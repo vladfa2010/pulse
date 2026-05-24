@@ -3,6 +3,28 @@ import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { query } from '../config/db';
 
 const router = Router();
+const USE_SQLITE = process.env.USE_SQLITE === 'true';
+
+function uuidv4(): string {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
+function nowSql(): string {
+  return USE_SQLITE ? "datetime('now')" : 'NOW()';
+}
+
+function insertOrReplace(table: string, columns: string[], values: any[]): string {
+  if (USE_SQLITE) {
+    const placeholders = values.map((_, i) => `$${i + 1}`).join(', ');
+    return `INSERT OR REPLACE INTO ${table} (${columns.join(', ')}) VALUES (${placeholders})`;
+  }
+  const placeholders = values.map((_, i) => `$${i + 1}`).join(', ');
+  return `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${placeholders})`;
+}
 
 // ============================================================
 // Profile
@@ -28,7 +50,7 @@ router.get('/profile', authMiddleware, async (req: AuthRequest, res) => {
 
     // Count portfolio tags
     const portfolioResult = await query(
-      'SELECT COUNT(*) FROM portfolios WHERE user_id = $1',
+      'SELECT COUNT(*) as count FROM portfolios WHERE user_id = $1',
       [userId]
     );
     const tagCount = parseInt(portfolioResult.rows[0].count);
@@ -65,12 +87,12 @@ router.patch('/profile', authMiddleware, async (req: AuthRequest, res) => {
       return res.status(400).json({ error: 'Username must be 2-30 characters' });
     }
 
-    const result = await query(
-      'UPDATE users SET username = $1 WHERE id = $2 RETURNING username',
+    await query(
+      'UPDATE users SET username = $1 WHERE id = $2',
       [username, userId]
     );
 
-    res.json({ username: result.rows[0].username });
+    res.json({ username });
   } catch (err) {
     res.status(500).json({ error: 'Failed to update profile' });
   }
@@ -109,7 +131,7 @@ router.post('/tags', authMiddleware, async (req: AuthRequest, res) => {
 
     // Check tag limit (10 for premium, 3 for free)
     const countResult = await query(
-      'SELECT COUNT(*) FROM portfolios WHERE user_id = $1',
+      'SELECT COUNT(*) as count FROM portfolios WHERE user_id = $1',
       [userId]
     );
     const tagCount = parseInt(countResult.rows[0].count);
@@ -127,15 +149,24 @@ router.post('/tags', authMiddleware, async (req: AuthRequest, res) => {
       });
     }
 
-    const result = await query(
-      `INSERT INTO portfolios (user_id, tag_id, tag_name, tag_type)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (user_id, tag_id) DO UPDATE SET tag_name = $3
-       RETURNING id, tag_id, tag_name, tag_type, created_at`,
-      [userId, tagId, tagName, tagType]
-    );
+    const portfolioId = uuidv4();
 
-    res.status(201).json({ tag: result.rows[0] });
+    if (USE_SQLITE) {
+      await query(
+        `INSERT OR REPLACE INTO portfolios (id, user_id, tag_id, tag_name, tag_type)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [portfolioId, userId, tagId, tagName, tagType]
+      );
+    } else {
+      await query(
+        `INSERT INTO portfolios (id, user_id, tag_id, tag_name, tag_type)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (user_id, tag_id) DO UPDATE SET tag_name = $4`,
+        [portfolioId, userId, tagId, tagName, tagType]
+      );
+    }
+
+    res.status(201).json({ tag: { id: portfolioId, tag_id: tagId, tag_name: tagName, tag_type: tagType } });
   } catch (err) {
     console.error('Add tag error:', err);
     res.status(500).json({ error: 'Failed to add tag' });
@@ -231,7 +262,7 @@ router.patch('/notifications', authMiddleware, async (req: AuthRequest, res) => 
 
     values.push(userId);
     await query(
-      `UPDATE notification_settings SET ${fields.join(', ')}, updated_at = NOW() WHERE user_id = $${paramIdx}`,
+      `UPDATE notification_settings SET ${fields.join(', ')}, updated_at = ${nowSql()} WHERE user_id = $${paramIdx}`,
       values
     );
 
@@ -269,15 +300,24 @@ router.post('/channels', authMiddleware, async (req: AuthRequest, res) => {
       return res.status(400).json({ error: 'channel and target required' });
     }
 
-    const result = await query(
-      `INSERT INTO user_channels (user_id, channel, target, is_active)
-       VALUES ($1, $2, $3, TRUE)
-       ON CONFLICT (user_id, channel) DO UPDATE SET target = $3, is_active = TRUE
-       RETURNING id, channel, target, is_active`,
-      [userId, channel, target]
-    );
+    const channelId = uuidv4();
 
-    res.json({ channel: result.rows[0] });
+    if (USE_SQLITE) {
+      await query(
+        `INSERT OR REPLACE INTO user_channels (id, user_id, channel, target, is_active)
+         VALUES ($1, $2, $3, $4, 1)`,
+        [channelId, userId, channel, target]
+      );
+    } else {
+      await query(
+        `INSERT INTO user_channels (id, user_id, channel, target, is_active)
+         VALUES ($1, $2, $3, $4, TRUE)
+         ON CONFLICT (user_id, channel) DO UPDATE SET target = $4, is_active = TRUE`,
+        [channelId, userId, channel, target]
+      );
+    }
+
+    res.json({ channel: { id: channelId, channel, target, is_active: true } });
   } catch (err) {
     res.status(500).json({ error: 'Failed to save channel' });
   }

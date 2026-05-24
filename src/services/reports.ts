@@ -3,6 +3,8 @@ import { query } from '../config/db';
 import { sendWeeklyReport } from './telegram';
 import { sendWeeklyReportEmail } from './email';
 
+const USE_SQLITE = process.env.USE_SQLITE === 'true';
+
 // ============================================================
 // Report Generation
 // ============================================================
@@ -43,15 +45,31 @@ async function generateReportForUser(userId: string): Promise<ReportData | null>
   const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
   // Get news for user's tags from last 7 days
-  const newsResult = await query(
-    `SELECT title_ru, summary_ru, source, url, published_at, sentiment, matched_tags
-     FROM news
-     WHERE matched_tags && $1::text[]
-       AND published_at > $2
-     ORDER BY published_at DESC
-     LIMIT 200`,
-    [tagIds, since]
-  );
+  let newsResult;
+  if (USE_SQLITE) {
+    // SQLite: matched_tags stored as JSON text, use LIKE for each tag
+    const conditions = tagIds.map((_, i) => `matched_tags LIKE $${i + 1}`).join(' OR ');
+    const likeParams = tagIds.map((id: string) => `%"${id}"%`);
+    newsResult = await query(
+      `SELECT title_ru, summary_ru, source, url, published_at, sentiment, matched_tags
+       FROM news
+       WHERE (${conditions})
+         AND published_at > $${tagIds.length + 1}
+       ORDER BY published_at DESC
+       LIMIT 200`,
+      [...likeParams, since]
+    );
+  } else {
+    newsResult = await query(
+      `SELECT title_ru, summary_ru, source, url, published_at, sentiment, matched_tags
+       FROM news
+       WHERE matched_tags && $1::text[]
+         AND published_at > $2
+       ORDER BY published_at DESC
+       LIMIT 200`,
+      [tagIds, since]
+    );
+  }
 
   const articles = newsResult.rows;
   if (articles.length === 0) return null;

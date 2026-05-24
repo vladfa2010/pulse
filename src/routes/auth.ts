@@ -5,6 +5,16 @@ import { query } from '../config/db';
 
 const router = Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
+const USE_SQLITE = process.env.USE_SQLITE === 'true';
+
+// Simple UUID v4 generator
+function uuidv4(): string {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
 
 // POST /api/auth/register
 router.post('/register', async (req, res) => {
@@ -27,35 +37,40 @@ router.post('/register', async (req, res) => {
 
     // Hash password
     const passwordHash = await bcrypt.hash(password, 10);
+    const userId = uuidv4();
 
     // Insert user
-    const result = await query(
-      `INSERT INTO users (email, username, password_hash, news_count)
-       VALUES ($1, $2, $3, 0)
-       RETURNING id, email, username, created_at`,
-      [email, username, passwordHash]
-    );
-
-    const user = result.rows[0];
+    if (USE_SQLITE) {
+      await query(
+        `INSERT INTO users (id, email, username, password_hash, news_count)
+         VALUES ($1, $2, $3, $4, 0)`,
+        [userId, email, username, passwordHash]
+      );
+    } else {
+      await query(
+        `INSERT INTO users (id, email, username, password_hash, news_count)
+         VALUES ($1, $2, $3, $4, 0)`,
+        [userId, email, username, passwordHash]
+      );
+    }
 
     // Create default notification settings
     await query(
-      `INSERT INTO notification_settings (user_id)
-       VALUES ($1)`,
-      [user.id]
+      `INSERT INTO notification_settings (user_id) VALUES ($1)`,
+      [userId]
     );
 
     // Generate JWT
-    const token = jwt.sign({ userId: user.id, email: user.email }, JWT_SECRET, {
+    const token = jwt.sign({ userId, email }, JWT_SECRET, {
       expiresIn: '7d',
     });
 
     res.status(201).json({
       token,
       user: {
-        id: user.id,
-        email: user.email,
-        username: user.username,
+        id: userId,
+        email,
+        username,
       },
     });
   } catch (err) {

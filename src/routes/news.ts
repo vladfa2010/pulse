@@ -3,6 +3,40 @@ import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { query } from '../config/db';
 
 const router = Router();
+const USE_SQLITE = process.env.USE_SQLITE === 'true';
+
+// Build WHERE clause for tag matching
+function buildTagWhere(tagIds: string[]): { clause: string; params: any[] } {
+  if (USE_SQLITE) {
+    // SQLite: matched_tags stored as JSON text, use LIKE
+    const conditions = tagIds.map((_, i) => `matched_tags LIKE $${i + 1}`);
+    return {
+      clause: '(' + conditions.join(' OR ') + ')',
+      params: tagIds.map(id => `%"${id}"%`),
+    };
+  }
+  // PostgreSQL: native array support
+  return {
+    clause: 'matched_tags && $1::text[]',
+    params: [tagIds],
+  };
+}
+
+// Time filter SQL
+function timeFilterSql(): string {
+  if (USE_SQLITE) {
+    return "published_at > datetime('now', '-14 days')";
+  }
+  return "published_at > NOW() - INTERVAL '14 days'";
+}
+
+// Current timestamp SQL
+function nowSql(): string {
+  if (USE_SQLITE) {
+    return "datetime('now')";
+  }
+  return 'NOW()';
+}
 
 // GET /api/news — get fresh news for user
 router.get('/', authMiddleware, async (req: AuthRequest, res) => {
@@ -24,41 +58,57 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
       return res.json({ articles: [], total: 0, page, hasMore: false });
     }
 
-    // Build query — find news matching any user tag
+    const tagWhere = buildTagWhere(tagIds);
+    const timeFilter = timeFilterSql();
+
+    // Build params
+    const params: any[] = [...tagWhere.params];
+    let paramIdx = params.length + 1;
+
     let sql = `
       SELECT title_ru, summary_ru, source, url, published_at, sentiment, matched_tags
       FROM news
-      WHERE matched_tags && $1::text[]
+      WHERE ${tagWhere.clause}
     `;
-    const params: any[] = [tagIds];
 
     if (since) {
-      sql += ` AND published_at > $2`;
+      sql += ` AND published_at > $${paramIdx}`;
       params.push(since);
+      paramIdx++;
     }
 
     // Count total
-    const countResult = await query(
-      sql.replace('SELECT title_ru, summary_ru, source, url, published_at, sentiment, matched_tags', 'SELECT COUNT(*)') + ` AND published_at > NOW() - INTERVAL '14 days'`,
-      params
-    );
-    const total = parseInt(countResult.rows[0].count);
+    const countSql = sql.replace(
+      'SELECT title_ru, summary_ru, source, url, published_at, sentiment, matched_tags',
+      'SELECT COUNT(*) as count'
+    ) + ` AND ${timeFilter}`;
+
+    const countResult = await query(countSql, params);
+    const total = parseInt(countResult.rows[0]?.count || '0');
 
     // Get paginated results
-    sql += ` AND published_at > NOW() - INTERVAL '14 days'
+    sql += ` AND ${timeFilter}
       ORDER BY published_at DESC
-      LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+      LIMIT $${paramIdx} OFFSET $${paramIdx + 1}`;
     params.push(limit, offset);
 
     const result = await query(sql, params);
 
     // Update last_connected_at
-    await query(
-      `INSERT INTO user_sessions (user_id, last_connected_at)
-       VALUES ($1, NOW())
-       ON CONFLICT (user_id) DO UPDATE SET last_connected_at = NOW()`,
-      [userId]
-    );
+    if (USE_SQLITE) {
+      await query(
+        `INSERT OR REPLACE INTO user_sessions (id, user_id, last_connected_at)
+         VALUES ((SELECT id FROM user_sessions WHERE user_id = $1), $1, ${nowSql()})`,
+        [userId]
+      );
+    } else {
+      await query(
+        `INSERT INTO user_sessions (user_id, last_connected_at)
+         VALUES ($1, ${nowSql()})
+         ON CONFLICT (user_id) DO UPDATE SET last_connected_at = ${nowSql()}`,
+        [userId]
+      );
+    }
 
     // Increment news_count
     await query(
@@ -82,15 +132,30 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
 router.get('/tags/:tagId', async (req, res) => {
   try {
     const { tagId } = req.params;
-    const result = await query(
-      `SELECT title_ru, summary_ru, source, url, published_at, sentiment
-       FROM news
-       WHERE $1 = ANY(matched_tags)
-       AND published_at > NOW() - INTERVAL '14 days'
-       ORDER BY published_at DESC
-       LIMIT 50`,
-      [tagId]
-    );
+    const timeFilter = timeFilterSql();
+
+    let result;
+    if (USE_SQLITE) {
+      result = await query(
+        `SELECT title_ru, summary_ru, source, url, published_at, sentiment
+         FROM news
+         WHERE matched_tags LIKE $1 AND ${timeFilter}
+         ORDER BY published_at DESC
+         LIMIT 50`,
+        [`%"${tagId}"%`]
+      );
+    } else {
+      result = await query(
+        `SELECT title_ru, summary_ru, source, url, published_at, sentiment
+         FROM news
+         WHERE $1 = ANY(matched_tags)
+         AND ${timeFilter}
+         ORDER BY published_at DESC
+         LIMIT 50`,
+        [tagId]
+      );
+    }
+
     res.json({ articles: result.rows });
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch tag news' });

@@ -24,6 +24,7 @@ npm-debug.log*
 .DS_Store
 Thumbs.db
 
-# DB data (docker)
+# DB data (docker / sqlite)
 postgres_data/
 redis_data/
+*.db

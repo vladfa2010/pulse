@@ -3,6 +3,23 @@ import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { query } from '../config/db';
 
 const router = Router();
+const USE_SQLITE = process.env.USE_SQLITE === 'true';
+
+function uuidv4(): string {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
+function nowSql(): string {
+  return USE_SQLITE ? "datetime('now')" : 'NOW()';
+}
+
+function nowPlusDaysSql(days: number): string {
+  return USE_SQLITE ? `datetime('now', '+${days} days')` : `NOW() + INTERVAL '${days} days'`;
+}
 
 // POST /api/payment/create — create payment
 router.post('/create', authMiddleware, async (req: AuthRequest, res) => {
@@ -11,15 +28,15 @@ router.post('/create', authMiddleware, async (req: AuthRequest, res) => {
     const { amount = 490, discount = 0, method = 'card' } = req.body;
 
     const finalAmount = Math.round(amount * (1 - discount / 100));
+    const paymentId = uuidv4();
 
-    const result = await query(
-      `INSERT INTO payments (user_id, amount, base_amount, discount, method, status)
-       VALUES ($1, $2, $3, $4, $5, 'pending')
-       RETURNING id, amount, status`,
-      [userId, finalAmount, amount, discount, method]
+    await query(
+      `INSERT INTO payments (id, user_id, amount, base_amount, discount, method, status)
+       VALUES ($1, $2, $3, $4, $5, $6, 'pending')`,
+      [paymentId, userId, finalAmount, amount, discount, method]
     );
 
-    res.json({ payment: result.rows[0] });
+    res.json({ payment: { id: paymentId, amount: finalAmount, status: 'pending' } });
   } catch (err) {
     res.status(500).json({ error: 'Payment creation failed' });
   }
@@ -33,15 +50,15 @@ router.post('/confirm', authMiddleware, async (req: AuthRequest, res) => {
 
     // Update payment
     await query(
-      `UPDATE payments SET status = 'completed', paid_at = NOW() WHERE id = $1`,
+      `UPDATE payments SET status = 'completed', paid_at = ${nowSql()} WHERE id = $1`,
       [paymentId]
     );
 
     // Activate subscription for 30 days
     await query(
-      `UPDATE users 
-       SET subscription_active = TRUE, 
-           subscription_expires_at = NOW() + INTERVAL '30 days'
+      `UPDATE users
+       SET subscription_active = ${USE_SQLITE ? 1 : 1},
+           subscription_expires_at = ${nowPlusDaysSql(30)}
        WHERE id = $1`,
       [userId]
     );

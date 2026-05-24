@@ -2,6 +2,15 @@ import { Router } from 'express';
 import { query } from '../config/db';
 
 const router = Router();
+const USE_SQLITE = process.env.USE_SQLITE === 'true';
+
+function nowSql(): string {
+  return USE_SQLITE ? "datetime('now')" : 'NOW()';
+}
+
+function nowPlusDaysSql(days: number): string {
+  return USE_SQLITE ? `datetime('now', '+${days} days')` : `NOW() + INTERVAL '${days} days'`;
+}
 
 // YooKassa webhook — POST /api/webhook/yookassa
 router.post('/yookassa', async (req, res) => {
@@ -19,11 +28,15 @@ router.post('/yookassa', async (req, res) => {
       const status = event === 'payment.succeeded' ? 'completed' : 'failed';
 
       // Update payment status
-      const paymentResult = await query(
-        `UPDATE payments SET status = $1, paid_at = NOW()
-         WHERE provider_ref = $2
-         RETURNING user_id`,
+      await query(
+        `UPDATE payments SET status = $1, paid_at = ${nowSql()} WHERE provider_ref = $2`,
         [status, object.id]
+      );
+
+      // Get user_id
+      const paymentResult = await query(
+        'SELECT user_id FROM payments WHERE provider_ref = $1',
+        [object.id]
       );
 
       if (paymentResult.rows.length > 0 && status === 'completed') {
@@ -32,8 +45,8 @@ router.post('/yookassa', async (req, res) => {
         // Activate subscription for 30 days
         await query(
           `UPDATE users
-           SET subscription_active = TRUE,
-               subscription_expires_at = NOW() + INTERVAL '30 days'
+           SET subscription_active = ${USE_SQLITE ? 1 : 1},
+               subscription_expires_at = ${nowPlusDaysSql(30)}
            WHERE id = $1`,
           [userId]
         );

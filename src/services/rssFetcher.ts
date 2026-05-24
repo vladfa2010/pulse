@@ -105,17 +105,36 @@ export async function fetchAllRSS(): Promise<ParsedArticle[]> {
   });
 }
 
+// Simple UUID v4 generator
+function uuidv4(): string {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
+const USE_SQLITE = process.env.USE_SQLITE === 'true';
+
 // Save articles to DB
 export async function saveArticles(articles: ParsedArticle[]): Promise<number> {
   let count = 0;
   for (const a of articles) {
     try {
-      await query(
-        `INSERT INTO news (title_original, title_ru, summary_ru, source, source_id, url, published_at, lang_original)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         ON CONFLICT DO NOTHING`,
-        [a.title, a.title, a.summary, a.source, a.sourceId, a.url, a.publishedAt, a.lang]
-      );
+      if (USE_SQLITE) {
+        await query(
+          `INSERT OR IGNORE INTO news (id, title_original, title_ru, summary_ru, source, source_id, url, published_at, lang_original)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          [uuidv4(), a.title, a.title, a.summary, a.source, a.sourceId, a.url, a.publishedAt.toISOString(), a.lang]
+        );
+      } else {
+        await query(
+          `INSERT INTO news (title_original, title_ru, summary_ru, source, source_id, url, published_at, lang_original)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+           ON CONFLICT DO NOTHING`,
+          [a.title, a.title, a.summary, a.source, a.sourceId, a.url, a.publishedAt, a.lang]
+        );
+      }
       count++;
     } catch (err) {
       // Skip duplicates / errors

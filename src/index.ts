@@ -15,6 +15,7 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
 // Middleware
 app.use(cors());
@@ -39,11 +40,22 @@ app.use((req, res) => {
   res.status(404).json({ error: 'Not found' });
 });
 
-app.listen(PORT, () => {
-  console.log(`PULSE backend running on port ${PORT}`);
-  console.log(`Routes: /api/auth, /api/news, /api/payment, /api/user, /api/translate, /api/webhook, /api/admin`);
+// Start server — initialize DB first if SQLite
+async function start() {
+  if (USE_SQLITE) {
+    const sqlite = await import('./config/db-sqlite');
+    await sqlite.initSQLite();
+    await sqlite.initSQLiteSchema();
+  }
 
-  // Start cron jobs
-  startCron();
-  startReportCron();
-});
+  app.listen(PORT, () => {
+    console.log(`PULSE backend running on port ${PORT}`);
+    console.log(`Routes: /api/auth, /api/news, /api/payment, /api/user, /api/translate, /api/webhook, /api/admin`);
+
+    // Start cron jobs
+    startCron();
+    startReportCron();
+  });
+}
+
+start();

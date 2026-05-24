@@ -3,6 +3,17 @@ import { fetchAllRSS, saveArticles } from './rssFetcher';
 import { translateBatch } from './translate';
 import { query } from '../config/db';
 
+const USE_SQLITE = process.env.USE_SQLITE === 'true';
+
+// Simple UUID v4 generator
+function uuidv4(): string {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
 // Tag keywords for matching
 const TAG_KEYWORDS: Record<string, string[]> = {
   sber: ['сбер', 'сбербанк', 'sber'],
@@ -92,12 +103,20 @@ async function processArticles() {
   let saved = 0;
   for (const a of processed) {
     try {
-      await query(
-        `INSERT INTO news (title_original, title_ru, summary_ru, source, source_id, url, published_at, lang_original, sentiment, matched_tags)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-         ON CONFLICT DO NOTHING`,
-        [a.title, a.title_ru || a.title, a.summary_ru || a.summary, a.source, a.sourceId, a.url, a.publishedAt, a.lang, a.sentiment, a.matched_tags]
-      );
+      if (USE_SQLITE) {
+        await query(
+          `INSERT OR IGNORE INTO news (id, title_original, title_ru, summary_ru, source, source_id, url, published_at, lang_original, sentiment, matched_tags)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+          [uuidv4(), a.title, a.title_ru || a.title, a.summary_ru || a.summary, a.source, a.sourceId, a.url, a.publishedAt.toISOString(), a.lang, a.sentiment, JSON.stringify(a.matched_tags)]
+        );
+      } else {
+        await query(
+          `INSERT INTO news (title_original, title_ru, summary_ru, source, source_id, url, published_at, lang_original, sentiment, matched_tags)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+           ON CONFLICT DO NOTHING`,
+          [a.title, a.title_ru || a.title, a.summary_ru || a.summary, a.source, a.sourceId, a.url, a.publishedAt, a.lang, a.sentiment, a.matched_tags]
+        );
+      }
       saved++;
     } catch {
       // Skip duplicates
@@ -107,7 +126,11 @@ async function processArticles() {
   console.log(`[Cron] Saved ${saved} new articles`);
 
   // 5. Clean old news (>14 days)
-  await query(`DELETE FROM news WHERE created_at < NOW() - INTERVAL '14 days'`);
+  if (USE_SQLITE) {
+    await query(`DELETE FROM news WHERE created_at < datetime('now', '-14 days')`);
+  } else {
+    await query(`DELETE FROM news WHERE created_at < NOW() - INTERVAL '14 days'`);
+  }
 }
 
 // Start cron: every 15 minutes

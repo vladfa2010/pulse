@@ -3,6 +3,7 @@ import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { query } from '../config/db';
 
 const router = Router();
+const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
 // Middleware: check admin role (simple: check email domain or list)
 const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '').split(',').filter(Boolean);
@@ -41,7 +42,9 @@ router.get('/stats', adminMiddleware, async (_req, res) => {
     );
     const newsResult = await query('SELECT COUNT(*) FROM news');
     const news24hResult = await query(
-      'SELECT COUNT(*) FROM news WHERE created_at > NOW() - INTERVAL \'24 hours\''
+      USE_SQLITE
+        ? "SELECT COUNT(*) FROM news WHERE created_at > datetime('now', '-24 hours')"
+        : "SELECT COUNT(*) FROM news WHERE created_at > NOW() - INTERVAL '24 hours'"
     );
     const paymentsResult = await query(
       'SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE status = \'completed\''

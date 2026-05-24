@@ -2,13 +2,20 @@ import axios from 'axios';
 import { query } from '../config/db';
 
 const TRANSLATION_API_KEY = process.env.TRANSLATION_API_KEY;
+const USE_SQLITE = process.env.USE_SQLITE === 'true';
+
+function nowMinusDaysSql(days: number): string {
+  return USE_SQLITE
+    ? `datetime('now', '-${days} days')`
+    : `NOW() - INTERVAL '${days} days'`;
+}
 
 // Check cache first
 export async function getCachedTranslation(textEn: string): Promise<string | null> {
   try {
     const hash = Buffer.from(textEn).toString('base64').slice(0, 64);
     const result = await query(
-      'SELECT text_ru FROM translation_cache WHERE hash = $1 AND created_at > NOW() - INTERVAL \'30 days\'',
+      `SELECT text_ru FROM translation_cache WHERE hash = $1 AND created_at > ${nowMinusDaysSql(30)}`,
       [hash]
     );
     return result.rows.length > 0 ? result.rows[0].text_ru : null;
@@ -21,12 +28,20 @@ export async function getCachedTranslation(textEn: string): Promise<string | nul
 export async function saveTranslation(textEn: string, textRu: string): Promise<void> {
   try {
     const hash = Buffer.from(textEn).toString('base64').slice(0, 64);
-    await query(
-      `INSERT INTO translation_cache (hash, text_en, text_ru)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (hash) DO NOTHING`,
-      [hash, textEn, textRu]
-    );
+    if (USE_SQLITE) {
+      await query(
+        `INSERT OR IGNORE INTO translation_cache (id, hash, text_en, text_ru)
+         VALUES ($1, $2, $3, $4)`,
+        [crypto.randomUUID ? crypto.randomUUID() : hash.slice(0, 36), hash, textEn, textRu]
+      );
+    } else {
+      await query(
+        `INSERT INTO translation_cache (hash, text_en, text_ru)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (hash) DO NOTHING`,
+        [hash, textEn, textRu]
+      );
+    }
   } catch {
     // Ignore cache errors
   }
