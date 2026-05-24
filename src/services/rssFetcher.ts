@@ -10,6 +10,8 @@ const BATCH_DELAY = 50;
 export interface ParsedArticle {
   title: string;
   summary: string;
+  title_ru?: string;
+  summary_ru?: string;
   url: string;
   publishedAt: Date;
   source: string;
