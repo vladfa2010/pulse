@@ -151,4 +151,84 @@ router.get('/me', async (req, res) => {
   }
 });
 
+// POST /api/auth/demo — create or login demo user
+router.post('/demo', async (_req, res) => {
+  try {
+    const demoEmail = 'demo@pulse.ru';
+    const demoUsername = 'Демо';
+    const demoPassword = 'demo123';
+
+    // Check if demo user exists
+    let result = await query(
+      'SELECT id, email, username FROM users WHERE email = $1',
+      [demoEmail]
+    );
+
+    let userId: string;
+
+    if (result.rows.length === 0) {
+      // Create demo user
+      userId = uuidv4();
+      const passwordHash = await bcrypt.hash(demoPassword, 10);
+
+      await query(
+        `INSERT INTO users (id, email, username, password_hash, subscription_active, subscription_expires_at, news_count)
+         VALUES ($1, $2, $3, $4, 1, datetime('now', '+30 days'), 0)`,
+        [userId, demoEmail, demoUsername, passwordHash]
+      );
+
+      // Create default notification settings
+      await query(
+        `INSERT INTO notification_settings (user_id) VALUES ($1)`,
+        [userId]
+      );
+
+      // Create demo portfolio (5 tags)
+      const demoTags = [
+        { id: 'sber', name: 'SBER', type: 'company' },
+        { id: 'gazp', name: 'GAZP', type: 'company' },
+        { id: 'tech', name: 'Технологии', type: 'sector' },
+        { id: 'musk', name: 'Илон Маск', type: 'person' },
+        { id: 'ai', name: 'AI', type: 'trend' },
+      ];
+
+      for (const tag of demoTags) {
+        await query(
+          `INSERT INTO portfolios (id, user_id, tag_id, tag_name, tag_type)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [uuidv4(), userId, tag.id, tag.name, tag.type]
+        );
+      }
+
+      // Create demo payment
+      await query(
+        `INSERT INTO payments (id, user_id, amount, base_amount, discount, method, status, paid_at)
+         VALUES ($1, $2, 490, 490, 0, 'card', 'completed', datetime('now'))`,
+        [uuidv4(), userId]
+      );
+
+      console.log('[Auth] Demo user created:', userId);
+    } else {
+      userId = result.rows[0].id;
+    }
+
+    // Generate JWT
+    const token = jwt.sign({ userId, email: demoEmail }, JWT_SECRET, {
+      expiresIn: '7d',
+    });
+
+    res.json({
+      token,
+      user: {
+        id: userId,
+        email: demoEmail,
+        username: demoUsername,
+      },
+    });
+  } catch (err) {
+    console.error('Demo login error:', err);
+    res.status(500).json({ error: 'Demo login failed' });
+  }
+});
+
 export default router;
