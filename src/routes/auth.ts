@@ -32,7 +32,7 @@ router.post('/register', async (req, res) => {
     // Check if email exists
     const existing = await query('SELECT id FROM users WHERE email = $1', [email]);
     if (existing.rows.length > 0) {
-      return res.status(409).json({ error: 'Email already registered' });
+      return res.status(409).json({ error: 'На эту почту уже зарегистрирован аккаунт', code: 'EMAIL_EXISTS' });
     }
 
     // Hash password
@@ -96,7 +96,7 @@ router.post('/login', async (req, res) => {
     );
 
     if (result.rows.length === 0) {
-      return res.status(401).json({ error: 'Invalid credentials' });
+      return res.status(404).json({ error: 'Неправильный логин или пароль', code: 'USER_NOT_FOUND' });
     }
 
     const user = result.rows[0];
@@ -104,7 +104,7 @@ router.post('/login', async (req, res) => {
     // Check password
     const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid) {
-      return res.status(401).json({ error: 'Invalid credentials' });
+      return res.status(401).json({ error: 'Неправильный логин или пароль', code: 'INVALID_PASSWORD' });
     }
 
     // Generate JWT
