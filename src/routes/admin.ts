@@ -5,16 +5,32 @@ import { query } from '../config/db';
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
-// Middleware: check admin role (simple: check email domain or list)
-const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '').split(',').filter(Boolean);
-
+// Middleware: check is_admin flag in database
 function adminMiddleware(req: AuthRequest, res: any, next: any) {
-  authMiddleware(req, res, () => {
-    const email = req.user?.email;
-    if (!email || !ADMIN_EMAILS.includes(email)) {
-      return res.status(403).json({ error: 'Admin access required' });
+  authMiddleware(req, res, async () => {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: 'Authentication required' });
+      }
+
+      const result = await query(
+        'SELECT is_admin FROM users WHERE id = $1',
+        [userId]
+      );
+
+      const isAdmin = USE_SQLITE
+        ? (result.rows[0]?.is_admin === 1)
+        : (result.rows[0]?.is_admin === true);
+
+      if (!isAdmin) {
+        return res.status(403).json({ error: 'Admin access required' });
+      }
+
+      next();
+    } catch {
+      res.status(500).json({ error: 'Admin check failed' });
     }
-    next();
   });
 }
 
@@ -22,7 +38,7 @@ function adminMiddleware(req: AuthRequest, res: any, next: any) {
 router.get('/users', adminMiddleware, async (_req, res) => {
   try {
     const result = await query(
-      `SELECT id, email, username, is_verified, subscription_active,
+      `SELECT id, email, username, is_verified, is_admin, subscription_active,
               subscription_expires_at, news_count, created_at
        FROM users ORDER BY created_at DESC LIMIT 500`
     );

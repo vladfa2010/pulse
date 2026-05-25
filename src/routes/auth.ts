@@ -71,6 +71,7 @@ router.post('/register', async (req, res) => {
         id: userId,
         email,
         username,
+        is_admin: false,
       },
     });
   } catch (err) {
@@ -90,7 +91,7 @@ router.post('/login', async (req, res) => {
 
     // Find user
     const result = await query(
-      'SELECT id, email, username, password_hash FROM users WHERE email = $1',
+      'SELECT id, email, username, password_hash, is_admin FROM users WHERE email = $1',
       [email]
     );
 
@@ -117,6 +118,7 @@ router.post('/login', async (req, res) => {
         id: user.id,
         email: user.email,
         username: user.username,
+        is_admin: user.is_admin === 1 || user.is_admin === true,
       },
     });
   } catch (err) {
@@ -137,7 +139,7 @@ router.get('/me', async (req, res) => {
     const decoded = jwt.verify(token, JWT_SECRET) as { userId: string };
 
     const result = await query(
-      'SELECT id, email, username, subscription_active, subscription_expires_at, news_count FROM users WHERE id = $1',
+      'SELECT id, email, username, subscription_active, subscription_expires_at, news_count, is_admin FROM users WHERE id = $1',
       [decoded.userId]
     );
 
@@ -145,7 +147,13 @@ router.get('/me', async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    res.json({ user: result.rows[0] });
+    const user = result.rows[0];
+    res.json({
+      user: {
+        ...user,
+        is_admin: user.is_admin === 1 || user.is_admin === true,
+      },
+    });
   } catch (err) {
     res.status(401).json({ error: 'Invalid token' });
   }
@@ -172,8 +180,8 @@ router.post('/demo', async (_req, res) => {
       const passwordHash = await bcrypt.hash(demoPassword, 10);
 
       await query(
-        `INSERT INTO users (id, email, username, password_hash, subscription_active, subscription_expires_at, news_count)
-         VALUES ($1, $2, $3, $4, 1, datetime('now', '+30 days'), 0)`,
+        `INSERT INTO users (id, email, username, password_hash, subscription_active, subscription_expires_at, news_count, is_admin)
+         VALUES ($1, $2, $3, $4, 1, datetime('now', '+30 days'), 0, 0)`,
         [userId, demoEmail, demoUsername, passwordHash]
       );
 
