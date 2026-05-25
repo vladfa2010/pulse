@@ -4,8 +4,8 @@ import { query } from '../config/db';
 
 const CORS_PROXY = 'https://api.codetabs.com/v1/proxy?quest=';
 const FETCH_TIMEOUT = 5000;
-const BATCH_SIZE = 5;
-const BATCH_DELAY = 50;
+const BATCH_SIZE = 4;
+const BATCH_DELAY = 1000; // 1s pause between batches to avoid overload
 
 export interface ParsedArticle {
   title: string;
@@ -90,7 +90,12 @@ export async function fetchAllRSS(): Promise<ParsedArticle[]> {
       }
     }
 
+    const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+    const totalBatches = Math.ceil(RSS_SOURCES.length / BATCH_SIZE);
+    console.log(`[RSS] Batch ${batchNum}/${totalBatches} done (${Math.min(i + BATCH_SIZE, RSS_SOURCES.length)}/${RSS_SOURCES.length} sources), ${allArticles.length} articles so far`);
+
     if (i + BATCH_SIZE < RSS_SOURCES.length) {
+      console.log(`[RSS] Pausing ${BATCH_DELAY}ms before next batch...`);
       await new Promise(r => setTimeout(r, BATCH_DELAY));
     }
   }
