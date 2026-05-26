@@ -84,8 +84,10 @@ router.post('/register', async (req, res) => {
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
+    console.log('[Auth] Login attempt:', email);
 
     if (!email || !password) {
+      console.log('[Auth] Login rejected: missing email or password');
       return res.status(400).json({ error: 'Email and password required' });
     }
 
@@ -95,7 +97,10 @@ router.post('/login', async (req, res) => {
       [email]
     );
 
+    console.log('[Auth] User lookup:', email, 'found:', result.rows.length);
+
     if (result.rows.length === 0) {
+      console.log('[Auth] Login rejected: user not found:', email);
       return res.status(404).json({ error: 'Неправильный логин или пароль', code: 'USER_NOT_FOUND' });
     }
 
@@ -103,7 +108,10 @@ router.post('/login', async (req, res) => {
 
     // Check password
     const valid = await bcrypt.compare(password, user.password_hash);
+    console.log('[Auth] Password check for', email, 'valid:', valid);
+
     if (!valid) {
+      console.log('[Auth] Login rejected: invalid password for:', email);
       return res.status(401).json({ error: 'Неправильный логин или пароль', code: 'INVALID_PASSWORD' });
     }
 
@@ -112,6 +120,7 @@ router.post('/login', async (req, res) => {
       expiresIn: '7d',
     });
 
+    console.log('[Auth] Login success:', email, 'userId:', user.id);
     res.json({
       token,
       user: {
