@@ -1,13 +1,35 @@
+/**
+ * =============================================================================
+ * PULSE — Auth Routes (Аутентификация)
+ * =============================================================================
+ *
+ * Эндпоинты:
+ *   POST /api/auth/register  — Регистрация нового пользователя
+ *   POST /api/auth/login     — Вход (получение JWT токена)
+ *   GET  /api/auth/me        — Проверка токена (кто я?)
+ *   POST /api/auth/demo      — Демо-вход (без регистрации)
+ *
+ * JWT (JSON Web Token):
+ *   - Токен подписывается секретом (JWT_SECRET)
+ *   - Срок жизни: 7 дней
+ *   - В payload: userId, email
+ *   - Передаётся в заголовке: Authorization: Bearer <token>
+ *
+ * Пароли:
+ *   - Хранятся как bcrypt hash (10 раундов)
+ *   - НИКОГДА не хранятся в открытом виде
+ */
+
 import { Router } from 'express';
-import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';   // ← Хеширование паролей
+import jwt from 'jsonwebtoken';  // ← Создание JWT токенов
 import { query } from '../config/db';
 
 const router = Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
-// Simple UUID v4 generator
+// Генератор UUID v4 (уникальный идентификатор для каждой записи)
 function uuidv4(): string {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
     const r = Math.random() * 16 | 0;
@@ -16,117 +38,107 @@ function uuidv4(): string {
   });
 }
 
-// POST /api/auth/register
+// ═══════════════════════════════════════════════════════════════════════════
+// POST /api/auth/register — Регистрация
+// ═══════════════════════════════════════════════════════════════════════════
+// Принимает: { email, username, password }
+// Возвращает: { token, user: { id, email, username, is_admin } }
+// Ошибки: 400 (неверные данные), 409 (email уже занят), 500 (внутренняя)
 router.post('/register', async (req, res) => {
   try {
     const { email, username, password } = req.body;
 
+    // ─── Валидация ──────────────────────────────────────────────────────
     if (!email || !username || !password) {
       return res.status(400).json({ error: 'Email, username and password required' });
     }
-
     if (password.length < 8) {
       return res.status(400).json({ error: 'Password must be at least 8 characters' });
     }
 
-    // Check if email exists
+    // ─── Проверяем, не занят ли email ───────────────────────────────────
     const existing = await query('SELECT id FROM users WHERE email = $1', [email]);
     if (existing.rows.length > 0) {
-      return res.status(409).json({ error: 'На эту почту уже зарегистрирован аккаунт', code: 'EMAIL_EXISTS' });
+      return res.status(409).json({
+        error: 'На эту почту уже зарегистрирован аккаунт',
+        code: 'EMAIL_EXISTS'
+      });
     }
 
-    // Hash password
+    // ─── Хешируем пароль (bcrypt, 10 раундов) ───────────────────────────
     const passwordHash = await bcrypt.hash(password, 10);
     const userId = uuidv4();
 
-    // Insert user
-    if (USE_SQLITE) {
-      await query(
-        `INSERT INTO users (id, email, username, password_hash, news_count)
-         VALUES ($1, $2, $3, $4, 0)`,
-        [userId, email, username, passwordHash]
-      );
-    } else {
-      await query(
-        `INSERT INTO users (id, email, username, password_hash, news_count)
-         VALUES ($1, $2, $3, $4, 0)`,
-        [userId, email, username, passwordHash]
-      );
-    }
+    // ─── Создаём пользователя ───────────────────────────────────────────
+    await query(
+      `INSERT INTO users (id, email, username, password_hash, news_count)
+       VALUES ($1, $2, $3, $4, 0)`,
+      [userId, email, username, passwordHash]
+    );
 
-    // Create default notification settings
+    // ─── Создаём настройки уведомлений по умолчанию ─────────────────────
     await query(
       `INSERT INTO notification_settings (user_id) VALUES ($1)`,
       [userId]
     );
 
-    // Generate JWT
-    const token = jwt.sign({ userId, email }, JWT_SECRET, {
-      expiresIn: '7d',
-    });
+    // ─── Генерируем JWT токен ───────────────────────────────────────────
+    const token = jwt.sign({ userId, email }, JWT_SECRET, { expiresIn: '7d' });
 
     res.status(201).json({
       token,
-      user: {
-        id: userId,
-        email,
-        username,
-        is_admin: false,
-      },
+      user: { id: userId, email, username, is_admin: false },
     });
   } catch (err: any) {
-    console.error('[Auth] Register error:', err.message || err);
+    console.error('[Auth] Register error:', err.message);
     res.status(500).json({ error: 'Registration failed', details: err.message });
   }
 });
 
-// POST /api/auth/login
+// ═══════════════════════════════════════════════════════════════════════════
+// POST /api/auth/login — Вход
+// ═══════════════════════════════════════════════════════════════════════════
+// Принимает: { email, password }
+// Возвращает: { token, user: { id, email, username, is_admin } }
+// Ошибки: 400 (нет данных), 404 (пользователь не найден), 401 (неверный пароль)
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
-    console.log('[Auth] Login attempt:', email);
 
+    // ─── Валидация ──────────────────────────────────────────────────────
     if (!email || !password) {
-      console.log('[Auth] Login rejected: missing email or password');
       return res.status(400).json({ error: 'Email and password required' });
     }
 
-    // Find user
+    // ─── Ищем пользователя по email ─────────────────────────────────────
     const result = await query(
       'SELECT id, email, username, password_hash, is_admin FROM users WHERE email = $1',
       [email]
     );
-
-    console.log('[Auth] User lookup:', email, 'found:', result.rows.length);
-
     if (result.rows.length === 0) {
-      console.log('[Auth] Login rejected: user not found:', email);
-      return res.status(404).json({ error: 'Неправильный логин или пароль', code: 'USER_NOT_FOUND' });
+      return res.status(404).json({
+        error: 'Неправильный логин или пароль',
+        code: 'USER_NOT_FOUND'
+      });
     }
 
     const user = result.rows[0];
-    console.log('[Auth] User found:', user.id, 'hash exists:', !!user.password_hash, 'hash length:', user.password_hash?.length);
 
-    // Check password
-    let valid = false;
-    try {
-      valid = await bcrypt.compare(password, user.password_hash);
-    } catch (bcryptErr: any) {
-      console.error('[Auth] bcrypt error:', bcryptErr.message);
-    }
-    console.log('[Auth] Password check for', email, 'valid:', valid);
-
+    // ─── Проверяем пароль (bcrypt.compare) ──────────────────────────────
+    // bcrypt сравнивает plain-text пароль с хешем из БД
+    const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid) {
-      console.log('[Auth] Login rejected: invalid password for:', email);
-      return res.status(401).json({ error: 'Неправильный логин или пароль', code: 'INVALID_PASSWORD' });
+      return res.status(401).json({
+        error: 'Неправильный логин или пароль',
+        code: 'INVALID_PASSWORD'
+      });
     }
 
-    // Generate JWT
+    // ─── Генерируем JWT токен ───────────────────────────────────────────
     const token = jwt.sign({ userId: user.id, email: user.email }, JWT_SECRET, {
       expiresIn: '7d',
     });
 
-    console.log('[Auth] Login success:', email, 'userId:', user.id);
     res.json({
       token,
       user: {
@@ -136,28 +148,37 @@ router.post('/login', async (req, res) => {
         is_admin: user.is_admin === 1 || user.is_admin === true,
       },
     });
-  } catch (err) {
-    console.error('Login error:', err);
-    res.status(500).json({ error: 'Login failed' });
+  } catch (err: any) {
+    console.error('[Auth] Login error:', err.message);
+    res.status(500).json({ error: 'Login failed', details: err.message });
   }
 });
 
-// GET /api/auth/me
+// ═══════════════════════════════════════════════════════════════════════════
+// GET /api/auth/me — Кто я? (проверка токена)
+// ═══════════════════════════════════════════════════════════════════════════
+// Заголовок: Authorization: Bearer <token>
+// Возвращает: { user: { id, email, username, subscription_active, ... } }
+// Ошибки: 401 (нет токена), 401 (токен невалиден), 404 (пользователь удалён)
 router.get('/me', async (req, res) => {
   try {
+    // Извлекаем токен из заголовка Authorization
     const authHeader = req.headers.authorization;
     if (!authHeader) {
       return res.status(401).json({ error: 'No token' });
     }
 
     const token = authHeader.replace('Bearer ', '');
+
+    // Верифицируем токен (проверяем подпись и срок действия)
     const decoded = jwt.verify(token, JWT_SECRET) as { userId: string };
 
+    // Загружаем пользователя из БД
     const result = await query(
-      'SELECT id, email, username, subscription_active, subscription_expires_at, news_count, is_admin FROM users WHERE id = $1',
+      `SELECT id, email, username, subscription_active, subscription_expires_at,
+              news_count, is_admin FROM users WHERE id = $1`,
       [decoded.userId]
     );
-
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -174,14 +195,18 @@ router.get('/me', async (req, res) => {
   }
 });
 
-// POST /api/auth/demo — create or login demo user
+// ═══════════════════════════════════════════════════════════════════════════
+// POST /api/auth/demo — Демо-вход (без регистрации)
+// ═══════════════════════════════════════════════════════════════════════════
+// Создаёт демо-пользователя demo@pulse.ru если его ещё нет
+// Возвращает: { token, user }
 router.post('/demo', async (_req, res) => {
   try {
     const demoEmail = 'demo@pulse.ru';
     const demoUsername = 'Демо';
     const demoPassword = 'demo123';
 
-    // Check if demo user exists
+    // Проверяем, существует ли демо-пользователь
     let result = await query(
       'SELECT id, email, username FROM users WHERE email = $1',
       [demoEmail]
@@ -190,23 +215,16 @@ router.post('/demo', async (_req, res) => {
     let userId: string;
 
     if (result.rows.length === 0) {
-      // Create demo user
+      // ─── Создаём демо-пользователя ──────────────────────────────────
       userId = uuidv4();
       const passwordHash = await bcrypt.hash(demoPassword, 10);
-
       await query(
-        `INSERT INTO users (id, email, username, password_hash, subscription_active, subscription_expires_at, news_count, is_admin)
+        `INSERT INTO users (id, email, username, password_hash, subscription_active,
+                           subscription_expires_at, news_count, is_admin)
          VALUES ($1, $2, $3, $4, 1, datetime('now', '+30 days'), 0, 0)`,
         [userId, demoEmail, demoUsername, passwordHash]
       );
-
-      // Create default notification settings
-      await query(
-        `INSERT INTO notification_settings (user_id) VALUES ($1)`,
-        [userId]
-      );
-
-      // Create demo portfolio (5 tags)
+      // Создаём демо-портфель (5 тегов)
       const demoTags = [
         { id: 'sber', name: 'SBER', type: 'company' },
         { id: 'gazp', name: 'GAZP', type: 'company' },
@@ -214,7 +232,6 @@ router.post('/demo', async (_req, res) => {
         { id: 'musk', name: 'Илон Маск', type: 'person' },
         { id: 'ai', name: 'AI', type: 'trend' },
       ];
-
       for (const tag of demoTags) {
         await query(
           `INSERT INTO portfolios (id, user_id, tag_id, tag_name, tag_type)
@@ -222,33 +239,20 @@ router.post('/demo', async (_req, res) => {
           [uuidv4(), userId, tag.id, tag.name, tag.type]
         );
       }
-
-      // Create demo payment
-      await query(
-        `INSERT INTO payments (id, user_id, amount, base_amount, discount, method, status, paid_at)
-         VALUES ($1, $2, 490, 490, 0, 'card', 'completed', datetime('now'))`,
-        [uuidv4(), userId]
-      );
-
-      console.log('[Auth] Demo user created:', userId);
     } else {
       userId = result.rows[0].id;
     }
 
-    // Generate JWT
+    // ─── Генерируем JWT токен ───────────────────────────────────────────
     const token = jwt.sign({ userId, email: demoEmail }, JWT_SECRET, {
       expiresIn: '7d',
     });
 
     res.json({
       token,
-      user: {
-        id: userId,
-        email: demoEmail,
-        username: demoUsername,
-      },
+      user: { id: userId, email: demoEmail, username: demoUsername },
     });
-  } catch (err) {
+  } catch (err: any) {
     console.error('Demo login error:', err);
     res.status(500).json({ error: 'Demo login failed' });
   }

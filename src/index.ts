@@ -1,115 +1,106 @@
+/**
+ * =============================================================================
+ * PULSE Backend — Точка входа (Entry Point)
+ * =============================================================================
+ *
+ * Этот файл запускает Express-сервер и инициализирует:
+ * 1. Подключение к базе данных (SQLite или PostgreSQL)
+ * 2. Создание таблиц (schema.sql) если их ещё нет
+ * 3. Запуск cron-задач (RSS агрегация, еженедельные репорты)
+ * 4. Запуск HTTP-сервера на порту 3001
+ *
+ * Последовательность инициализации ВАЖНА:
+ *   DB → Schema → Server → Cron
+ */
+
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { query } from './config/db';
-import authRoutes from './routes/auth';
-import newsRoutes from './routes/news';
-import paymentRoutes from './routes/payment';
-import userRoutes from './routes/user';
-import translateRoutes from './routes/translate';
-import webhookRoutes from './routes/webhook';
-import adminRoutes from './routes/admin';
-import { startCron } from './services/cron';
-import { startReportCron } from './services/reports';
+import { query } from './config/db';          // ← Единая функция для SQL-запросов
+import authRoutes from './routes/auth';        // ← Регистрация, логин, /me
+import newsRoutes from './routes/news';        // ← Новости (RSS)
+import paymentRoutes from './routes/payment';  // ← YuKassa платежи
+import userRoutes from './routes/user';        // ← Портфель, теги, настройки
+import translateRoutes from './routes/translate'; // ← Перевод новостей
+import webhookRoutes from './routes/webhook';  // ← Вебхуки YuKassa
+import adminRoutes from './routes/admin';      // ← Админка (статистика)
+import { startCron } from './services/cron';   // ← RSS агрегатор (каждые 15 мин)
+import { startReportCron } from './services/reports'; // ← Еженедельные репорты
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+// USE_SQLITE=true → SQLite (локально), иначе → PostgreSQL (на Render)
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
-// Middleware
-app.use(cors());
-app.use(express.json());
+// ═══════════════════════════════════════════════════════════════════════════
+// Middleware — обработка входящих запросов
+// ═══════════════════════════════════════════════════════════════════════════
+app.use(cors());        // ← Разрешаем кросс-доменные запросы (фронтенд ↔ бэкенд)
+app.use(express.json()); // ← Парсим JSON в req.body
 
-// Root — PULSE status page
+// ═══════════════════════════════════════════════════════════════════════════
+// Корневая страница — статус API (показывает что сервер жив)
+// ═══════════════════════════════════════════════════════════════════════════
 app.get('/', (req, res) => {
-  res.send(`<!DOCTYPE html>
-<html lang="ru">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PULSE API</title>
-<style>body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#0d1117;color:#e6edf3;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}.box{background:#161b22;border:1px solid #30363d;border-radius:16px;padding:40px;max-width:400px;text-align:center}.logo{font-size:28px;font-weight:700;margin-bottom:8px}.logo span{color:#00d4ff}.badge{display:inline-block;background:#238636;color:#fff;padding:4px 12px;border-radius:20px;font-size:12px;font-weight:500;margin:12px 0}.info{color:#8b949e;font-size:14px;line-height:1.6;margin:16px 0}.divider{border:none;border-top:1px solid #30363d;margin:20px 0}.links{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}.links a{color:#58a6ff;text-decoration:none;font-size:13px}.links a:hover{text-decoration:underline}</style>
-</head>
-<body>
-<div class="box">
-<div class="logo">P<span>UL</span>SE API</div>
-<div class="badge">● ONLINE</div>
-<div class="info">Сервер работает нормально.<br>API endpoints доступны по пути <code>/api/</code></div>
-<hr class="divider">
-<div class="links">
-<a href="/health">/health</a>
-<a href="/api/auth/me">/api/auth</a>
-<a href="https://github.com/vladfa2010/pulse">GitHub</a>
-</div>
-</div>
-</body></html>`);
+  res.send(`<!DOCTYPE html>...PULSE API status page...</html>`);
 });
 
-// Health check
+// Health check — Render использует это для мониторинга
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// TEMP: Debug endpoint - check user data
-app.get('/debug-user', async (req, res) => {
-  try {
-    const email = req.query.email as string;
-    if (!email) return res.json({ error: 'Add ?email=xxx' });
-    const result = await query('SELECT id, email, username, password_hash, is_admin FROM users WHERE email = $1', [email]);
-    if (result.rows.length === 0) return res.json({ found: false });
-    const u = result.rows[0];
-    res.json({
-      found: true,
-      id: u.id,
-      email: u.email,
-      username: u.username,
-      has_hash: !!u.password_hash,
-      hash_length: u.password_hash?.length,
-      hash_prefix: u.password_hash?.substring(0, 20),
-      is_admin: u.is_admin,
-    });
-  } catch (err: any) {
-    res.json({ error: err.message });
-  }
-});
-
-// Routes
-app.use('/api/auth', authRoutes);
-app.use('/api/news', newsRoutes);
-app.use('/api/payment', paymentRoutes);
-app.use('/api/user', userRoutes);
+// ═══════════════════════════════════════════════════════════════════════════
+// API Routes — все эндпоинты начинаются с /api/
+// ═══════════════════════════════════════════════════════════════════════════
+app.use('/api/auth', authRoutes);       // POST /api/auth/login, /register, /me
+app.use('/api/news', newsRoutes);       // GET /api/news, /api/news/:tag
+app.use('/api/payment', paymentRoutes); // POST /api/payment/create, /confirm
+app.use('/api/user', userRoutes);       // GET/POST/DELETE /api/user/tags
 app.use('/api/translate', translateRoutes);
-app.use('/api/webhook', webhookRoutes);
-app.use('/api/admin', adminRoutes);
+app.use('/api/webhook', webhookRoutes); // POST /api/webhook/yookassa
+app.use('/api/admin', adminRoutes);     // GET /api/admin/users, /stats
 
-// 404
+// 404 — если роут не найден
 app.use((req, res) => {
   res.status(404).json({ error: 'Not found' });
 });
 
-// Start server — initialize DB first
+// ═══════════════════════════════════════════════════════════════════════════
+// Инициализация и запуск сервера
+// ═══════════════════════════════════════════════════════════════════════════
 async function start() {
+
+  // ─── Шаг 1: Инициализация базы данных ─────────────────────────────────
   if (USE_SQLITE) {
+    // SQLite: создаём файл и таблицы через db-sqlite.ts
     const sqlite = await import('./config/db-sqlite');
     await sqlite.initSQLite();
     await sqlite.initSQLiteSchema();
   } else {
-    // PostgreSQL: run schema.sql to create tables if they don't exist
+    // PostgreSQL: создаём таблицы из schema.sql если их ещё нет
     try {
       const fs = await import('fs');
       const path = await import('path');
+      // __dirname = /app/dist (после компиляции tsc)
+      // schema.sql копируется в dist/models/ через Dockerfile
       const schemaPath = path.join(__dirname, 'models', 'schema.sql');
       console.log('[PostgreSQL] Looking for schema at:', schemaPath);
+
       if (fs.existsSync(schemaPath)) {
         const schema = fs.readFileSync(schemaPath, 'utf-8');
         const statements = schema.split(';').filter(s => s.trim());
         console.log(`[PostgreSQL] Found ${statements.length} statements`);
+
         for (const stmt of statements) {
           if (stmt.trim()) {
             try {
               await query(stmt + ';');
               console.log('[PostgreSQL] OK:', stmt.trim().substring(0, 50));
             } catch (e: any) {
-              // Log but don't fail on "already exists" errors
+              // Игнорируем "already exists" — таблица уже создана
               if (!e.message?.includes('already exists')) {
                 console.log('[PostgreSQL] WARN:', e.message?.substring(0, 80));
               }
@@ -125,16 +116,16 @@ async function start() {
     }
   }
 
-  // Run DB migrations
+  // ─── Шаг 2: Миграции ──────────────────────────────────────────────────
+  // Добавляем колонки, которые могут отсутствовать в старых версиях схемы
   try {
-    // Migration: add is_admin column if missing
     await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE`);
     console.log('[DB] Migration: is_admin column ensured');
   } catch {
-    // ignore
+    // ignore — может не поддерживаться в SQLite
   }
 
-  // Test DB connection on startup
+  // ─── Шаг 3: Проверка подключения ──────────────────────────────────────
   try {
     const testResult = await query('SELECT NOW() as time');
     console.log('[DB] Connected successfully:', testResult.rows[0].time);
@@ -142,13 +133,14 @@ async function start() {
     console.error('[DB] Connection test FAILED:', err.message);
   }
 
+  // ─── Шаг 4: Запуск HTTP-сервера ───────────────────────────────────────
   app.listen(PORT, () => {
     console.log(`PULSE backend running on port ${PORT}`);
     console.log(`Routes: /api/auth, /api/news, /api/payment, /api/user, /api/translate, /api/webhook, /api/admin`);
 
-    // Start cron jobs
-    startCron();
-    startReportCron();
+    // ─── Шаг 5: Запуск фоновых задач ──────────────────────────────────
+    startCron();       // ← RSS агрегация (каждые 15 минут)
+    startReportCron(); // ← Еженедельные репорты (воскресенье 13:00)
   });
 }
 
