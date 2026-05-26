@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import { query } from './config/db';
 import authRoutes from './routes/auth';
 import newsRoutes from './routes/news';
 import paymentRoutes from './routes/payment';
