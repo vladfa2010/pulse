@@ -65,8 +65,14 @@ function matchTags(title: string, summary: string): string[] {
 async function processArticles() {
   console.log('[Cron] Starting RSS fetch at', new Date().toISOString());
 
-  // 1. Fetch RSS
-  const articles = await fetchAllRSS();
+  // 1. Fetch RSS (wrapped in try/catch — one failed source shouldn't stop everything)
+  let articles: any[] = [];
+  try {
+    articles = await fetchAllRSS();
+  } catch (err: any) {
+    console.error('[Cron] RSS fetch failed:', err.message);
+    return;  // Exit gracefully — try again in 15 minutes
+  }
   console.log(`[Cron] Fetched ${articles.length} articles`);
 
   // 2. Translate EN articles
@@ -136,7 +142,19 @@ async function processArticles() {
 // Start cron: every 15 minutes
 export function startCron() {
   console.log('[Cron] RSS aggregator scheduled every 15 minutes');
-  cron.schedule('*/15 * * * *', processArticles);
-  // Run immediately on startup
-  processArticles();
+  // Schedule: run every 15 minutes (but NOT immediately on startup)
+  // First run will be at next 15-min boundary (:00, :15, :30, :45)
+  cron.schedule('*/15 * * * *', async () => {
+    try {
+      await processArticles();
+    } catch (err: any) {
+      console.error('[Cron] RSS process failed:', err.message);
+    }
+  });
+  // Delayed first run: wait 2 minutes after startup (avoid overload on deploy)
+  setTimeout(() => {
+    processArticles().catch((err: any) => {
+      console.error('[Cron] Initial RSS fetch failed:', err.message);
+    });
+  }, 2 * 60 * 1000);
 }
