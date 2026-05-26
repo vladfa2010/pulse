@@ -17,9 +17,10 @@
  *   - Или при клике на карточку
  *
  * Эндпоинты:
- *   GET  /api/news          → Лента (только непрочитанные)
- *   POST /api/news/:id/read → Отметить как прочитанную
- *   GET  /api/news/tags/:id → Новости по конкретному тегу
+ *   GET  /api/news?all=true  → Лента (ВСЕ новости — для обучения в /feed)
+ *   GET  /api/news           → Лента (только НЕПРОЧИТАННЫЕ — для главной)
+ *   POST /api/news/:id/read  → Отметить как прочитанную
+ *   GET  /api/news/tags/:id  → Новости по конкретному тегу
  */
 
 import { Router } from 'express';
@@ -42,18 +43,23 @@ function nowSql(): string {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// GET /api/news — ЛЕНТА НЕПРОЧИТАННЫХ НОВОСТЕЙ
+// GET /api/news — ЛЕНТА НОВОСТЕЙ
 // ═══════════════════════════════════════════════════════════════════════════
-// Возвращает новости по тегам пользователя, которые он ЕЩЁ НЕ ВИДЕЛ.
+// Параметры:
+//   ?all=true    → ВСЕ новости (read + unread) — для страницы /feed
+//   (без all)    → Только НЕПРОЧИТАННЫЕ — для главной "Это вы ещё не видели"
+//   ?page=N      → Пагинация (default: 1)
+//   ?limit=N     → Количество (default: 50, max: 100)
 //
-// Алгоритм:
+// Логика:
 //   1. Получаем теги пользователя из portfolios
 //   2. Ищем новости за 14 дней WHERE matched_tags && user_tags
-//   3. AND id NOT IN (SELECT news_id FROM user_news_reads WHERE user_id = X)
+//   3. Если ?all не задан → ИСКЛЮЧАЕМ прочитанные (user_news_reads)
 //   4. ORDER BY published_at DESC LIMIT 50
 router.get('/', authMiddleware, async (req: AuthRequest, res) => {
   try {
     const userId = req.user!.userId;
+    const showAll = req.query.all === 'true';  // ← true = показать ВСЕ (для /feed)
     const page = parseInt(req.query.page as string) || 1;
     const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
     const offset = (page - 1) * limit;
@@ -74,53 +80,58 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
     let total: number;
 
     if (USE_SQLITE) {
-      // SQLite: matched_tags как JSON текст, используем LIKE
+      // ─── SQLite версия ──────────────────────────────────────────────
       const conditions = tagIds.map(() => 'matched_tags LIKE ?').join(' OR ');
-      const likeParams = tagIds.map(id => `%{"${id}"}%`);
+      const likeParams = tagIds.map(id => `%"${id}"%`);
 
-      // Count: сколько НЕПРОЧИТАННЫХ новостей
+      // SQL часть: исключение прочитанных (если showAll=false)
+      const excludeRead = showAll ? '' : ' AND id NOT IN (SELECT news_id FROM user_news_reads WHERE user_id = ?)';
+      const excludeParams = showAll ? [] : [userId];
+
+      // Count
       const countResult = await query(
         `SELECT COUNT(*) as count FROM news
-         WHERE (${conditions})
-         AND id NOT IN (SELECT news_id FROM user_news_reads WHERE user_id = ?)
+         WHERE (${conditions})${excludeRead}
          AND ${timeFilter}`,
-        [...likeParams, userId]
+        [...likeParams, ...excludeParams]
       );
       total = parseInt(countResult.rows[0]?.count || '0');
 
-      // Get: сами новости
+      // Get
       const result = await query(
         `SELECT title_ru, summary_ru, source, url, published_at, sentiment, matched_tags
          FROM news
-         WHERE (${conditions})
-         AND id NOT IN (SELECT news_id FROM user_news_reads WHERE user_id = ?)
+         WHERE (${conditions})${excludeRead}
          AND ${timeFilter}
          ORDER BY published_at DESC
          LIMIT ? OFFSET ?`,
-        [...likeParams, userId, limit, offset]
+        [...likeParams, ...excludeParams, limit, offset]
       );
       articles = result.rows;
     } else {
-      // PostgreSQL: native arrays (&& — пересечение массивов)
-      // КЛЮЧЕВОЕ УСЛОВИЕ: id NOT IN (прочитанные)
+      // ─── PostgreSQL версие ──────────────────────────────────────────
+      const excludeRead = showAll ? '' : ' AND id NOT IN (SELECT news_id FROM user_news_reads WHERE user_id = $2)';
+      const pgParams: any[] = showAll ? [tagIds] : [tagIds, userId];
+      let pgIdx = showAll ? 2 : 3;
+
+      // Count
       const countResult = await query(
         `SELECT COUNT(*) as count FROM news
-         WHERE matched_tags && $1::text[]
-         AND id NOT IN (SELECT news_id FROM user_news_reads WHERE user_id = $2)
+         WHERE matched_tags && $1::text[]${excludeRead}
          AND ${timeFilter}`,
-        [tagIds, userId]
+        pgParams
       );
       total = parseInt(countResult.rows[0]?.count || '0');
 
+      // Get
       const result = await query(
         `SELECT title_ru, summary_ru, source, url, published_at, sentiment, matched_tags
          FROM news
-         WHERE matched_tags && $1::text[]
-         AND id NOT IN (SELECT news_id FROM user_news_reads WHERE user_id = $2)
+         WHERE matched_tags && $1::text[]${excludeRead}
          AND ${timeFilter}
          ORDER BY published_at DESC
-         LIMIT $3 OFFSET $4`,
-        [tagIds, userId, limit, offset]
+         LIMIT $${pgIdx} OFFSET $${pgIdx + 1}`,
+        [...pgParams, limit, offset]
       );
       articles = result.rows;
     }
@@ -208,7 +219,7 @@ router.get('/tags/:tagId', async (req, res) => {
          WHERE matched_tags LIKE $1 AND ${timeFilter}
          ORDER BY published_at DESC
          LIMIT 50`,
-        [`%{"${tagId}"%`]
+        [`%"${tagId}"%`]
       );
     } else {
       result = await query(
