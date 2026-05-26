@@ -1,3 +1,27 @@
+/**
+ * =============================================================================
+ * PULSE — News Routes (Лента новостей)
+ * =============================================================================
+ *
+ * КЛЮЧЕВАЯ ЛОГИКА: показывать ТОЛЬКО непрочитанные новости.
+ *
+ * Как это работает:
+ *   1. Пользователь открывает ленту → GET /api/news
+ *   2. Бэкенд ищет новости по тегам пользователя
+ *   3. ИСКЛЮЧАЕТ новости из user_news_reads (уже просмотренные)
+ *   4. Возвращает только свежие + непрочитанные
+ *
+ * Когда новость считается "прочитанной":
+ *   - Frontend посылает POST /api/news/:id/read после того,
+ *     как пользователь увидел новость (on scroll into view)
+ *   - Или при клике на карточку
+ *
+ * Эндпоинты:
+ *   GET  /api/news          → Лента (только непрочитанные)
+ *   POST /api/news/:id/read → Отметить как прочитанную
+ *   GET  /api/news/tags/:id → Новости по конкретному тегу
+ */
+
 import { Router } from 'express';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { query } from '../config/db';
@@ -5,49 +29,36 @@ import { query } from '../config/db';
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
-// Build WHERE clause for tag matching
-function buildTagWhere(tagIds: string[]): { clause: string; params: any[] } {
-  if (USE_SQLITE) {
-    // SQLite: matched_tags stored as JSON text, use LIKE
-    const conditions = tagIds.map((_, i) => `matched_tags LIKE $${i + 1}`);
-    return {
-      clause: '(' + conditions.join(' OR ') + ')',
-      params: tagIds.map(id => `%"${id}"%`),
-    };
-  }
-  // PostgreSQL: native array support
-  return {
-    clause: 'matched_tags && $1::text[]',
-    params: [tagIds],
-  };
-}
-
-// Time filter SQL
+// ─── SQL для фильтра по времени (14 дней) ─────────────────────────────────
 function timeFilterSql(): string {
-  if (USE_SQLITE) {
-    return "published_at > datetime('now', '-14 days')";
-  }
-  return "published_at > NOW() - INTERVAL '14 days'";
+  return USE_SQLITE
+    ? "published_at > datetime('now', '-14 days')"
+    : "published_at > NOW() - INTERVAL '14 days'";
 }
 
-// Current timestamp SQL
+// ─── SQL для текущего времени ─────────────────────────────────────────────
 function nowSql(): string {
-  if (USE_SQLITE) {
-    return "datetime('now')";
-  }
-  return 'NOW()';
+  return USE_SQLITE ? "datetime('now')" : 'NOW()';
 }
 
-// GET /api/news — get fresh news for user
+// ═══════════════════════════════════════════════════════════════════════════
+// GET /api/news — ЛЕНТА НЕПРОЧИТАННЫХ НОВОСТЕЙ
+// ═══════════════════════════════════════════════════════════════════════════
+// Возвращает новости по тегам пользователя, которые он ЕЩЁ НЕ ВИДЕЛ.
+//
+// Алгоритм:
+//   1. Получаем теги пользователя из portfolios
+//   2. Ищем новости за 14 дней WHERE matched_tags && user_tags
+//   3. AND id NOT IN (SELECT news_id FROM user_news_reads WHERE user_id = X)
+//   4. ORDER BY published_at DESC LIMIT 50
 router.get('/', authMiddleware, async (req: AuthRequest, res) => {
   try {
     const userId = req.user!.userId;
-    const since = req.query.since as string;
     const page = parseInt(req.query.page as string) || 1;
     const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
     const offset = (page - 1) * limit;
 
-    // Get user tags
+    // ─── Шаг 1: Теги пользователя ──────────────────────────────────────
     const portfolioResult = await query(
       'SELECT tag_id FROM portfolios WHERE user_id = $1',
       [userId]
@@ -58,48 +69,68 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
       return res.json({ articles: [], total: 0, page, hasMore: false });
     }
 
-    const tagWhere = buildTagWhere(tagIds);
     const timeFilter = timeFilterSql();
+    let articles: any[];
+    let total: number;
 
-    // Build params
-    const params: any[] = [...tagWhere.params];
-    let paramIdx = params.length + 1;
+    if (USE_SQLITE) {
+      // SQLite: matched_tags как JSON текст, используем LIKE
+      const conditions = tagIds.map(() => 'matched_tags LIKE ?').join(' OR ');
+      const likeParams = tagIds.map(id => `%{"${id}"}%`);
 
-    let sql = `
-      SELECT title_ru, summary_ru, source, url, published_at, sentiment, matched_tags
-      FROM news
-      WHERE ${tagWhere.clause}
-    `;
+      // Count: сколько НЕПРОЧИТАННЫХ новостей
+      const countResult = await query(
+        `SELECT COUNT(*) as count FROM news
+         WHERE (${conditions})
+         AND id NOT IN (SELECT news_id FROM user_news_reads WHERE user_id = ?)
+         AND ${timeFilter}`,
+        [...likeParams, userId]
+      );
+      total = parseInt(countResult.rows[0]?.count || '0');
 
-    if (since) {
-      sql += ` AND published_at > $${paramIdx}`;
-      params.push(since);
-      paramIdx++;
+      // Get: сами новости
+      const result = await query(
+        `SELECT title_ru, summary_ru, source, url, published_at, sentiment, matched_tags
+         FROM news
+         WHERE (${conditions})
+         AND id NOT IN (SELECT news_id FROM user_news_reads WHERE user_id = ?)
+         AND ${timeFilter}
+         ORDER BY published_at DESC
+         LIMIT ? OFFSET ?`,
+        [...likeParams, userId, limit, offset]
+      );
+      articles = result.rows;
+    } else {
+      // PostgreSQL: native arrays (&& — пересечение массивов)
+      // КЛЮЧЕВОЕ УСЛОВИЕ: id NOT IN (прочитанные)
+      const countResult = await query(
+        `SELECT COUNT(*) as count FROM news
+         WHERE matched_tags && $1::text[]
+         AND id NOT IN (SELECT news_id FROM user_news_reads WHERE user_id = $2)
+         AND ${timeFilter}`,
+        [tagIds, userId]
+      );
+      total = parseInt(countResult.rows[0]?.count || '0');
+
+      const result = await query(
+        `SELECT title_ru, summary_ru, source, url, published_at, sentiment, matched_tags
+         FROM news
+         WHERE matched_tags && $1::text[]
+         AND id NOT IN (SELECT news_id FROM user_news_reads WHERE user_id = $2)
+         AND ${timeFilter}
+         ORDER BY published_at DESC
+         LIMIT $3 OFFSET $4`,
+        [tagIds, userId, limit, offset]
+      );
+      articles = result.rows;
     }
 
-    // Count total
-    const countSql = sql.replace(
-      'SELECT title_ru, summary_ru, source, url, published_at, sentiment, matched_tags',
-      'SELECT COUNT(*) as count'
-    ) + ` AND ${timeFilter}`;
-
-    const countResult = await query(countSql, params);
-    const total = parseInt(countResult.rows[0]?.count || '0');
-
-    // Get paginated results
-    sql += ` AND ${timeFilter}
-      ORDER BY published_at DESC
-      LIMIT $${paramIdx} OFFSET $${paramIdx + 1}`;
-    params.push(limit, offset);
-
-    const result = await query(sql, params);
-
-    // Update last_connected_at
+    // ─── Обновляем last_connected_at ────────────────────────────────────
     if (USE_SQLITE) {
       await query(
         `INSERT OR REPLACE INTO user_sessions (id, user_id, last_connected_at)
          VALUES ((SELECT id FROM user_sessions WHERE user_id = $1), $1, ${nowSql()})`,
-        [userId]
+        [userId, userId]
       );
     } else {
       await query(
@@ -110,25 +141,60 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
       );
     }
 
-    // Increment news_count
-    await query(
-      'UPDATE users SET news_count = news_count + $1 WHERE id = $2',
-      [result.rows.length, userId]
-    );
-
     res.json({
-      articles: result.rows,
+      articles,
       total,
       page,
-      hasMore: offset + result.rows.length < total,
+      hasMore: offset + articles.length < total,
     });
-  } catch (err) {
-    console.error('News fetch error:', err);
+  } catch (err: any) {
+    console.error('[News] Feed error:', err.message);
     res.status(500).json({ error: 'Failed to fetch news' });
   }
 });
 
-// GET /api/news/tags/:tagId — news for specific tag
+// ═══════════════════════════════════════════════════════════════════════════
+// POST /api/news/:id/read — Отметить новость как прочитанную
+// ═══════════════════════════════════════════════════════════════════════════
+// Фронтенд вызывает этот endpoint когда:
+//   - Новость появилась в viewport (IntersectionObserver)
+//   - Или пользователь кликнул на карточку
+//
+// После этого новость НЕ будет показываться в ленте (исключается через
+// user_news_reads в GET /api/news).
+router.post('/:id/read', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.userId;
+    const newsId = req.params.id;
+
+    // UPSERT: если запись уже есть — не падаем с ошибкой
+    if (USE_SQLITE) {
+      await query(
+        `INSERT OR IGNORE INTO user_news_reads (user_id, news_id, read_at)
+         VALUES ($1, $2, ${nowSql()})`,
+        [userId, newsId]
+      );
+    } else {
+      await query(
+        `INSERT INTO user_news_reads (user_id, news_id, read_at)
+         VALUES ($1, $2, ${nowSql()})
+         ON CONFLICT (user_id, news_id) DO NOTHING`,
+        [userId, newsId]
+      );
+    }
+
+    res.json({ success: true });
+  } catch (err: any) {
+    console.error('[News] Mark read error:', err.message);
+    res.status(500).json({ error: 'Failed to mark as read' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GET /api/news/tags/:tagId — Новости по конкретному тегу (без auth)
+// ═══════════════════════════════════════════════════════════════════════════
+// Публичный endpoint — показывает последние 50 новостей по тегу.
+// НЕ фильтрует прочитанные (публичная страница).
 router.get('/tags/:tagId', async (req, res) => {
   try {
     const { tagId } = req.params;
@@ -142,7 +208,7 @@ router.get('/tags/:tagId', async (req, res) => {
          WHERE matched_tags LIKE $1 AND ${timeFilter}
          ORDER BY published_at DESC
          LIMIT 50`,
-        [`%"${tagId}"%`]
+        [`%{"${tagId}"%`]
       );
     } else {
       result = await query(

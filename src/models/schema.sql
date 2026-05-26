@@ -133,4 +133,26 @@ CREATE INDEX IF NOT EXISTS idx_news_source_id ON news (source_id);
 CREATE INDEX IF NOT EXISTS idx_portfolios_user_id ON portfolios (user_id);
 CREATE INDEX IF NOT EXISTS idx_payments_user_id ON payments (user_id);
 CREATE INDEX IF NOT EXISTS idx_user_channels_user_id ON user_channels (user_id);
+-- ============================================================
+-- 9. user_news_reads (КЛЮЧЕВАЯ: отслеживание прочитанных)
+-- ============================================================
+-- Каждая запись = пользователь прочитал новость.
+-- При запросе ленты: SELECT * FROM news WHERE id NOT IN (
+--   SELECT news_id FROM user_news_reads WHERE user_id = $1
+-- )
+CREATE TABLE IF NOT EXISTS user_news_reads (
+  id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id    UUID REFERENCES users(id) ON DELETE CASCADE,
+  news_id    UUID REFERENCES news(id) ON DELETE CASCADE,
+  read_at    TIMESTAMP DEFAULT NOW(),
+  UNIQUE(user_id, news_id)
+);
+
+-- Индексы для быстрого исключения прочитанных
+CREATE INDEX IF NOT EXISTS idx_user_news_reads_user_id ON user_news_reads (user_id);
+CREATE INDEX IF NOT EXISTS idx_user_news_reads_news_id ON user_news_reads (news_id);
+
+-- ============================================================
+-- Индексы (остальные)
+-- ============================================================
 CREATE INDEX IF NOT EXISTS idx_translation_hash ON translation_cache (hash);
