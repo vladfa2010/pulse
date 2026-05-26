@@ -125,6 +125,15 @@ async function start() {
     }
   }
 
+  // Run DB migrations
+  try {
+    // Migration: add is_admin column if missing
+    await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE`);
+    console.log('[DB] Migration: is_admin column ensured');
+  } catch {
+    // ignore
+  }
+
   // Test DB connection on startup
   try {
     const testResult = await query('SELECT NOW() as time');
