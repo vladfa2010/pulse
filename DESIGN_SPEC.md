@@ -901,6 +901,42 @@ Sentiment: 🟢 Позитив (4/4)
 - **Root page:** PULSE API status page (HTML)
 - **Free plan:** 15-min sleep, 30-sec warmup on first request
 
+### Tag System (Теги) — 2026-05-26
+
+#### Architecture
+- **Frontend state:** `portfolio` в `useAuth` контексте (не локальный `useState`!)
+- **API:** `GET /api/user/tags`, `POST /api/user/tags`, `DELETE /api/user/tags/:tagId`
+- **DB:** таблица `portfolios` (user_id, tag_id, tag_name, tag_type)
+- **Load on login:** `loadPortfolio()` вызывается после успешного входа
+
+#### Flow
+```
+Добавление тега:
+  User clicks suggestion → handleSelectSuggestion() → addTag({tagId, tagName, tagType})
+  → POST /api/user/tags → DB INSERT → setPortfolio([...prev, newTag])
+
+Удаление тега:
+  User clicks X → handleRemoveTag(tagId) → removeTag(tagId)
+  → DELETE /api/user/tags/:tagId → DB DELETE → setPortfolio(filtered)
+
+Login:
+  useAuth.login() → api.post('/auth/login') → loadPortfolio()
+  → GET /api/user/tags → setPortfolio(tags)
+
+Logout:
+  useAuth.logout() → setPortfolio([])
+```
+
+#### Counter (1/3, 2/3...)
+- Виден только авторизованным
+- Цвет: голубой (`#00D4FF`) пока < limit, красный (`#EF4444`) при limit
+- Позиция: справа от ряда тегов
+
+#### Premium Prompt
+- Появляется при попытке добавить 4-й тег на Free
+- Backdrop blur + анимация
+- CTA: "Оформить Premium" → /pricing
+
 ### 10.9 Auth Refactor (2026-05-25) — DONE ✅
 
 - **localStorage = только JWT токен** — никаких пользователей, портфелей, платежей
