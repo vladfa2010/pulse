@@ -75,22 +75,30 @@ async function start() {
       const fs = await import('fs');
       const path = await import('path');
       const schemaPath = path.join(__dirname, 'models', 'schema.sql');
+      console.log('[PostgreSQL] Looking for schema at:', schemaPath);
       if (fs.existsSync(schemaPath)) {
         const schema = fs.readFileSync(schemaPath, 'utf-8');
         const statements = schema.split(';').filter(s => s.trim());
+        console.log(`[PostgreSQL] Found ${statements.length} statements`);
         for (const stmt of statements) {
           if (stmt.trim()) {
             try {
               await query(stmt + ';');
-            } catch {
-              // Ignore "already exists" errors
+              console.log('[PostgreSQL] OK:', stmt.trim().substring(0, 50));
+            } catch (e: any) {
+              // Log but don't fail on "already exists" errors
+              if (!e.message?.includes('already exists')) {
+                console.log('[PostgreSQL] WARN:', e.message?.substring(0, 80));
+              }
             }
           }
         }
         console.log('[PostgreSQL] Schema initialized');
+      } else {
+        console.error('[PostgreSQL] schema.sql NOT FOUND at', schemaPath);
       }
-    } catch (err) {
-      console.error('[PostgreSQL] Schema init error:', err);
+    } catch (err: any) {
+      console.error('[PostgreSQL] Schema init error:', err.message);
     }
   }
 
