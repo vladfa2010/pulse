@@ -105,9 +105,15 @@ router.post('/login', async (req, res) => {
     }
 
     const user = result.rows[0];
+    console.log('[Auth] User found:', user.id, 'hash exists:', !!user.password_hash, 'hash length:', user.password_hash?.length);
 
     // Check password
-    const valid = await bcrypt.compare(password, user.password_hash);
+    let valid = false;
+    try {
+      valid = await bcrypt.compare(password, user.password_hash);
+    } catch (bcryptErr: any) {
+      console.error('[Auth] bcrypt error:', bcryptErr.message);
+    }
     console.log('[Auth] Password check for', email, 'valid:', valid);
 
     if (!valid) {
