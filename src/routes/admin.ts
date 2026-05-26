@@ -34,6 +34,20 @@ function adminMiddleware(req: AuthRequest, res: any, next: any) {
   });
 }
 
+// GET /api/admin/users-debug — TEMPORARY: list all users (no auth, for diagnostics)
+router.get('/users-debug', async (_req, res) => {
+  try {
+    const result = await query(
+      `SELECT id, email, username, is_verified, is_admin, subscription_active,
+              subscription_expires_at, created_at
+       FROM users ORDER BY created_at DESC LIMIT 500`
+    );
+    res.json({ users: result.rows });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch users' });
+  }
+});
+
 // GET /api/admin/users — list all users
 router.get('/users', adminMiddleware, async (_req, res) => {
   try {
