@@ -94,6 +94,14 @@ async function start() {
     }
   }
 
+  // Test DB connection on startup
+  try {
+    const testResult = await query('SELECT NOW() as time');
+    console.log('[DB] Connected successfully:', testResult.rows[0].time);
+  } catch (err: any) {
+    console.error('[DB] Connection test FAILED:', err.message);
+  }
+
   app.listen(PORT, () => {
     console.log(`PULSE backend running on port ${PORT}`);
     console.log(`Routes: /api/auth, /api/news, /api/payment, /api/user, /api/translate, /api/webhook, /api/admin`);

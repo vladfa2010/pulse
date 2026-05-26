@@ -74,9 +74,9 @@ router.post('/register', async (req, res) => {
         is_admin: false,
       },
     });
-  } catch (err) {
-    console.error('Register error:', err);
-    res.status(500).json({ error: 'Registration failed' });
+  } catch (err: any) {
+    console.error('[Auth] Register error:', err.message || err);
+    res.status(500).json({ error: 'Registration failed', details: err.message });
   }
 });
 

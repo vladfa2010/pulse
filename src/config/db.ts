@@ -17,7 +17,7 @@ if (USE_SQLITE) {
   const { Pool } = require('pg');
   const pool = new Pool({
     connectionString: DATABASE_URL,
-    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+    ssl: { rejectUnauthorized: false }, // Required for Render PostgreSQL
   });
   pool.on('error', (err: any) => {
     console.error('PostgreSQL pool error:', err);
