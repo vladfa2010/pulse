@@ -49,6 +49,29 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// TEMP: Debug endpoint - check user data
+app.get('/debug-user', async (req, res) => {
+  try {
+    const email = req.query.email as string;
+    if (!email) return res.json({ error: 'Add ?email=xxx' });
+    const result = await query('SELECT id, email, username, password_hash, is_admin FROM users WHERE email = $1', [email]);
+    if (result.rows.length === 0) return res.json({ found: false });
+    const u = result.rows[0];
+    res.json({
+      found: true,
+      id: u.id,
+      email: u.email,
+      username: u.username,
+      has_hash: !!u.password_hash,
+      hash_length: u.password_hash?.length,
+      hash_prefix: u.password_hash?.substring(0, 20),
+      is_admin: u.is_admin,
+    });
+  } catch (err: any) {
+    res.json({ error: err.message });
+  }
+});
+
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/news', newsRoutes);
