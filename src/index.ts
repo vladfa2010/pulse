@@ -62,12 +62,35 @@ app.use((req, res) => {
   res.status(404).json({ error: 'Not found' });
 });
 
-// Start server — initialize DB first if SQLite
+// Start server — initialize DB first
 async function start() {
   if (USE_SQLITE) {
     const sqlite = await import('./config/db-sqlite');
     await sqlite.initSQLite();
     await sqlite.initSQLiteSchema();
+  } else {
+    // PostgreSQL: run schema.sql to create tables if they don't exist
+    try {
+      const fs = await import('fs');
+      const path = await import('path');
+      const schemaPath = path.join(__dirname, 'models', 'schema.sql');
+      if (fs.existsSync(schemaPath)) {
+        const schema = fs.readFileSync(schemaPath, 'utf-8');
+        const statements = schema.split(';').filter(s => s.trim());
+        for (const stmt of statements) {
+          if (stmt.trim()) {
+            try {
+              await query(stmt + ';');
+            } catch {
+              // Ignore "already exists" errors
+            }
+          }
+        }
+        console.log('[PostgreSQL] Schema initialized');
+      }
+    } catch (err) {
+      console.error('[PostgreSQL] Schema init error:', err);
+    }
   }
 
   app.listen(PORT, () => {
