@@ -134,14 +134,14 @@ export async function processArticles() {
         // Ключевой момент: дубликат по content_hash → добавляем источник, НЕ создаём новую запись
         const result = await query(
           `INSERT INTO news (title_original, title_ru, summary_ru, source, source_id, url, url_normalized, content_hash, all_sources, source_count, published_at, lang_original, sentiment, matched_tags)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-           ON CONFLICT (content_hash) DO UPDATE 
-             SET all_sources = CASE 
-               WHEN news.all_sources @> ARRAY[EXCLUDED.source] THEN news.all_sources
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text[], $10, $11, $12, $13, $14)
+           ON CONFLICT (content_hash) DO UPDATE
+             SET all_sources = CASE
+               WHEN news.all_sources @> ARRAY[EXCLUDED.source]::text[] THEN news.all_sources
                ELSE array_append(news.all_sources, EXCLUDED.source)
              END,
-             source_count = CASE 
-               WHEN news.all_sources @> ARRAY[EXCLUDED.source] THEN news.source_count
+             source_count = CASE
+               WHEN news.all_sources @> ARRAY[EXCLUDED.source]::text[] THEN news.source_count
                ELSE news.source_count + 1
              END
            RETURNING (xmax = 0) as is_insert`,
