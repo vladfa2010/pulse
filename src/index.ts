@@ -581,3 +581,12 @@ async function start() {
 // ─── Шаг 4: Запуск HTTP-сервера ───────────────────────────────────────
   app.listen(PORT, () => {
     console.log(`PULSE backend running on port ${PORT}`);
+    console.log(`Routes: /api/auth, /api/news, /api/payment, /api/user, /api/translate, /api/webhook, /api/admin`);
+
+    // ─── Шаг 5: Запуск фоновых задач ──────────────────────────────────
+    startCron();       // ← RSS агрегация (каждые 15 минут)
+    startReportCron(); // ← Еженедельные репорты (воскресенье 13:00)
+  });
+}
+
+start();
