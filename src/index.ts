@@ -103,6 +103,55 @@ app.get('/backfill-translate', async (req, res) => {
   }
 });
 
+// TEMP: Backfill: translate existing EN summaries to RU via Kimi
+app.get('/backfill-summary', async (req, res) => {
+  const secret = req.headers['x-trigger-secret'] || req.query.secret;
+  if (secret !== (process.env.CRON_SECRET_KEY || 'pulse-dev-key')) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  try {
+    const { translateBatch } = await import('./services/translate');
+
+    // Find news with EN or empty summary (but EN lang or EN title)
+    const result = await query(`
+      SELECT id, title_original, title_ru
+      FROM news
+      WHERE (summary_ru IS NULL OR TRIM(summary_ru) = '' OR summary_ru ~ '^[a-zA-Z]')
+        AND (lang_original = 'en' OR title_ru ~ '[a-zA-Z]')
+      LIMIT 50
+    `);
+
+    console.log(`[Backfill-Summary] Found ${result.rows.length} articles needing summary translation`);
+
+    let translated = 0;
+    const details: { id: string; title: string; summary: string }[] = [];
+
+    for (const row of result.rows) {
+      try {
+        // Use title_original if EN, else title_ru to generate a summary
+        const sourceText = row.title_original || row.title_ru;
+        if (!sourceText || sourceText.length < 5) continue;
+
+        // Create a summary from the title (translate if EN)
+        const [translatedSummary] = await translateBatch([sourceText]);
+        if (translatedSummary && translatedSummary.length > 10) {
+          await query(`UPDATE news SET summary_ru = $1 WHERE id = $2`, [translatedSummary, row.id]);
+          translated++;
+          details.push({ id: row.id, title: row.title_ru?.slice(0, 60) || '', summary: translatedSummary.slice(0, 80) });
+          console.log(`[Backfill-Summary] ✓ ${row.id.slice(0, 8)}...`);
+        }
+      } catch (e: any) {
+        console.log(`[Backfill-Summary] Skip: ${e.message?.slice(0, 80)}`);
+      }
+    }
+
+    res.json({ scanned: result.rows.length, translated, samples: details.slice(0, 5) });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // TEMP: Check env vars (safe — no secrets exposed)
 app.get('/debug-env', async (req, res) => {
   res.json({
@@ -531,5 +580,4 @@ async function start() {
 
 // ─── Шаг 4: Запуск HTTP-сервера ───────────────────────────────────────
   app.listen(PORT, () => {
-    console.log(`PULSE bac// Deploy check: 2026-05-27T20:05:45Z
-// summary backfill endpoint
+    console.log(`PULSE backend running on port ${PORT}`);
