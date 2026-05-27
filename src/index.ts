@@ -25,7 +25,7 @@ import translateRoutes from './routes/translate';
 import webhookRoutes from './routes/webhook';
 import adminRoutes from './routes/admin';
 import { apiLimiter, authLimiter, webhookLimiter } from './middleware/rateLimit';
-import { startCron } from './services/cron';   // ← RSS агрегатор (каждые 15 мин)
+import { startCron, processArticles } from './services/cron';   // ← RSS агрегатор (каждые 15 мин)
 import { startReportCron } from './services/reports'; // ← Еженедельные репорты
 
 dotenv.config();
@@ -87,6 +87,27 @@ app.get('/cleanup-content-dups', async (req, res) => {
     }
 
     res.json({ cleaned: merged, groups: dups.rows.length });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TRIGGER: Manual RSS fetch (protected by secret key)
+// ═══════════════════════════════════════════════════════════════════════════
+app.post('/trigger-rss', async (req, res) => {
+  const secret = req.headers['x-trigger-secret'] || req.query.secret;
+  const expected = process.env.CRON_SECRET_KEY || 'pulse-dev-key';
+  if (secret !== expected) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  try {
+    console.log('[Trigger] Manual RSS fetch started');
+    // Run in background — don't await
+    processArticles().catch((err: any) => {
+      console.error('[Trigger] RSS fetch failed:', err.message);
+    });
+    res.json({ status: 'started', message: 'RSS fetch is running in background. Check logs.' });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

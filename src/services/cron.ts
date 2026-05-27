@@ -48,7 +48,7 @@ function analyzeSentiment(text: string): 'positive' | 'negative' | 'neutral' {
 // ═══════════════════════════════════════════════════════════════════════════
 // processArticles — главная функция: fetch → translate → analyze → save
 // ═══════════════════════════════════════════════════════════════════════════
-async function processArticles() {
+export async function processArticles() {
   console.log('[Cron] Starting RSS fetch at', new Date().toISOString());
 
   // 1. Fetch RSS (с защитой от ошибок)
