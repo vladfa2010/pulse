@@ -2,6 +2,8 @@ FROM node:20-alpine
 WORKDIR /app
 COPY package*.json ./
 RUN npm install
+# Clear cache to ensure fresh source
+RUN rm -rf src dist
 COPY . .
 RUN npx tsc
 # Copy schema.sql to dist (tsc only compiles .ts files)
