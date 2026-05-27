@@ -1,4 +1,4 @@
-# PULSE — Product Context & Agreements
+# PULSE -- Product Context & Agreements
 
 > Файл обновляется при КАЖДОЙ новой договорённости.
 
@@ -6,35 +6,35 @@
 
 ## КРИТИЧЕСКИЕ ПРАВИЛА
 
-### Правило: Email — ключевое поле в базе пользователей
+### Правило: Email -- ключевое поле в базе пользователей
 - **Email = PRIMARY KEY в таблице users**
 - Email **НЕЛЬЗЯ менять** после регистрации
-- Username (логин) — редактируемый, отображается в интерфейсе
-- В профиле: email read-only, username — editable
+- Username (логин) -- редактируемый, отображается в интерфейсе
+- В профиле: email read-only, username -- editable
 - ❌ ЗАПРЕЩЕНО давать пользователю менять email самостоятельно
 - Смена email только через поддержку (ручной процесс)
-- Все связи в БД (portfolio, payments, sessions) — по `user.id`
+- Все связи в БД (portfolio, payments, sessions) -- по `user.id`
 
 ### Правило: перевод англоязычных новостей
 - **Все английские новости обязательно переводятся на русский**
-- Пользователь видит **только русский текст** — заголовки и описания
-- Русские источники (13) — без изменений
-- Английские источники (19) — перевод через мой API (Kimi Translate) + fallback Google/DeepL
-- **Перевод не делается на клиенте** — требуется backend + API-ключ
+- Пользователь видит **только русский текст** -- заголовки и описания
+- Русские источники (13) -- без изменений
+- Английские источники (19) -- перевод через Kimi API (moonshot-v1-8k)
+- **Перевод не делается на клиенте** -- требуется backend + API-ключ
 - ❌ ЗАПРЕЩЕНО показывать английские заголовки без перевода
 - ❌ ЗАПРЕЩЕНО смешивать русские и английские новости в одной ленте без перевода
 
 ### Правило: хранение новостей
-- **Backend хранит новости в БД (PostgreSQL) — 2 недели**
-- После 2 недель — автоматически удаляются
-- Backend — источник правды, клиентский кэш — только для скорости
+- **Backend хранит новости в БД (PostgreSQL) -- 2 недели**
+- После 2 недель -- автоматически удаляются
+- Backend -- источник правды, клиентский кэш -- только для скорости
 - ❌ НЕ хранить новости только в кэше клиента
 
-### Правило: при backend — мок-новости КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНЫ
-- `getNewsForTag()` из `mockData.ts` — удаляется целиком
-- Все новости — только из RSS через API
-- Fallback на мок-данные — **ЗАПРЕЩЁН**
-- Это платный продукт — только реальные новости
+### Правило: при backend -- мок-новости КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНЫ
+- `getNewsForTag()` из `mockData.ts` -- удаляется целиком
+- Все новости -- только из RSS через API
+- Fallback на мок-данные -- **ЗАПРЕЩЁН**
+- Это платный продукт -- только реальные новости
 
 ### Правило: хранение платежей (КРИТИЧЕСКО)
 - **ВСЕ платежи сохраняются в БД (таблица `payments`)**
@@ -43,18 +43,51 @@
 - ❌ НЕ терять информацию о платежах
 - Связь: `payments.user_id → users.id`
 
+### Правило: 3 карусели новостей
+- **Карусель 1 "Это вы ещё не видели"**: непрочитанные по тегам, DESC сортировка
+- **Карусель 2 "Вся лента"**: прочитанные по тегам, DESC сортировка
+- **Карусель 3 "Общая лента"**: все новости без фильтра тегов, видна без логина
+- Новость считается прочитанной **ТОЛЬКО явно**: клик / кнопка ✓ / 2 сек в viewport при 80%+ видимости
+
+### Правило: перевод через Kimi API
+- Google Translate **ЗАБЛОКИРОВАН** на Render → используем Kimi API (api.moonshot.ai)
+- **Endpoint**: `api.moonshot.ai` (НЕ `.cn` -- возвращает 401)
+- **Модель**: `moonshot-v1-8k`
+- **Batch size**: 5 текстов за запрос
+- ❌ ЗАПРЕЩЕНО использовать Google Translate на Render
+- ❌ ЗАПРЕЩЕНО использовать api.moonshot.cn -- 401 Unauthorized
+
+### Правило: пользовательские теги
+- Пользователь может создать **ЛЮБОЙ тег** через поиск
+- Система автоматически генерирует keywords + транслит + склонения
+- Автоматический **BACKFILL** всех существующих новостей
+- Карусели автоматически обновляются (`tagVersion → invalidateQueries`)
+- ❌ ЗАПРЕЩЕНО ограничивать список тегов предопределённым набором
+
+### Правило: sentiment + liquid glass
+- Все карточки новостей -- **liquid glass эффект** (`backdrop-filter: blur`)
+- Цвет рамки/свечения зависит от sentiment:
+  * 🟢 Зелёный (`#34D399`) = positive
+  * 🔴 Красный (`#F87171`) = negative
+  * ⚪ Серый (`#9CA3AF`) = neutral
+- Sentiment определяется **keyword-based** (быстро) или **LLM через Kimi API** (точнее)
+- **Tag Impact**: как новость влияет на КАЖДЫЙ тег (positive/negative/neutral + reasoning)
+
 ---
 
 ## Тарифы
 - Free: 3 тега, лента на сайте
 - Premium: 10 тегов, 490 ₽/мес, репорты + алерты
 
-## Источники новостей (32)
-- 13 русских, 19 английских (см. DESIGN_SPEC.md)
+## Источники новостей (20+)
+- RU + EN (см. DESIGN_SPEC.md)
 
 ## Технический стек
 - React 19 + TypeScript + Vite + Tailwind CSS v3.4 + shadcn/ui
 - HashRouter (SPA), localStorage (client-side DB), Framer Motion
+- React Query (@tanstack/react-query) — кэширование, optimistic updates, background refetch
+- IntersectionObserver — auto-mark-read после 2 секунд при 80%+ видимости
+- Kimi API — перевод, sentiment, tag matching
 
 ## Workflow (ПОСЛЕ каждой доработки) — КРИТИЧЕСКОЕ ПРАВИЛО
 1. Собрать: `npm run build`
@@ -64,6 +97,8 @@
 5. **Указать пользователю: что обновлено + git commit hash + статус проверки**
 6. **Обновить DESIGN_SPEC.md если логика изменилась**
 7. **Обновить PRODUCT_CONTEXT.md если договорённости изменились**
+8. **Обновить CAROUSELS.md если логика каруселей изменилась**
+9. **Обновить ARCHITECTURE.md если pipeline/модели изменились**
 
 **❌ ЗАПРЕЩЕНО: делать изменения без git commit + push**
 **❌ ЗАПРЕЩЕНО: молча обновлять файлы без записи в документацию**
@@ -149,7 +184,7 @@ cd /mnt/agents/projects/frontend && git push origin main
 - ✅ **Renewal discount:** скользящая скидка (25%/15%/10%/0%) — чем раньше продлеваешь, тем дешевле
 - ✅ **Reports via Telegram bot:** автоматические дайджесты по тегам, TG приоритет #1
 - ✅ **Product vision:** слежу за портфелем → читаю все → отбираю релевантное → анализирую → еженедельный репорт → 5 минут вместо 2 часов
-- ✅ **Репорт: воскресенье 13:00 МСК** — перед новой неделей
+- ✅ **Репорт: воскресенье 13:00 МСК** — перед новой недель
 - ✅ **Sentiment-алерты:** мгновенные уведомления на positive + negative
 - ✅ **11 настроек уведомлений:** каналы, частота, тип, алерты, время, тихие часы, формат, язык
 - ✅ **SubscribeBlock:** портфель инвестиционно.рф (VastData, Crusoe, SpaceX, Cashea) + "Добавить портфель"
@@ -160,8 +195,19 @@ cd /mnt/agents/projects/frontend && git push origin main
 - ✅ **Регистрация: кнопка "Пропустить верификацию"** — вход без ожидания письма
 - ✅ **Все тексты UI в src/lib/copy.ts** — single source of truth
 - ✅ **Текст: "Изучаем новости для вас"** вместо "Проверяем 10 источников каждый час"
+- ✅ **3 карусели:** Карусель 1 (непрочитанные по тегам), Карусель 2 (прочитанные по тегам), Карусель 3 (все новости, без логина)
+- ✅ **Optimistic updates:** новость мгновенно перемещается между каруселями через `setQueryData()`
+- ✅ **Tag reactivity:** `tagVersion++` → `invalidateQueries` → автоперезагрузка лент
+- ✅ **Explicit read only:** новость прочитана только по клику/кнопке/2сек viewport
+- ✅ **Liquid glass UI:** sentiment-цветные карточки с `backdrop-filter: blur`
+- ✅ **User-defined tags:** поиск → создание → авто-keywords → backfill → автопоказ в ленте
+- ✅ **Translation fix:** Google Translate blocked → Kimi API (api.moonshot.ai)
+- ✅ **Smart tag matching:** keyword + LLM + related tags, ищет по title + summary
+- ✅ **Tag impact analysis:** LLM определяет влияние новости на каждый тег
+- ✅ **RSS: 20+ источников**, batch processing каждые 15 минут
+- ✅ **Anti-duplicate:** `content_hash` UNIQUE + `ON CONFLICT DO UPDATE` + all_sources tracking
 
-*Последнее обновление: текущая сессия*
+*Последнее обновление: 2026-05-26 (текущая сессия)*
 *Подтверждено: синхронизация тегов работает корректно*
 
 ---
@@ -196,10 +242,14 @@ cd /mnt/agents/projects/frontend && git push origin main
 
 - ✅ **SQLite zero-config mode** — `USE_SQLITE=true` by default, sql.js (pure JavaScript/WASM, no native compilation)
 - ✅ **Dual-mode database** — работает с SQLite (development) и PostgreSQL (production) через единый интерфейс
-- ✅ **8 таблиц:** `users`, `portfolios`, `payments`, `news`, `user_sessions`, `user_channels`, `notification_settings`, `translation_cache`
+- ✅ **10 таблиц:** `users`, `portfolios`, `payments`, `news`, `user_sessions`, `user_channels`, `notification_settings`, `translation_cache`, `user_defined_tags`, `smart_tag_cache`
 - ✅ **7 API routes:** `auth`, `news`, `payment`, `user`, `translate`, `webhook`, `admin`
-- ✅ **RSS aggregator:** 32 источника (13 RU + 19 EN), batch по 5, cron каждые 15 минут
-- ✅ **Translation:** 3-уровневая система — cache → Kimi API → Google Translate fallback
+- ✅ **RSS aggregator:** 20+ источников (RU + EN), batch по 5, cron каждые 15 минут
+- ✅ **Translation:** Kimi API (moonshot-v1-8k) + `translation_cache` таблица
 - ✅ **Weekly reports:** Воскресенье 13:00 MSK, Telegram Bot + Email (SendGrid)
 - ✅ **Docker:** `docker-compose.yml` (PostgreSQL 16 + Redis 7 + Backend), Dockerfile multi-stage Node 20 Alpine
 - ✅ **Git branch:** `stable`
+- ✅ **User-defined tags:** авто-генерация keywords + backfill существующих новостей
+- ✅ **Sentiment analysis:** keyword-based fallback + LLM через Kimi API
+- ✅ **Tag impact analysis:** LLM определяет влияние новости на каждый тег
+- ✅ **Smart tag matching:** keyword + LLM + related tags, ищет по title + summary

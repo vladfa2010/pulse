@@ -1,7 +1,7 @@
 # PULSE — Deployment Guide
 
 > Единый документ по инфраструктуре, деплою и окружению.
-> Последнее обновление: 2026-05-26
+> Последнее обновление: 2026-06-24
 
 ---
 
@@ -21,11 +21,15 @@
 │                          │    │                              │
 │   Render Static Site     │◄──►│   Render Web Service         │
 │   - React SPA            │    │   - Node.js + Express        │
-│   - Build: npm run build │    │   - SQLite (sql.js/WASM)     │
-│   - Publish: dist/       │    │   - JWT Auth                 │
+│   - Build: npm run build │    │   - PostgreSQL (Render) /    │
+│   - Publish: dist/       │    │     SQLite (local)           │
+│                          │    │   - JWT Auth                 │
 │                          │    │   - RSS Aggregator           │
-└──────────────────────────┘    │   - Translation (Kimi API)   │
-                                └──────────────────────────────┘
+│                          │    │   - Kimi API (translation +  │
+│                          │    │     sentiment + tag matching)│
+└──────────────────────────┘    └──────────────────────────────┘
+
+        Связь: Frontend → Backend: REST API + JWT
 ```
 
 ---
@@ -82,11 +86,13 @@ npm run build   # выход в dist/
 ### Environment Variables (Render Dashboard)
 | Variable | Value | Описание |
 |----------|-------|----------|
-| `USE_SQLITE` | `true` | Использовать SQLite вместо PostgreSQL |
+| `USE_SQLITE` | `false` | `false` = PostgreSQL (production), `true` = SQLite (local) |
+| `DATABASE_URL` | `(скрыт)` | PostgreSQL Internal Database URL от Render |
 | `JWT_SECRET` | `(скрыт)` | Секрет для JWT токенов |
 | `YOOKASSA_SHOP_ID` | `(скрыт)` | ЮKassa shop ID (demo: 54401) |
 | `YOOKASSA_SECRET_KEY` | `(скрыт)` | ЮKassa secret key |
-| `KIMI_API_KEY` | `(скрыт)` | Kimi Translate API ключ |
+| `KIMI_API_KEY` | `(скрыт)` | Kimi API (api.moonshot.ai) для перевода EN→RU, sentiment analysis, tag matching |
+| `CRON_SECRET_KEY` | `(скрыт)` | Секрет для manual triggers (/trigger-rss, /backfill-tags, /backfill-translate) |
 | `SENDGRID_API_KEY` | `(скрыт)` | SendGrid API ключ |
 | `TELEGRAM_BOT_TOKEN` | `(скрыт)` | Telegram Bot токен |
 
@@ -109,6 +115,14 @@ docker-compose up   # PostgreSQL 16 + Redis 7 + Backend
 
 ---
 
+## Тестовый логин
+
+- **Email:** `vladfa@ya.ru`
+- **Password:** `!1234567890`
+- **URL:** https://pulse-frontend-jt53.onrender.com
+
+---
+
 ## Git Workflow
 
 ### Sandbox (локальная среда)
@@ -121,6 +135,13 @@ docker-compose up   # PostgreSQL 16 + Redis 7 + Backend
 ### Push-доступ
 - **Frontend:** `origin → https://TOKEN@github.com/vladfa2010/pulse-frontend.git`
 - **Backend:** `origin → https://TOKEN@github.com/vladfa2010/pulse.git`
+
+### Push workaround (sandbox)
+```bash
+cd /mnt/agents/projects/backend
+GIT_HTTP_LOW_SPEED_TIME=300 git push origin main
+```
+При ошибке GnuTLS — повторить через 3 секунды (`rm -f .git/index.lock` если нужно)
 
 ### Правило синхронного обновления
 - Backend и frontend — один проект
@@ -159,6 +180,18 @@ git push origin main
 **Причина:** GnuTLS error в sandbox
 **Решение:** Git config `http.version HTTP/1.1`
 
+### Google Translate blocked on Render
+**Причина:** Google Translate API недоступен с серверов Render
+**Решение:** Использовать Kimi API (api.moonshot.ai)
+
+### Render не обновляется после push
+**Причина:** Render игнорирует empty commits
+**Решение:** Делать реальные изменения (не empty commits), менять версию в `/health`
+
+### 504 Gateway Timeout
+**Причина:** Render free tier — сервер «засыпает» после 15 мин бездействия
+**Решение:** Первый запрос ~30 сек (warmup), последующие — быстрые
+
 ---
 
 ## Переменные окружения (.env.example)
@@ -177,6 +210,7 @@ JWT_SECRET=your-secret-key
 YOOKASSA_SHOP_ID=54401
 YOOKASSA_SECRET_KEY=test_secret_key
 KIMI_API_KEY=your-kimi-api-key
+CRON_SECRET_KEY=your-cron-secret
 SENDGRID_API_KEY=your-sendgrid-key
 TELEGRAM_BOT_TOKEN=your-bot-token
 ```
