@@ -33,8 +33,8 @@ const USE_SQLITE = process.env.USE_SQLITE === 'true';
 // ─── SQL для фильтра по времени (14 дней) ─────────────────────────────────
 function timeFilterSql(): string {
   return USE_SQLITE
-    ? "published_at > datetime('now', '-30 days')"
-    : "published_at > NOW() - INTERVAL '30 days'";
+    ? "published_at > datetime('now', '-90 days')"
+    : "published_at > NOW() - INTERVAL '90 days'";
 }
 
 // ─── SQL для текущего времени ─────────────────────────────────────────────
