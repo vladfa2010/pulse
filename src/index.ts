@@ -185,12 +185,15 @@ app.get('/debug-db', async (req, res) => {
         MAX(published_at) as newest
       FROM news
     `);
+    // DB size
+    const dbSize = await query(`SELECT pg_size_pretty(pg_database_size(current_database())) as size`);
     res.json({
       columns: columns.rows,
       news_count: parseInt(count.rows[0]?.c || '0'),
       content_hash_constraints: constraints.rows,
       content_hash_indexes: indexes.rows,
       date_distribution: dateDist.rows[0],
+      db_size: dbSize.rows[0]?.size,
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
