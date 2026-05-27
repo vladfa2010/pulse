@@ -66,7 +66,8 @@ CREATE TABLE IF NOT EXISTS news (
   fetched_at      TIMESTAMP DEFAULT NOW(),
   sentiment       VARCHAR(20),
   matched_tags    TEXT[],
-  created_at      TIMESTAMP DEFAULT NOW()
+  created_at      TIMESTAMP DEFAULT NOW(),
+  UNIQUE(url)  -- Предотвращает дубликаты одной и той же новости
 );
 
 -- ============================================================

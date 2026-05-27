@@ -121,23 +121,22 @@ async function start() {
   try {
     await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE`);
     console.log('[DB] Migration: is_admin column ensured');
-  } catch {
-    // ignore
-  }
-  // UNIQUE constraint на user_sessions.user_id (нужен для ON CONFLICT)
+  } catch { /* ignore */ }
+  // UNIQUE(url) на news — предотвращает дубликаты одной и той же новости
+  try {
+    await query(`ALTER TABLE news ADD CONSTRAINT news_url_unique UNIQUE (url)`);
+    console.log('[DB] Migration: news.url unique constraint added');
+  } catch { /* ignore — может уже существовать */ }
+  // UNIQUE constraint на user_sessions.user_id
   try {
     await query(`ALTER TABLE user_sessions ADD CONSTRAINT user_sessions_user_id_unique UNIQUE (user_id)`);
     console.log('[DB] Migration: user_sessions.user_id unique constraint added');
-  } catch {
-    // ignore — может уже существовать или не поддерживаться в SQLite
-  }
+  } catch { /* ignore */ }
   // UNIQUE constraint на user_news_reads (user_id, news_id)
   try {
     await query(`ALTER TABLE user_news_reads ADD CONSTRAINT user_news_reads_unique UNIQUE (user_id, news_id)`);
     console.log('[DB] Migration: user_news_reads unique constraint added');
-  } catch {
-    // ignore
-  }
+  } catch { /* ignore */ }
 
   // ─── Шаг 3: Проверка подключения ──────────────────────────────────────
   try {

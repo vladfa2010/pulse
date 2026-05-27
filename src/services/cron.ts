@@ -119,7 +119,7 @@ async function processArticles() {
         await query(
           `INSERT INTO news (title_original, title_ru, summary_ru, source, source_id, url, published_at, lang_original, sentiment, matched_tags)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-           ON CONFLICT DO NOTHING`,
+           ON CONFLICT (url) DO NOTHING`,
           [a.title, a.title_ru || a.title, a.summary_ru || a.summary, a.source, a.sourceId, a.url, a.publishedAt, a.lang, a.sentiment, a.matched_tags]
         );
       }
