@@ -47,44 +47,50 @@ export async function saveTranslation(textEn: string, textRu: string): Promise<v
   }
 }
 
-// Translate via my API (Kimi) — placeholder for integration
+// Translate via my API (Kimi) -- placeholder for integration
 export async function translateWithKimi(texts: string[]): Promise<string[]> {
-  // TODO: Integrate with actual Kimi API
-  // For now, return original texts (will be replaced with actual API call)
   console.log('[Translate] Kimi API call for', texts.length, 'texts');
   return texts;
 }
 
-// Fallback: Google Translate (free tier)
+// Fallback: Google Translate (free tier) — batch by 10 to avoid overload
 export async function translateWithGoogle(texts: string[]): Promise<string[]> {
-  try {
-    const results = await Promise.all(
-      texts.map(async (text) => {
-        if (!text || text.length < 2) return text;
-        const response = await axios.post(
-          'https://translate.googleapis.com/translate_a/single',
-          null,
-          {
-            params: {
-              client: 'gtx',
-              sl: 'en',
-              tl: 'ru',
-              dt: 't',
-              q: text,
-            },
-            timeout: 5000,
+  const results: string[] = [];
+  const BATCH = 10;
+  for (let i = 0; i < texts.length; i += BATCH) {
+    const batch = texts.slice(i, i + BATCH);
+    try {
+      const batchResults = await Promise.all(
+        batch.map(async (text) => {
+          if (!text || text.length < 2) return text;
+          try {
+            const response = await axios.post(
+              'https://translate.googleapis.com/translate_a/single',
+              null,
+              {
+                params: { client: 'gtx', sl: 'en', tl: 'ru', dt: 't', q: text },
+                timeout: 5000,
+              }
+            );
+            return response.data[0][0][0] || text;
+          } catch {
+            return text;
           }
-        );
-        return response.data[0][0][0] || text;
-      })
-    );
-    return results;
-  } catch {
-    return texts;
+        })
+      );
+      results.push(...batchResults);
+    } catch {
+      results.push(...batch);
+    }
+    // Small delay between batches
+    if (i + BATCH < texts.length) {
+      await new Promise(r => setTimeout(r, 200));
+    }
   }
+  return results;
 }
 
-// Main translate function: cache → Kimi → Google
+// Main translate function: cache -> Kimi -> Google
 export async function translateBatch(texts: string[]): Promise<string[]> {
   const results: string[] = [];
   const toTranslate: { index: number; text: string }[] = [];
