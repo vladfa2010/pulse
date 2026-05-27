@@ -119,4 +119,8 @@ export async function translateBatch(texts: string[]): Promise<string[]> {
   for (let i = 0; i < toTranslate.length; i++) {
     const { index, text } = toTranslate[i];
     results[index] = translated[i];
-    await saveTranslat
+    await saveTranslation(text, translated[i]);
+  }
+
+  return results;
+}
