@@ -54,6 +54,25 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// TEMP: Debug DB schema
+app.get('/debug-db', async (req, res) => {
+  try {
+    const columns = await query(`
+      SELECT column_name, data_type 
+      FROM information_schema.columns 
+      WHERE table_name = 'news' 
+      ORDER BY ordinal_position
+    `);
+    const count = await query('SELECT COUNT(*) as c FROM news');
+    res.json({
+      columns: columns.rows,
+      news_count: parseInt(count.rows[0]?.c || '0'),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -127,17 +146,26 @@ async function start() {
     console.log('[DB] Migration: is_admin column ensured');
   } catch { /* ignore */ }
   // url_normalized + content_hash + all_sources + source_count
+  const migrations = [
+    { sql: `ALTER TABLE news ADD COLUMN IF NOT EXISTS url_normalized TEXT`, name: 'url_normalized' },
+    { sql: `ALTER TABLE news ADD COLUMN IF NOT EXISTS content_hash TEXT`, name: 'content_hash' },
+    { sql: `ALTER TABLE news ADD COLUMN IF NOT EXISTS all_sources TEXT[] DEFAULT '{}'`, name: 'all_sources' },
+    { sql: `ALTER TABLE news ADD COLUMN IF NOT EXISTS source_count INTEGER DEFAULT 1`, name: 'source_count' },
+  ];
+  for (const m of migrations) {
+    try {
+      await query(m.sql);
+      console.log(`[DB] Migration: ${m.name} added`);
+    } catch (e: any) {
+      console.log(`[DB] Migration warning for ${m.name}:`, e.message);
+    }
+  }
+  // Backfill
   try {
-    await query(`ALTER TABLE news ADD COLUMN IF NOT EXISTS url_normalized TEXT`);
-    await query(`ALTER TABLE news ADD COLUMN IF NOT EXISTS content_hash TEXT`);
-    await query(`ALTER TABLE news ADD COLUMN IF NOT EXISTS all_sources TEXT[] DEFAULT '{}'`);
-    await query(`ALTER TABLE news ADD COLUMN IF NOT EXISTS source_count INTEGER DEFAULT 1`);
-    console.log('[DB] Migration: url_normalized, content_hash, all_sources, source_count columns added');
-    // Backfill: set all_sources = {source}, source_count = 1 for existing rows
-    await query(`UPDATE news SET all_sources = ARRAY[source], source_count = 1 WHERE all_sources = '{}'::text[] OR all_sources IS NULL`);
+    await query(`UPDATE news SET all_sources = ARRAY[source], source_count = 1 WHERE all_sources IS NULL OR array_length(all_sources, 1) IS NULL`);
     console.log('[DB] Migration: backfilled all_sources and source_count');
   } catch (e: any) {
-    console.log('[DB] Migration warning:', e.message);
+    console.log('[DB] Migration backfill warning:', e.message);
   }
   // UNIQUE(url) на news — предотвращает дубликаты одной и той же новости
   try {
