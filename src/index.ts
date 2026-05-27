@@ -51,7 +51,17 @@ app.get('/', (req, res) => {
 
 // Health check — Render использует это для мониторинга
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString(), version: '4.3' });
+  res.json({ status: 'ok', timestamp: new Date().toISOString(), version: '4.4' });
+});
+
+// TEMP: Check env vars (safe — no secrets exposed)
+app.get('/debug-env', async (req, res) => {
+  res.json({
+    kimi_key_set: !!process.env.KIMI_API_KEY,
+    kimi_key_length: process.env.KIMI_API_KEY ? process.env.KIMI_API_KEY.length : 0,
+    kimi_key_prefix: process.env.KIMI_API_KEY ? process.env.KIMI_API_KEY.slice(0, 12) + '...' : null,
+    cron_secret_set: !!process.env.CRON_SECRET_KEY,
+  });
 });
 
 // TEMP: Cleanup duplicate news by content_hash (keep first, merge sources)
