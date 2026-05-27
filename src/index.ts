@@ -213,6 +213,83 @@ app.use('/api/translate', translateRoutes);
 app.use('/api/webhook', webhookLimiter, webhookRoutes); // Высокий лимит для YuKassa
 app.use('/api/admin', adminRoutes);     // GET /api/admin/users, /stats
 
+// TEMP: Backfill matched_tags for existing articles without tags
+app.get('/backfill-tags', async (req, res) => {
+  const secret = req.headers['x-trigger-secret'] || req.query.secret;
+  if (secret !== (process.env.CRON_SECRET_KEY || 'pulse-dev-key')) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  try {
+    const { smartMatchTags } = await import('./services/smartTagMatcher');
+
+    // Find articles without matched_tags
+    const articles = await query(
+      `SELECT id, title_ru, summary_ru FROM news
+       WHERE matched_tags IS NULL OR array_length(matched_tags, 1) IS NULL
+       LIMIT 200`
+    );
+
+    let updated = 0;
+    for (const row of articles.rows) {
+      const tags = await smartMatchTags(row.title_ru, row.summary_ru);
+      if (tags.length > 0) {
+        await query(
+          `UPDATE news SET matched_tags = $1 WHERE id = $2`,
+          [tags, row.id]
+        );
+        updated++;
+      }
+    }
+
+    res.json({ processed: articles.rows.length, updated_with_tags: updated });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// TEMP: Quick tag distribution query
+app.get('/quick-tags', async (req, res) => {
+  try {
+    const result = await query(`
+      SELECT matched_tags, COUNT(*) as c
+      FROM news
+      WHERE matched_tags IS NOT NULL AND array_length(matched_tags, 1) > 0
+      GROUP BY matched_tags
+      ORDER BY c DESC
+      LIMIT 30
+    `);
+    res.json({ tags: result.rows });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// TEMP: Stats on matched_tags distribution
+app.get('/tag-stats', async (req, res) => {
+  try {
+    const withTags = await query(`SELECT COUNT(*) as c FROM news WHERE matched_tags IS NOT NULL AND array_length(matched_tags, 1) > 0`);
+    const withoutTags = await query(`SELECT COUNT(*) as c FROM news WHERE matched_tags IS NULL OR array_length(matched_tags, 1) IS NULL`);
+
+    const tagDist = await query(`
+      SELECT unnest(matched_tags) as tag, COUNT(*) as count
+      FROM news
+      WHERE matched_tags IS NOT NULL AND array_length(matched_tags, 1) > 0
+      GROUP BY tag
+      ORDER BY count DESC
+      LIMIT 20
+    `);
+
+    res.json({
+      with_tags: parseInt(withTags.rows[0]?.c || '0'),
+      without_tags: parseInt(withoutTags.rows[0]?.c || '0'),
+      tag_distribution: tagDist.rows,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 404 — если роут не найден
 app.use((req, res) => {
   res.status(404).json({ error: 'Not found' });
@@ -301,126 +378,4 @@ async function start() {
   } catch { /* ignore — может уже существовать */ }
   // UNIQUE(url_normalized) — защита от нормализованных дублей
   try {
-    await query(`ALTER TABLE news ADD CONSTRAINT news_url_norm_unique UNIQUE (url_normalized)`);
-    console.log('[DB] Migration: news.url_normalized unique constraint added');
-  } catch { /* ignore */ }
-  // UNIQUE(content_hash) — одна новость = одна запись
-  try {
-    await query(`ALTER TABLE news ADD CONSTRAINT news_content_hash_unique UNIQUE (content_hash)`);
-    console.log('[DB] Migration: news.content_hash unique constraint added');
-  } catch { /* ignore */ }
-  // UNIQUE(content_hash) — backup защита по контенту
-  try {
-    await query(`ALTER TABLE news ADD CONSTRAINT news_content_hash_unique UNIQUE (content_hash)`);
-    console.log('[DB] Migration: news.content_hash unique constraint added');
-  } catch { /* ignore */ }
-  // UNIQUE constraint на user_sessions.user_id
-  try {
-    await query(`ALTER TABLE user_sessions ADD CONSTRAINT user_sessions_user_id_unique UNIQUE (user_id)`);
-    console.log('[DB] Migration: user_sessions.user_id unique constraint added');
-  } catch { /* ignore */ }
-  // UNIQUE constraint на user_news_reads (user_id, news_id)
-  try {
-    await query(`ALTER TABLE user_news_reads ADD CONSTRAINT user_news_reads_unique UNIQUE (user_id, news_id)`);
-    console.log('[DB] Migration: user_news_reads unique constraint added');
-  } catch { /* ignore */ }
-
-  // ─── Шаг 3: Проверка подключения ──────────────────────────────────────
-  try {
-    const testResult = await query('SELECT NOW() as time');
-    console.log('[DB] Connected successfully:', testResult.rows[0].time);
-  } catch (err: any) {
-    console.error('[DB] Connection test FAILED:', err.message);
-  }
-
-  // TEMP: Backfill matched_tags for existing articles without tags
-app.get('/backfill-tags', async (req, res) => {
-  const secret = req.headers['x-trigger-secret'] || req.query.secret;
-  if (secret !== (process.env.CRON_SECRET_KEY || 'pulse-dev-key')) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-
-  try {
-    const { smartMatchTags } = await import('./services/smartTagMatcher');
-
-    // Find articles without matched_tags
-    const articles = await query(
-      `SELECT id, title_ru, summary_ru FROM news
-       WHERE matched_tags IS NULL OR array_length(matched_tags, 1) IS NULL
-       LIMIT 200`
-    );
-
-    let updated = 0;
-    for (const row of articles.rows) {
-      const tags = await smartMatchTags(row.title_ru, row.summary_ru);
-      if (tags.length > 0) {
-        await query(
-          `UPDATE news SET matched_tags = $1 WHERE id = $2`,
-          [tags, row.id]
-        );
-        updated++;
-      }
-    }
-
-    res.json({ processed: articles.rows.length, updated_with_tags: updated });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// TEMP: Quick tag distribution query
-app.get('/quick-tags', async (req, res) => {
-  try {
-    const result = await query(`
-      SELECT matched_tags, COUNT(*) as c
-      FROM news
-      WHERE matched_tags IS NOT NULL AND array_length(matched_tags, 1) > 0
-      GROUP BY matched_tags
-      ORDER BY c DESC
-      LIMIT 30
-    `);
-    res.json({ tags: result.rows });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// TEMP: Stats on matched_tags distribution
-app.get('/tag-stats', async (req, res) => {
-  try {
-    // Count articles with/without matched_tags
-    const withTags = await query(`SELECT COUNT(*) as c FROM news WHERE matched_tags IS NOT NULL AND array_length(matched_tags, 1) > 0`);
-    const withoutTags = await query(`SELECT COUNT(*) as c FROM news WHERE matched_tags IS NULL OR array_length(matched_tags, 1) IS NULL`);
-
-    // Count by specific tags
-    const tagDist = await query(`
-      SELECT unnest(matched_tags) as tag, COUNT(*) as count
-      FROM news
-      WHERE matched_tags IS NOT NULL AND array_length(matched_tags, 1) > 0
-      GROUP BY tag
-      ORDER BY count DESC
-      LIMIT 20
-    `);
-
-    res.json({
-      with_tags: parseInt(withTags.rows[0]?.c || '0'),
-      without_tags: parseInt(withoutTags.rows[0]?.c || '0'),
-      tag_distribution: tagDist.rows,
-    });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ─── Шаг 4: Запуск HTTP-сервера ───────────────────────────────────────
-  app.listen(PORT, () => {
-    console.log(`PULSE backend running on port ${PORT}`);
-    console.log(`Routes: /api/auth, /api/news, /api/payment, /api/user, /api/translate, /api/webhook, /api/admin`);
-
-    // ─── Шаг 5: Запуск фоновых задач ──────────────────────────────────
-    startCron();       // ← RSS агрегация (каждые 15 минут)
-    startReportCron(); // ← Еженедельные репорты (воскресенье 13:00)
-  });
-}
-
-start();
+    await query(`ALTER TABLE news ADD CONSTRAINT news_url_norm_u
