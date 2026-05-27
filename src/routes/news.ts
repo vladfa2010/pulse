@@ -70,19 +70,24 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
     let articles: any[];
     let total: number;
 
-    // ─── GLOBAL MODE: все новости без фильтра по тегам ──────────────────
+    // ─── GLOBAL MODE: все новости С тегами (без фильтра по конкретным тегам пользователя)
+    // Показываем только новости, у которых есть хотя бы один matched_tag — новости без тегов бесполезны
     if (global) {
+      const tagFilter = USE_SQLITE
+        ? `matched_tags IS NOT NULL AND matched_tags != '[]'`
+        : `matched_tags IS NOT NULL AND array_length(matched_tags, 1) > 0`;
+
       const result = await query(
         `SELECT id, title_ru, summary_ru, source, url, published_at, sentiment, sentiment_source, matched_tags,
                 tag_impact, source_count, all_sources
          FROM news
-         WHERE ${timeFilter}
+         WHERE ${timeFilter} AND ${tagFilter}
          ORDER BY published_at DESC
          LIMIT $1 OFFSET $2`,
         [limit, offset]
       );
       articles = result.rows;
-      const countResult = await query(`SELECT COUNT(*) as c FROM news WHERE ${timeFilter}`, []);
+      const countResult = await query(`SELECT COUNT(*) as c FROM news WHERE ${timeFilter} AND ${tagFilter}`, []);
       total = parseInt(countResult.rows[0]?.c || '0');
 
       res.json({ articles, total, page, hasMore: offset + articles.length < total });
