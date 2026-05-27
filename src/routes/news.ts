@@ -59,8 +59,9 @@ function nowSql(): string {
 router.get('/', authMiddleware, async (req: AuthRequest, res) => {
   try {
     const userId = req.user!.userId;
-    const showAll = req.query.all === 'true';  // ← true = показать ВСЕ (для /feed)
-    const global = req.query.global === 'true'; // ← true = ВСЕ новости без фильтра по тегам
+    const showAll = req.query.all === 'true';     // ← true = ВСЕ по тегам (read + unread)
+    const history = req.query.history === 'true';  // ← true = только ПРОЧИТАННЫЕ по тегам
+    const global = req.query.global === 'true';    // ← true = ВСЕ новости без фильтра тегов
     const page = parseInt(req.query.page as string) || 1;
     const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
     const offset = (page - 1) * limit;
@@ -104,54 +105,83 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
       const conditions = tagIds.map(() => 'matched_tags LIKE ?').join(' OR ');
       const likeParams = tagIds.map(id => `%"${id}"%`);
 
-      // SQL часть: исключение прочитанных (если showAll=false)
-      const excludeRead = showAll ? '' : ' AND id NOT IN (SELECT news_id FROM user_news_reads WHERE user_id = ?)';
-      const excludeParams = showAll ? [] : [userId];
+      // SQL часть: фильтр по прочтению
+      // history=true → ТОЛЬКО прочитанные
+      // showAll=true → ВСЕ (без фильтра)
+      // default → ТОЛЬКО непрочитанные
+      let readFilter: string;
+      let readParams: any[];
+      if (history) {
+        readFilter = ' AND id IN (SELECT news_id FROM user_news_reads WHERE user_id = ?)';
+        readParams = [userId];
+      } else if (showAll) {
+        readFilter = '';
+        readParams = [];
+      } else {
+        readFilter = ' AND id NOT IN (SELECT news_id FROM user_news_reads WHERE user_id = ?)';
+        readParams = [userId];
+      }
 
       // Count
       const countResult = await query(
         `SELECT COUNT(*) as count FROM news
-         WHERE (${conditions})${excludeRead}
+         WHERE (${conditions})${readFilter}
          AND ${timeFilter}`,
-        [...likeParams, ...excludeParams]
+        [...likeParams, ...readParams]
       );
       total = parseInt(countResult.rows[0]?.count || '0');
 
       // Get (with source_count and all_sources)
+      const orderDir = history ? 'ASC' : 'DESC';
       const result = await query(
         `SELECT title_ru, summary_ru, source, url, published_at, sentiment, matched_tags,
                 source_count, all_sources
          FROM news
-         WHERE (${conditions})${excludeRead}
+         WHERE (${conditions})${readFilter}
          AND ${timeFilter}
-         ORDER BY published_at DESC
+         ORDER BY published_at ${orderDir}
          LIMIT ? OFFSET ?`,
-        [...likeParams, ...excludeParams, limit, offset]
+        [...likeParams, ...readParams, limit, offset]
       );
       articles = result.rows;
     } else {
-      // ─── PostgreSQL версие ──────────────────────────────────────────
-      const excludeRead = showAll ? '' : ' AND id NOT IN (SELECT news_id FROM user_news_reads WHERE user_id = $2)';
-      const pgParams: any[] = showAll ? [tagIds] : [tagIds, userId];
-      let pgIdx = showAll ? 2 : 3;
+      // ─── PostgreSQL версия ──────────────────────────────────────────
+      // history=true → ТОЛЬКО прочитанные
+      // showAll=true → ВСЕ (без фильтра)
+      // default → ТОЛЬКО непрочитанные
+      let pgReadFilter: string;
+      let pgParams: any[];
+      if (history) {
+        pgReadFilter = ' AND id IN (SELECT news_id FROM user_news_reads WHERE user_id = $2)';
+        pgParams = [tagIds, userId];
+      } else if (showAll) {
+        pgReadFilter = '';
+        pgParams = [tagIds];
+      } else {
+        pgReadFilter = ' AND id NOT IN (SELECT news_id FROM user_news_reads WHERE user_id = $2)';
+        pgParams = [tagIds, userId];
+      }
+      let pgIdx = pgParams.length + 1;
 
       // Count
       const countResult = await query(
         `SELECT COUNT(*) as count FROM news
-         WHERE matched_tags && $1::text[]${excludeRead}
+         WHERE matched_tags && $1::text[]${pgReadFilter}
          AND ${timeFilter}`,
         pgParams
       );
       total = parseInt(countResult.rows[0]?.count || '0');
 
       // Get (with source_count and all_sources)
+      // history → хронологический порядок (ASC), остальные → новые сверху (DESC)
+      const pgOrder = history ? 'ASC' : 'DESC';
       const result = await query(
         `SELECT title_ru, summary_ru, source, url, published_at, sentiment, matched_tags,
                 source_count, all_sources
          FROM news
-         WHERE matched_tags && $1::text[]${excludeRead}
+         WHERE matched_tags && $1::text[]${pgReadFilter}
          AND ${timeFilter}
-         ORDER BY published_at DESC
+         ORDER BY published_at ${pgOrder}
          LIMIT $${pgIdx} OFFSET $${pgIdx + 1}`,
         [...pgParams, limit, offset]
       );
