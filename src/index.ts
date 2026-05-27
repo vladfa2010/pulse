@@ -532,3 +532,4 @@ async function start() {
 // ─── Шаг 4: Запуск HTTP-сервера ───────────────────────────────────────
   app.listen(PORT, () => {
     console.log(`PULSE bac// Deploy check: 2026-05-27T20:05:45Z
+// summary backfill endpoint
