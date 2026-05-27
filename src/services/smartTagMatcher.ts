@@ -19,6 +19,7 @@ import { query } from '../config/db';
 import { getAllUserDefinedTags } from './tagManager';
 
 const KIMI_API_KEY = process.env.KIMI_API_KEY;
+const KIMI_MODEL = process.env.KIMI_MODEL || 'moonshot-v1-8k';
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -199,11 +200,11 @@ async function callLLMForTags(title: string, summary: string, availableTags: str
 
   try {
     const response = await axios.post(
-      'https://api.moonshot.cn/v1/chat/completions',
+      'https://api.moonshot.ai/v1/chat/completions',
       {
-        model: 'moonshot-v1-8k',
+        model: KIMI_MODEL,
         messages: [{ role: 'user', content: prompt }],
-        temperature: 0.1,
+        temperature: KIMI_MODEL.startsWith('kimi-k') ? 1 : 0.1,
         max_tokens: 200,
       },
       {
@@ -211,7 +212,7 @@ async function callLLMForTags(title: string, summary: string, availableTags: str
           'Authorization': `Bearer ${KIMI_API_KEY}`,
           'Content-Type': 'application/json',
         },
-        timeout: 15000,
+        timeout: KIMI_MODEL.startsWith('kimi-k') ? 30000 : 15000,
       }
     );
 
@@ -288,16 +289,16 @@ Return ONLY one word: positive, negative, or neutral.`;
 
   try {
     const response = await axios.post(
-      'https://api.moonshot.cn/v1/chat/completions',
+      'https://api.moonshot.ai/v1/chat/completions',
       {
-        model: 'moonshot-v1-8k',
+        model: KIMI_MODEL,
         messages: [{ role: 'user', content: prompt }],
-        temperature: 0.1,
+        temperature: KIMI_MODEL.startsWith('kimi-k') ? 1 : 0.1,
         max_tokens: 10,
       },
       {
         headers: { 'Authorization': `Bearer ${KIMI_API_KEY}`, 'Content-Type': 'application/json' },
-        timeout: 10000,
+        timeout: KIMI_MODEL.startsWith('kimi-k') ? 30000 : 10000,
       }
     );
 
@@ -342,16 +343,16 @@ Return ONLY a JSON array:
 
   try {
     const response = await axios.post(
-      'https://api.moonshot.cn/v1/chat/completions',
+      'https://api.moonshot.ai/v1/chat/completions',
       {
-        model: 'moonshot-v1-8k',
+        model: KIMI_MODEL,
         messages: [{ role: 'user', content: prompt }],
-        temperature: 0.1,
-        max_tokens: 300,
+        temperature: KIMI_MODEL.startsWith('kimi-k') ? 1 : 0.1,
+        max_tokens: 500,
       },
       {
         headers: { 'Authorization': `Bearer ${KIMI_API_KEY}`, 'Content-Type': 'application/json' },
-        timeout: 15000,
+        timeout: KIMI_MODEL.startsWith('kimi-k') ? 30000 : 15000,
       }
     );
 
