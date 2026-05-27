@@ -69,7 +69,9 @@ CREATE TABLE IF NOT EXISTS news (
   published_at    TIMESTAMP,
   fetched_at      TIMESTAMP DEFAULT NOW(),
   sentiment       VARCHAR(20),
+  sentiment_source VARCHAR(20) DEFAULT 'keyword', -- keyword | llm
   matched_tags    TEXT[],
+  tag_impact      JSONB DEFAULT '[]',  -- [{"tag":"tesla","impact":"negative","reasoning":"Stock dropped"}]
   created_at      TIMESTAMP DEFAULT NOW(),
   UNIQUE(url),              -- Защита по оригинальному URL (один URL = одна запись)
   UNIQUE(url_normalized),   -- Защита по нормализованному URL

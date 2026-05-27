@@ -240,3 +240,106 @@ export async function smartMatchTags(
   // No match found
   return [];
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LLM Sentiment Analysis (more accurate than keyword-based)
+// ═══════════════════════════════════════════════════════════════════════════
+
+export async function analyzeSentimentLLM(title: string, summary: string): Promise<'positive' | 'negative' | 'neutral'> {
+  if (!KIMI_API_KEY) return 'neutral';
+
+  const prompt = `Analyze the sentiment of this financial news article.
+
+Title: ${title.slice(0, 200)}
+Summary: ${summary.slice(0, 400)}
+
+Return ONLY one word: positive, negative, or neutral.
+Consider financial context: revenue growth, profit, losses, market decline, acquisitions, etc.`;
+
+  try {
+    const response = await axios.post(
+      'https://api.moonshot.cn/v1/chat/completions',
+      {
+        model: 'moonshot-v1-8k',
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.1,
+        max_tokens: 10,
+      },
+      {
+        headers: { 'Authorization': `Bearer ${KIMI_API_KEY}`, 'Content-Type': 'application/json' },
+        timeout: 10000,
+      }
+    );
+
+    const content = response.data?.choices?.[0]?.message?.content?.toLowerCase() || '';
+    if (content.includes('positive')) return 'positive';
+    if (content.includes('negative')) return 'negative';
+    return 'neutral';
+  } catch {
+    return 'neutral';
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Tag Impact Analysis — how does the news affect each tag?
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface TagImpact {
+  tag: string;
+  impact: 'positive' | 'negative' | 'neutral';
+  reasoning: string;
+}
+
+export async function analyzeTagImpact(title: string, summary: string, tags: string[]): Promise<TagImpact[]> {
+  if (!KIMI_API_KEY || tags.length === 0) {
+    return tags.map(t => ({ tag: t, impact: 'neutral', reasoning: '' }));
+  }
+
+  const prompt = `Analyze how this financial news article affects the following tags.
+
+Article title: ${title.slice(0, 200)}
+Article summary: ${summary.slice(0, 400)}
+
+Tags to analyze: ${tags.join(', ')}
+
+For each tag, determine if the news is positive, negative, or neutral for it.
+Example: "Tesla stock drops 10%" → tesla: negative, nvda: neutral
+
+Return ONLY a JSON array:
+[{"tag":"tesla","impact":"negative","reasoning":"Stock price dropped"}, ...]`;
+
+  try {
+    const response = await axios.post(
+      'https://api.moonshot.cn/v1/chat/completions',
+      {
+        model: 'moonshot-v1-8k',
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.1,
+        max_tokens: 300,
+      },
+      {
+        headers: { 'Authorization': `Bearer ${KIMI_API_KEY}`, 'Content-Type': 'application/json' },
+        timeout: 15000,
+      }
+    );
+
+    const content = response.data?.choices?.[0]?.message?.content || '';
+    const jsonMatch = content.match(/\[[\s\S]*?\]/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      if (Array.isArray(parsed)) {
+        return parsed
+          .filter((p: any) => tags.includes(p.tag))
+          .map((p: any) => ({
+            tag: p.tag,
+            impact: ['positive', 'negative'].includes(p.impact) ? p.impact : 'neutral',
+            reasoning: p.reasoning || '',
+          }));
+      }
+    }
+  } catch {
+    // Fallback
+  }
+
+  return tags.map(t => ({ tag: t, impact: 'neutral', reasoning: '' }));
+}
