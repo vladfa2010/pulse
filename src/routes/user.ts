@@ -5,6 +5,7 @@ import { validate } from '../middleware/validate';
 import { AddTagSchema } from '../schemas/user';
 import { getRelatedTags, TAG_KEYWORDS } from '../services/smartTagMatcher';
 import { createUserTag, generateTagKeywords } from '../services/tagManager';
+import { matchTagsByKeywords } from '../services/smartTagMatcher';
 
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
@@ -356,7 +357,7 @@ router.get('/tags/related', async (req, res) => {
   }
 });
 
-// POST /api/user/tags/custom — создать пользовательский тег
+// POST /api/user/tags/custom — создать пользовательский тег + backfill по всей базе
 router.post('/tags/custom', authMiddleware, async (req: AuthRequest, res) => {
   try {
     const userId = req.user!.userId;
@@ -382,8 +383,34 @@ router.post('/tags/custom', authMiddleware, async (req: AuthRequest, res) => {
       return res.status(500).json({ error: 'Failed to create tag' });
     }
 
-    // Возвращаем созданный тег
     const keywords = generateTagKeywords(tagName);
+
+    // BACKFILL: Ищем по ВСЕЙ базе новостей и привязываем тег
+    console.log(`[TagBackfill] Starting backfill for "${tagId}"...`);
+    const allNews = await query(
+      `SELECT id, title_ru, summary_ru, matched_tags FROM news ORDER BY published_at DESC`,
+      []
+    );
+
+    let matched = 0;
+    for (const row of allNews.rows) {
+      const text = `${row.title_ru || ''} ${row.summary_ru || ''}`.toLowerCase();
+      const hasMatch = keywords.some(kw => text.includes(kw.toLowerCase()));
+
+      if (hasMatch) {
+        // Добавляем тег в matched_tags (если ещё нет)
+        const currentTags = row.matched_tags || [];
+        if (!currentTags.includes(tagId)) {
+          await query(
+            `UPDATE news SET matched_tags = array_append(matched_tags, $1) WHERE id = $2`,
+            [tagId, row.id]
+          );
+          matched++;
+        }
+      }
+    }
+    console.log(`[TagBackfill] Matched ${matched} articles for "${tagId}"`);
+
     res.json({
       tag: {
         id: tagId,
@@ -392,7 +419,11 @@ router.post('/tags/custom', authMiddleware, async (req: AuthRequest, res) => {
         tag_type: tagType,
         keywords,
       },
-      message: 'Tag created successfully',
+      backfill: {
+        scanned: allNews.rows.length,
+        matched,
+      },
+      message: 'Tag created and backfilled successfully',
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
