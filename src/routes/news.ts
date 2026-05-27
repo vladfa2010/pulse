@@ -73,8 +73,8 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
     // ─── GLOBAL MODE: все новости без фильтра по тегам ──────────────────
     if (global) {
       const result = await query(
-        `SELECT title_ru, summary_ru, source, url, published_at, sentiment, matched_tags,
-                source_count, all_sources
+        `SELECT title_ru, summary_ru, source, url, published_at, sentiment, sentiment_source, matched_tags,
+                tag_impact, source_count, all_sources
          FROM news
          WHERE ${timeFilter}
          ORDER BY published_at DESC
@@ -134,8 +134,8 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
       // Get (with source_count and all_sources)
       const orderDir = history ? 'ASC' : 'DESC';
       const result = await query(
-        `SELECT title_ru, summary_ru, source, url, published_at, sentiment, matched_tags,
-                source_count, all_sources
+        `SELECT title_ru, summary_ru, source, url, published_at, sentiment, sentiment_source, matched_tags,
+                tag_impact, source_count, all_sources
          FROM news
          WHERE (${conditions})${readFilter}
          AND ${timeFilter}
@@ -176,8 +176,8 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
       // history → хронологический порядок (ASC), остальные → новые сверху (DESC)
       const pgOrder = history ? 'ASC' : 'DESC';
       const result = await query(
-        `SELECT title_ru, summary_ru, source, url, published_at, sentiment, matched_tags,
-                source_count, all_sources
+        `SELECT title_ru, summary_ru, source, url, published_at, sentiment, sentiment_source, matched_tags,
+                tag_impact, source_count, all_sources
          FROM news
          WHERE matched_tags && $1::text[]${pgReadFilter}
          AND ${timeFilter}
@@ -266,7 +266,8 @@ router.get('/tags/:tagId', async (req, res) => {
     let result;
     if (USE_SQLITE) {
       result = await query(
-        `SELECT title_ru, summary_ru, source, url, published_at, sentiment
+        `SELECT title_ru, summary_ru, source, url, published_at, sentiment, sentiment_source, matched_tags,
+                tag_impact, source_count, all_sources
          FROM news
          WHERE matched_tags LIKE $1 AND ${timeFilter}
          ORDER BY published_at DESC
@@ -275,7 +276,8 @@ router.get('/tags/:tagId', async (req, res) => {
       );
     } else {
       result = await query(
-        `SELECT title_ru, summary_ru, source, url, published_at, sentiment
+        `SELECT title_ru, summary_ru, source, url, published_at, sentiment, sentiment_source, matched_tags,
+                tag_impact, source_count, all_sources
          FROM news
          WHERE $1 = ANY(matched_tags)
          AND ${timeFilter}
