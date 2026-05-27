@@ -69,7 +69,7 @@ app.get('/cleanup-content-dups', async (req, res) => {
     let merged = 0;
     for (const row of dups.rows) {
       const ids: string[] = row.ids;
-      const sources: string[] = [...new Set(row.sources)]; // unique sources
+      const sources: string[] = [...new Set(row.sources as string[])]; // unique sources
       const keepId = ids[0]; // keep oldest
       const removeIds = ids.slice(1); // remove rest
       
