@@ -16,6 +16,7 @@
 
 import axios from 'axios';
 import { query } from '../config/db';
+import { getAllUserDefinedTags } from './tagManager';
 
 const KIMI_API_KEY = process.env.KIMI_API_KEY;
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
@@ -81,9 +82,25 @@ export function getRelatedTags(tagId: string): string[] {
 }
 
 // Layer 1: Keyword matching
-export function matchTagsByKeywords(text: string): string[] {
+// Кэш пользовательских тегов (обновляется при вызове)
+let userTagsCache: Record<string, string[]> = {};
+let userTagsCacheTime = 0;
+const USER_TAGS_CACHE_TTL = 60 * 1000; // 1 минута
+
+async function getCachedUserTags(): Promise<Record<string, string[]>> {
+  const now = Date.now();
+  if (now - userTagsCacheTime > USER_TAGS_CACHE_TTL) {
+    userTagsCache = await getAllUserDefinedTags();
+    userTagsCacheTime = now;
+  }
+  return userTagsCache;
+}
+
+export async function matchTagsByKeywords(text: string): Promise<string[]> {
   const lower = text.toLowerCase();
   const matched: string[] = [];
+
+  // Layer 1a: Стандартные теги
   for (const [tagId, keywords] of Object.entries(TAG_KEYWORDS)) {
     if (keywords.some(kw => lower.includes(kw.toLowerCase()))) {
       if (!matched.includes(tagId)) {
@@ -91,6 +108,17 @@ export function matchTagsByKeywords(text: string): string[] {
       }
     }
   }
+
+  // Layer 1b: Пользовательские теги
+  const userTags = await getCachedUserTags();
+  for (const [tagId, keywords] of Object.entries(userTags)) {
+    if (keywords.some(kw => lower.includes(kw.toLowerCase()))) {
+      if (!matched.includes(tagId)) {
+        matched.push(tagId);
+      }
+    }
+  }
+
   return matched;
 }
 
@@ -219,8 +247,8 @@ export async function smartMatchTags(
 ): Promise<string[]> {
   const fullText = `${title} ${summary}`;
 
-  // Layer 1: Keyword matching (always)
-  const keywordTags = matchTagsByKeywords(fullText);
+  // Layer 1: Keyword matching (standard + user-defined tags)
+  const keywordTags = await matchTagsByKeywords(fullText);
 
   if (keywordTags.length > 0) {
     console.log(`[SmartTags] Keyword match: ${keywordTags.join(', ')} for "${title.slice(0, 50)}..."`);

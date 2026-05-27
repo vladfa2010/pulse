@@ -88,6 +88,18 @@ CREATE TABLE IF NOT EXISTS user_sessions (
 );
 
 -- ============================================================
+-- 5c. user_defined_tags (пользовательские теги)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS user_defined_tags (
+  tag_id      VARCHAR(50) PRIMARY KEY,
+  tag_name    VARCHAR(100) NOT NULL,
+  tag_type    VARCHAR(20) DEFAULT 'company',
+  keywords    TEXT[] DEFAULT '{}',
+  created_by  UUID REFERENCES users(id),
+  created_at  TIMESTAMP DEFAULT NOW()
+);
+
+-- ============================================================
 -- 5b. smart_tag_cache (LLM matching results)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS smart_tag_cache (

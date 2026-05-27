@@ -4,6 +4,7 @@ import { query } from '../config/db';
 import { validate } from '../middleware/validate';
 import { AddTagSchema } from '../schemas/user';
 import { getRelatedTags, TAG_KEYWORDS } from '../services/smartTagMatcher';
+import { createUserTag, generateTagKeywords } from '../services/tagManager';
 
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
@@ -350,6 +351,49 @@ router.get('/tags/related', async (req, res) => {
       });
 
     res.json({ tag: tagId, related: relatedWithInfo });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/user/tags/custom — создать пользовательский тег
+router.post('/tags/custom', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.userId;
+    const { tagName, tagType = 'company' } = req.body;
+
+    if (!tagName || tagName.length < 2) {
+      return res.status(400).json({ error: 'Tag name must be at least 2 characters' });
+    }
+
+    // Генерируем tag_id из названия (транслит + lowercase)
+    const tagId = tagName.toLowerCase()
+      .replace(/[^a-zа-яё0-9\s]/g, '')
+      .replace(/\s+/g, '_')
+      .substring(0, 50);
+
+    if (!tagId) {
+      return res.status(400).json({ error: 'Invalid tag name' });
+    }
+
+    // Создаем тег
+    const success = await createUserTag(userId, tagId, tagName, tagType);
+    if (!success) {
+      return res.status(500).json({ error: 'Failed to create tag' });
+    }
+
+    // Возвращаем созданный тег
+    const keywords = generateTagKeywords(tagName);
+    res.json({
+      tag: {
+        id: tagId,
+        tag_id: tagId,
+        tag_name: tagName,
+        tag_type: tagType,
+        keywords,
+      },
+      message: 'Tag created successfully',
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
