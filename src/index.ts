@@ -52,6 +52,22 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// TEMP: Cleanup duplicate news (one-time run after UNIQUE(url) migration)
+app.get('/cleanup-news', async (req, res) => {
+  try {
+    // Delete duplicates keeping the oldest (min id)
+    const result = await query(`
+      DELETE FROM news 
+      WHERE id NOT IN (
+        SELECT MIN(id) FROM news GROUP BY url
+      )
+    `);
+    res.json({ cleaned: result.rowCount || 0 });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // API Routes — все эндпоинты начинаются с /api/
 // ═══════════════════════════════════════════════════════════════════════════
