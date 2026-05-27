@@ -55,14 +55,20 @@ app.get('/health', (req, res) => {
 // TEMP: Cleanup duplicate news (one-time run after UNIQUE(url) migration)
 app.get('/cleanup-news', async (req, res) => {
   try {
+    // Count before
+    const before = await query('SELECT COUNT(*) as c FROM news');
+    const countBefore = parseInt(before.rows[0]?.c || '0');
     // Delete duplicates keeping the oldest (min id)
-    const result = await query(`
+    await query(`
       DELETE FROM news 
       WHERE id NOT IN (
         SELECT MIN(id) FROM news GROUP BY url
       )
     `);
-    res.json({ cleaned: result.rowCount || 0 });
+    // Count after
+    const after = await query('SELECT COUNT(*) as c FROM news');
+    const countAfter = parseInt(after.rows[0]?.c || '0');
+    res.json({ cleaned: countBefore - countAfter, before: countBefore, after: countAfter });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
