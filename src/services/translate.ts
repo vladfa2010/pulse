@@ -1,131 +1,140 @@
 import axios from 'axios';
 import { query } from '../config/db';
 
-const TRANSLATION_API_KEY = process.env.TRANSLATION_API_KEY;
-const USE_SQLITE = process.env.USE_SQLITE === 'true';
+const KIMI_API_KEY = process.env.KIMI_API_KEY;
 
-function nowMinusDaysSql(days: number): string {
-  return USE_SQLITE
-    ? `datetime('now', '-${days} days')`
-    : `NOW() - INTERVAL '${days} days'`;
-}
+// ═══════════════════════════════════════════════════════════════════════════
+// Kimi Translation (primary)
+// ═══════════════════════════════════════════════════════════════════════════
 
-// Check cache first
-export async function getCachedTranslation(textEn: string): Promise<string | null> {
-  try {
-    const hash = Buffer.from(textEn).toString('base64').slice(0, 64);
-    const result = await query(
-      `SELECT text_ru FROM translation_cache WHERE hash = $1 AND created_at > ${nowMinusDaysSql(30)}`,
-      [hash]
-    );
-    return result.rows.length > 0 ? result.rows[0].text_ru : null;
-  } catch {
-    return null;
-  }
-}
-
-// Save to cache
-export async function saveTranslation(textEn: string, textRu: string): Promise<void> {
-  try {
-    const hash = Buffer.from(textEn).toString('base64').slice(0, 64);
-    if (USE_SQLITE) {
-      await query(
-        `INSERT OR IGNORE INTO translation_cache (id, hash, text_en, text_ru)
-         VALUES ($1, $2, $3, $4)`,
-        [crypto.randomUUID ? crypto.randomUUID() : hash.slice(0, 36), hash, textEn, textRu]
-      );
-    } else {
-      await query(
-        `INSERT INTO translation_cache (hash, text_en, text_ru)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (hash) DO NOTHING`,
-        [hash, textEn, textRu]
-      );
-    }
-  } catch {
-    // Ignore cache errors
-  }
-}
-
-// Translate via my API (Kimi) -- placeholder for integration
 export async function translateWithKimi(texts: string[]): Promise<string[]> {
-  console.log('[Translate] Kimi API call for', texts.length, 'texts');
-  return texts;
-}
+  if (!KIMI_API_KEY) {
+    console.log('[Translate] No KIMI_API_KEY, skipping translation');
+    return texts;
+  }
 
-// Fallback: Google Translate (free tier) — batch by 10 to avoid overload
-export async function translateWithGoogle(texts: string[]): Promise<string[]> {
   const results: string[] = [];
-  const BATCH = 10;
+  const BATCH = 5; // Kimi: 5 текстов за раз
+
   for (let i = 0; i < texts.length; i += BATCH) {
     const batch = texts.slice(i, i + BATCH);
+    const validTexts = batch.filter(t => t && t.length > 2);
+
+    if (validTexts.length === 0) {
+      results.push(...batch);
+      continue;
+    }
+
+    // Формируем JSON-запрос
+    const jsonInput = JSON.stringify(validTexts);
+
     try {
-      const batchResults = await Promise.all(
-        batch.map(async (text) => {
-          if (!text || text.length < 2) return text;
-          try {
-            const response = await axios.post(
-              'https://translate.googleapis.com/translate_a/single',
-              null,
-              {
-                params: { client: 'gtx', sl: 'en', tl: 'ru', dt: 't', q: text },
-                timeout: 5000,
-              }
-            );
-            return response.data[0][0][0] || text;
-          } catch {
-            return text;
-          }
-        })
+      const response = await axios.post(
+        'https://api.moonshot.cn/v1/chat/completions',
+        {
+          model: 'moonshot-v1-8k',
+          messages: [
+            {
+              role: 'system',
+              content: 'You are a professional translator. Translate English financial news to Russian. Return ONLY a JSON array of translated strings, same order. Preserve names, tickers, numbers. No extra text.'
+            },
+            {
+              role: 'user',
+              content: `Translate to Russian: ${jsonInput}`
+            }
+          ],
+          temperature: 0.1,
+          max_tokens: 2000,
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${KIMI_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 30000,
+        }
       );
-      results.push(...batchResults);
-    } catch {
+
+      const content = response.data?.choices?.[0]?.message?.content || '';
+
+      // Extract JSON array
+      const jsonMatch = content.match(/\[[\s\S]*?\]/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        if (Array.isArray(parsed) && parsed.length === validTexts.length) {
+          // Map back to original positions
+          let validIdx = 0;
+          for (const original of batch) {
+            if (original && original.length > 2 && validIdx < parsed.length) {
+              results.push(parsed[validIdx]);
+              validIdx++;
+            } else {
+              results.push(original);
+            }
+          }
+          console.log(`[Translate] Kimi translated ${validTexts.length} texts`);
+          continue;
+        }
+      }
+
+      // Fallback: return originals
+      console.log('[Translate] Kimi parse failed, returning originals');
+      results.push(...batch);
+
+    } catch (err: any) {
+      console.error(`[Translate] Kimi error: ${err.message?.slice(0, 100)}`);
       results.push(...batch);
     }
-    // Small delay between batches
+
+    // Delay between batches
     if (i + BATCH < texts.length) {
-      await new Promise(r => setTimeout(r, 200));
+      await new Promise(r => setTimeout(r, 500));
     }
   }
+
   return results;
 }
 
-// Main translate function: cache -> Kimi -> Google
+// ═══════════════════════════════════════════════════════════════════════════
+// translateBatch — main entry point
+// ═══════════════════════════════════════════════════════════════════════════
+
 export async function translateBatch(texts: string[]): Promise<string[]> {
-  const results: string[] = [];
+  // Skip if no Kimi key
+  if (!KIMI_API_KEY) {
+    return texts;
+  }
+
+  // Filter: only translate EN texts (contain latin chars, no cyrillic)
   const toTranslate: { index: number; text: string }[] = [];
+  const results: string[] = [];
 
-  // Check cache
   for (let i = 0; i < texts.length; i++) {
-    const cached = await getCachedTranslation(texts[i]);
-    if (cached) {
-      results[i] = cached;
+    const text = texts[i];
+    const hasCyrillic = /[а-яё]/i.test(text);
+    const hasLatin = /[a-z]/i.test(text);
+
+    if (hasLatin && !hasCyrillic && text.length > 5) {
+      toTranslate.push({ index: i, text });
     } else {
-      toTranslate.push({ index: i, text: texts[i] });
+      results[i] = text; // Already Russian or short
     }
   }
 
-  if (toTranslate.length === 0) return results;
-
-  // Try Kimi API first
-  const kimiTexts = toTranslate.map(t => t.text);
-  let translated: string[];
-
-  try {
-    translated = await translateWithKimi(kimiTexts);
-    // If Kimi returns same texts (not translated), try Google
-    if (translated[0] === kimiTexts[0]) {
-      throw new Error('Kimi did not translate');
-    }
-  } catch {
-    translated = await translateWithGoogle(kimiTexts);
+  if (toTranslate.length === 0) {
+    return texts;
   }
 
-  // Save results and cache
+  console.log(`[Translate] ${toTranslate.length} texts need translation`);
+
+  // Translate via Kimi
+  const textsToTranslate = toTranslate.map(t => t.text);
+  const translated = await translateWithKimi(textsToTranslate);
+
+  // Map back
   for (let i = 0; i < toTranslate.length; i++) {
-    const { index, text } = toTranslate[i];
-    results[index] = translated[i];
-    await saveTranslation(text, translated[i]);
+    const { index } = toTranslate[i];
+    results[index] = translated[i] || texts[index];
   }
 
   return results;
