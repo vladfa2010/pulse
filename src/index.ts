@@ -126,11 +126,13 @@ async function start() {
     await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE`);
     console.log('[DB] Migration: is_admin column ensured');
   } catch { /* ignore */ }
-  // url_normalized + content_hash колонки (защита от дубликатов)
+  // url_normalized + content_hash + all_sources + source_count
   try {
     await query(`ALTER TABLE news ADD COLUMN IF NOT EXISTS url_normalized TEXT`);
     await query(`ALTER TABLE news ADD COLUMN IF NOT EXISTS content_hash TEXT`);
-    console.log('[DB] Migration: url_normalized + content_hash columns added');
+    await query(`ALTER TABLE news ADD COLUMN IF NOT EXISTS all_sources TEXT[] DEFAULT '{}'`);
+    await query(`ALTER TABLE news ADD COLUMN IF NOT EXISTS source_count INTEGER DEFAULT 1`);
+    console.log('[DB] Migration: url_normalized, content_hash, all_sources, source_count columns added');
   } catch { /* ignore */ }
   // UNIQUE(url) на news — предотвращает дубликаты одной и той же новости
   try {

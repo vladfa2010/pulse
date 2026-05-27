@@ -97,9 +97,10 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
       );
       total = parseInt(countResult.rows[0]?.count || '0');
 
-      // Get
+      // Get (with source_count and all_sources)
       const result = await query(
-        `SELECT title_ru, summary_ru, source, url, published_at, sentiment, matched_tags
+        `SELECT title_ru, summary_ru, source, url, published_at, sentiment, matched_tags,
+                source_count, all_sources
          FROM news
          WHERE (${conditions})${excludeRead}
          AND ${timeFilter}

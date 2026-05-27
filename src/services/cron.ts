@@ -107,36 +107,59 @@ async function processArticles() {
     sentiment: detectSentiment(a.title_ru || a.title),
   }));
 
-  // 4. Save to DB
+  // 4. Save to DB (с подсчётом дубликатов по content_hash)
   let saved = 0;
+  let merged = 0;
   for (const a of processed) {
     try {
-      if (USE_SQLITE) {
-        await query(
-          `INSERT OR IGNORE INTO news (id, title_original, title_ru, summary_ru, source, source_id, url, published_at, lang_original, sentiment, matched_tags)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-          [uuidv4(), a.title, a.title_ru || a.title, a.summary_ru || a.summary, a.source, a.sourceId, a.url, a.publishedAt.toISOString(), a.lang, a.sentiment, JSON.stringify(a.matched_tags)]
-        );
-      } else {
-        // Нормализуем URL и считаем content_hash
-        const urlNormalized = normalizeUrl(article.url || '');
-        const contentHash = crypto.createHash('md5').update(`${title_ru}_${summary_ru}`.slice(0, 500)).digest('hex');
+      const urlNormalized = normalizeUrl(a.url || '');
+      const title_ru = a.title_ru || a.title;
+      const summary_ru = a.summary_ru || a.summary;
+      const contentHash = crypto.createHash('md5').update(`${title_ru}_${summary_ru}`.slice(0, 500)).digest('hex');
 
-        await query(
-          `INSERT INTO news (title_original, title_ru, summary_ru, source, source_id, url, url_normalized, content_hash, published_at, lang_original, sentiment, matched_tags)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-           ON CONFLICT (url) DO NOTHING`,
-          [title_original, title_ru, summary_ru, article.source, article.sourceId, article.url, urlNormalized, contentHash, published_at, lang, sentiment, matchedTags]
-          [a.title, a.title_ru || a.title, a.summary_ru || a.summary, a.source, a.sourceId, a.url, a.publishedAt, a.lang, a.sentiment, a.matched_tags]
+      if (USE_SQLITE) {
+        const existing = await query('SELECT id, all_sources FROM news WHERE content_hash = ? LIMIT 1', [contentHash]);
+        if (existing.rows.length > 0) {
+          const sources: string[] = JSON.parse(existing.rows[0].all_sources || '[]');
+          if (!sources.includes(a.source)) { sources.push(a.source); merged++; }
+          await query('UPDATE news SET all_sources = ?, source_count = ? WHERE id = ?',
+            [JSON.stringify(sources), sources.length, existing.rows[0].id]);
+        } else {
+          await query(
+            `INSERT OR IGNORE INTO news (id, title_original, title_ru, summary_ru, source, source_id, url, url_normalized, content_hash, all_sources, source_count, published_at, lang_original, sentiment, matched_tags)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [uuidv4(), a.title, title_ru, summary_ru, a.source, a.sourceId, a.url, urlNormalized, contentHash, JSON.stringify([a.source]), 1, a.publishedAt.toISOString(), a.lang, a.sentiment, JSON.stringify(a.matched_tags)]
+          );
+          saved++;
+        }
+      } else {
+        const insertResult = await query(
+          `INSERT INTO news (title_original, title_ru, summary_ru, source, source_id, url, url_normalized, content_hash, all_sources, source_count, published_at, lang_original, sentiment, matched_tags)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 1, $11, $12, $13, $14)
+           ON CONFLICT (url) DO NOTHING
+           RETURNING id`,
+          [a.title, title_ru, summary_ru, a.source, a.sourceId, a.url, urlNormalized, contentHash, [a.source], a.publishedAt, a.lang, a.sentiment, a.matched_tags]
         );
+        if (insertResult.rows.length === 0) {
+          const dup = await query('SELECT id, all_sources FROM news WHERE content_hash = $1 AND url != $2 LIMIT 1', [contentHash, a.url]);
+          if (dup.rows.length > 0) {
+            const sources: string[] = dup.rows[0].all_sources || [];
+            if (!sources.includes(a.source)) {
+              sources.push(a.source);
+              await query('UPDATE news SET all_sources = $1, source_count = $2 WHERE id = $3', [sources, sources.length, dup.rows[0].id]);
+              merged++;
+            }
+          }
+        } else {
+          saved++;
+        }
       }
-      saved++;
     } catch {
-      // Skip duplicates
+      // Skip
     }
   }
 
-  console.log(`[Cron] Saved ${saved} new articles`);
+  console.log(`[Cron] Saved ${saved} new, merged ${merged} duplicates (total ${processed.length})`);
 
   // 5. Clean old news (>14 days)
   if (USE_SQLITE) {
