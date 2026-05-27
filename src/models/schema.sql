@@ -62,12 +62,16 @@ CREATE TABLE IF NOT EXISTS news (
   source          VARCHAR(100),
   source_id       VARCHAR(50),
   url             TEXT,
+  url_normalized  TEXT,        -- Нормализованный URL (для поиска дубликатов)
+  content_hash    TEXT,        -- MD5 от title_ru + summary_ru (backup защита от дублей)
   published_at    TIMESTAMP,
   fetched_at      TIMESTAMP DEFAULT NOW(),
   sentiment       VARCHAR(20),
   matched_tags    TEXT[],
   created_at      TIMESTAMP DEFAULT NOW(),
-  UNIQUE(url)  -- Предотвращает дубликаты одной и той же новости
+  UNIQUE(url),              -- Защита по оригинальному URL
+  UNIQUE(url_normalized),   -- Защита по нормализованному URL
+  UNIQUE(content_hash)      -- Backup: защита по контенту (если URL разные)
 );
 
 -- ============================================================

@@ -1,6 +1,8 @@
 import axios from 'axios';
 import { RSS_SOURCES, RssSource } from './rssSources';
 import { query } from '../config/db';
+import { normalizeUrl } from '../utils/normalizeUrl';
+import crypto from 'crypto';
 
 const CORS_PROXY = 'https://api.codetabs.com/v1/proxy?quest=';
 const FETCH_TIMEOUT = 5000;
@@ -126,18 +128,21 @@ export async function saveArticles(articles: ParsedArticle[]): Promise<number> {
   let count = 0;
   for (const a of articles) {
     try {
+      const urlNormalized = normalizeUrl(a.url || '');
+      const contentHash = crypto.createHash('md5').update(`${a.title_ru || a.title}_${a.summary_ru || a.summary}`.slice(0, 500)).digest('hex');
+
       if (USE_SQLITE) {
         await query(
-          `INSERT OR IGNORE INTO news (id, title_original, title_ru, summary_ru, source, source_id, url, published_at, lang_original)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-          [uuidv4(), a.title, a.title, a.summary, a.source, a.sourceId, a.url, a.publishedAt.toISOString(), a.lang]
+          `INSERT OR IGNORE INTO news (id, title_original, title_ru, summary_ru, source, source_id, url, url_normalized, content_hash, published_at, lang_original)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+          [uuidv4(), a.title, a.title_ru || a.title, a.summary_ru || a.summary, a.source, a.sourceId, a.url, urlNormalized, contentHash, a.publishedAt.toISOString(), a.lang]
         );
       } else {
         await query(
-          `INSERT INTO news (title_original, title_ru, summary_ru, source, source_id, url, published_at, lang_original)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-           ON CONFLICT DO NOTHING`,
-          [a.title, a.title, a.summary, a.source, a.sourceId, a.url, a.publishedAt, a.lang]
+          `INSERT INTO news (title_original, title_ru, summary_ru, source, source_id, url, url_normalized, content_hash, published_at, lang_original)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+           ON CONFLICT (url) DO NOTHING`,
+          [a.title, a.title_ru || a.title, a.summary_ru || a.summary, a.source, a.sourceId, a.url, urlNormalized, contentHash, a.publishedAt, a.lang]
         );
       }
       count++;

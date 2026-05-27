@@ -1,7 +1,9 @@
 import cron from 'node-cron';
-import { fetchAllRSS, saveArticles } from './rssFetcher';
+import { fetchAllRSS } from './rssFetcher';
 import { translateBatch } from './translate';
 import { query } from '../config/db';
+import { normalizeUrl } from '../utils/normalizeUrl';
+import crypto from 'crypto';
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
@@ -116,10 +118,15 @@ async function processArticles() {
           [uuidv4(), a.title, a.title_ru || a.title, a.summary_ru || a.summary, a.source, a.sourceId, a.url, a.publishedAt.toISOString(), a.lang, a.sentiment, JSON.stringify(a.matched_tags)]
         );
       } else {
+        // Нормализуем URL и считаем content_hash
+        const urlNormalized = normalizeUrl(article.url || '');
+        const contentHash = crypto.createHash('md5').update(`${title_ru}_${summary_ru}`.slice(0, 500)).digest('hex');
+
         await query(
-          `INSERT INTO news (title_original, title_ru, summary_ru, source, source_id, url, published_at, lang_original, sentiment, matched_tags)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          `INSERT INTO news (title_original, title_ru, summary_ru, source, source_id, url, url_normalized, content_hash, published_at, lang_original, sentiment, matched_tags)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
            ON CONFLICT (url) DO NOTHING`,
+          [title_original, title_ru, summary_ru, article.source, article.sourceId, article.url, urlNormalized, contentHash, published_at, lang, sentiment, matchedTags]
           [a.title, a.title_ru || a.title, a.summary_ru || a.summary, a.source, a.sourceId, a.url, a.publishedAt, a.lang, a.sentiment, a.matched_tags]
         );
       }

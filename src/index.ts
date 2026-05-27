@@ -54,16 +54,7 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// TEMP: Clear all news and start fresh (one-time after UNIQUE(url) migration)
-app.get('/cleanup-news', async (req, res) => {
-  try {
-    await query('DELETE FROM news');
-    await query('DELETE FROM user_news_reads');
-    res.json({ cleared: true, message: 'All news deleted. RSS will fetch fresh unique articles.' });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
+
 
 // ═══════════════════════════════════════════════════════════════════════════
 // API Routes — все эндпоинты начинаются с /api/
@@ -135,11 +126,27 @@ async function start() {
     await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE`);
     console.log('[DB] Migration: is_admin column ensured');
   } catch { /* ignore */ }
+  // url_normalized + content_hash колонки (защита от дубликатов)
+  try {
+    await query(`ALTER TABLE news ADD COLUMN IF NOT EXISTS url_normalized TEXT`);
+    await query(`ALTER TABLE news ADD COLUMN IF NOT EXISTS content_hash TEXT`);
+    console.log('[DB] Migration: url_normalized + content_hash columns added');
+  } catch { /* ignore */ }
   // UNIQUE(url) на news — предотвращает дубликаты одной и той же новости
   try {
     await query(`ALTER TABLE news ADD CONSTRAINT news_url_unique UNIQUE (url)`);
     console.log('[DB] Migration: news.url unique constraint added');
   } catch { /* ignore — может уже существовать */ }
+  // UNIQUE(url_normalized) — защита от нормализованных дублей
+  try {
+    await query(`ALTER TABLE news ADD CONSTRAINT news_url_norm_unique UNIQUE (url_normalized)`);
+    console.log('[DB] Migration: news.url_normalized unique constraint added');
+  } catch { /* ignore */ }
+  // UNIQUE(content_hash) — backup защита по контенту
+  try {
+    await query(`ALTER TABLE news ADD CONSTRAINT news_content_hash_unique UNIQUE (content_hash)`);
+    console.log('[DB] Migration: news.content_hash unique constraint added');
+  } catch { /* ignore */ }
   // UNIQUE constraint на user_sessions.user_id
   try {
     await query(`ALTER TABLE user_sessions ADD CONSTRAINT user_sessions_user_id_unique UNIQUE (user_id)`);
