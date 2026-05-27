@@ -86,6 +86,15 @@ CREATE TABLE IF NOT EXISTS user_sessions (
 );
 
 -- ============================================================
+-- 5b. smart_tag_cache (LLM matching results)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS smart_tag_cache (
+  text_hash   VARCHAR(64) PRIMARY KEY,
+  tags        TEXT[] DEFAULT '{}',
+  created_at  TIMESTAMP DEFAULT NOW()
+);
+
+-- ============================================================
 -- 6. user_channels (TG / Email)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS user_channels (
