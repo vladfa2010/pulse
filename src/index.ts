@@ -115,6 +115,21 @@ app.post('/trigger-rss', async (req, res) => {
 
 // ═══════════════════════════════════════════════════════════════════════════
 
+// TEMP: Test RSS fetch (no save, just fetch + count)
+app.get('/test-rss', async (req, res) => {
+  try {
+    const { fetchAllRSS } = await import('./services/rssFetcher');
+    const articles = await fetchAllRSS();
+    res.json({
+      count: articles.length,
+      sources: [...new Set(articles.map(a => a.sourceId))],
+      sample: articles.slice(0, 3).map(a => ({ title: a.title.slice(0, 60), source: a.sourceId, lang: a.lang })),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // TEMP: Debug DB schema
 app.get('/debug-db', async (req, res) => {
   try {
