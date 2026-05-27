@@ -3,6 +3,11 @@ import { query } from '../config/db';
 
 const KIMI_API_KEY = process.env.KIMI_API_KEY;
 
+// Model selection via env var:
+//   moonshot-v1-8k  — fast, cheap, flexible temperature (default)
+//   kimi-k2.5       — best quality, temperature MUST be 1, ~5x more tokens
+const KIMI_MODEL = process.env.KIMI_MODEL || 'moonshot-v1-8k';
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Kimi Translation (primary)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -35,7 +40,10 @@ export async function translateWithKimi(texts: string[]): Promise<string[]> {
   }
 
   const results: string[] = [];
-  const BATCH = 3; // Smaller batch for better quality context
+  // k2.5 needs temp=1 (not configurable) and uses more tokens — smaller batch
+  const isK2 = KIMI_MODEL.startsWith('kimi-k');
+  const BATCH = isK2 ? 3 : 5;
+  const TEMP = isK2 ? 1 : 0.3;
 
   for (let i = 0; i < texts.length; i += BATCH) {
     const batch = texts.slice(i, i + BATCH);
@@ -53,7 +61,7 @@ export async function translateWithKimi(texts: string[]): Promise<string[]> {
       const response = await axios.post(
         'https://api.moonshot.ai/v1/chat/completions',
         {
-          model: 'moonshot-v1-32k', // More capable model
+          model: KIMI_MODEL,
           messages: [
             {
               role: 'system',
@@ -64,19 +72,28 @@ export async function translateWithKimi(texts: string[]): Promise<string[]> {
               content: `Translate these ${validTexts.length} financial news headlines to Russian. Return as JSON array in same order:\n${numberedInput}`
             }
           ],
-          temperature: 0.3, // More natural than 0.1
-          max_tokens: 3000,
+          temperature: TEMP,
+          max_tokens: isK2 ? 4000 : 3000,
         },
         {
           headers: {
             'Authorization': `Bearer ${KIMI_API_KEY}`,
             'Content-Type': 'application/json',
           },
-          timeout: 30000,
+          timeout: isK2 ? 60000 : 30000,
         }
       );
 
-      const content = response.data?.choices?.[0]?.message?.content || '';
+      let content = response.data?.choices?.[0]?.message?.content || '';
+
+      // k2.5 may return JSON inside markdown code blocks — extract it
+      if (content.includes('```json')) {
+        const codeMatch = content.match(/```json\n?([\s\S]*?)```/);
+        if (codeMatch) content = codeMatch[1].trim();
+      } else if (content.includes('```')) {
+        const codeMatch = content.match(/```\n?([\s\S]*?)```/);
+        if (codeMatch) content = codeMatch[1].trim();
+      }
 
       // Extract JSON array
       const jsonMatch = content.match(/\[[\s\S]*?\]/);
@@ -94,7 +111,7 @@ export async function translateWithKimi(texts: string[]): Promise<string[]> {
               results.push(original);
             }
           }
-          console.log(`[Translate] Kimi translated ${validTexts.length} texts (moonshot-v1-32k)`);
+          console.log(`[Translate] ${KIMI_MODEL} translated ${validTexts.length} texts`);
           continue;
         }
       }
@@ -112,21 +129,21 @@ export async function translateWithKimi(texts: string[]): Promise<string[]> {
             results.push(original);
           }
         }
-        console.log(`[Translate] Kimi line-parsed ${validTexts.length} texts`);
+        console.log(`[Translate] ${KIMI_MODEL} line-parsed ${validTexts.length} texts`);
         continue;
       }
 
-      console.log('[Translate] Kimi parse failed, returning originals');
+      console.log(`[Translate] ${KIMI_MODEL} parse failed, returning originals`);
       results.push(...batch);
 
     } catch (err: any) {
-      console.error(`[Translate] Kimi error: ${err.message?.slice(0, 100)}`);
+      console.error(`[Translate] ${KIMI_MODEL} error: ${err.message?.slice(0, 100)}`);
       results.push(...batch);
     }
 
     // Delay between batches
     if (i + BATCH < texts.length) {
-      await new Promise(r => setTimeout(r, 800));
+      await new Promise(r => setTimeout(r, isK2 ? 1000 : 500));
     }
   }
 
