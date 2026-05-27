@@ -333,7 +333,42 @@ async function start() {
     console.error('[DB] Connection test FAILED:', err.message);
   }
 
-  // ─── Шаг 4: Запуск HTTP-сервера ───────────────────────────────────────
+  // TEMP: Backfill matched_tags for existing articles without tags
+app.get('/backfill-tags', async (req, res) => {
+  const secret = req.headers['x-trigger-secret'] || req.query.secret;
+  if (secret !== (process.env.CRON_SECRET_KEY || 'pulse-dev-key')) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  try {
+    const { smartMatchTags } = await import('./services/smartTagMatcher');
+
+    // Find articles without matched_tags
+    const articles = await query(
+      `SELECT id, title_ru, summary_ru FROM news
+       WHERE matched_tags IS NULL OR array_length(matched_tags, 1) IS NULL
+       LIMIT 200`
+    );
+
+    let updated = 0;
+    for (const row of articles.rows) {
+      const tags = await smartMatchTags(row.title_ru, row.summary_ru);
+      if (tags.length > 0) {
+        await query(
+          `UPDATE news SET matched_tags = $1 WHERE id = $2`,
+          [tags, row.id]
+        );
+        updated++;
+      }
+    }
+
+    res.json({ processed: articles.rows.length, updated_with_tags: updated });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Шаг 4: Запуск HTTP-сервера ───────────────────────────────────────
   app.listen(PORT, () => {
     console.log(`PULSE backend running on port ${PORT}`);
     console.log(`Routes: /api/auth, /api/news, /api/payment, /api/user, /api/translate, /api/webhook, /api/admin`);
