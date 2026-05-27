@@ -51,7 +51,7 @@ app.get('/', (req, res) => {
 
 // Health check — Render использует это для мониторинга
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString(), version: '2.0' });
+  res.json({ status: 'ok', timestamp: new Date().toISOString(), version: '3.0' });
 });
 
 // TEMP: Cleanup duplicate news by content_hash (keep first, merge sources)
@@ -378,4 +378,47 @@ async function start() {
   } catch { /* ignore — может уже существовать */ }
   // UNIQUE(url_normalized) — защита от нормализованных дублей
   try {
-    await query(`ALTER TABLE news ADD CONSTRAINT news_url_norm_u
+    await query(`ALTER TABLE news ADD CONSTRAINT news_url_norm_unique UNIQUE (url_normalized)`);
+    console.log('[DB] Migration: news.url_normalized unique constraint added');
+  } catch { /* ignore */ }
+  // UNIQUE(content_hash) — одна новость = одна запись
+  try {
+    await query(`ALTER TABLE news ADD CONSTRAINT news_content_hash_unique UNIQUE (content_hash)`);
+    console.log('[DB] Migration: news.content_hash unique constraint added');
+  } catch { /* ignore */ }
+  // UNIQUE(content_hash) — backup защита по контенту
+  try {
+    await query(`ALTER TABLE news ADD CONSTRAINT news_content_hash_unique UNIQUE (content_hash)`);
+    console.log('[DB] Migration: news.content_hash unique constraint added');
+  } catch { /* ignore */ }
+  // UNIQUE constraint на user_sessions.user_id
+  try {
+    await query(`ALTER TABLE user_sessions ADD CONSTRAINT user_sessions_user_id_unique UNIQUE (user_id)`);
+    console.log('[DB] Migration: user_sessions.user_id unique constraint added');
+  } catch { /* ignore */ }
+  // UNIQUE constraint на user_news_reads (user_id, news_id)
+  try {
+    await query(`ALTER TABLE user_news_reads ADD CONSTRAINT user_news_reads_unique UNIQUE (user_id, news_id)`);
+    console.log('[DB] Migration: user_news_reads unique constraint added');
+  } catch { /* ignore */ }
+
+  // ─── Шаг 3: Проверка подключения ──────────────────────────────────────
+  try {
+    const testResult = await query('SELECT NOW() as time');
+    console.log('[DB] Connected successfully:', testResult.rows[0].time);
+  } catch (err: any) {
+    console.error('[DB] Connection test FAILED:', err.message);
+  }
+
+// ─── Шаг 4: Запуск HTTP-сервера ───────────────────────────────────────
+  app.listen(PORT, () => {
+    console.log(`PULSE backend running on port ${PORT}`);
+    console.log(`Routes: /api/auth, /api/news, /api/payment, /api/user, /api/translate, /api/webhook, /api/admin`);
+
+    // ─── Шаг 5: Запуск фоновых задач ──────────────────────────────────
+    startCron();       // ← RSS агрегация (каждые 15 минут)
+    startReportCron(); // ← Еженедельные репорты (воскресенье 13:00)
+  });
+}
+
+start();
