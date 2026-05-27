@@ -10,3 +10,4 @@ RUN npx tsc
 RUN mkdir -p dist/models && cp src/models/schema.sql dist/models/schema.sql
 EXPOSE 3001
 CMD ["node", "dist/index.js"]
+# digest service build 1779921359
