@@ -30,7 +30,7 @@ export async function translateWithKimi(texts: string[]): Promise<string[]> {
 
     try {
       const response = await axios.post(
-        'https://api.moonshot.cn/v1/chat/completions',
+        'https://api.moonshot.ai/v1/chat/completions',
         {
           model: 'moonshot-v1-8k',
           messages: [

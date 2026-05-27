@@ -51,7 +51,7 @@ app.get('/', (req, res) => {
 
 // Health check — Render использует это для мониторинга
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString(), version: '4.4' });
+  res.json({ status: 'ok', timestamp: new Date().toISOString(), version: '4.5' });
 });
 
 // TEMP: Backfill: translate existing EN titles to RU via Kimi
@@ -65,26 +65,39 @@ app.get('/backfill-translate', async (req, res) => {
     const { translateBatch } = await import('./services/translate');
 
     // Find news with EN titles (contain latin, no cyrillic)
+    // Use COALESCE: prefer title_original if available, else title_ru
     const result = await query(`
-      SELECT id, title_original, title_ru FROM news
+      SELECT id, COALESCE(NULLIF(title_original, ''), title_ru) as source_text, title_ru
+      FROM news
       WHERE title_ru ~ '[a-zA-Z]' AND title_ru !~ '[а-яёА-ЯЁ]'
       LIMIT 50
     `);
 
+    console.log(`[Backfill-Translate] Found ${result.rows.length} EN titles to translate`);
+
     let translated = 0;
+    const details: { id: string; before: string; after: string }[] = [];
+
     for (const row of result.rows) {
       try {
-        const [newTitle] = await translateBatch([row.title_original]);
-        if (newTitle && newTitle !== row.title_original) {
-          await query(`UPDATE news SET title_ru = $1 WHERE id = $2`, [newTitle, row.id]);
+        const sourceText = row.source_text || row.title_ru;
+        console.log(`[Backfill-Translate] Translating: "${sourceText?.slice(0, 60)}..."`);
+
+        const [newTitle] = await translateBatch([sourceText]);
+        if (newTitle && newTitle !== sourceText) {
+          await query(`UPDATE news SET title_ru = $1, title_original = $2 WHERE id = $3`, [newTitle, sourceText, row.id]);
           translated++;
+          details.push({ id: row.id, before: sourceText.slice(0, 80), after: newTitle.slice(0, 80) });
+          console.log(`[Backfill-Translate] ✓ "${newTitle?.slice(0, 60)}..."`);
+        } else {
+          console.log(`[Backfill-Translate] ✗ No change (API returned same text)`);
         }
       } catch (e: any) {
-        console.log(`[Backfill] Skip: ${e.message?.slice(0, 50)}`);
+        console.log(`[Backfill-Translate] Skip: ${e.message?.slice(0, 80)}`);
       }
     }
 
-    res.json({ scanned: result.rows.length, translated });
+    res.json({ scanned: result.rows.length, translated, samples: details.slice(0, 5) });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
