@@ -102,9 +102,11 @@ export async function processArticles() {
     try {
       sentiment = await analyzeSentimentLLM(title_ru, summary_ru);
       sentiment_source = 'llm';
+      console.log(`[Cron] LLM sentiment: ${sentiment} for "${title_ru.slice(0, 40)}..."`);
     } catch {
       sentiment = analyzeSentiment(text);
       sentiment_source = 'keyword';
+      console.log(`[Cron] Keyword sentiment: ${sentiment} for "${title_ru.slice(0, 40)}..."`);
     }
 
     // Smart matching: keywords → LLM → related tags

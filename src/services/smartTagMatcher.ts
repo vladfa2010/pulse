@@ -246,15 +246,17 @@ export async function smartMatchTags(
 // ═══════════════════════════════════════════════════════════════════════════
 
 export async function analyzeSentimentLLM(title: string, summary: string): Promise<'positive' | 'negative' | 'neutral'> {
-  if (!KIMI_API_KEY) return 'neutral';
+  if (!KIMI_API_KEY) {
+    console.log('[SentimentLLM] No KIMI_API_KEY');
+    return 'neutral';
+  }
 
   const prompt = `Analyze the sentiment of this financial news article.
 
 Title: ${title.slice(0, 200)}
 Summary: ${summary.slice(0, 400)}
 
-Return ONLY one word: positive, negative, or neutral.
-Consider financial context: revenue growth, profit, losses, market decline, acquisitions, etc.`;
+Return ONLY one word: positive, negative, or neutral.`;
 
   try {
     const response = await axios.post(
@@ -272,10 +274,12 @@ Consider financial context: revenue growth, profit, losses, market decline, acqu
     );
 
     const content = response.data?.choices?.[0]?.message?.content?.toLowerCase() || '';
+    console.log(`[SentimentLLM] Raw: "${content}" for "${title.slice(0, 30)}..."`);
     if (content.includes('positive')) return 'positive';
     if (content.includes('negative')) return 'negative';
     return 'neutral';
-  } catch {
+  } catch (err: any) {
+    console.error(`[SentimentLLM] Error: ${err.message?.slice(0, 100)}`);
     return 'neutral';
   }
 }
@@ -324,21 +328,24 @@ Return ONLY a JSON array:
     );
 
     const content = response.data?.choices?.[0]?.message?.content || '';
+    console.log(`[TagImpact] Raw: ${content.slice(0, 200)}`);
     const jsonMatch = content.match(/\[[\s\S]*?\]/);
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0]);
       if (Array.isArray(parsed)) {
-        return parsed
+        const result = parsed
           .filter((p: any) => tags.includes(p.tag))
           .map((p: any) => ({
             tag: p.tag,
             impact: ['positive', 'negative'].includes(p.impact) ? p.impact : 'neutral',
             reasoning: p.reasoning || '',
           }));
+        console.log(`[TagImpact] Result: ${JSON.stringify(result)}`);
+        return result;
       }
     }
-  } catch {
-    // Fallback
+  } catch (err: any) {
+    console.error(`[TagImpact] Error: ${err.message?.slice(0, 100)}`);
   }
 
   return tags.map(t => ({ tag: t, impact: 'neutral', reasoning: '' }));
