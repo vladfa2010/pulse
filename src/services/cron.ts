@@ -89,32 +89,39 @@ export async function processArticles() {
     }
   }
 
-  // 3. Analyze sentiment (LLM if available) + smart tag matching + tag impact
+  // 3. Check if LLM is available (check once, not per article)
+  const llmAvailable = !!process.env.KIMI_API_KEY;
+  console.log(`[Cron] LLM sentiment: ${llmAvailable ? 'ENABLED' : 'DISABLED (keyword-based)'}`);
+
+  // Analyze sentiment + smart tag matching
   const processed = [];
   for (const a of articles) {
     const title_ru = a.title_ru || a.title;
     const summary_ru = a.summary_ru || a.summary;
     const text = `${title_ru} ${summary_ru}`;
 
-    // Sentiment: try LLM first, fallback to keyword-based
+    // Sentiment: LLM if key exists, otherwise keyword-based (fast, no timeouts)
     let sentiment: 'positive' | 'negative' | 'neutral';
     let sentiment_source: 'llm' | 'keyword';
-    try {
-      sentiment = await analyzeSentimentLLM(title_ru, summary_ru);
-      sentiment_source = 'llm';
-      console.log(`[Cron] LLM sentiment: ${sentiment} for "${title_ru.slice(0, 40)}..."`);
-    } catch {
+    if (llmAvailable) {
+      try {
+        sentiment = await analyzeSentimentLLM(title_ru, summary_ru);
+        sentiment_source = 'llm';
+      } catch {
+        sentiment = analyzeSentiment(text);
+        sentiment_source = 'keyword';
+      }
+    } else {
       sentiment = analyzeSentiment(text);
       sentiment_source = 'keyword';
-      console.log(`[Cron] Keyword sentiment: ${sentiment} for "${title_ru.slice(0, 40)}..."`);
     }
 
     // Smart matching: keywords → LLM → related tags
     const matched_tags = await smartMatchTags(title_ru, summary_ru);
 
-    // Tag impact: how does this news affect each matched tag?
+    // Tag impact: LLM only if key exists
     let tag_impact: TagImpact[] = [];
-    if (matched_tags.length > 0) {
+    if (llmAvailable && matched_tags.length > 0) {
       try {
         tag_impact = await analyzeTagImpact(title_ru, summary_ru, matched_tags);
       } catch {
