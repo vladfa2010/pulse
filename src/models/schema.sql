@@ -72,8 +72,8 @@ CREATE TABLE IF NOT EXISTS news (
   matched_tags    TEXT[],
   created_at      TIMESTAMP DEFAULT NOW(),
   UNIQUE(url),              -- Защита по оригинальному URL (один URL = одна запись)
-  UNIQUE(url_normalized)    -- Защита по нормализованному URL
-  -- content_hash НЕ unique! Мы сохраняем дубликаты для подсчёта источников
+  UNIQUE(url_normalized),   -- Защита по нормализованному URL
+  UNIQUE(content_hash)      -- Одна новость = одна запись. Дубликаты обновляют all_sources
 );
 
 -- ============================================================

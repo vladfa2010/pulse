@@ -54,6 +54,42 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// TEMP: Cleanup duplicate news by content_hash (keep first, merge sources)
+app.get('/cleanup-content-dups', async (req, res) => {
+  try {
+    // Find duplicates by content_hash
+    const dups = await query(`
+      SELECT content_hash, array_agg(id ORDER BY published_at) as ids,
+             array_agg(source) as sources
+      FROM news
+      GROUP BY content_hash
+      HAVING count(*) > 1
+    `);
+    
+    let merged = 0;
+    for (const row of dups.rows) {
+      const ids: string[] = row.ids;
+      const sources: string[] = [...new Set(row.sources)]; // unique sources
+      const keepId = ids[0]; // keep oldest
+      const removeIds = ids.slice(1); // remove rest
+      
+      // Update kept record with merged sources
+      await query(`UPDATE news SET all_sources = $1, source_count = $2 WHERE id = $3`,
+        [sources, sources.length, keepId]);
+      
+      // Delete duplicates
+      for (const removeId of removeIds) {
+        await query(`DELETE FROM news WHERE id = $1`, [removeId]);
+        merged++;
+      }
+    }
+    
+    res.json({ cleaned: merged, groups: dups.rows.length });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // TEMP: Debug DB schema
 app.get('/debug-db', async (req, res) => {
   try {
@@ -176,6 +212,11 @@ async function start() {
   try {
     await query(`ALTER TABLE news ADD CONSTRAINT news_url_norm_unique UNIQUE (url_normalized)`);
     console.log('[DB] Migration: news.url_normalized unique constraint added');
+  } catch { /* ignore */ }
+  // UNIQUE(content_hash) — одна новость = одна запись
+  try {
+    await query(`ALTER TABLE news ADD CONSTRAINT news_content_hash_unique UNIQUE (content_hash)`);
+    console.log('[DB] Migration: news.content_hash unique constraint added');
   } catch { /* ignore */ }
   // UNIQUE(content_hash) — backup защита по контенту
   try {
