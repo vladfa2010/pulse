@@ -265,13 +265,51 @@ app.get('/quick-tags', async (req, res) => {
   }
 });
 
-// TEMP: Check LLM config
-app.get('/debug-llm', async (req, res) => {
-  res.json({
-    kimi_key_set: !!process.env.KIMI_API_KEY,
-    kimi_key_prefix: process.env.KIMI_API_KEY ? process.env.KIMI_API_KEY.slice(0, 10) + '...' : null,
-    cron_secret_set: !!process.env.CRON_SECRET_KEY,
-  });
+// TEMP: Cleanup news — keep only 50 latest
+app.get('/cleanup-news', async (req, res) => {
+  const secret = req.headers['x-trigger-secret'] || req.query.secret;
+  if (secret !== (process.env.CRON_SECRET_KEY || 'pulse-dev-key')) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  try {
+    // Count before
+    const before = await query('SELECT COUNT(*) as c FROM news');
+    const beforeCount = parseInt(before.rows[0]?.c || '0');
+
+    // Keep 50 latest by published_at
+    await query(`
+      DELETE FROM news
+      WHERE id NOT IN (
+        SELECT id FROM news
+        ORDER BY published_at DESC
+        LIMIT 50
+      )
+    `);
+
+    // Clean up orphaned reads
+    await query(`
+      DELETE FROM user_news_reads
+      WHERE news_id NOT IN (SELECT id FROM news)
+    `);
+
+    // Clean caches
+    await query(`DELETE FROM translation_cache`);
+    await query(`DELETE FROM smart_tag_cache`);
+
+    // Count after
+    const after = await query('SELECT COUNT(*) as c FROM news');
+    const afterCount = parseInt(after.rows[0]?.c || '0');
+
+    res.json({
+      before: beforeCount,
+      after: afterCount,
+      deleted: beforeCount - afterCount,
+      message: 'Kept 50 latest news, cleaned caches and orphaned reads',
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // TEMP: Stats on matched_tags distribution
