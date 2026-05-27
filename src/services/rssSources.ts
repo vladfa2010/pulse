@@ -19,7 +19,7 @@ export const RSS_SOURCES: RssSource[] = [
   { id: 'tass', name: 'ТАСС', url: 'https://tass.ru/rss/v2.xml', lang: 'ru', category: 'news' },
   { id: 'ria', name: 'РИА Новости', url: 'https://ria.ru/export/rss2/archive/index.xml', lang: 'ru', category: 'news' },
   { id: 'interfax', name: 'Интерфакс', url: 'https://www.interfax.ru/rss.asp', lang: 'ru', category: 'news' },
-  { id: 'forbes_ru', name: 'Forbes Russia', url: 'https://www.forbes.ru/rss', lang: 'ru', category: 'business' },
+  { id: 'seekingalpha', name: 'Seeking Alpha', url: 'https://seekingalpha.com/feed.xml', lang: 'en', category: 'finance' },
   { id: 'rt', name: 'RT', url: 'https://russian.rt.com/rss', lang: 'ru', category: 'news' },
   { id: 'izvestia', name: 'Известия', url: 'https://iz.ru/xml/rss/all.xml', lang: 'ru', category: 'news' },
 
@@ -47,8 +47,9 @@ export const RSS_SOURCES: RssSource[] = [
   { id: 'cointelegraph', name: 'Cointelegraph', url: 'https://cointelegraph.com/rss', lang: 'en', category: 'crypto' },
 
   // Energy (2)
-  { id: 'oilprice', name: 'OilPrice.com', url: 'https://oilprice.com/rss/main.xml', lang: 'en', category: 'energy' },
+  { id: 'oilprice', name: 'OilPrice.com', url: 'https://oilprice.com/rss.xml', lang: 'en', category: 'energy' },
   { id: 'mining', name: 'Mining.com', url: 'https://www.mining.com/feed/', lang: 'en', category: 'energy' },
+  { id: 'marketwatch', name: 'MarketWatch', url: 'https://feeds.content.dowjones.io/public/rss/mw_topstories', lang: 'en', category: 'finance' },
 ];
 
 export const EN_SOURCES = RSS_SOURCES.filter(s => s.lang === 'en');

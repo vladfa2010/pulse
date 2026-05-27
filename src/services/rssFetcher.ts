@@ -4,10 +4,11 @@ import { query } from '../config/db';
 import { normalizeUrl } from '../utils/normalizeUrl';
 import crypto from 'crypto';
 
-const CORS_PROXY = 'https://api.codetabs.com/v1/proxy?quest=';
-const FETCH_TIMEOUT = 5000;
+// CORS proxy only needed in browser — server makes direct requests
+const CORS_PROXY = '';
+const FETCH_TIMEOUT = 8000;
 const BATCH_SIZE = 4;
-const BATCH_DELAY = 1000; // 1s pause between batches to avoid overload
+const BATCH_DELAY = 1500; // 1.5s pause between batches
 
 export interface ParsedArticle {
   title: string;
@@ -64,16 +65,21 @@ function stripHtml(html: string): string {
     .replace(/&nbsp;/g, ' ');
 }
 
-// Fetch single source with timeout
+// Fetch single source with timeout (direct — no CORS proxy on server)
 async function fetchSource(source: RssSource): Promise<ParsedArticle[]> {
   try {
-    const response = await axios.get(`${CORS_PROXY}${encodeURIComponent(source.url)}`, {
+    const response = await axios.get(source.url, {
       timeout: FETCH_TIMEOUT,
       responseType: 'text',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; PULSE RSS Bot/1.0)',
+        'Accept': 'application/rss+xml, application/xml, text/xml, */*',
+      },
+      maxRedirects: 5,
     });
     return parseRSS(response.data, source);
-  } catch (err) {
-    console.warn(`RSS fetch failed for ${source.id}:`, (err as Error).message);
+  } catch (err: any) {
+    console.warn(`RSS fetch failed for ${source.id}: ${err.message?.substring(0, 100)}`);
     return [];
   }
 }
