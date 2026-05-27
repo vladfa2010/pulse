@@ -133,7 +133,12 @@ async function start() {
     await query(`ALTER TABLE news ADD COLUMN IF NOT EXISTS all_sources TEXT[] DEFAULT '{}'`);
     await query(`ALTER TABLE news ADD COLUMN IF NOT EXISTS source_count INTEGER DEFAULT 1`);
     console.log('[DB] Migration: url_normalized, content_hash, all_sources, source_count columns added');
-  } catch { /* ignore */ }
+    // Backfill: set all_sources = {source}, source_count = 1 for existing rows
+    await query(`UPDATE news SET all_sources = ARRAY[source], source_count = 1 WHERE all_sources = '{}'::text[] OR all_sources IS NULL`);
+    console.log('[DB] Migration: backfilled all_sources and source_count');
+  } catch (e: any) {
+    console.log('[DB] Migration warning:', e.message);
+  }
   // UNIQUE(url) на news — предотвращает дубликаты одной и той же новости
   try {
     await query(`ALTER TABLE news ADD CONSTRAINT news_url_unique UNIQUE (url)`);
