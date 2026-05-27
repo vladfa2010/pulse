@@ -27,6 +27,8 @@
 import { Router } from 'express';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { query } from '../config/db';
+import { validate } from '../middleware/validate';
+import { CreatePaymentSchema, ConfirmPaymentSchema } from '../schemas/payment';
 import axios from 'axios';
 
 const router = Router();
@@ -73,7 +75,7 @@ function yookassaAuth(): string {
 //   1. Сохраняем платёж в БД (status = 'pending')
 //   2. Если YuKassa настроена → создаём платёж через API YuKassa
 //   3. Если YuKassa НЕ настроена → demo-режим
-router.post('/create', authMiddleware, async (req: AuthRequest, res) => {
+router.post('/create', authMiddleware, validate(CreatePaymentSchema), async (req: AuthRequest, res) => {
   try {
     const userId = req.user!.userId;     // ID пользователя из JWT токена
     const { amount = 490, discount = 0, method = 'bank_card' } = req.body;
@@ -163,7 +165,7 @@ router.post('/create', authMiddleware, async (req: AuthRequest, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 // Используется в demo-режиме когда YuKassa не подключена.
 // Просто активирует подписку без реальной оплаты.
-router.post('/confirm', authMiddleware, async (req: AuthRequest, res) => {
+router.post('/confirm', authMiddleware, validate(ConfirmPaymentSchema), async (req: AuthRequest, res) => {
   try {
     const userId = req.user!.userId;
     const { paymentId } = req.body;

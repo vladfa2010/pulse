@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { query } from '../config/db';
+import { validate } from '../middleware/validate';
+import { AddTagSchema } from '../schemas/user';
 
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
@@ -120,7 +122,7 @@ router.get('/tags', authMiddleware, async (req: AuthRequest, res) => {
 });
 
 // POST /api/user/tags — add a tag
-router.post('/tags', authMiddleware, async (req: AuthRequest, res) => {
+router.post('/tags', authMiddleware, validate(AddTagSchema), async (req: AuthRequest, res) => {
   try {
     const userId = req.user!.userId;
     const { tagId, tagName, tagType } = req.body;

@@ -17,13 +17,14 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { query } from './config/db';          // ← Единая функция для SQL-запросов
-import authRoutes from './routes/auth';        // ← Регистрация, логин, /me
-import newsRoutes from './routes/news';        // ← Новости (RSS)
-import paymentRoutes from './routes/payment';  // ← YuKassa платежи
-import userRoutes from './routes/user';        // ← Портфель, теги, настройки
-import translateRoutes from './routes/translate'; // ← Перевод новостей
-import webhookRoutes from './routes/webhook';  // ← Вебхуки YuKassa
-import adminRoutes from './routes/admin';      // ← Админка (статистика)
+import authRoutes from './routes/auth';
+import newsRoutes from './routes/news';
+import paymentRoutes from './routes/payment';
+import userRoutes from './routes/user';
+import translateRoutes from './routes/translate';
+import webhookRoutes from './routes/webhook';
+import adminRoutes from './routes/admin';
+import { apiLimiter, authLimiter, webhookLimiter } from './middleware/rateLimit';
 import { startCron } from './services/cron';   // ← RSS агрегатор (каждые 15 мин)
 import { startReportCron } from './services/reports'; // ← Еженедельные репорты
 
@@ -37,8 +38,9 @@ const USE_SQLITE = process.env.USE_SQLITE === 'true';
 // ═══════════════════════════════════════════════════════════════════════════
 // Middleware — обработка входящих запросов
 // ═══════════════════════════════════════════════════════════════════════════
-app.use(cors());        // ← Разрешаем кросс-доменные запросы (фронтенд ↔ бэкенд)
-app.use(express.json()); // ← Парсим JSON в req.body
+app.use(cors());
+app.use(express.json());
+app.use(apiLimiter);  // ← Rate limiting для всех API запросов (Task 4)
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Корневая страница — статус API (показывает что сервер жив)
@@ -66,12 +68,12 @@ app.get('/cleanup-news', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 // API Routes — все эндпоинты начинаются с /api/
 // ═══════════════════════════════════════════════════════════════════════════
-app.use('/api/auth', authRoutes);       // POST /api/auth/login, /register, /me
+app.use('/api/auth', authLimiter, authRoutes);  // Строгий лимит (5/15min) — защита от брутфорса
 app.use('/api/news', newsRoutes);       // GET /api/news, /api/news/:tag
 app.use('/api/payment', paymentRoutes); // POST /api/payment/create, /confirm
 app.use('/api/user', userRoutes);       // GET/POST/DELETE /api/user/tags
 app.use('/api/translate', translateRoutes);
-app.use('/api/webhook', webhookRoutes); // POST /api/webhook/yookassa
+app.use('/api/webhook', webhookLimiter, webhookRoutes); // Высокий лимит для YuKassa
 app.use('/api/admin', adminRoutes);     // GET /api/admin/users, /stats
 
 // 404 — если роут не найден

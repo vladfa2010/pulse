@@ -21,9 +21,11 @@
  */
 
 import { Router } from 'express';
-import bcrypt from 'bcryptjs';   // ← Хеширование паролей
-import jwt from 'jsonwebtoken';  // ← Создание JWT токенов
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
 import { query } from '../config/db';
+import { validate } from '../middleware/validate';
+import { RegisterSchema, LoginSchema } from '../schemas/auth';
 
 const router = Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
@@ -44,7 +46,7 @@ function uuidv4(): string {
 // Принимает: { email, username, password }
 // Возвращает: { token, user: { id, email, username, is_admin } }
 // Ошибки: 400 (неверные данные), 409 (email уже занят), 500 (внутренняя)
-router.post('/register', async (req, res) => {
+router.post('/register', validate(RegisterSchema), async (req, res) => {
   try {
     const { email, username, password } = req.body;
 
@@ -101,7 +103,7 @@ router.post('/register', async (req, res) => {
 // Принимает: { email, password }
 // Возвращает: { token, user: { id, email, username, is_admin } }
 // Ошибки: 400 (нет данных), 404 (пользователь не найден), 401 (неверный пароль)
-router.post('/login', async (req, res) => {
+router.post('/login', validate(LoginSchema), async (req, res) => {
   try {
     const { email, password } = req.body;
 
