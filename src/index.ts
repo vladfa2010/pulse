@@ -54,6 +54,42 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString(), version: '4.4' });
 });
 
+// TEMP: Backfill: translate existing EN titles to RU via Kimi
+app.get('/backfill-translate', async (req, res) => {
+  const secret = req.headers['x-trigger-secret'] || req.query.secret;
+  if (secret !== (process.env.CRON_SECRET_KEY || 'pulse-dev-key')) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  try {
+    const { translateBatch } = await import('./services/translate');
+
+    // Find news with EN titles (contain latin, no cyrillic)
+    const result = await query(`
+      SELECT id, title_original, title_ru FROM news
+      WHERE title_ru ~ '[a-zA-Z]' AND title_ru !~ '[а-яёА-ЯЁ]'
+      LIMIT 50
+    `);
+
+    let translated = 0;
+    for (const row of result.rows) {
+      try {
+        const [newTitle] = await translateBatch([row.title_original]);
+        if (newTitle && newTitle !== row.title_original) {
+          await query(`UPDATE news SET title_ru = $1 WHERE id = $2`, [newTitle, row.id]);
+          translated++;
+        }
+      } catch (e: any) {
+        console.log(`[Backfill] Skip: ${e.message?.slice(0, 50)}`);
+      }
+    }
+
+    res.json({ scanned: result.rows.length, translated });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // TEMP: Check env vars (safe — no secrets exposed)
 app.get('/debug-env', async (req, res) => {
   res.json({
