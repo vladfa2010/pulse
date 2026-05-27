@@ -159,8 +159,8 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
       hasMore: offset + articles.length < total,
     });
   } catch (err: any) {
-    console.error('[News] Feed error:', err.message);
-    res.status(500).json({ error: 'Failed to fetch news' });
+    console.error('[News] Feed error:', err.message, err.stack?.substring(0, 200));
+    res.status(500).json({ error: 'Failed to fetch news', details: err.message });
   }
 });
 

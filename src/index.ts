@@ -117,12 +117,26 @@ async function start() {
   }
 
   // ─── Шаг 2: Миграции ──────────────────────────────────────────────────
-  // Добавляем колонки, которые могут отсутствовать в старых версиях схемы
+  // Добавляем колонки и constraints, которые могут отсутствовать
   try {
     await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE`);
     console.log('[DB] Migration: is_admin column ensured');
   } catch {
-    // ignore — может не поддерживаться в SQLite
+    // ignore
+  }
+  // UNIQUE constraint на user_sessions.user_id (нужен для ON CONFLICT)
+  try {
+    await query(`ALTER TABLE user_sessions ADD CONSTRAINT user_sessions_user_id_unique UNIQUE (user_id)`);
+    console.log('[DB] Migration: user_sessions.user_id unique constraint added');
+  } catch {
+    // ignore — может уже существовать или не поддерживаться в SQLite
+  }
+  // UNIQUE constraint на user_news_reads (user_id, news_id)
+  try {
+    await query(`ALTER TABLE user_news_reads ADD CONSTRAINT user_news_reads_unique UNIQUE (user_id, news_id)`);
+    console.log('[DB] Migration: user_news_reads unique constraint added');
+  } catch {
+    // ignore
   }
 
   // ─── Шаг 3: Проверка подключения ──────────────────────────────────────

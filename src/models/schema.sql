@@ -74,7 +74,7 @@ CREATE TABLE IF NOT EXISTS news (
 -- ============================================================
 CREATE TABLE IF NOT EXISTS user_sessions (
   id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id         UUID REFERENCES users(id) ON DELETE CASCADE,
+  user_id         UUID REFERENCES users(id) ON DELETE CASCADE UNIQUE,
   last_connected_at TIMESTAMP DEFAULT NOW()
 );
 
