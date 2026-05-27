@@ -132,7 +132,7 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
       total = parseInt(countResult.rows[0]?.count || '0');
 
       // Get (with source_count and all_sources)
-      const orderDir = history ? 'ASC' : 'DESC';
+      const orderDir = 'DESC'; // всегда новые сверху
       const result = await query(
         `SELECT id, title_ru, summary_ru, source, url, published_at, sentiment, sentiment_source, matched_tags,
                 tag_impact, source_count, all_sources
@@ -173,8 +173,7 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
       total = parseInt(countResult.rows[0]?.count || '0');
 
       // Get (with source_count and all_sources)
-      // history → хронологический порядок (ASC), остальные → новые сверху (DESC)
-      const pgOrder = history ? 'ASC' : 'DESC';
+      const pgOrder = 'DESC'; // всегда новые сверху
       const result = await query(
         `SELECT id, title_ru, summary_ru, source, url, published_at, sentiment, sentiment_source, matched_tags,
                 tag_impact, source_count, all_sources
@@ -293,4 +292,4 @@ router.get('/tags/:tagId', async (req, res) => {
   }
 });
 
-export default router;
+e
