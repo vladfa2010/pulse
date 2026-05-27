@@ -120,10 +120,12 @@ app.get('/test-rss', async (req, res) => {
   try {
     const { fetchAllRSS } = await import('./services/rssFetcher');
     const articles = await fetchAllRSS();
+    const sorted = [...articles].sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime());
     res.json({
       count: articles.length,
       sources: [...new Set(articles.map(a => a.sourceId))],
-      sample: articles.slice(0, 3).map(a => ({ title: a.title.slice(0, 60), source: a.sourceId, lang: a.lang })),
+      newest: sorted.slice(0, 5).map(a => ({ title: a.title.slice(0, 60), source: a.sourceId, date: a.publishedAt?.toISOString() })),
+      oldest: sorted.slice(-3).map(a => ({ title: a.title.slice(0, 60), source: a.sourceId, date: a.publishedAt?.toISOString() })),
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -172,11 +174,23 @@ app.get('/debug-db', async (req, res) => {
       FROM pg_indexes
       WHERE tablename = 'news' AND indexdef LIKE '%content_hash%'
     `);
+    // Date distribution
+    const dateDist = await query(`
+      SELECT
+        COUNT(*) FILTER (WHERE published_at > NOW() - INTERVAL '7 days') as d7,
+        COUNT(*) FILTER (WHERE published_at > NOW() - INTERVAL '14 days') as d14,
+        COUNT(*) FILTER (WHERE published_at > NOW() - INTERVAL '30 days') as d30,
+        COUNT(*) FILTER (WHERE published_at > NOW() - INTERVAL '90 days') as d90,
+        MIN(published_at) as oldest,
+        MAX(published_at) as newest
+      FROM news
+    `);
     res.json({
       columns: columns.rows,
       news_count: parseInt(count.rows[0]?.c || '0'),
       content_hash_constraints: constraints.rows,
       content_hash_indexes: indexes.rows,
+      date_distribution: dateDist.rows[0],
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
