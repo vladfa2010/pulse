@@ -143,19 +143,35 @@ app.get('/test-process', async (req, res) => {
   }
 });
 
-// TEMP: Debug DB schema
+// TEMP: Debug DB schema + constraints
 app.get('/debug-db', async (req, res) => {
   try {
     const columns = await query(`
-      SELECT column_name, data_type 
-      FROM information_schema.columns 
-      WHERE table_name = 'news' 
+      SELECT column_name, data_type
+      FROM information_schema.columns
+      WHERE table_name = 'news'
       ORDER BY ordinal_position
     `);
     const count = await query('SELECT COUNT(*) as c FROM news');
+    // Check UNIQUE constraints on content_hash
+    const constraints = await query(`
+      SELECT tc.constraint_name, tc.constraint_type, kcu.column_name
+      FROM information_schema.table_constraints tc
+      JOIN information_schema.key_column_usage kcu
+        ON tc.constraint_name = kcu.constraint_name
+      WHERE tc.table_name = 'news' AND kcu.column_name = 'content_hash'
+    `);
+    // Check indexes on content_hash
+    const indexes = await query(`
+      SELECT indexname, indexdef
+      FROM pg_indexes
+      WHERE tablename = 'news' AND indexdef LIKE '%content_hash%'
+    `);
     res.json({
       columns: columns.rows,
       news_count: parseInt(count.rows[0]?.c || '0'),
+      content_hash_constraints: constraints.rows,
+      content_hash_indexes: indexes.rows,
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });

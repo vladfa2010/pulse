@@ -154,8 +154,8 @@ export async function processArticles() {
           merged++;     // Дубликат — обновили all_sources
         }
       }
-    } catch {
-      // Skip errors
+    } catch (e: any) {
+      console.error(`[Cron] Save error for article "${a.title?.slice(0, 40)}": ${e.message?.slice(0, 100)}`);
     }
   }
 
