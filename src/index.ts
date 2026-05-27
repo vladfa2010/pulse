@@ -134,10 +134,15 @@ app.get('/test-rss', async (req, res) => {
 app.get('/test-process', async (req, res) => {
   try {
     const start = Date.now();
+    // Capture console.error output
+    const errors: string[] = [];
+    const origError = console.error;
+    console.error = (...args: any[]) => errors.push(args.map(a => String(a)).join(' '));
     await processArticles();
+    console.error = origError;
     const elapsed = Date.now() - start;
     const count = await query('SELECT COUNT(*) as c FROM news');
-    res.json({ status: 'done', elapsed_ms: elapsed, news_count: parseInt(count.rows[0]?.c || '0') });
+    res.json({ status: 'done', elapsed_ms: elapsed, news_count: parseInt(count.rows[0]?.c || '0'), errors: errors.slice(0, 20) });
   } catch (err: any) {
     res.status(500).json({ error: err.message, stack: err.stack });
   }
