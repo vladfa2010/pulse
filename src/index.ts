@@ -233,6 +233,15 @@ app.get('/debug-db', async (req, res) => {
       FROM pg_indexes
       WHERE tablename = 'news' AND indexdef LIKE '%content_hash%'
     `);
+    // Summary translation stats
+    const summaryStats = await query(`
+      SELECT
+        COUNT(*) FILTER (WHERE summary_ru IS NULL OR TRIM(summary_ru) = '') as empty,
+        COUNT(*) FILTER (WHERE summary_ru IS NOT NULL AND TRIM(summary_ru) != '') as filled,
+        COUNT(*) FILTER (WHERE (summary_ru IS NULL OR TRIM(summary_ru) = '') AND lang_original = 'en') as en_empty,
+        COUNT(*) FILTER (WHERE (summary_ru IS NULL OR TRIM(summary_ru) = '') AND lang_original = 'ru') as ru_empty
+      FROM news
+    `);
     // Date distribution
     const dateDist = await query(`
       SELECT
@@ -251,6 +260,7 @@ app.get('/debug-db', async (req, res) => {
       news_count: parseInt(count.rows[0]?.c || '0'),
       content_hash_constraints: constraints.rows,
       content_hash_indexes: indexes.rows,
+      summary_stats: summaryStats.rows[0],
       date_distribution: dateDist.rows[0],
       db_size: dbSize.rows[0]?.size,
     });
@@ -521,13 +531,4 @@ async function start() {
 
 // ─── Шаг 4: Запуск HTTP-сервера ───────────────────────────────────────
   app.listen(PORT, () => {
-    console.log(`PULSE backend running on port ${PORT}`);
-    console.log(`Routes: /api/auth, /api/news, /api/payment, /api/user, /api/translate, /api/webhook, /api/admin`);
-
-    // ─── Шаг 5: Запуск фоновых задач ──────────────────────────────────
-    startCron();       // ← RSS агрегация (каждые 15 минут)
-    startReportCron(); // ← Еженедельные репорты (воскресенье 13:00)
-  });
-}
-
-start();
+    console.log(`PULSE bac
