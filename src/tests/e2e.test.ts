@@ -19,19 +19,24 @@ import { query } from '../config/db';
 const API_URL = process.env.API_URL || 'https://pulse-api-bsov.onrender.com/api';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
-async function post(path: string, body: any, token?: string) {
+interface ApiResponse {
+  status: number;
+  data: Record<string, any>;
+}
+
+async function post(path: string, body: any, token?: string): Promise<ApiResponse> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
   const res = await fetch(`${API_URL}${path}`, { method: 'POST', headers, body: JSON.stringify(body) });
-  const data = await res.json().catch(() => ({}));
+  const data = await res.json().catch(() => ({})) as Record<string, any>;
   return { status: res.status, data };
 }
 
-async function get(path: string, token: string) {
+async function get(path: string, token: string): Promise<ApiResponse> {
   const res = await fetch(`${API_URL}${path}`, {
     headers: { 'Authorization': `Bearer ${token}` },
   });
-  const data = await res.json().catch(() => ({}));
+  const data = await res.json().catch(() => ({})) as Record<string, any>;
   return { status: res.status, data };
 }
 
