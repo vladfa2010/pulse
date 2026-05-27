@@ -28,6 +28,36 @@ import crypto from 'crypto';
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Tag matching — keywords for user tags
+// ═══════════════════════════════════════════════════════════════════════════
+const TAG_KEYWORDS: Record<string, string[]> = {
+  'sber': ['сбербанк', 'сбер', 'sberbank', 'sber'],
+  'gazprom': ['газпром', 'gazprom'],
+  'yandex': ['яндекс', 'yandex'],
+  'nvda': ['nvidia', 'nvda', 'енвидиа'],
+  'tech': ['технолог', 'technology', 'tech', 'it ', 'айти'],
+  'crypto': ['криптовалют', 'bitcoin', 'биткоин', 'ethereum', 'блокчейн', 'blockchain'],
+  'oil': ['нефт', 'нефть', 'oil', 'газ', 'газов'],
+  'greff': ['греф', 'gref'],
+  'tesla': ['tesla', 'тесла', 'musk', 'маск', 'elon'],
+  'apple': ['apple', 'эпл', 'iphone', 'ipad', 'macbook'],
+  'ai': ['искусственный интеллект', 'ии', 'нейросет', 'chatgpt', 'gpt', 'llm', 'machine learning', 'ml ', 'openai'],
+  'fed': ['фрс', 'федеральный резерв', 'fed', 'federal reserve', 'powell', 'паунел'],
+  'gold': ['золот', 'gold', 'золото'],
+};
+
+function matchTags(text: string): string[] {
+  const lower = text.toLowerCase();
+  const matched: string[] = [];
+  for (const [tagId, keywords] of Object.entries(TAG_KEYWORDS)) {
+    if (keywords.some(kw => lower.includes(kw))) {
+      matched.push(tagId);
+    }
+  }
+  return matched;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // analyzeSentiment — простой анализ на основе ключевых слов
 // ═══════════════════════════════════════════════════════════════════════════
 function analyzeSentiment(text: string): 'positive' | 'negative' | 'neutral' {
@@ -88,12 +118,14 @@ export async function processArticles() {
   const processed = articles.map(a => {
     const text = `${a.title_ru || a.title} ${a.summary_ru || a.summary}`;
     const sentiment = analyzeSentiment(text);
+    const matched_tags = matchTags(text);
 
     return {
       ...a,
       title_ru: a.title_ru || a.title,
       summary_ru: a.summary_ru || a.summary,
       sentiment,
+      matched_tags,
     };
   });
 
