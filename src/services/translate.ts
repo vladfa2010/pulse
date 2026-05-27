@@ -60,6 +60,7 @@ export async function translateWithGoogle(texts: string[]): Promise<string[]> {
   try {
     const results = await Promise.all(
       texts.map(async (text) => {
+        if (!text || text.length < 2) return text;
         const response = await axios.post(
           'https://translate.googleapis.com/translate_a/single',
           null,
@@ -71,6 +72,7 @@ export async function translateWithGoogle(texts: string[]): Promise<string[]> {
               dt: 't',
               q: text,
             },
+            timeout: 5000,
           }
         );
         return response.data[0][0][0] || text;
@@ -117,8 +119,4 @@ export async function translateBatch(texts: string[]): Promise<string[]> {
   for (let i = 0; i < toTranslate.length; i++) {
     const { index, text } = toTranslate[i];
     results[index] = translated[i];
-    await saveTranslation(text, translated[i]);
-  }
-
-  return results;
-}
+    await saveTranslat
