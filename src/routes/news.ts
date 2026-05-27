@@ -292,4 +292,4 @@ router.get('/tags/:tagId', async (req, res) => {
   }
 });
 
-e
+export default router;
