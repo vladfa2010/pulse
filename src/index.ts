@@ -27,6 +27,7 @@ import adminRoutes from './routes/admin';
 import { apiLimiter, authLimiter, webhookLimiter } from './middleware/rateLimit';
 import { startCron, processArticles } from './services/cron';   // ← RSS агрегатор (каждые 15 мин)
 import { startReportCron } from './services/reports'; // ← Еженедельные репорты
+import { startDigestCron, sendAllDigests } from './services/digest'; // ← TG дайджест (каждые 3 ч)
 
 dotenv.config();
 
@@ -456,6 +457,193 @@ app.get('/tag-stats', async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Telegram Bot Webhook — обработка команд (/start, /stop, /now, /settings)
+// ═══════════════════════════════════════════════════════════════════════════
+app.post('/webhook/telegram', express.json(), async (req, res) => {
+  try {
+    const { message } = req.body;
+    if (!message?.text || !message?.from) {
+      return res.sendStatus(200);
+    }
+
+    const chatId = message.chat.id.toString();
+    const text = message.text.trim();
+    const username = message.from.username || message.from.first_name || 'User';
+
+    // Log
+    console.log(`[TG Bot] ${username} (${chatId}): ${text}`);
+
+    // Handle commands
+    switch (text.toLowerCase()) {
+      case '/start': {
+        // Try to find user by this chat_id
+        const userResult = await query(
+          `SELECT u.id, u.email FROM users u
+           JOIN user_channels uc ON uc.user_id = u.id
+           WHERE uc.channel = 'telegram' AND uc.target = $1`,
+          [chatId]
+        );
+
+        if (userResult.rows.length > 0) {
+          const user = userResult.rows[0];
+          await sendTelegramReply(chatId,
+            `👋 Привет, ${escapeMd(username)}!\n\n` +
+            `Ваш аккаунт подключен: ${escapeMd(user.email)}\n\n` +
+            `📰 Команды:\n` +
+            `/now — получить свежий дайджест\n` +
+            `/stop — приостановить рассылку\n` +
+            `/settings — настройки частоты и режима сна\n\n` +
+            `⏰ Дайджест приходит каждые 3 часа (если есть новости).`
+          );
+        } else {
+          await sendTelegramReply(chatId,
+            `👋 Привет, ${escapeMd(username)}!\n\n` +
+            `Добро пожаловать в PULSE — инвестиционные новости.\n\n` +
+            `🔗 Для подключения рассылки:\n` +
+            `1. Войдите на https://pulse-frontend-jt53.onrender.com\n` +
+            `2. В профиле подключите Telegram\n\n` +
+            `📰 Доступные команды:\n` +
+            `/start — эта справка\n` +
+            `/now — запросить дайджест (если подключен)\n` +
+            `/settings — настройки`
+          );
+        }
+        break;
+      }
+
+      case '/now': {
+        const userResult = await query(
+          `SELECT u.id FROM users u
+           JOIN user_channels uc ON uc.user_id = u.id
+           WHERE uc.channel = 'telegram' AND uc.target = $1`,
+          [chatId]
+        );
+
+        if (userResult.rows.length === 0) {
+          await sendTelegramReply(chatId,
+            `⚠️ Аккаунт не подключен.\n\n` +
+            `Войдите на сайт и подключите Telegram в профиле.`
+          );
+          break;
+        }
+
+        await sendTelegramReply(chatId, `⏳ Собираю свежие новости…`);
+
+        // Build and send digest immediately
+        const { sendDigestToUser } = await import('./services/digest');
+        const ok = await sendDigestToUser(userResult.rows[0].id);
+
+        if (!ok) {
+          await sendTelegramReply(chatId,
+            `📭 Нет новых непрочитанных новостей по вашим тегам.\n\n` +
+            `Проверьте позже или добавьте теги на сайте.`
+          );
+        }
+        break;
+      }
+
+      case '/stop': {
+        const userResult = await query(
+          `SELECT u.id FROM users u
+           JOIN user_channels uc ON uc.user_id = u.id
+           WHERE uc.channel = 'telegram' AND uc.target = $1`,
+          [chatId]
+        );
+
+        if (userResult.rows.length > 0) {
+          // Disable digest
+          await query(
+            `UPDATE notification_settings SET tg_digest_enabled = FALSE WHERE user_id = $1`,
+            [userResult.rows[0].id]
+          );
+          await sendTelegramReply(chatId,
+            `🛑 Рассылка приостановлена.\n\n` +
+            `Для возобновления:\n` +
+            `• Включите на сайте в настройках\n` +
+            `• Или напишите /start`
+          );
+        } else {
+          await sendTelegramReply(chatId, `⚠️ Аккаунт не подключен.`);
+        }
+        break;
+      }
+
+      case '/settings': {
+        await sendTelegramReply(chatId,
+          `⚙️ Настройки рассылки:\n\n` +
+          `Частота дайджеста:\n` +
+          `• Каждые 3 часа (по умолчанию)\n` +
+          `• Настраивается на сайте\n\n` +
+          `Режим сна (quiet hours):\n` +
+          `• По умолчанию 22:00 — 08:00\n` +
+          `• В это время дайджест не приходит\n\n` +
+          `🔗 Управлять на сайте:\n` +
+          `https://pulse-frontend-jt53.onrender.com`
+        );
+        break;
+      }
+
+      default: {
+        // Unknown command
+        await sendTelegramReply(chatId,
+          `❓ Неизвестная команда.\n\n` +
+          `Доступные команды:\n` +
+          `/start — справка\n` +
+          `/now — дайджест сейчас\n` +
+          `/stop — отключить рассылку\n` +
+          `/settings — настройки`
+        );
+      }
+    }
+
+    res.sendStatus(200);
+  } catch (err: any) {
+    console.error('[TG Webhook] Error:', err.message);
+    res.sendStatus(200); // Always return 200 to Telegram
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Trigger digest manually (admin)
+// ═══════════════════════════════════════════════════════════════════════════
+app.get('/trigger-digest', async (req, res) => {
+  const secret = req.headers['x-trigger-secret'] || req.query.secret;
+  if (secret !== (process.env.CRON_SECRET_KEY || 'pulse-dev-key')) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  try {
+    sendAllDigests();
+    res.json({ status: 'started', message: 'Digest distribution running in background' });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TG webhook helper
+// ═══════════════════════════════════════════════════════════════════════════
+async function sendTelegramReply(chatId: string, text: string): Promise<void> {
+  const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+  if (!BOT_TOKEN) return;
+
+  try {
+    const axios = (await import('axios')).default;
+    await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+      chat_id: chatId,
+      text,
+      parse_mode: 'HTML',
+    });
+  } catch (err) {
+    console.error('[TG Reply] Failed:', (err as Error).message);
+  }
+}
+
+function escapeMd(text: string): string {
+  return text.replace(/[_*\[\]()~`>#+=|{}.!-]/g, '\\$&');
+}
+
 // 404 — если роут не найден
 app.use((req, res) => {
   res.status(404).json({ error: 'Not found' });
@@ -524,6 +712,10 @@ async function start() {
     { sql: `ALTER TABLE news ADD COLUMN IF NOT EXISTS tag_impact JSONB DEFAULT '[]'`, name: 'tag_impact' },
     { sql: `ALTER TABLE news ADD COLUMN IF NOT EXISTS sentiment_source VARCHAR(20) DEFAULT 'keyword'`, name: 'sentiment_source' },
     { sql: `CREATE TABLE IF NOT EXISTS user_defined_tags (tag_id VARCHAR(50) PRIMARY KEY, tag_name VARCHAR(100) NOT NULL, tag_type VARCHAR(20) DEFAULT 'company', keywords TEXT[] DEFAULT '{}', created_by UUID REFERENCES users(id), created_at TIMESTAMP DEFAULT NOW())`, name: 'user_defined_tags' },
+    // Telegram digest settings
+    { sql: `ALTER TABLE notification_settings ADD COLUMN IF NOT EXISTS tg_digest_enabled BOOLEAN DEFAULT FALSE`, name: 'tg_digest_enabled' },
+    { sql: `ALTER TABLE notification_settings ADD COLUMN IF NOT EXISTS digest_frequency VARCHAR(10) DEFAULT '3h'`, name: 'digest_frequency' },
+    { sql: `ALTER TABLE notification_settings ADD COLUMN IF NOT EXISTS last_digest_sent TIMESTAMP`, name: 'last_digest_sent' },
   ];
   for (const m of migrations) {
     try {
@@ -587,6 +779,7 @@ async function start() {
     // ─── Шаг 5: Запуск фоновых задач ──────────────────────────────────
     startCron();       // ← RSS агрегация (каждые 15 минут)
     startReportCron(); // ← Еженедельные репорты (воскресенье 13:00)
+    startDigestCron(); // ← TG дайджест (каждые 3 часа)
   });
 }
 
