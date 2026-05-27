@@ -368,6 +368,50 @@ app.get('/backfill-tags', async (req, res) => {
   }
 });
 
+// TEMP: Quick tag distribution query
+app.get('/quick-tags', async (req, res) => {
+  try {
+    const result = await query(`
+      SELECT matched_tags, COUNT(*) as c
+      FROM news
+      WHERE matched_tags IS NOT NULL AND array_length(matched_tags, 1) > 0
+      GROUP BY matched_tags
+      ORDER BY c DESC
+      LIMIT 30
+    `);
+    res.json({ tags: result.rows });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// TEMP: Stats on matched_tags distribution
+app.get('/tag-stats', async (req, res) => {
+  try {
+    // Count articles with/without matched_tags
+    const withTags = await query(`SELECT COUNT(*) as c FROM news WHERE matched_tags IS NOT NULL AND array_length(matched_tags, 1) > 0`);
+    const withoutTags = await query(`SELECT COUNT(*) as c FROM news WHERE matched_tags IS NULL OR array_length(matched_tags, 1) IS NULL`);
+
+    // Count by specific tags
+    const tagDist = await query(`
+      SELECT unnest(matched_tags) as tag, COUNT(*) as count
+      FROM news
+      WHERE matched_tags IS NOT NULL AND array_length(matched_tags, 1) > 0
+      GROUP BY tag
+      ORDER BY count DESC
+      LIMIT 20
+    `);
+
+    res.json({
+      with_tags: parseInt(withTags.rows[0]?.c || '0'),
+      without_tags: parseInt(withoutTags.rows[0]?.c || '0'),
+      tag_distribution: tagDist.rows,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── Шаг 4: Запуск HTTP-сервера ───────────────────────────────────────
   app.listen(PORT, () => {
     console.log(`PULSE backend running on port ${PORT}`);
