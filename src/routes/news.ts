@@ -60,9 +60,33 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
   try {
     const userId = req.user!.userId;
     const showAll = req.query.all === 'true';  // ← true = показать ВСЕ (для /feed)
+    const global = req.query.global === 'true'; // ← true = ВСЕ новости без фильтра по тегам
     const page = parseInt(req.query.page as string) || 1;
     const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
     const offset = (page - 1) * limit;
+
+    const timeFilter = timeFilterSql();
+    let articles: any[];
+    let total: number;
+
+    // ─── GLOBAL MODE: все новости без фильтра по тегам ──────────────────
+    if (global) {
+      const result = await query(
+        `SELECT title_ru, summary_ru, source, url, published_at, sentiment, matched_tags,
+                source_count, all_sources
+         FROM news
+         WHERE ${timeFilter}
+         ORDER BY published_at DESC
+         LIMIT $1 OFFSET $2`,
+        [limit, offset]
+      );
+      articles = result.rows;
+      const countResult = await query(`SELECT COUNT(*) as c FROM news WHERE ${timeFilter}`, []);
+      total = parseInt(countResult.rows[0]?.c || '0');
+
+      res.json({ articles, total, page, hasMore: offset + articles.length < total });
+      return;
+    }
 
     // ─── Шаг 1: Теги пользователя ──────────────────────────────────────
     const portfolioResult = await query(
@@ -74,10 +98,6 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
     if (tagIds.length === 0) {
       return res.json({ articles: [], total: 0, page, hasMore: false });
     }
-
-    const timeFilter = timeFilterSql();
-    let articles: any[];
-    let total: number;
 
     if (USE_SQLITE) {
       // ─── SQLite версия ──────────────────────────────────────────────
