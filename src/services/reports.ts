@@ -238,8 +238,13 @@ export async function sendAllWeeklyReports(): Promise<void> {
       // Send via Email
       if (settings.email_enabled) {
         const html = formatReportHtml(reportData);
-        const ok = await sendWeeklyReportEmail(user.id, html);
-        if (ok) sent++;
+        const emailResult = await query(`SELECT email FROM users WHERE id = $1`, [user.id]);
+        const userEmail = emailResult.rows[0]?.email;
+        if (userEmail) {
+          const stats = reportData.sentimentBreakdown;
+          const ok = await sendWeeklyReportEmail(userEmail, reportData.tagSummaries.flatMap(t => t.articles), { total: reportData.totalArticles, ...stats });
+          if (ok) sent++;
+        }
       }
 
       // Rate limit

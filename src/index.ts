@@ -55,7 +55,7 @@ app.get('/', (req, res) => {
 
 // Health check — Render использует это для мониторинга
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString(), version: '6.1' });
+  res.json({ status: 'ok', timestamp: new Date().toISOString(), version: '6.2' });
 });
 
 // TEMP: Backfill: translate existing EN titles to RU via Kimi
