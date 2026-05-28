@@ -169,7 +169,7 @@ async function isPremium(userId: string): Promise<boolean> {
 // ═══════════════════════════════════════════════════════════════════════════
 // Send digest to a single user
 // ═══════════════════════════════════════════════════════════════════════════
-async function sendDigestToUser(userId: string): Promise<boolean> {
+export async function sendDigestToUser(userId: string): Promise<boolean> {
   try {
     // Get user's digest settings
     const settingsResult = await query(

@@ -117,7 +117,7 @@ export async function translateWithKimi(texts: string[]): Promise<string[]> {
       }
 
       // Fallback: try line-by-line parsing
-      const lines = content.split('\n').filter(l => l.trim() && !l.trim().startsWith('[') && !l.trim().startsWith(']'));
+      const lines = content.split('\n').filter((l: string) => l.trim() && !l.trim().startsWith('[') && !l.trim().startsWith(']'));
       if (lines.length === validTexts.length) {
         const cleaned = lines.map((s: string) => s.replace(/^\d+\.\s*["']?|["']?,?\s*$/g, '').trim());
         let validIdx = 0;
