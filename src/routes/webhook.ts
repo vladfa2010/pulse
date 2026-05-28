@@ -75,8 +75,14 @@ router.post('/yookassa', async (req, res) => {
 });
 
 // Telegram Bot webhook — POST /api/webhook/telegram
+// Handles both messages AND callback queries from inline buttons
 router.post('/telegram', async (req, res) => {
   try {
+    // Handle callback queries from buttons
+    if (req.body.callback_query) {
+      return handleCallbackQuery(req, res);
+    }
+
     const { message } = req.body;
     if (!message?.text || !message?.from || !BOT_TOKEN) {
       return res.sendStatus(200);
@@ -122,10 +128,33 @@ router.post('/telegram', async (req, res) => {
     // Simple commands
     switch (text.toLowerCase()) {
       case '/start': {
-        await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-          chat_id: chatId,
-          text: '👋 PULSE — инвестиционные новости\n\nДля подключения:\n1. Войдите на сайт\n2. Профиль → Уведомления → Подключить Telegram',
-        });
+        // Check if user is connected
+        const userResult = await query(
+          `SELECT user_id FROM user_channels WHERE target = $1 AND channel = 'telegram' AND is_active = TRUE`,
+          [chatId]
+        );
+        const isConnected = userResult.rows.length > 0;
+        
+        if (isConnected) {
+          // Connected user — show main menu with buttons
+          await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+            chat_id: chatId,
+            text: '👋 PULSE — ваши инвестиционные новости\n\nВыберите действие:',
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: '📰 Получить дайджест', callback_data: 'digest_now' }],
+                [{ text: '⚙️ Настройки', callback_data: 'settings' }],
+                [{ text: '🔕 Отключить рассылку', callback_data: 'stop_digest' }],
+              ]
+            }
+          });
+        } else {
+          // Not connected
+          await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+            chat_id: chatId,
+            text: '👋 PULSE — инвестиционные новости\n\nДля подключения:\n1. Войдите на сайт\n2. Профиль → Уведомления → Подключить Telegram',
+          });
+        }
         break;
       }
       case '/stop': {
@@ -133,49 +162,151 @@ router.post('/telegram', async (req, res) => {
         await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
           chat_id: chatId,
           text: '🔕 Рассылка приостановлена.\n\nДля возобновления: /start',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '▶️ Включить рассылку', callback_data: 'start_digest' }],
+            ]
+          }
         });
         break;
       }
       case '/now': {
-        // Find user by chatId
-        const userResult = await query(
-          `SELECT user_id FROM user_channels WHERE target = $1 AND channel = 'telegram' AND is_active = TRUE`,
-          [chatId]
-        );
-        if (userResult.rows.length === 0) {
-          await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-            chat_id: chatId,
-            text: '⚠️ Аккаунт не подключен. Войдите на сайт и подключите Telegram в профиле.',
-          });
-          break;
-        }
-        const userId = userResult.rows[0].user_id;
-        
-        await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-          chat_id: chatId,
-          text: '⏳ Формирую дайджест...',
-        });
-        
-        // Send digest (bypass timing check for manual request)
-        try {
-          const { sendDigestToUserNow } = await import('../services/digest');
-          const sent = await sendDigestToUserNow(userId);
-          if (!sent) {
-            await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-              chat_id: chatId,
-              text: '📭 Нет новых непрочитанных новостей по вашим тегам.',
-            });
-          }
-        } catch (err: any) {
-          console.error('[TG Bot] /now error:', err.message);
-          await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-            chat_id: chatId,
-            text: '❌ Ошибка формирования дайджеста.',
-          });
-        }
+        await handleDigestNow(chatId);
         break;
       }
     }
+  }
+
+  res.sendStatus(200);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Handle callback queries from inline buttons
+// ═══════════════════════════════════════════════════════════════════════════
+async function handleCallbackQuery(req: any, res: any): Promise<void> {
+  try {
+    const callback = req.body.callback_query;
+    if (!callback || !BOT_TOKEN) {
+      res.sendStatus(200);
+      return;
+    }
+
+    const chatId = callback.message?.chat?.id?.toString();
+    const data = callback.data;
+    const callbackId = callback.id;
+
+    if (!chatId || !data) {
+      res.sendStatus(200);
+      return;
+    }
+
+    console.log(`[TG Bot] Button clicked: ${data} by ${chatId}`);
+
+    // Answer callback (removes loading state from button)
+    await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
+      callback_query_id: callbackId,
+    });
+
+    switch (data) {
+      case 'digest_now': {
+        await handleDigestNow(chatId);
+        break;
+      }
+      case 'stop_digest': {
+        await query(`UPDATE notification_settings SET tg_digest_enabled = FALSE WHERE user_id = (SELECT user_id FROM user_channels WHERE target = $1 AND channel = 'telegram')`, [chatId]);
+        await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+          chat_id: chatId,
+          text: '🔕 Рассылка приостановлена.',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '▶️ Включить рассылку', callback_data: 'start_digest' }],
+            ]
+          }
+        });
+        break;
+      }
+      case 'start_digest': {
+        await query(`UPDATE notification_settings SET tg_digest_enabled = TRUE WHERE user_id = (SELECT user_id FROM user_channels WHERE target = $1 AND channel = 'telegram')`, [chatId]);
+        await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+          chat_id: chatId,
+          text: '▶️ Рассылка включена!',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '📰 Получить дайджест', callback_data: 'digest_now' }],
+            ]
+          }
+        });
+        break;
+      }
+      case 'settings': {
+        await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+          chat_id: chatId,
+          text: '⚙️ Настройки:\n\nЧастота дайджеста: каждые 3 часа\n\nТихие часы: 23:00 — 07:00',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '🔕 Отключить рассылку', callback_data: 'stop_digest' }],
+              [{ text: '📰 Получить дайджест', callback_data: 'digest_now' }],
+            ]
+          }
+        });
+        break;
+      }
+    }
+
+    res.sendStatus(200);
+  } catch (err: any) {
+    console.error('[TG Bot] Callback error:', err.message);
+    res.sendStatus(200);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Helper: send digest now (used by /now and button)
+// ═══════════════════════════════════════════════════════════════════════════
+async function handleDigestNow(chatId: string): Promise<void> {
+  if (!BOT_TOKEN) return;
+  
+  // Find user by chatId
+  const userResult = await query(
+    `SELECT user_id FROM user_channels WHERE target = $1 AND channel = 'telegram' AND is_active = TRUE`,
+    [chatId]
+  );
+  if (userResult.rows.length === 0) {
+    await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+      chat_id: chatId,
+      text: '⚠️ Аккаунт не подключен. Войдите на сайт и подключите Telegram в профиле.',
+    });
+    return;
+  }
+  const userId = userResult.rows[0].user_id;
+
+  await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+    chat_id: chatId,
+    text: '⏳ Формирую дайджест...',
+  });
+
+  // Send digest (bypass timing check for manual request)
+  try {
+    const { sendDigestToUserNow } = await import('../services/digest');
+    const sent = await sendDigestToUserNow(userId);
+    if (!sent) {
+      await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+        chat_id: chatId,
+        text: '📭 Нет новых непрочитанных новостей по вашим тегам.',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '📰 Обновить', callback_data: 'digest_now' }],
+          ]
+        }
+      });
+    }
+  } catch (err: any) {
+    console.error('[TG Bot] digest_now error:', err.message);
+    await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+      chat_id: chatId,
+      text: '❌ Ошибка формирования дайджеста.',
+    });
+  }
 
     res.sendStatus(200);
   } catch (err: any) {
