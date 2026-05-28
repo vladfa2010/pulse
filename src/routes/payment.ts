@@ -34,6 +34,10 @@ import axios from 'axios';
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
+// Webhook URL for YooKassa
+const BACKEND_URL = process.env.BACKEND_URL || 'https://pulse-api-bsov.onrender.com';
+const WEBHOOK_URL = `${BACKEND_URL}/api/webhook/yookassa`;
+
 // ─── YuKassa конфигурация ─────────────────────────────────────────────────
 const YOOKASSA_SHOP_ID = process.env.YOOKASSA_SHOP_ID || '';
 const YOOKASSA_SECRET_KEY = process.env.YOOKASSA_SECRET_KEY || '';
@@ -216,34 +220,39 @@ router.get('/status/:id', authMiddleware, async (req: AuthRequest, res) => {
     // Если YuKassa настроена и платёж всё ещё pending → проверяем у YuKassa
     if (IS_YOOKASSA_CONFIGURED && payment.provider_ref && payment.status === 'pending') {
       try {
+        console.log(`[YuKassa] Polling status for payment ${id}, provider_ref: ${payment.provider_ref}`);
         const yookassaRes = await axios.get(
           `https://api.yookassa.ru/v3/payments/${payment.provider_ref}`,
-          { headers: { 'Authorization': yookassaAuth() }, timeout: 10000 }
+          { headers: { 'Authorization': yookassaAuth() }, timeout: 15000 }
         );
 
         const yookassaStatus = yookassaRes.data.status;
+        console.log(`[YuKassa] Payment ${id} status: ${yookassaStatus}`);
 
         // YuKassa подтвердил оплату → активируем подписку
-        if (yookassaStatus === 'succeeded' && payment.status !== 'completed') {
+        if (yookassaStatus === 'succeeded') {
           await query(
             `UPDATE payments SET status = 'completed', paid_at = ${nowSql()} WHERE id = $1`,
             [id]
           );
           await query(
-            `UPDATE users SET subscription_active = 1,
+            `UPDATE users SET subscription_active = TRUE,
                  subscription_expires_at = ${nowPlusDaysSql(30)} WHERE id = $1`,
             [userId]
           );
           payment.status = 'completed';
           payment.paid_at = new Date().toISOString();
+          console.log(`[YuKassa] Payment ${id} completed, subscription activated for user ${userId}`);
         }
         // YuKassa отменил → помечаем failed
         else if (yookassaStatus === 'canceled') {
           await query(`UPDATE payments SET status = 'failed' WHERE id = $1`, [id]);
           payment.status = 'failed';
+          console.log(`[YuKassa] Payment ${id} canceled`);
         }
+        // Still pending/waiting_for_capture → leave as is
       } catch (ykErr: any) {
-        console.error('[YuKassa] Status check failed:', ykErr.message);
+        console.error(`[YuKassa] Status check failed for ${id}:`, ykErr.response?.data || ykErr.message);
       }
     }
 
@@ -268,5 +277,136 @@ router.get('/history', authMiddleware, async (req: AuthRequest, res) => {
     res.status(500).json({ error: 'Failed to fetch history' });
   }
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// POST /api/payment/force-check — Принудительная проверка статуса
+// ═══════════════════════════════════════════════════════════════════════════
+// Используется когда webhook от YuKassa не пришёл (например, Render sleep).
+// Проверяет статус у YuKassa API и активирует подписку если оплата прошла.
+router.post('/force-check', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const { paymentId } = req.body;
+    const userId = req.user!.userId;
+
+    if (!paymentId) {
+      return res.status(400).json({ error: 'paymentId required' });
+    }
+
+    // Load payment
+    const result = await query(
+      `SELECT id, status, provider_ref FROM payments WHERE id = $1 AND user_id = $2`,
+      [paymentId, userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Payment not found' });
+    }
+
+    const payment = result.rows[0];
+
+    // Already completed
+    if (payment.status === 'completed') {
+      return res.json({ status: 'completed', message: 'Already completed' });
+    }
+
+    // Check YuKassa API
+    if (!IS_YOOKASSA_CONFIGURED || !payment.provider_ref) {
+      return res.status(400).json({ error: 'YuKassa not configured or no provider_ref' });
+    }
+
+    console.log(`[YuKassa] Force-check payment ${paymentId}`);
+    const yookassaRes = await axios.get(
+      `https://api.yookassa.ru/v3/payments/${payment.provider_ref}`,
+      { headers: { 'Authorization': yookassaAuth() }, timeout: 15000 }
+    );
+
+    const yookassaStatus = yookassaRes.data.status;
+    console.log(`[YuKassa] Force-check: payment ${paymentId} = ${yookassaStatus}`);
+
+    if (yookassaStatus === 'succeeded') {
+      await query(
+        `UPDATE payments SET status = 'completed', paid_at = ${nowSql()} WHERE id = $1`,
+        [paymentId]
+      );
+      await query(
+        `UPDATE users SET subscription_active = TRUE, subscription_expires_at = ${nowPlusDaysSql(30)} WHERE id = $1`,
+        [userId]
+      );
+      return res.json({ status: 'completed', message: 'Payment confirmed, Premium activated' });
+    } else if (yookassaStatus === 'canceled') {
+      await query(`UPDATE payments SET status = 'failed' WHERE id = $1`, [paymentId]);
+      return res.json({ status: 'failed', message: 'Payment was canceled' });
+    } else {
+      return res.json({ status: 'pending', yookassaStatus, message: 'Payment still pending' });
+    }
+  } catch (err: any) {
+    console.error('[Payment] Force-check failed:', err.response?.data || err.message);
+    res.status(500).json({ error: 'Force-check failed' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Auto-setup YooKassa webhook on server start
+// ═══════════════════════════════════════════════════════════════════════════
+export async function setupYookassaWebhook(): Promise<void> {
+  if (!IS_YOOKASSA_CONFIGURED) {
+    console.log('[YuKassa] Webhook auto-setup skipped (not configured)');
+    return;
+  }
+
+  try {
+    // List existing webhooks
+    const listRes = await axios.get(
+      'https://api.yookassa.ru/v3/webhooks',
+      { headers: { 'Authorization': yookassaAuth() }, timeout: 15000 }
+    );
+
+    const webhooks = listRes.data.items || [];
+    const existing = webhooks.find((w: any) => w.url === WEBHOOK_URL && w.event === 'payment.succeeded');
+
+    if (existing) {
+      console.log('[YuKassa] Webhook already configured:', WEBHOOK_URL);
+      return;
+    }
+
+    // Remove old webhooks pointing to our domain
+    for (const wh of webhooks) {
+      if (wh.url?.includes('onrender.com') || wh.url?.includes('pulse')) {
+        try {
+          await axios.delete(`https://api.yookassa.ru/v3/webhooks/${wh.id}`, {
+            headers: { 'Authorization': yookassaAuth() }, timeout: 10000
+          });
+          console.log('[YuKassa] Removed old webhook:', wh.url);
+        } catch {
+          // ignore cleanup errors
+        }
+      }
+    }
+
+    // Create new webhook
+    await axios.post(
+      'https://api.yookassa.ru/v3/webhooks',
+      {
+        event: 'payment.succeeded',
+        url: WEBHOOK_URL
+      },
+      { headers: { 'Authorization': yookassaAuth() }, timeout: 15000 }
+    );
+
+    // Also register payment.canceled
+    await axios.post(
+      'https://api.yookassa.ru/v3/webhooks',
+      {
+        event: 'payment.canceled',
+        url: WEBHOOK_URL
+      },
+      { headers: { 'Authorization': yookassaAuth() }, timeout: 15000 }
+    );
+
+    console.log('[YuKassa] Webhook configured:', WEBHOOK_URL);
+  } catch (err: any) {
+    console.error('[YuKassa] Webhook setup failed:', err.response?.data || err.message);
+  }
+}
 
 export default router;

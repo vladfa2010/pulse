@@ -29,6 +29,7 @@ import { apiLimiter, authLimiter, webhookLimiter } from './middleware/rateLimit'
 import { startCron, processArticles } from './services/cron';   // ← RSS агрегатор (каждые 15 мин)
 import { startReportCron } from './services/reports'; // ← Еженедельные репорты
 import { startDigestCron, sendAllDigests } from './services/digest'; // ← TG дайджест (каждые 3 ч)
+import { setupYookassaWebhook } from './routes/payment'; // ← Auto-setup YuKassa webhook
 
 dotenv.config();
 
@@ -53,7 +54,7 @@ app.get('/', (req, res) => {
 
 // Health check — Render использует это для мониторинга
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString(), version: '5.1' });
+  res.json({ status: 'ok', timestamp: new Date().toISOString(), version: '5.2' });
 });
 
 // TEMP: Backfill: translate existing EN titles to RU via Kimi
@@ -164,6 +165,11 @@ app.get('/debug-env', async (req, res) => {
     cron_secret_set: !!process.env.CRON_SECRET_KEY,
     telegram_bot_set: !!process.env.TELEGRAM_BOT_TOKEN,
     telegram_bot_prefix: process.env.TELEGRAM_BOT_TOKEN ? process.env.TELEGRAM_BOT_TOKEN.split(':')[0] + ':...' : null,
+    yookassa_shop_id_set: !!process.env.YOOKASSA_SHOP_ID,
+    yookassa_secret_key_set: !!process.env.YOOKASSA_SECRET_KEY,
+    yookassa_configured: !!(process.env.YOOKASSA_SHOP_ID && process.env.YOOKASSA_SECRET_KEY),
+    frontend_url: process.env.FRONTEND_URL || 'https://pulse-frontend-jt53.onrender.com',
+    node_env: process.env.NODE_ENV || 'development',
   });
 });
 
@@ -917,6 +923,11 @@ async function start() {
     // ─── Шаг 5: Запуск фоновых задач ──────────────────────────────────
     startCron();       // ← RSS агрегация (каждые 15 минут)
     startReportCron(); // ← Еженедельные репорты (воскресенье 13:00)
+
+    // ─── Шаг 6: Настройка YuKassa webhook ─────────────────────────────
+    setTimeout(() => {
+      setupYookassaWebhook().catch(err => console.error('[YuKassa] Webhook setup error:', err));
+    }, 5000); // Задержка 5с чтобы сервер точно был доступен
     startDigestCron(); // ← TG дайджест (каждые 3 часа)
   });
 }
