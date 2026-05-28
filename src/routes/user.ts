@@ -430,4 +430,107 @@ router.post('/tags/custom', authMiddleware, async (req: AuthRequest, res) => {
   }
 });
 
+// GET /api/user/telegram-status — статус подключения Telegram
+router.get('/telegram-status', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.userId;
+
+    // Get channel info
+    const channelResult = await query(
+      `SELECT target, is_active FROM user_channels WHERE user_id = $1 AND channel = 'telegram'`,
+      [userId]
+    );
+
+    // Get notification settings
+    const settingsResult = await query(
+      `SELECT tg_digest_enabled, digest_frequency, quiet_hours_enabled, quiet_hours_start, quiet_hours_end
+       FROM notification_settings WHERE user_id = $1`,
+      [userId]
+    );
+
+    const channel = channelResult.rows[0];
+    const settings = settingsResult.rows[0] || {};
+
+    res.json({
+      connected: !!channel && channel.is_active,
+      chatId: channel?.target || undefined,
+      digestEnabled: settings.tg_digest_enabled || false,
+      frequency: settings.digest_frequency || '3h',
+      quietHoursEnabled: settings.quiet_hours_enabled || false,
+      quietHoursStart: settings.quiet_hours_start || '23:00',
+      quietHoursEnd: settings.quiet_hours_end || '07:00',
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch telegram status' });
+  }
+});
+
+// POST /api/user/telegram-disconnect — отключить Telegram
+router.post('/telegram-disconnect', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.userId;
+
+    // Deactivate channel
+    await query(
+      `UPDATE user_channels SET is_active = FALSE WHERE user_id = $1 AND channel = 'telegram'`,
+      [userId]
+    );
+
+    // Disable digest
+    await query(
+      `UPDATE notification_settings SET tg_digest_enabled = FALSE WHERE user_id = $1`,
+      [userId]
+    );
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to disconnect telegram' });
+  }
+});
+
+// POST /api/user/notification-settings — сохранить настройки уведомлений
+router.post('/notification-settings', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.userId;
+    const { frequency, quietHoursEnabled, quietHoursStart, quietHoursEnd } = req.body;
+
+    const fields: string[] = [];
+    const values: any[] = [];
+    let paramIdx = 1;
+
+    if (frequency !== undefined) {
+      fields.push(`digest_frequency = $${paramIdx++}`);
+      values.push(frequency);
+    }
+    if (quietHoursEnabled !== undefined) {
+      fields.push(`quiet_hours_enabled = $${paramIdx++}`);
+      values.push(quietHoursEnabled);
+    }
+    if (quietHoursStart !== undefined) {
+      fields.push(`quiet_hours_start = $${paramIdx++}`);
+      values.push(quietHoursStart);
+    }
+    if (quietHoursEnd !== undefined) {
+      fields.push(`quiet_hours_end = $${paramIdx++}`);
+      values.push(quietHoursEnd);
+    }
+
+    if (fields.length === 0) {
+      return res.status(400).json({ error: 'No settings provided' });
+    }
+
+    fields.push(`updated_at = ${nowSql()}`);
+    values.push(userId);
+
+    await query(
+      `UPDATE notification_settings SET ${fields.join(', ')} WHERE user_id = $${paramIdx}`,
+      values
+    );
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to save notification settings' });
+  }
+});
+
 export default router;
