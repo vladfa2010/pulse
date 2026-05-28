@@ -6,6 +6,7 @@ import { AddTagSchema } from '../schemas/user';
 import { getRelatedTags, matchTagsByKeywords } from '../services/smartTagMatcher';
 import { createUserTag, generateTagKeywords, getAllTagNames, detectTagTypeViaLLM, TAG_TYPE_LABELS } from '../services/tagManager';
 import type { TagType } from '../services/tagManager';
+import axios from 'axios';
 
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
@@ -599,6 +600,159 @@ router.post('/email-settings', authMiddleware, async (req: AuthRequest, res) => 
     res.json({ success: true, email, enabled: enabled === true });
   } catch (err) {
     res.status(500).json({ error: 'Failed to save email settings' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Daily AI Summary — новости по тегам пользователя за последние N часов
+// ═══════════════════════════════════════════════════════════════════════════
+
+const KIMI_API_KEY_SUMMARY = process.env.KIMI_API_KEY;
+const KIMI_MODEL_SUMMARY = process.env.KIMI_MODEL || 'moonshot-v1-8k';
+
+// In-memory cache: userId -> { text, timestamp }
+const summaryCache: Map<string, { text: string; time: number; generatedAt: string }> = new Map();
+const SUMMARY_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+
+// Build prompt for daily summary
+function buildSummaryPrompt(
+  tagNames: string[],
+  articles: { title: string; summary: string; tags: string[]; sentiment: string }[]
+): string {
+  const tagList = tagNames.join(', ');
+
+  const articlesText = articles
+    .map((a, i) => {
+      const tagStr = a.tags?.join(', ') || '';
+      const emoji = a.sentiment === 'positive' ? '🟢' : a.sentiment === 'negative' ? '🔴' : '⚪';
+      return `${i + 1}. ${emoji} ${a.title}\n   ${a.summary.slice(0, 200)}\n   Теги: ${tagStr}`;
+    })
+    .join('\n\n');
+
+  return `Ты — инвестиционный аналитик PULSE. Подготовь краткое саммари для клиента о событиях, затрагивающих его активы.
+
+Активы клиента: ${tagList}
+
+Новости за последние 12 часов:
+${articlesText}
+
+Требования к саммари:
+1. Напиши на русском языке
+2. Общий объем — 80-150 слов (3-5 коротких абзацев)
+3. Стиль: уверенный аналитический, без воды, конкретные выводы
+4. Укажи ключевые события и их влияние на активы клиента
+5. Если новостей нет или мало — напиши "За последние 12 часов значимых событий по вашим активам не зафиксировано."
+6. Не используй markdown-заголовки, списки, эмодзи — только плавный текст
+7. Начинай с фразы типа "За последние 12 часов..." или "В фокусе..."
+
+Саммари:`;
+}
+
+// GET /api/user/summary — AI summary of recent news for user's tags
+router.get('/summary', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.userId;
+    const hours = parseInt(req.query.hours as string) || 12;
+    const skipCache = req.query.refresh === '1';
+
+    // 1. Check cache (unless refresh requested)
+    if (!skipCache) {
+      const cached = summaryCache.get(userId);
+      if (cached && Date.now() - cached.time < SUMMARY_CACHE_TTL) {
+        console.log(`[Summary] Cache hit for user ${userId.slice(0, 8)}`);
+        return res.json({
+          summary: cached.text,
+          cached: true,
+          generated_at: cached.generatedAt,
+          articles_count: 0,
+        });
+      }
+    }
+
+    // 2. Get user's tags
+    const tagsResult = await query(
+      `SELECT tag_id, tag_name FROM portfolios WHERE user_id = $1`,
+      [userId]
+    );
+    const userTags = tagsResult.rows;
+    if (userTags.length === 0) {
+      return res.json({
+        summary: 'У вас пока нет отслеживаемых активов. Добавьте тег в профиле, чтобы получать персональное саммари.',
+        cached: false,
+        articles_count: 0,
+      });
+    }
+
+    const tagIds = userTags.map((t: any) => t.tag_id);
+    const tagNames = userTags.map((t: any) => t.tag_name);
+
+    // 3. Fetch recent news matching user's tags
+    const newsResult = await query(
+      `SELECT title_ru, summary_ru, matched_tags, sentiment
+       FROM news
+       WHERE published_at > NOW() - INTERVAL '${hours} hours'
+         AND matched_tags && $1
+       ORDER BY published_at DESC
+       LIMIT 30`,
+      [tagIds]
+    );
+
+    const articles = newsResult.rows.map((row: any) => ({
+      title: row.title_ru || '',
+      summary: row.summary_ru || '',
+      tags: row.matched_tags || [],
+      sentiment: row.sentiment || 'neutral',
+    }));
+
+    // 4. If no LLM key — return fallback
+    if (!KIMI_API_KEY_SUMMARY) {
+      return res.json({
+        summary: `Новостей по вашим активам (${tagNames.join(', ')}) за последние ${hours} часов: ${articles.length}. LLM недоступен для генерации саммари.`,
+        cached: false,
+        articles_count: articles.length,
+      });
+    }
+
+    // 5. Call LLM for summary
+    const prompt = buildSummaryPrompt(tagNames, articles);
+
+    console.log(`[Summary] Generating for user ${userId.slice(0, 8)}, tags: ${tagNames.join(', ')}, articles: ${articles.length}`);
+
+    const llmResponse = await axios.post(
+      'https://api.moonshot.ai/v1/chat/completions',
+      {
+        model: KIMI_MODEL_SUMMARY,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: KIMI_MODEL_SUMMARY.startsWith('kimi-k') ? 1 : 0.3,
+        max_tokens: 500,
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${KIMI_API_KEY_SUMMARY}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: 30000,
+      }
+    );
+
+    const summaryText = llmResponse.data?.choices?.[0]?.message?.content?.trim()
+      || 'Не удалось сгенерировать саммари. Попробуйте обновить позже.';
+
+    // 6. Save to cache
+    const now = new Date().toISOString();
+    summaryCache.set(userId, { text: summaryText, time: Date.now(), generatedAt: now });
+
+    console.log(`[Summary] Generated ${summaryText.length} chars for user ${userId.slice(0, 8)}`);
+
+    res.json({
+      summary: summaryText,
+      cached: false,
+      generated_at: now,
+      articles_count: articles.length,
+    });
+  } catch (err: any) {
+    console.error('[Summary] Error:', err.message);
+    res.status(500).json({ error: 'Failed to generate summary' });
   }
 });
 
