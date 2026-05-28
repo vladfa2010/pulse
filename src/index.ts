@@ -161,6 +161,8 @@ app.get('/debug-env', async (req, res) => {
     kimi_key_prefix: process.env.KIMI_API_KEY ? process.env.KIMI_API_KEY.slice(0, 12) + '...' : null,
     kimi_model: process.env.KIMI_MODEL || 'moonshot-v1-8k (default)',
     cron_secret_set: !!process.env.CRON_SECRET_KEY,
+    telegram_bot_set: !!process.env.TELEGRAM_BOT_TOKEN,
+    telegram_bot_prefix: process.env.TELEGRAM_BOT_TOKEN ? process.env.TELEGRAM_BOT_TOKEN.split(':')[0] + ':...' : null,
   });
 });
 
