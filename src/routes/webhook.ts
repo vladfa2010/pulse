@@ -94,7 +94,6 @@ router.post('/telegram', async (req, res) => {
       const payload = startMatch[1];
       const parts = payload.split(':');
       if (parts.length === 2) {
-        const { verifyLinkToken } = await import('../index');
         if (verifyLinkToken(parts[0], parts[1])) {
           const userId = parts[0];
           // Save connection
