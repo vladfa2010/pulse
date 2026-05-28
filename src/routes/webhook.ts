@@ -45,7 +45,7 @@ router.post('/yookassa', async (req, res) => {
         // Activate subscription for 30 days
         await query(
           `UPDATE users
-           SET subscription_active = ${USE_SQLITE ? 1 : 1},
+           SET subscription_active = TRUE,
                subscription_expires_at = ${nowPlusDaysSql(30)}
            WHERE id = $1`,
           [userId]

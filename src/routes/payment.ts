@@ -183,7 +183,7 @@ router.post('/confirm', authMiddleware, validate(ConfirmPaymentSchema), async (r
     // Активируем подписку на 30 дней
     await query(
       `UPDATE users
-       SET subscription_active = 1,
+       SET subscription_active = TRUE,
            subscription_expires_at = ${nowPlusDaysSql(30)}
        WHERE id = $1`,
       [userId]
