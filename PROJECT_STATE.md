@@ -1,9 +1,9 @@
 # PULSE — Project State (Session Resume)
 
 > **Файл для быстрого входа в контекст после сброса.**
-> **Дата:** 2026-05-28
-> **Версия API:** 4.5
-> **Актуальные коммиты:** backend `2f11a94`, frontend `d94669a`
+> **Дата:** 2026-06-05
+> **Версия API:** 4.6
+> **Актуальные коммиты:** backend `6af00e8`, frontend `c395059`
 
 ---
 
@@ -28,6 +28,8 @@
 | LLM API | Kimi API (api.moonshot.ai, НЕ .cn) — перевод, sentiment, tag matching |
 | RSS | 20+ источников (RU + EN), batch по 4, cron каждые 15 мин |
 | Auth | JWT + bcryptjs, cookie-based sessions |
+| Telegram Bot | @Insidepulse_bot — webhook, HMAC-secured linking |
+| Payments | YooKassa (REAL + DEMO), triple activation |
 
 ---
 
@@ -46,7 +48,7 @@
 
 ---
 
-## 4. News Pipeline (RSS → БД)
+## 4. News Pipeline (RSS → БД) ✅
 
 ```
 RSS Fetch (20+ sources) → Parse XML → URL Normalize → Translate EN→RU (Kimi API)
@@ -59,7 +61,7 @@ RSS Fetch (20+ sources) → Parse XML → URL Normalize → Translate EN→RU (K
 
 ---
 
-## 5. Smart Tag Matching — 3 слоя
+## 5. Smart Tag Matching — 3 слоя ✅
 
 1. **Keyword matching** — стандартные теги (18 шт) + пользовательские (из `user_defined_tags`), ищет по title + summary
 2. **LLM matching** (Kimi API) — если keywords ничего не нашли, спрашиваем LLM. Кэш: `smart_tag_cache`
@@ -67,7 +69,7 @@ RSS Fetch (20+ sources) → Parse XML → URL Normalize → Translate EN→RU (K
 
 ---
 
-## 6. Sentiment + Liquid Glass
+## 6. Sentiment + Liquid Glass ✅
 
 | Sentiment | Цвет | CSS glow |
 |-----------|------|----------|
@@ -83,9 +85,10 @@ RSS Fetch (20+ sources) → Parse XML → URL Normalize → Translate EN→RU (K
 
 ---
 
-## 7. Translation
+## 7. Translation ✅
 
-- **Kimi API** (api.moonshot.ai, модель moonshot-v1-8k)
+- **Kimi API** (api.moonshot.ai) — модель задаётся через `KIMI_MODEL` env var
+- **259 EN заголовков переведено** ✅
 - Google Translate **заблокирован** на Render (не работает)
 - Batch size: 5 текстов, задержка 500ms между batch
 - Фильтр: `hasLatin && !hasCyrillic && length > 5`
@@ -93,7 +96,7 @@ RSS Fetch (20+ sources) → Parse XML → URL Normalize → Translate EN→RU (K
 
 ---
 
-## 8. User-Defined Tags
+## 8. User-Defined Tags ✅
 
 Flow создания:
 1. Пользователь вводит название в поиск → "Создать тег 'X'"
@@ -109,7 +112,7 @@ Flow создания:
 
 ---
 
-## 9. Optimistic Updates
+## 9. Optimistic Updates ✅
 
 Когда пользователь отмечает новость прочитанной:
 1. **Мгновенно** (350ms fade-out) — карточка исчезает из карусели 1
@@ -119,7 +122,7 @@ Flow создания:
 
 ---
 
-## 10. "Прочитано" — только явное
+## 10. "Прочитано" — только явное ✅
 
 Новость считается прочитанной ТОЛЬКО если:
 - Клик на карточку (открытие URL + markAsRead)
@@ -130,7 +133,75 @@ Flow создания:
 
 ---
 
-## 11. Таблицы БД (10 штук)
+## 11. Telegram Bot @Insidepulse_bot ✅
+
+Полностью работает в продакшене.
+
+| Фича | Статус |
+|------|--------|
+| Webhook auto-setup | ✅ |
+| HMAC-secured linking (`telegram_id`) | ✅ |
+| Desktop fallback (copy /start command) | ✅ |
+| Premium-only access | ✅ |
+| Команды: /start, /now, /stop | ✅ |
+
+**Flow подключения:**
+1. Пользователь кликает "Подключить Telegram" в профиле
+2. Бот: `POST /api/notifications/link-telegram` с HMAC-подписью
+3. `user_channels` + `notification_settings` обновляются
+4. Desktop fallback: кнопка "Скопировать /start команду" если deep link не сработал
+
+---
+
+## 12. Платежи (YooKassa) ✅
+
+Полностью работают в продакшене.
+
+| Фича | Статус |
+|------|--------|
+| DEMO режим | ✅ |
+| YooKassa REAL | ✅ |
+| Triple activation (webhook + polling + force-check) | ✅ |
+| `refreshUser` после оплаты | ✅ |
+| CRITICAL BUG FIX: `subscription_active = TRUE` | ✅ |
+
+**Flow оплаты:**
+1. Пользователь выбирает тариф → `POST /api/payments/create`
+2. YooKassa возвращает `confirmation_url` → редирект
+3. Triple activation:
+   - YooKassa webhook → `POST /api/payments/webhook`
+   - Polling статуса каждые 5 сек (фронт)
+   - Force-check при загрузке страницы
+4. `payments` INSERT + `users.subscription_active = TRUE` UPDATE
+5. `refreshUser()` → UI обновляется мгновенно
+
+---
+
+## 13. UI улучшения (все в продакшене) ✅
+
+| Улучшение | Значение | Статус |
+|-----------|----------|--------|
+| text-2xl заголовки каруселей | Большие читаемые заголовки | ✅ |
+| 16:9 landscape карточки в 1-й карусели | Альбомная ориентация | ✅ |
+| 25% увеличение карточек | Крупнее, удобнее читать | ✅ |
+| 3 минуты задержка удаления | Карточки не исчезают мгновенно | ✅ |
+| 900ms fade-out | Плавное исчезновение | ✅ |
+| Tag impact pills | Отображение impact per tag на карточке | ✅ |
+
+---
+
+## 14. Kimi API — выбор модели ✅
+
+| Параметр | Значение |
+|----------|----------|
+| Env var | `KIMI_MODEL` |
+| Default (стандарт) | `moonshot-v1-8k` |
+| Premium | `kimi-k2.5` |
+| Endpoint | `api.moonshot.ai` (.cn возвращает 401) |
+
+---
+
+## 15. Таблицы БД (10 штук)
 
 `users`, `portfolios`, `payments`, `news`, `user_sessions`, `user_channels`, `notification_settings`, `translation_cache`, `smart_tag_cache`, `user_defined_tags`
 
@@ -138,7 +209,7 @@ Flow создания:
 
 ---
 
-## 12. Тестовый доступ
+## 16. Тестовый доступ
 
 - **Email:** vladfa@ya.ru
 - **Password:** !1234567890
@@ -146,7 +217,7 @@ Flow создания:
 
 ---
 
-## 13. Debug endpoints
+## 17. Debug endpoints
 
 | Endpoint | Что показывает |
 |----------|---------------|
@@ -157,12 +228,15 @@ Flow создания:
 | `POST /trigger-rss?secret=` | Ручной запуск RSS (background) |
 | `GET /backfill-tags?secret=` | Ретегирование статей без тегов |
 | `GET /backfill-translate?secret=` | Перевод EN заголовков (limit 50) |
+| `POST /verify-token` | Проверка JWT токена + debug |
+| `POST /api/notifications/link-telegram` | HMAC-верификация Telegram linking |
+| `POST /api/payments/webhook` | YooKassa payment webhook |
 
 **Secret:** `pulse-dev-key` (или `CRON_SECRET_KEY` из env)
 
 ---
 
-## 14. Где что в коде
+## 18. Где что в коде
 
 ```
 backend/src/
@@ -171,13 +245,15 @@ backend/src/
     smartTagMatcher.ts   — 3-layer tag matching + sentiment + tag impact
     rssFetcher.ts        — RSS fetch + XML parse
     rssSources.ts        — 20+ RSS sources config
-    translate.ts         — Kimi API translation (api.moonshot.ai)
+    translate.ts         — Kimi API translation (api.moonshot.ai, KIMI_MODEL)
     tagManager.ts        — User-defined tags + keyword generation + backfill
     reports.ts           — Weekly email reports
   routes/
     news.ts              — 3 режима ленты
     user.ts              — Tags CRUD + custom tag creation
     auth.ts              — Login/register
+    payments.ts          — YooKassa integration (DEMO + REAL)
+    notifications.ts     — Telegram bot webhook + HMAC linking
   index.ts               — Entry point, debug endpoints, migrations
 
 frontend/src/
@@ -185,29 +261,29 @@ frontend/src/
     UnreadNewsCarousel.tsx   — Карусель 1 (optimistic updates)
     AllNewsCarousel.tsx      — Карусель 2 (fade-in animation)
     GlobalNewsCarousel.tsx   — Карусель 3 (все новости)
-    NewsCard.tsx             — Liquid glass sentiment card
-    NewsCarousel.tsx         — Universal carousel wrapper
+    NewsCard.tsx             — Liquid glass sentiment card + tag impact pills
+    NewsCarousel.tsx         — Universal carousel wrapper (16:9, 25% larger, 900ms fade)
   hooks/
     useNewsStream.ts         — Новые статьи → isNew → CSS анимация
   pages/
     Home.tsx                 — 3 карусели + tag search + create tag
+    Profile.tsx              — Telegram linking + payments + subscription status
 ```
 
 ---
 
-## 15. Известные проблемы / TODO
+## 19. Известные проблемы / TODO
 
 | # | Проблема | Приоритет | Примечание |
 |---|----------|-----------|------------|
 | 1 | `summary_ru` не переводится (только title_ru) | medium | Нужно добавить перевод summary в translateBatch |
-| 2 | Tag impact генерируется но не отображается в UI | medium | Данные в БД, нужен компонент отображения |
-| 3 | Карусель 2 DESC сортировка — проверить на фронте | low | Backend отдаёт DESC, проверить что фронт не переворачивает |
-| 4 | 300 статей без matched_tags | low | `/backfill-tags` для ретегирования |
-| 5 | `content_hash` может быть NULL у старых записей | low | Не критично, UNIQUE constraint пропускает NULL |
+| 2 | Карусель 2 DESC сортировка — проверить на фронте | low | Backend отдаёт DESC, проверить что фронт не переворачивает |
+| 3 | ~300 статей без matched_tags | low | `/backfill-tags` для ретегирования |
+| 4 | `content_hash` может быть NULL у старых записей | low | Не критично, UNIQUE constraint пропускает NULL |
 
 ---
 
-## 16. Git репозитории
+## 20. Git репозитории
 
 | Репо | URL | Путь локально |
 |------|-----|---------------|
@@ -219,7 +295,7 @@ frontend/src/
 
 ---
 
-## 17. Ключевые договорённости (не нарушать)
+## 21. Ключевые договорённости (не нарушать)
 
 1. **ТОЛЬКО реальные новости** из RSS — мок-данные ЗАПРЕЩЕНЫ
 2. **Все EN новости переводятся** на русский — пользователь видит только RU
@@ -229,10 +305,12 @@ frontend/src/
 6. **Liquid glass UI** — все карточки с sentiment-цветами
 7. **User-defined tags** — пользователь может создать ЛЮБОЙ тег
 8. **Каждое изменение = git commit + push + deploy**
+9. **Telegram linking = HMAC-secured** — никогда не доверять `telegram_id` без подписи
+10. **Payments = triple activation** — webhook + polling + force-check для надёжности
 
 ---
 
-## 18. Полная документация (ссылки)
+## 22. Полная документация (ссылки)
 
 | Файл | Где | Описание |
 |------|-----|----------|
