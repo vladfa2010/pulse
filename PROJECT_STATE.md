@@ -1,9 +1,9 @@
 # PULSE — Project State (Session Resume)
 
 > **Файл для быстрого входа в контекст после сброса.**
-> **Дата:** 2026-06-05
-> **Версия API:** 4.6
-> **Актуальные коммиты:** backend `6af00e8`, frontend `c395059`
+> **Дата:** 2026-05-28
+> **Версия API:** 6.1
+> **Актуальные коммиты:** backend `db0d8e9` (v6.1), frontend `e0c3f0c`
 
 ---
 
@@ -201,7 +201,31 @@ Flow создания:
 
 ---
 
-## 15. Таблицы БД (10 штук)
+## 15. Telegram Bot — управление тегами ✅
+
+Пользователь может управлять тегами прямо в Telegram боте:
+- 🏷 **Мои теги** — просмотр всех тегов с кнопками удаления
+- ➕ **Добавить тег** — multi-step flow: ввод → поиск по 18 стандартным тегам → подтверждение
+- 🗑 **Удалить тег** — inline-кнопка рядом с каждым тегом
+
+**State management:** `userStates: Map<chatId, { action: 'awaiting_tag_input' }>`
+**Standard tags:** 18 тегов (nvda, apple, tesla, sber, gazprom, lukoil, yandex, google, amazon, microsoft, btc, eth, oil, gold, sp500, moex, rub, fed)
+**Custom tags:** создаются автоматически если не найдены в стандартных
+
+**Flow добавления тега:**
+```
+🏷 Мои теги → ➕ Добавить тег → Ввод названия → Поиск в STANDARD_TAGS
+  → 0 совпадений: предложить создать кастомный
+  → 1 совпадение: добавить сразу
+  → 2+ совпадений: показать выбор
+```
+
+**Files:**
+- `backend/src/routes/webhook.ts` — showMyTags, promptAddTag, handleTagInput, confirmAddTag, deleteUserTag
+
+---
+
+## 16. Таблицы БД (10 штук)
 
 `users`, `portfolios`, `payments`, `news`, `user_sessions`, `user_channels`, `notification_settings`, `translation_cache`, `smart_tag_cache`, `user_defined_tags`
 
@@ -209,7 +233,7 @@ Flow создания:
 
 ---
 
-## 16. Тестовый доступ
+## 17. Тестовый доступ
 
 - **Email:** vladfa@ya.ru
 - **Password:** !1234567890
@@ -217,7 +241,7 @@ Flow создания:
 
 ---
 
-## 17. Debug endpoints
+## 18. Debug endpoints
 
 | Endpoint | Что показывает |
 |----------|---------------|
@@ -236,7 +260,7 @@ Flow создания:
 
 ---
 
-## 18. Где что в коде
+## 19. Где что в коде
 
 ```
 backend/src/
@@ -272,18 +296,17 @@ frontend/src/
 
 ---
 
-## 19. Известные проблемы / TODO
+## 20. Известные проблемы / TODO
 
-| # | Проблема | Приоритет | Примечание |
-|---|----------|-----------|------------|
-| 1 | `summary_ru` не переводится (только title_ru) | medium | Нужно добавить перевод summary в translateBatch |
-| 2 | Карусель 2 DESC сортировка — проверить на фронте | low | Backend отдаёт DESC, проверить что фронт не переворачивает |
-| 3 | ~300 статей без matched_tags | low | `/backfill-tags` для ретегирования |
-| 4 | `content_hash` может быть NULL у старых записей | low | Не критично, UNIQUE constraint пропускает NULL |
+| # | Проблема | Приоритет | Статус |
+|---|----------|-----------|--------|
+| 1 | `summary_ru` не переводится (только `title_ru`) | medium | В разработке |
+| 2 | `content_hash` NULL у старых записей — не критично | low | Отложено |
+| 3 | Настройки тихих часов через бота (сейчас только на сайте) | low | Запланировано |
 
 ---
 
-## 20. Git репозитории
+## 21. Git репозитории
 
 | Репо | URL | Путь локально |
 |------|-----|---------------|
@@ -295,7 +318,7 @@ frontend/src/
 
 ---
 
-## 21. Ключевые договорённости (не нарушать)
+## 22. Ключевые договорённости (не нарушать)
 
 1. **ТОЛЬКО реальные новости** из RSS — мок-данные ЗАПРЕЩЕНЫ
 2. **Все EN новости переводятся** на русский — пользователь видит только RU
@@ -307,10 +330,11 @@ frontend/src/
 8. **Каждое изменение = git commit + push + deploy**
 9. **Telegram linking = HMAC-secured** — никогда не доверять `telegram_id` без подписи
 10. **Payments = triple activation** — webhook + polling + force-check для надёжности
+11. **Tag management in bot** — пользователь управляет тегами через Telegram
 
 ---
 
-## 22. Полная документация (ссылки)
+## 23. Полная документация (ссылки)
 
 | Файл | Где | Описание |
 |------|-----|----------|
@@ -318,3 +342,4 @@ frontend/src/
 | `ARCHITECTURE.md` | `/mnt/agents/projects/backend/ARCHITECTURE.md` | Pipeline, smart matching, translation, sentiment, API design |
 | `DEPLOYMENT.md` | `/mnt/agents/projects/backend/DEPLOYMENT.md` | Инфраструктура, env vars, тестовый логин, troubleshooting |
 | `PRODUCT_CONTEXT.md` | `/mnt/agents/projects/backend/PRODUCT_CONTEXT.md` | Критические правила, договорённости, тарифы, workflow |
+| `TELEGRAM_NOTIFICATIONS.md` | `/mnt/agents/projects/backend/TELEGRAM_NOTIFICATIONS.md` | Логика уведомлений, управление тегами в боте |
