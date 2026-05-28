@@ -92,31 +92,53 @@
 
 ## 2. Flow подключения пользователя
 
+### Требования
+- **Premium подписка** — бот работает только для Premium пользователей
+- **HMAC-подпись** — ссылка содержит защитный токен, предотвращает подмену user_id
+
 ### Последовательность шагов
 
 ```
 ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
 │  Пользователь │     │   PULSE      │     │   Telegram   │
-│              │     │  Frontend    │     │    Bot       │
+│  (Premium)   │     │  Backend     │     │    Bot       │
 └──────┬───────┘     └──────┬───────┘     └──────┬───────┘
        │                    │                    │
        │ (1) Заходит        │                    │
        │ в Профиль →        │                    │
        │ Telegram           │                    │
        │───────────────────>│                    │
-       │                    │ (2) Генерирует     │
-       │ (2) Показывает     │ ссылку с deep-     │
-       │    ссылку /start   │ link               │
+       │  Bearer <JWT>      │                    │
+       │                    │ (2) Проверяет      │
+       │                    │  subscription_     │
+       │                    │  active = TRUE     │
+       │                    │  + генерирует      │
+       │                    │  HMAC токен        │
+       │                    │                    │
+       │ (3) Показывает     │                    │
+       │ ссылку:            │                    │
+       │ /start UID:TOKEN   │                    │
        │<───────────────────│                    │
        │                    │                    │
-       │ (3) Нажимает       │                    │
-       │ ссылку, открывает  │                    │
+       │ (4) Нажимает       │                    │
+       │ ссылку → открывает │                    │
        │ @Insidepulse_bot   │                    │
        │─────────────────────────────────────────>│
        │                    │                    │
-       │                    │                    │ (4) /start
-       │                    │                    │ вызывает webhook
-       │                    │<───────────────────│
+       │                    │                    │ (5) /start UID:TOKEN
+       │                    │                    │ → POST /webhook/telegram
+       │                    │                    │
+       │                    │                    │ (6) verifyLinkToken()
+       │                    │                    │  HMAC-SHA256 проверка
+       │                    │                    │
+       │                    │                    │ (7) Проверка подписки
+       │                    │                    │  subscription_active?
+       │                    │                    │
+       │                    │                    │ (8) INSERT user_channels
+       │                    │                    │  UPDATE notification_settings
+       │                    │                    │
+       │ (9) ✅ Подключено! │                    │
+       │    Дайджест активен│<───────────────────│
        │                    │                    │
        │                    │ (5) Регистрирует   │
        │                    │ chat_id в          │
@@ -138,26 +160,85 @@
 
 ### Шаги подключения (подробно)
 
-| Шаг | Действие | Результат в БД |
-|-----|----------|----------------|
-| **1** | Пользователь заходит в раздел Профиль → Telegram на сайте PULSE | — |
-| **2** | Frontend генерирует ссылку `https://t.me/Insidepulse_bot?start=<user_id>` | — |
-| **3** | Пользователь открывает бота и нажимает `/start` | — |
-| **4** | Бот отправляет webhook на `/webhook/telegram` с `message.chat.id` | — |
-| **5** | Backend создаёт запись в `user_channels` | `channel='telegram', target=chat_id, is_active=true` |
-| **5b** | Backend обновляет `notification_settings` | `tg_digest_enabled = TRUE` |
-| **6** | Бот отправляет приветственное сообщение | — |
+| Шаг | Действие | Проверка | Результат в БД |
+|-----|----------|----------|----------------|
+| **1** | Пользователь заходит в раздел Профиль → Telegram | `subscription_active = TRUE` | — |
+| **2** | Frontend вызывает `GET /api/telegram/link` (Bearer JWT) | JWT валиден + Premium | — |
+| **3** | Backend генерирует HMAC-токен | `crypto.createHmac('sha256', BOT_TOKEN).update(userId)` | — |
+| **4** | Frontend показывает ссылку `/start <user_id>:<hmac_token>` | — | — |
+| **5** | Пользователь открывает бота, нажимает ссылку | — | — |
+| **6** | Бот отправляет webhook `/start UID:TOKEN` | `verifyLinkToken()` — HMAC проверка | — |
+| **7** | Backend проверяет подписку | `subscription_active = TRUE` | — |
+| **8** | Backend создаёт/обновляет `user_channels` | — | `channel='telegram', target=chat_id, is_active=true` |
+| **8b** | Backend обновляет `notification_settings` | — | `tg_digest_enabled = TRUE` |
+| **9** | Бот отправляет подтверждение | — | — |
+
+### Безопасность: HMAC-подпись
+
+**Проблема:** Простой `/start <user_id>` позволяет любому подставить чужой ID и перехватить уведомления.
+
+**Решение:** HMAC-SHA256 подпись, привязанная к TELEGRAM_BOT_TOKEN.
+
+```typescript
+// Генерация (Backend)
+function generateLinkToken(userId: string): string {
+  return crypto.createHmac('sha256', TELEGRAM_BOT_TOKEN)
+    .update(userId).digest('hex').slice(0, 16);
+}
+// → "a3f7b2c9d1e8f5a4"
+
+// Проверка (Bot)
+function verifyLinkToken(userId: string, token: string): boolean {
+  const expected = generateLinkToken(userId);
+  return crypto.timingSafeEqual(
+    Buffer.from(expected, 'hex'), 
+    Buffer.from(token, 'hex')
+  );
+}
+```
+
+**Deep link формат:**
+```
+https://t.me/Insidepulse_bot?start=<user_id>:<hmac_token>
+
+Пример:
+https://t.me/Insidepulse_bot?start=uuid-123:a3f7b2c9d1e8f5a4
+```
+
+### Тарифы: кто получает уведомления
+
+| Тариф | Digest | Weekly Report | Sentiment Alerts |
+|-------|--------|---------------|------------------|
+| **Free** | ❌ Нет | ❌ Нет | ❌ Нет |
+| **Premium** | ✅ Каждые 3ч | ✅ Воскресенье | ✅ Мгновенно |
+
+**Проверка подписки:**
+```sql
+-- В запросе sendAllDigests()
+SELECT DISTINCT u.id
+FROM users u
+JOIN notification_settings ns ON ns.user_id = u.id
+JOIN user_channels uc ON uc.user_id = u.id
+WHERE u.subscription_active = TRUE  ← ← ← ТОЛЬКО PREMIUM
+  AND ns.tg_digest_enabled = TRUE
+  AND uc.channel = 'telegram'
+  AND uc.is_active = TRUE
+```
 
 ### Пример данных после подключения
 
 ```sql
--- user_channels
+-- user_channels (после подключения через /start с HMAC)
 INSERT INTO user_channels (user_id, channel, target, is_active)
 VALUES ('uuid-user-123', 'telegram', '123456789', true);
 
 -- notification_settings (обновлено)
 UPDATE notification_settings
 SET tg_digest_enabled = TRUE,
+    digest_frequency = '3h',
+    quiet_hours_enabled = TRUE,
+    quiet_hours_start = '23:00',
+    quiet_hours_end = '07:00'
     tg_enabled = TRUE
 WHERE user_id = 'uuid-user-123';
 ```
@@ -943,9 +1024,51 @@ async function shouldSendDigest(userId: string, frequency: string): Promise<bool
 
 ---
 
-## 10. Webhook Endpoint
+## 10. API Endpoints
 
-### Конфигурация
+### `GET /api/telegram/link` — Генерация ссылки подключения
+
+Требует авторизацию (Bearer JWT). Возвращает deep link с HMAC-подписью.
+
+**Request:**
+```http
+GET /api/telegram/link
+Authorization: Bearer <JWT_TOKEN>
+```
+
+**Response (Premium):**
+```json
+{
+  "deepLink": "https://t.me/Insidepulse_bot?start=uuid-123:a3f7b2c9d1e8f5a4",
+  "botUsername": "Insidepulse_bot",
+  "expiresIn": "24h"
+}
+```
+
+**Response (Free / без подписки):**
+```json
+{ "error": "Premium subscription required" }
+```
+
+**Response (неавторизован):**
+```json
+{ "error": "Unauthorized" }
+```
+
+### `POST /webhook/telegram` — Webhook бота
+
+Принимает обновления от Telegram API. Обрабатывает команды.
+
+**Команды:**
+| Команда | Описание | Требования |
+|---------|----------|------------|
+| `/start` | Приветствие, статус подключения | — |
+| `/start <uid>:<token>` | Подключение аккаунта (HMAC) | Premium |
+| `/now` | Мгновенный дайджест | Подключен |
+| `/stop` | Отключить рассылку | Подключен |
+| `/settings` | Настройки | Подключен |
+
+### Конфигурация Webhook
 
 ```typescript
 // index.ts
