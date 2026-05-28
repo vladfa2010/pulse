@@ -6,7 +6,7 @@ const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 
-// HMAC helper for secure Telegram linking (copied to avoid circular import)
+// HMAC helper for secure Telegram linking
 function verifyLinkToken(userId: string, token: string): boolean {
   const secret = process.env.TELEGRAM_BOT_TOKEN || '';
   if (!secret) return false;
@@ -22,7 +22,9 @@ function nowPlusDaysSql(days: number): string {
   return USE_SQLITE ? `datetime('now', '+${days} days')` : `NOW() + INTERVAL '${days} days'`;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
 // YooKassa webhook — POST /api/webhook/yookassa
+// ═══════════════════════════════════════════════════════════════════════════
 router.post('/yookassa', async (req, res) => {
   try {
     const { event, object } = req.body;
@@ -31,19 +33,16 @@ router.post('/yookassa', async (req, res) => {
       return res.status(400).json({ error: 'Invalid webhook payload' });
     }
 
-    // Log webhook
     console.log('[YooKassa Webhook]', event, object.id);
 
     if (event === 'payment.succeeded' || event === 'payment.canceled') {
       const status = event === 'payment.succeeded' ? 'completed' : 'failed';
 
-      // Update payment status
       await query(
         `UPDATE payments SET status = $1, paid_at = ${nowSql()} WHERE provider_ref = $2`,
         [status, object.id]
       );
 
-      // Get user_id
       const paymentResult = await query(
         'SELECT user_id FROM payments WHERE provider_ref = $1',
         [object.id]
@@ -51,34 +50,27 @@ router.post('/yookassa', async (req, res) => {
 
       if (paymentResult.rows.length > 0 && status === 'completed') {
         const userId = paymentResult.rows[0].user_id;
-
-        // Activate subscription for 30 days
         await query(
-          `UPDATE users
-           SET subscription_active = TRUE,
-               subscription_expires_at = ${nowPlusDaysSql(30)}
-           WHERE id = $1`,
+          `UPDATE users SET subscription_active = TRUE, subscription_expires_at = ${nowPlusDaysSql(30)} WHERE id = $1`,
           [userId]
         );
-
         console.log(`[YooKassa] Subscription activated for user ${userId}`);
       }
     }
 
-    // Always return 200 to YooKassa
     res.status(200).json({ received: true });
   } catch (err) {
     console.error('YooKassa webhook error:', err);
-    // Still return 200 so YooKassa doesn't retry indefinitely
     res.status(200).json({ received: true, error: 'Processing failed' });
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
 // Telegram Bot webhook — POST /api/webhook/telegram
-// Handles both messages AND callback queries from inline buttons
+// ═══════════════════════════════════════════════════════════════════════════
 router.post('/telegram', async (req, res) => {
   try {
-    // Handle callback queries from buttons
+    // Handle callback queries from inline buttons
     if (req.body.callback_query) {
       return handleCallbackQuery(req, res);
     }
@@ -105,7 +97,6 @@ router.post('/telegram', async (req, res) => {
         console.log(`[TG Bot] verifyLinkToken(${parts[0]}, ...): ${tokenValid}`);
         if (tokenValid) {
           const userId = parts[0];
-          // Save connection
           await query(
             `INSERT INTO user_channels (user_id, channel, target, is_active)
              VALUES ($1, 'telegram', $2, TRUE)
@@ -116,10 +107,9 @@ router.post('/telegram', async (req, res) => {
             `UPDATE notification_settings SET tg_digest_enabled = TRUE WHERE user_id = $1`,
             [userId]
           );
-          await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-            chat_id: chatId,
-            text: '✅ PULSE подключен!\n\nДайджесты будут приходить по расписанию.\n\nКоманды:\n/now — дайджест сейчас\n/stop — отключить',
-          });
+          await sendMessage(chatId,
+            '✅ PULSE подключен!\n\nДайджесты будут приходить по расписанию.\n\nКоманды:\n/now — дайджест сейчас\n/stop — отключить'
+          );
           return res.sendStatus(200);
         }
       }
@@ -128,46 +118,28 @@ router.post('/telegram', async (req, res) => {
     // Simple commands
     switch (text.toLowerCase()) {
       case '/start': {
-        // Check if user is connected
         const userResult = await query(
           `SELECT user_id FROM user_channels WHERE target = $1 AND channel = 'telegram' AND is_active = TRUE`,
           [chatId]
         );
         const isConnected = userResult.rows.length > 0;
-        
+
         if (isConnected) {
-          // Connected user — show main menu with buttons
-          await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-            chat_id: chatId,
-            text: '👋 PULSE — ваши инвестиционные новости\n\nВыберите действие:',
-            reply_markup: {
-              inline_keyboard: [
-                [{ text: '📰 Получить дайджест', callback_data: 'digest_now' }],
-                [{ text: '⚙️ Настройки', callback_data: 'settings' }],
-                [{ text: '🔕 Отключить рассылку', callback_data: 'stop_digest' }],
-              ]
-            }
-          });
+          await sendMessageWithButtons(chatId, '👋 PULSE — ваши инвестиционные новости\n\nВыберите действие:', [
+            [{ text: '📰 Получить дайджест', callback_data: 'digest_now' }],
+            [{ text: '⚙️ Настройки', callback_data: 'settings' }],
+            [{ text: '🔕 Отключить рассылку', callback_data: 'stop_digest' }],
+          ]);
         } else {
-          // Not connected
-          await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-            chat_id: chatId,
-            text: '👋 PULSE — инвестиционные новости\n\nДля подключения:\n1. Войдите на сайт\n2. Профиль → Уведомления → Подключить Telegram',
-          });
+          await sendMessage(chatId, '👋 PULSE — инвестиционные новости\n\nДля подключения:\n1. Войдите на сайт\n2. Профиль → Уведомления → Подключить Telegram');
         }
         break;
       }
       case '/stop': {
         await query(`UPDATE notification_settings SET tg_digest_enabled = FALSE WHERE user_id = (SELECT user_id FROM user_channels WHERE target = $1 AND channel = 'telegram')`, [chatId]);
-        await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-          chat_id: chatId,
-          text: '🔕 Рассылка приостановлена.\n\nДля возобновления: /start',
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: '▶️ Включить рассылку', callback_data: 'start_digest' }],
-            ]
-          }
-        });
+        await sendMessageWithButtons(chatId, '🔕 Рассылка приостановлена.', [
+          [{ text: '▶️ Включить рассылку', callback_data: 'start_digest' }],
+        ]);
         break;
       }
       case '/now': {
@@ -175,9 +147,12 @@ router.post('/telegram', async (req, res) => {
         break;
       }
     }
-  }
 
-  res.sendStatus(200);
+    res.sendStatus(200);
+  } catch (err: any) {
+    console.error('[TG Bot] Webhook error:', err.message);
+    res.sendStatus(200);
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -214,41 +189,23 @@ async function handleCallbackQuery(req: any, res: any): Promise<void> {
       }
       case 'stop_digest': {
         await query(`UPDATE notification_settings SET tg_digest_enabled = FALSE WHERE user_id = (SELECT user_id FROM user_channels WHERE target = $1 AND channel = 'telegram')`, [chatId]);
-        await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-          chat_id: chatId,
-          text: '🔕 Рассылка приостановлена.',
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: '▶️ Включить рассылку', callback_data: 'start_digest' }],
-            ]
-          }
-        });
+        await sendMessageWithButtons(chatId, '🔕 Рассылка приостановлена.', [
+          [{ text: '▶️ Включить рассылку', callback_data: 'start_digest' }],
+        ]);
         break;
       }
       case 'start_digest': {
         await query(`UPDATE notification_settings SET tg_digest_enabled = TRUE WHERE user_id = (SELECT user_id FROM user_channels WHERE target = $1 AND channel = 'telegram')`, [chatId]);
-        await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-          chat_id: chatId,
-          text: '▶️ Рассылка включена!',
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: '📰 Получить дайджест', callback_data: 'digest_now' }],
-            ]
-          }
-        });
+        await sendMessageWithButtons(chatId, '▶️ Рассылка включена!', [
+          [{ text: '📰 Получить дайджест', callback_data: 'digest_now' }],
+        ]);
         break;
       }
       case 'settings': {
-        await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-          chat_id: chatId,
-          text: '⚙️ Настройки:\n\nЧастота дайджеста: каждые 3 часа\n\nТихие часы: 23:00 — 07:00',
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: '🔕 Отключить рассылку', callback_data: 'stop_digest' }],
-              [{ text: '📰 Получить дайджест', callback_data: 'digest_now' }],
-            ]
-          }
-        });
+        await sendMessageWithButtons(chatId, '⚙️ Настройки:\n\nЧастота дайджеста: каждые 3 часа\n\nТихие часы: 23:00 — 07:00', [
+          [{ text: '🔕 Отключить рассылку', callback_data: 'stop_digest' }],
+          [{ text: '📰 Получить дайджест', callback_data: 'digest_now' }],
+        ]);
         break;
       }
     }
@@ -265,55 +222,55 @@ async function handleCallbackQuery(req: any, res: any): Promise<void> {
 // ═══════════════════════════════════════════════════════════════════════════
 async function handleDigestNow(chatId: string): Promise<void> {
   if (!BOT_TOKEN) return;
-  
-  // Find user by chatId
+
   const userResult = await query(
     `SELECT user_id FROM user_channels WHERE target = $1 AND channel = 'telegram' AND is_active = TRUE`,
     [chatId]
   );
   if (userResult.rows.length === 0) {
-    await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-      chat_id: chatId,
-      text: '⚠️ Аккаунт не подключен. Войдите на сайт и подключите Telegram в профиле.',
-    });
+    await sendMessage(chatId, '⚠️ Аккаунт не подключен. Войдите на сайт и подключите Telegram в профиле.');
     return;
   }
   const userId = userResult.rows[0].user_id;
 
-  await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-    chat_id: chatId,
-    text: '⏳ Формирую дайджест...',
-  });
+  await sendMessage(chatId, '⏳ Формирую дайджест...');
 
-  // Send digest (bypass timing check for manual request)
   try {
     const { sendDigestToUserNow } = await import('../services/digest');
     const sent = await sendDigestToUserNow(userId);
     if (!sent) {
-      await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-        chat_id: chatId,
-        text: '📭 Нет новых непрочитанных новостей по вашим тегам.',
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '📰 Обновить', callback_data: 'digest_now' }],
-          ]
-        }
-      });
+      await sendMessageWithButtons(chatId, '📭 Нет новых непрочитанных новостей по вашим тегам.', [
+        [{ text: '📰 Обновить', callback_data: 'digest_now' }],
+      ]);
     }
   } catch (err: any) {
     console.error('[TG Bot] digest_now error:', err.message);
-    await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-      chat_id: chatId,
-      text: '❌ Ошибка формирования дайджеста.',
-    });
+    await sendMessage(chatId, '❌ Ошибка формирования дайджеста.');
   }
+}
 
-    res.sendStatus(200);
-  } catch (err: any) {
-    console.error('[TG Bot] Webhook error:', err.message);
-    res.sendStatus(200); // Always return 200 to Telegram
-  }
-});
+// ═══════════════════════════════════════════════════════════════════════════
+// Helper functions
+// ═══════════════════════════════════════════════════════════════════════════
+async function sendMessage(chatId: string, text: string): Promise<void> {
+  if (!BOT_TOKEN) return;
+  await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+    chat_id: chatId,
+    text,
+    parse_mode: 'HTML',
+  });
+}
+
+async function sendMessageWithButtons(chatId: string, text: string, buttons: any[][]): Promise<void> {
+  if (!BOT_TOKEN) return;
+  await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+    chat_id: chatId,
+    text,
+    reply_markup: {
+      inline_keyboard: buttons,
+    },
+  });
+}
 
 // GET /api/webhook/verify-token — проверить HMAC токен (debug)
 router.get('/verify-token', async (req, res) => {
