@@ -386,7 +386,7 @@ removeTagFromPortfolio(userId, tagId) → boolean  // удаление из loca
 savePortfolio(userId, tags) → void         // полная перезапись
 ```
 
-**Seed:** demo@pulse.ru / demo123, free tier, 3 тега
+**Seed:** пользователь создаёт теги сам, free tier = 1 тег
 
 ### 5.2 Tag Sync Flow (КРИТИЧЕСКИЙ)
 
@@ -940,8 +940,8 @@ Logout:
 ### 10.9 Auth Refactor (2026-05-25) — DONE ✅
 
 - **localStorage = только JWT токен** — никаких пользователей, портфелей, платежей
-- **useAuth = только API** — login/register/me/demo через бэкенд
-- **Демо-пользователь** — `POST /api/auth/demo` создаёт в SQLite, не hardcoded
+- **useAuth = только API** — login/register/me через бэкенд (demo login удалён)
+- **Пользователь создаёт первый тег сам** — нет forced suggestions
 - **Единая база данных** — SQLite/PostgreSQL, единый источник правды
 
 ---

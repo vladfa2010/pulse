@@ -49,7 +49,7 @@ docker-compose up
 | POST | `/api/auth/login` | Вход |
 | POST | `/api/auth/logout` | Выход |
 | GET | `/api/auth/me` | Текущий пользователь |
-| POST | `/api/auth/demo` | Демо-пользователь |
+
 
 ### News
 | Method | Endpoint | Описание |
