@@ -659,6 +659,8 @@ async function start() {
     { sql: `ALTER TABLE notification_settings ADD COLUMN IF NOT EXISTS tg_digest_enabled BOOLEAN DEFAULT FALSE`, name: 'tg_digest_enabled' },
     { sql: `ALTER TABLE notification_settings ADD COLUMN IF NOT EXISTS digest_frequency VARCHAR(10) DEFAULT '3h'`, name: 'digest_frequency' },
     { sql: `ALTER TABLE notification_settings ADD COLUMN IF NOT EXISTS last_digest_sent TIMESTAMP`, name: 'last_digest_sent' },
+    { sql: `ALTER TABLE notification_settings ADD COLUMN IF NOT EXISTS digest_email VARCHAR(255)`, name: 'digest_email' },
+    { sql: `ALTER TABLE notification_settings ADD COLUMN IF NOT EXISTS email_digest_enabled BOOLEAN DEFAULT FALSE`, name: 'email_digest_enabled' },
   ];
   for (const m of migrations) {
     try {

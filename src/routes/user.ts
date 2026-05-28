@@ -533,4 +533,49 @@ router.post('/notification-settings', authMiddleware, async (req: AuthRequest, r
   }
 });
 
+// GET /api/user/email-settings — получить email для дайджеста
+router.get('/email-settings', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.userId;
+    const result = await query(
+      `SELECT digest_email, email_digest_enabled FROM notification_settings WHERE user_id = $1`,
+      [userId]
+    );
+    if (result.rows.length === 0) {
+      return res.json({ email: '', enabled: false });
+    }
+    res.json({
+      email: result.rows[0].digest_email || '',
+      enabled: result.rows[0].email_digest_enabled || false,
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch email settings' });
+  }
+});
+
+// POST /api/user/email-settings — сохранить email для дайджеста
+router.post('/email-settings', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.userId;
+    const { email, enabled } = req.body;
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (email && !emailRegex.test(email)) {
+      return res.status(400).json({ error: 'Invalid email format' });
+    }
+
+    await query(
+      `UPDATE notification_settings 
+       SET digest_email = $1, email_digest_enabled = $2, updated_at = ${nowSql()}
+       WHERE user_id = $3`,
+      [email || null, enabled === true, userId]
+    );
+
+    res.json({ success: true, email, enabled: enabled === true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to save email settings' });
+  }
+});
+
 export default router;
