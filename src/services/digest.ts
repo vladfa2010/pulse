@@ -245,13 +245,14 @@ export async function sendDigestToUser(userId: string): Promise<boolean> {
 export async function sendAllDigests(): Promise<void> {
   console.log('[Digest] Starting digest distribution');
 
-  // Find all users with TG digest enabled and active Telegram channel
+  // Find all PREMIUM users with TG digest enabled and active Telegram channel
   const usersResult = await query(
     `SELECT DISTINCT u.id
      FROM users u
      JOIN notification_settings ns ON ns.user_id = u.id
      JOIN user_channels uc ON uc.user_id = u.id
-     WHERE ns.tg_digest_enabled = TRUE
+     WHERE u.subscription_active = TRUE
+       AND ns.tg_digest_enabled = TRUE
        AND uc.channel = 'telegram'
        AND uc.is_active = TRUE
        AND EXISTS (SELECT 1 FROM portfolios p WHERE p.user_id = u.id LIMIT 1)`

@@ -16,6 +16,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import crypto from 'crypto';
 import { query } from './config/db';          // ← Единая функция для SQL-запросов
 import authRoutes from './routes/auth';
 import newsRoutes from './routes/news';
@@ -52,7 +53,7 @@ app.get('/', (req, res) => {
 
 // Health check — Render использует это для мониторинга
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString(), version: '5.0' });
+  res.json({ status: 'ok', timestamp: new Date().toISOString(), version: '5.1' });
 });
 
 // TEMP: Backfill: translate existing EN titles to RU via Kimi
@@ -335,6 +336,53 @@ app.use('/api/translate', translateRoutes);
 app.use('/api/webhook', webhookLimiter, webhookRoutes); // Высокий лимит для YuKassa
 app.use('/api/admin', adminRoutes);     // GET /api/admin/users, /stats
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Telegram Bot — generate secure link for connecting account
+// ═══════════════════════════════════════════════════════════════════════════
+app.get('/api/telegram/link', async (req, res) => {
+  try {
+    // Get user from auth token
+    const authHeader = req.headers.authorization;
+    if (!authHeader?.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    
+    const token = authHeader.slice(7);
+    const jwt = await import('jsonwebtoken');
+    const JWT_SECRET = process.env.JWT_SECRET || 'pulse-secret-key';
+    const decoded = jwt.default.verify(token, JWT_SECRET) as any;
+    const userId = decoded.userId;
+    
+    if (!userId) {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+    
+    // Check subscription
+    const userResult = await query(
+      `SELECT subscription_active FROM users WHERE id = $1`,
+      [userId]
+    );
+    
+    if (userResult.rows.length === 0 || !userResult.rows[0].subscription_active) {
+      return res.status(403).json({ error: 'Premium subscription required' });
+    }
+    
+    // Generate secure token
+    const linkToken = generateLinkToken(userId);
+    const botUsername = 'Insidepulse_bot';
+    const deepLink = `https://t.me/${botUsername}?start=${userId}:${linkToken}`;
+    
+    res.json({
+      deepLink,
+      botUsername,
+      expiresIn: '24h', // Token is valid for 24 hours
+    });
+  } catch (err: any) {
+    console.error('[Telegram Link] Error:', err.message);
+    res.status(500).json({ error: 'Failed to generate link' });
+  }
+});
+
 // TEMP: Backfill matched_tags for existing articles without tags
 app.get('/backfill-tags', async (req, res) => {
   const secret = req.headers['x-trigger-secret'] || req.query.secret;
@@ -460,6 +508,21 @@ app.get('/tag-stats', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// HMAC helper for secure Telegram linking
+// ═══════════════════════════════════════════════════════════════════════════
+function verifyLinkToken(userId: string, token: string): boolean {
+  const secret = process.env.TELEGRAM_BOT_TOKEN || '';
+  if (!secret) return false;
+  const expected = crypto.createHmac('sha256', secret).update(userId).digest('hex').slice(0, 16);
+  return crypto.timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(token, 'hex'));
+}
+
+export function generateLinkToken(userId: string): string {
+  const secret = process.env.TELEGRAM_BOT_TOKEN || '';
+  return crypto.createHmac('sha256', secret).update(userId).digest('hex').slice(0, 16);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Telegram Bot Webhook — обработка команд (/start, /stop, /now, /settings)
 // ═══════════════════════════════════════════════════════════════════════════
 app.post('/webhook/telegram', express.json(), async (req, res) => {
@@ -476,12 +539,86 @@ app.post('/webhook/telegram', express.json(), async (req, res) => {
     // Log
     console.log(`[TG Bot] ${username} (${chatId}): ${text}`);
 
-    // Handle commands
+    // Handle commands (check /start with token first)
+    const startMatch = text.match(/^\/start\s+(\S+)/i);
+    if (startMatch) {
+      // Secure linking: /start <user_id>:<hmac_token>
+      const payload = startMatch[1];
+      const parts = payload.split(':');
+      
+      if (parts.length === 2) {
+        const linkedUserId = parts[0];
+        const token = parts[1];
+        
+        if (verifyLinkToken(linkedUserId, token)) {
+          // Check if user exists and has active subscription
+          const userCheck = await query(
+            `SELECT id, email, subscription_active FROM users WHERE id = $1`,
+            [linkedUserId]
+          );
+          
+          if (userCheck.rows.length === 0) {
+            await sendTelegramReply(chatId,
+              `⚠️ Пользователь не найден.\n\n` +
+              `Войдите на сайт и получите новую ссылку для подключения.`
+            );
+            res.sendStatus(200);
+            return;
+          }
+          
+          const user = userCheck.rows[0];
+          
+          // Check subscription
+          if (!user.subscription_active) {
+            await sendTelegramReply(chatId,
+              `⚠️ Подписка не активна.\n\n` +
+              `Оформите подписку на сайте для получения уведомлений:\n` +
+              `https://pulse-frontend-jt53.onrender.com`
+            );
+            res.sendStatus(200);
+            return;
+          }
+          
+          // Save channel link
+          await query(
+            `INSERT INTO user_channels (user_id, channel, target, is_active)
+             VALUES ($1, 'telegram', $2, TRUE)
+             ON CONFLICT (user_id, channel) DO UPDATE
+             SET target = $2, is_active = TRUE`,
+            [linkedUserId, chatId]
+          );
+          
+          // Enable digest
+          await query(
+            `UPDATE notification_settings SET tg_digest_enabled = TRUE WHERE user_id = $1`,
+            [linkedUserId]
+          );
+          
+          await sendTelegramReply(chatId,
+            `✅ Подключено!\n\n` +
+            `Аккаунт: ${escapeMd(user.email)}\n` +
+            `Тариф: Premium ✅\n\n` +
+            `📰 Команды:\n` +
+            `/now — получить дайджест\n` +
+            `/stop — приостановить рассылку\n` +
+            `/settings — настройки\n\n` +
+            `⏰ Дайджест каждые 3 часа.`
+          );
+          console.log(`[TG Bot] Linked user ${linkedUserId} to chat ${chatId}`);
+        } else {
+          await sendTelegramReply(chatId, `⚠️ Неверная ссылка. Получите новую на сайте.`);
+        }
+        res.sendStatus(200);
+        return;
+      }
+    }
+
+    // Handle simple commands
     switch (text.toLowerCase()) {
       case '/start': {
         // Try to find user by this chat_id
         const userResult = await query(
-          `SELECT u.id, u.email FROM users u
+          `SELECT u.id, u.email, u.subscription_active FROM users u
            JOIN user_channels uc ON uc.user_id = u.id
            WHERE uc.channel = 'telegram' AND uc.target = $1`,
           [chatId]
@@ -489,26 +626,25 @@ app.post('/webhook/telegram', express.json(), async (req, res) => {
 
         if (userResult.rows.length > 0) {
           const user = userResult.rows[0];
+          const subStatus = user.subscription_active ? '✅' : '⚠️ неактивна';
           await sendTelegramReply(chatId,
             `👋 Привет, ${escapeMd(username)}!\n\n` +
-            `Ваш аккаунт подключен: ${escapeMd(user.email)}\n\n` +
+            `Аккаунт: ${escapeMd(user.email)}\n` +
+            `Подписка: ${subStatus}\n\n` +
             `📰 Команды:\n` +
             `/now — получить свежий дайджест\n` +
             `/stop — приостановить рассылку\n` +
-            `/settings — настройки частоты и режима сна\n\n` +
+            `/settings — настройки\n\n` +
             `⏰ Дайджест приходит каждые 3 часа (если есть новости).`
           );
         } else {
           await sendTelegramReply(chatId,
             `👋 Привет, ${escapeMd(username)}!\n\n` +
             `Добро пожаловать в PULSE — инвестиционные новости.\n\n` +
-            `🔗 Для подключения рассылки:\n` +
+            `🔗 Для подключения:\n` +
             `1. Войдите на https://pulse-frontend-jt53.onrender.com\n` +
-            `2. В профиле подключите Telegram\n\n` +
-            `📰 Доступные команды:\n` +
-            `/start — эта справка\n` +
-            `/now — запросить дайджест (если подключен)\n` +
-            `/settings — настройки`
+            `2. В профиле нажмите «Подключить Telegram»\n\n` +
+            `Требуется активная подписка Premium.`
           );
         }
         break;
