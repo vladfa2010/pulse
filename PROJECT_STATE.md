@@ -64,8 +64,10 @@ RSS Fetch (20+ sources) → Parse XML → URL Normalize → Translate EN→RU (K
 ## 5. Smart Tag Matching — 3 слоя ✅
 
 1. **Keyword matching** — только пользовательские теги (из `user_defined_tags`), ищет по title + summary
-2. **LLM matching** (Kimi API) — если keywords ничего не нашли, спрашиваем LLM со всеми тегами из БД. Кэш: `smart_tag_cache`
+2. **LLM matching** (Kimi API) — ВСЕГДА запускается после keyword matching. Union: Layer 1 ∪ Layer 2. Кэш: `smart_tag_cache`
 3. **Related tags (LLM)** — связанные теги определяются динамически через LLM, нет хардкода
+
+**Tag Types (Auto-Detection):** 8 типов через LLM — company, ticker, sector, trend, person, commodity, index, currency. Endpoint: `GET /api/user/tags/detect-type?tagName=X`
 
 ---
 

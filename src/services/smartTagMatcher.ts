@@ -6,14 +6,14 @@
  * Architecture: ONLY user-defined tags. No hardcoded keywords.
  *
  * Layer 1: Keyword matching via user-defined tags from DB
- * Layer 2: LLM smart matching (for articles without keyword hits)
+ * Layer 2: LLM smart matching (ALWAYS runs after Layer 1 — union of results)
  * Layer 3: LLM-based related tags (dynamic, no hardcoded mappings)
  *
  * Flow:
  *   1. Fetch all user-defined tags with keywords from DB
- *   2. Try keyword matching on title + summary
- *   3. If no matches → call LLM to analyze relevance against all known tags
- *   4. LLM returns which tags apply (with confidence scores)
+ *   2. Layer 1: keyword matching on title + summary
+ *   3. Layer 2: ALWAYS call LLM to find additional tags
+ *   4. Union: Layer 1 results ∪ Layer 2 results (deduplicated)
  *   5. Cache LLM results to avoid repeated calls
  *   6. For related tags → LLM suggests semantically connected tags
  */
@@ -269,27 +269,28 @@ export async function smartMatchTags(
 ): Promise<string[]> {
   const fullText = `${title} ${summary}`;
 
-  // Layer 1: Keyword matching (user-defined tags from DB)
+  // Layer 1: Keyword matching (user-defined tags from DB) — всегда выполняем
   const keywordTags = await matchTagsByKeywords(fullText);
 
-  if (keywordTags.length > 0) {
-    console.log(`[SmartTags] Keyword match: ${keywordTags.join(', ')} for "${title.slice(0, 50)}..."`);
-    return keywordTags;
-  }
-
-  // Layer 2: LLM matching (if no keyword match AND useLLM is true)
+  // Layer 2: LLM matching — ВСЕГДА запускаем после Layer 1 (вариант Б)
+  // Объединяем результаты: keyword matches + LLM-discovered matches
+  let llmTags: string[] = [];
   if (options.useLLM !== false && KIMI_API_KEY) {
-    // Fetch all tag IDs from DB for LLM
     const availableTags = await getAllTagNames();
-    const llmTags = await callLLMForTags(title, summary, availableTags);
-    if (llmTags.length > 0) {
-      console.log(`[SmartTags] LLM match: ${llmTags.join(', ')} for "${title.slice(0, 50)}..."`);
-      return llmTags;
-    }
+    llmTags = await callLLMForTags(title, summary, availableTags);
   }
 
-  // No match found
-  return [];
+  // Union: Layer 1 ∪ Layer 2 (deduplicate)
+  const allTags = [...new Set([...keywordTags, ...llmTags])];
+
+  if (allTags.length > 0) {
+    const sources: string[] = [];
+    if (keywordTags.length > 0) sources.push(`keyword: ${keywordTags.join(',')}`);
+    if (llmTags.length > 0) sources.push(`LLM: ${llmTags.join(',')}`);
+    console.log(`[SmartTags] ${allTags.join(', ')} (${sources.join(' + ')}) for "${title.slice(0, 50)}..."`);
+  }
+
+  return allTags;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
