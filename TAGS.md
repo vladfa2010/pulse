@@ -78,7 +78,68 @@ function generateTagKeywords(tagName: string): string[]
 
 ---
 
-## 3. Алгоритм матчинга (3 метода)
+## 3. Типы тегов (Auto-Detection)
+
+### 3.1 Доступные типы
+
+| Тип | Описание | Примеры |
+|-----|----------|---------|
+| `company` | Компания / эмитент | Apple, Tesla, Сбербанк, Яндекс |
+| `ticker` | Биржевой тикер | AAPL, TSLA, SBER, NVDA |
+| `sector` | Сектор экономики | Технологии, Фарма, Энергетика, Финансы |
+| `trend` | Тренд / тема | AI, Крипто, ESG, Космос, Метавселенная |
+| `person` | Ключевая персона | Илон Маск, Пауэлл, Цукерберг |
+| `commodity` | Сырьё / товар | Золото, Нефть, Медь, Пшеница |
+| `index` | Фондовый индекс | S&P 500, NASDAQ, MOEX, Dow Jones |
+| `currency` | Валюта (фиат или крипто) | USD, EUR, BTC, ETH, Юань |
+
+### 3.2 Автоопределение через LLM
+
+```typescript
+async function detectTagTypeViaLLM(tagName: string): Promise<TagType>
+```
+
+При создании тега с `tagType: 'auto'` (по умолчанию):
+1. Отправляем название тега в Kimi API
+2. LLM анализирует и возвращает один из 8 типов
+3. Fallback: `heuristicTagType()` если LLM недоступен
+
+**Примеры определения:**
+```
+"Apple"     → company
+"AAPL"      → ticker
+"Илон Маск"  → person
+"AI"        → trend
+"Gold"      → commodity
+"USD"       → currency
+"S&P 500"   → index
+"Технологии" → sector
+```
+
+### 3.3 Heuristic Fallback (без LLM)
+
+```typescript
+function heuristicTagType(tagName: string): TagType
+```
+
+Быстрая локальная проверка (регулярные выражения):
+- 1-5 латинских букв → `ticker`
+- Имя фамилии (Маск, Пауэлл) → `person`
+- Валютные коды (USD, BTC) → `currency`
+- Названия индексов → `index`
+- Сырьё (Gold, Oil) → `commodity`
+- Остальное → `company`
+
+### 3.4 Endpoint
+
+```
+GET /api/user/tags/detect-type?tagName=Apple
+→ { "tag_name": "Apple", "tag_type": "company", "tag_type_label": "Компания" }
+```
+
+---
+
+## 4. Алгоритм матчинга (3 метода)
 
 ### Метод 1: Поиск по словам (Keyword Search)
 
@@ -146,7 +207,7 @@ function getRelatedTags(tagId: string, allTagIds?: string[]): Promise<string[]>
 
 ---
 
-## 4. Sentiment Analysis
+## 5. Sentiment Analysis
 
 ### 4.1 Keyword-based (fallback, fast)
 ```
@@ -172,7 +233,7 @@ function analyzeTagImpact(title, summary, tags): TagImpact[]
 
 ---
 
-## 5. Где используются теги
+## 6. Где используются теги
 
 | Компонент | Использование |
 |-----------|--------------|
@@ -187,7 +248,7 @@ function analyzeTagImpact(title, summary, tags): TagImpact[]
 
 ---
 
-## 6. Базы данных
+## 7. Базы данных
 
 ### 6.1 Таблицы
 
@@ -231,7 +292,20 @@ CREATE TABLE news (
 
 ---
 
-## 7. Эндпоинты
+## 8. Эндпоинты
+
+### GET /api/user/tags/detect-type?tagName={name}
+
+Автоопределение типа тега (preview перед созданием).
+
+```json
+// Запрос: /api/user/tags/detect-type?tagName=AAPL
+{
+  "tag_name": "AAPL",
+  "tag_type": "ticker",
+  "tag_type_label": "Тикер"
+}
+```
 
 ### GET /api/user/tags/related?tag={tagId}
 
@@ -251,7 +325,7 @@ CREATE TABLE news (
 
 ---
 
-## 8. Диагностика
+## 9. Диагностика
 
 ```sql
 -- Распределение тегов по новостям
@@ -267,62 +341,4 @@ SELECT * FROM user_defined_tags;
 -- Кэш LLM matching
 SELECT COUNT(*) FROM smart_tag_cache;
 
--- Теги конкретного пользователя
-SELECT * FROM portfolios WHERE user_id = '...';
-
--- Сколько тегов в системе
-SELECT COUNT(*) FROM user_defined_tags;
-```
-
----
-
-## 9. Правила модификации
-
-1. **Добавить тег:** пользователь создаёт через UI → автоматический backfill по всей базе
-2. **Изменить keywords:** нет ручного редактирования — keywords генерируются автоматически
-3. **Related tags:** автоматические через LLM — не требуют ручного обновления
-4. **Нет деплоя для тегов:** всё через UI или БД
-
----
-
-## 10. Технические детали
-
-### Производительность
-
-| Операция | Скорость | Зависимость |
-|----------|----------|-------------|
-| Keyword match | < 1 мс | Количество тегов в БД |
-| LLM tag match | 1-5 сек | Сеть + API |
-| LLM related tags | 1-3 сек | Сеть + API (кэш 5 мин) |
-| Sentiment LLM | 1-3 сек | Сеть + API |
-| Tag impact | 2-5 сек | Сеть + API |
-
-### Кэширование
-
-```
-User tags (keywords):     60 секунд (in-memory)
-LLM matching results:     7 дней (БД: smart_tag_cache)
-LLM related tags:         5 минут (in-memory Map)
-```
-
-### Fallback-цепочка
-
-```
-Новость пришла
-  → Метод 1 (keywords): нашли? → return
-  → Метод 2 (LLM tags): нашли? → return
-  → Метод 3 (LLM related): дополняем найденные
-  → Ничего не нашли → matched_tags = NULL
-```
-
----
-
-## 11. TODO / Улучшения
-
-| # | Проблема | Приоритет |
-|---|----------|-----------|
-| 1 | Нет пересечения тегов (AND logic) — только OR | medium |
-| 2 | Нет весов у keywords — "apple" = "app store" по весу | low |
-| 3 | Нет negative keywords — исключений | low |
-| 4 | Склонения только русские — нужны английские (s, es, ing) | low |
-| 5 | LLM related tags: персистентный кэш в БД вместо in-memory | low |
+-- Теги конкретного 
