@@ -6,6 +6,32 @@ const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 
+// User state for multi-step flows (e.g., adding a tag)
+// Map<chatId, { action: 'awaiting_tag_input' | 'confirming_tag', data?: any }>
+const userStates = new Map<string, { action: string; data?: any }>();
+
+// Tag keywords database (same as frontend)
+const STANDARD_TAGS: Record<string, string[]> = {
+  nvda: ['nvidia', 'nvda', 'энвидиа'],
+  apple: ['apple', 'aapl', 'эпл', 'эппл'],
+  tesla: ['tesla', 'tsla', 'тесла'],
+  sber: ['сбер', 'сбербанк', 'sber'],
+  gazprom: ['газпром', 'gazprom'],
+  lukoil: ['лукойл', 'lukoil'],
+  yandex: ['яндекс', 'yandex', 'yndx'],
+  google: ['google', 'goog', 'алфабет', 'alphabet'],
+  amazon: ['amazon', 'amzn', 'амазон'],
+  microsoft: ['microsoft', 'msft', 'майкрософт'],
+  btc: ['bitcoin', 'btc', 'биткоин', 'биткойн'],
+  eth: ['ethereum', 'eth', 'эфириум'],
+  oil: ['нефть', 'oil', 'brent', 'брент'],
+  gold: ['золото', 'gold'],
+  sp500: ['s&p 500', 'sp500', 'spx', 'эс-энд-би'],
+  moex: ['moex', 'мосбиржа', 'индекс мосбиржи'],
+  rub: ['рубль', 'ruble', 'usdrub', 'eurrub'],
+  fed: ['фрс', 'fed', 'federal reserve', 'пowell'],
+};
+
 // HMAC helper for secure Telegram linking
 function verifyLinkToken(userId: string, token: string): boolean {
   const secret = process.env.TELEGRAM_BOT_TOKEN || '';
@@ -86,6 +112,14 @@ router.post('/telegram', async (req, res) => {
 
     console.log(`[TG Bot] ${username} (${chatId}): ${text}`);
 
+    // ─── Check user state (multi-step flows) ──────────────────────────
+    const state = userStates.get(chatId);
+    if (state) {
+      if (state.action === 'awaiting_tag_input') {
+        return handleTagInput(chatId, text, res);
+      }
+    }
+
     // Handle /start with payload: /start <user_id>:<token>
     const startMatch = text.match(/^\/start\s+(\S+)/i);
     if (startMatch) {
@@ -127,6 +161,7 @@ router.post('/telegram', async (req, res) => {
         if (isConnected) {
           await sendMessageWithButtons(chatId, '👋 PULSE — ваши инвестиционные новости\n\nВыберите действие:', [
             [{ text: '📰 Получить дайджест', callback_data: 'digest_now' }],
+            [{ text: '🏷 Мои теги', callback_data: 'my_tags' }],
             [{ text: '⚙️ Настройки', callback_data: 'settings' }],
             [{ text: '🔕 Отключить рассылку', callback_data: 'stop_digest' }],
           ]);
@@ -208,6 +243,23 @@ async function handleCallbackQuery(req: any, res: any): Promise<void> {
         ]);
         break;
       }
+      case 'my_tags': {
+        await showMyTags(chatId);
+        break;
+      }
+      case 'add_tag': {
+        await promptAddTag(chatId);
+        break;
+      }
+    }
+
+    // Handle delete_tag:<tagId> and confirm_add_tag:<tagName>
+    if (data.startsWith('delete_tag:')) {
+      const tagId = data.replace('delete_tag:', '');
+      await deleteUserTag(chatId, tagId);
+    } else if (data.startsWith('confirm_add_tag:')) {
+      const tagName = decodeURIComponent(data.replace('confirm_add_tag:', ''));
+      await confirmAddTag(chatId, tagName);
     }
 
     res.sendStatus(200);
@@ -259,6 +311,157 @@ async function sendMessage(chatId: string, text: string): Promise<void> {
     text,
     parse_mode: 'HTML',
   });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Tag Management Functions
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function getUserIdByChatId(chatId: string): Promise<string | null> {
+  const result = await query(
+    `SELECT user_id FROM user_channels WHERE target = $1 AND channel = 'telegram' AND is_active = TRUE`,
+    [chatId]
+  );
+  return result.rows.length > 0 ? result.rows[0].user_id : null;
+}
+
+async function showMyTags(chatId: string): Promise<void> {
+  const userId = await getUserIdByChatId(chatId);
+  if (!userId) {
+    await sendMessage(chatId, '⚠️ Аккаунт не подключен.');
+    return;
+  }
+
+  const result = await query(
+    `SELECT tag_id, tag_name, tag_type FROM portfolios WHERE user_id = $1 ORDER BY tag_name`,
+    [userId]
+  );
+
+  if (result.rows.length === 0) {
+    await sendMessageWithButtons(chatId, '🏷 У вас пока нет тегов.\n\nДобавьте теги, чтобы получать персональные новости.', [
+      [{ text: '➕ Добавить тег', callback_data: 'add_tag' }],
+    ]);
+    return;
+  }
+
+  let text = `🏷 Ваши теги (${result.rows.length}):\n\n`;
+  const keyboard: any[][] = [];
+
+  for (const row of result.rows) {
+    text += `• <b>${escapeHtml(row.tag_name)}</b> (${row.tag_type || 'custom'})\n`;
+    keyboard.push([{
+      text: `🗑 ${row.tag_name}`,
+      callback_data: `delete_tag:${row.tag_id}`
+    }]);
+  }
+
+  keyboard.push([{ text: '➕ Добавить тег', callback_data: 'add_tag' }]);
+
+  await sendMessageWithButtons(chatId, text, keyboard);
+}
+
+async function promptAddTag(chatId: string): Promise<void> {
+  userStates.set(chatId, { action: 'awaiting_tag_input' });
+  await sendMessage(chatId, '➕ Введите название тега:\n\nНапример: <b>Сбер</b>, <b>Apple</b>, <b>нефть</b>\n\nИли отправьте /cancel для отмены.');
+}
+
+async function handleTagInput(chatId: string, text: string, res: any): Promise<void> {
+  userStates.delete(chatId); // Clear state
+
+  if (text.toLowerCase() === '/cancel') {
+    await sendMessage(chatId, '❌ Отменено.');
+    res.sendStatus(200);
+    return;
+  }
+
+  const input = text.toLowerCase().trim();
+  if (input.length < 2) {
+    await sendMessage(chatId, '⚠️ Слишком короткое название. Минимум 2 символа.');
+    res.sendStatus(200);
+    return;
+  }
+
+  // Search in standard tags
+  const matches: string[] = [];
+  for (const [tagId, keywords] of Object.entries(STANDARD_TAGS)) {
+    if (keywords.some(k => k.toLowerCase().includes(input) || input.includes(k.toLowerCase()))) {
+      matches.push(tagId);
+    }
+  }
+
+  // Check if exact match exists
+  if (matches.length === 0) {
+    // No matches — ask to create new tag
+    await sendMessageWithButtons(chatId, `Тег "<b>${escapeHtml(text)}</b>" не найден в базе.\n\nСоздать новый тег?`, [
+      [{ text: '✅ Создать', callback_data: `confirm_add_tag:${encodeURIComponent(text)}` }],
+      [{ text: '❌ Отмена', callback_data: 'my_tags' }],
+    ]);
+  } else if (matches.length === 1) {
+    // Single match — add directly
+    await confirmAddTag(chatId, matches[0]);
+  } else {
+    // Multiple matches — show options
+    const keyboard = matches.map(tagId => ([{
+      text: `🏷 ${tagId}`,
+      callback_data: `confirm_add_tag:${encodeURIComponent(tagId)}`
+    }]));
+    keyboard.push([{ text: '❌ Отмена', callback_data: 'my_tags' }]);
+    await sendMessageWithButtons(chatId, `🔍 Найдено несколько совпадений для "<b>${escapeHtml(text)}</b>":`, keyboard);
+  }
+
+  res.sendStatus(200);
+}
+
+async function confirmAddTag(chatId: string, tagName: string): Promise<void> {
+  const userId = await getUserIdByChatId(chatId);
+  if (!userId) {
+    await sendMessage(chatId, '⚠️ Аккаунт не подключен.');
+    return;
+  }
+
+  const tagId = tagName.toLowerCase().replace(/\s+/g, '_');
+  const tagType = STANDARD_TAGS[tagId] ? 'standard' : 'custom';
+
+  try {
+    await query(
+      `INSERT INTO portfolios (user_id, tag_id, tag_name, tag_type)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (user_id, tag_id) DO NOTHING`,
+      [userId, tagId, tagName, tagType]
+    );
+    await sendMessageWithButtons(chatId, `✅ Тег "<b>${escapeHtml(tagName)}</b>" добавлен!\n\nНовости по этому тегу появятся в ленте.`, [
+      [{ text: '🏷 Мои теги', callback_data: 'my_tags' }],
+      [{ text: '➕ Добавить ещё', callback_data: 'add_tag' }],
+    ]);
+  } catch (err: any) {
+    console.error('[TG Bot] Add tag error:', err.message);
+    await sendMessage(chatId, '❌ Ошибка добавления тега.');
+  }
+}
+
+async function deleteUserTag(chatId: string, tagId: string): Promise<void> {
+  const userId = await getUserIdByChatId(chatId);
+  if (!userId) {
+    await sendMessage(chatId, '⚠️ Аккаунт не подключен.');
+    return;
+  }
+
+  try {
+    await query(`DELETE FROM portfolios WHERE user_id = $1 AND tag_id = $2`, [userId, tagId]);
+    await sendMessageWithButtons(chatId, `🗑 Тег удалён.`, [
+      [{ text: '🏷 Мои теги', callback_data: 'my_tags' }],
+    ]);
+  } catch (err: any) {
+    console.error('[TG Bot] Delete tag error:', err.message);
+    await sendMessage(chatId, '❌ Ошибка удаления тега.');
+  }
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
 
 async function sendMessageWithButtons(chatId: string, text: string, buttons: any[][]): Promise<void> {
