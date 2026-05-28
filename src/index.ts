@@ -25,6 +25,7 @@ import userRoutes from './routes/user';
 import translateRoutes from './routes/translate';
 import webhookRoutes from './routes/webhook';
 import adminRoutes from './routes/admin';
+import { authMiddleware, AuthRequest } from './middleware/auth';
 import { apiLimiter, authLimiter, webhookLimiter } from './middleware/rateLimit';
 import { startCron, processArticles } from './services/cron';   // ← RSS агрегатор (каждые 15 мин)
 import { startReportCron } from './services/reports'; // ← Еженедельные репорты
@@ -345,47 +346,40 @@ app.use('/api/admin', adminRoutes);     // GET /api/admin/users, /stats
 // ═══════════════════════════════════════════════════════════════════════════
 // Telegram Bot — generate secure link for connecting account
 // ═══════════════════════════════════════════════════════════════════════════
-app.get('/api/telegram/link', async (req, res) => {
+app.get('/api/telegram/link', authMiddleware, async (req: AuthRequest, res) => {
   try {
-    // Get user from auth token
-    const authHeader = req.headers.authorization;
-    if (!authHeader?.startsWith('Bearer ')) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-    
-    const token = authHeader.slice(7);
-    const jwt = await import('jsonwebtoken');
-    const JWT_SECRET = process.env.JWT_SECRET || 'pulse-secret-key';
-    const decoded = jwt.default.verify(token, JWT_SECRET) as any;
-    const userId = decoded.userId;
-    
-    if (!userId) {
-      return res.status(401).json({ error: 'Invalid token' });
-    }
-    
+    const userId = req.user!.userId;
+    console.log(`[Telegram Link] User ${userId} requesting link`);
+
     // Check subscription
     const userResult = await query(
       `SELECT subscription_active FROM users WHERE id = $1`,
       [userId]
     );
-    
-    if (userResult.rows.length === 0 || !userResult.rows[0].subscription_active) {
+    console.log(`[Telegram Link] User ${userId} subscription:`, userResult.rows[0]);
+
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    if (!userResult.rows[0].subscription_active) {
       return res.status(403).json({ error: 'Premium subscription required' });
     }
-    
+
     // Generate secure token
     const linkToken = generateLinkToken(userId);
     const botUsername = 'Insidepulse_bot';
     const deepLink = `https://t.me/${botUsername}?start=${userId}:${linkToken}`;
-    
+
+    console.log(`[Telegram Link] Generated link for user ${userId}`);
     res.json({
       deepLink,
       botUsername,
-      expiresIn: '24h', // Token is valid for 24 hours
+      expiresIn: '24h',
     });
   } catch (err: any) {
-    console.error('[Telegram Link] Error:', err.message);
-    res.status(500).json({ error: 'Failed to generate link' });
+    console.error('[Telegram Link] Error:', err.message, err.stack);
+    res.status(500).json({ error: 'Failed to generate link: ' + err.message });
   }
 });
 
