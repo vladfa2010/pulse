@@ -4,7 +4,8 @@ import { query } from '../config/db';
 import { validate } from '../middleware/validate';
 import { AddTagSchema } from '../schemas/user';
 import { getRelatedTags, matchTagsByKeywords } from '../services/smartTagMatcher';
-import { createUserTag, generateTagKeywords, getAllTagNames } from '../services/tagManager';
+import { createUserTag, generateTagKeywords, getAllTagNames, detectTagTypeViaLLM, TAG_TYPE_LABELS } from '../services/tagManager';
+import type { TagType } from '../services/tagManager';
 
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
@@ -123,17 +124,17 @@ router.get('/tags', authMiddleware, async (req: AuthRequest, res) => {
   }
 });
 
-// POST /api/user/tags — add a tag
+// POST /api/user/tags — add a tag (auto-detects type via LLM)
 router.post('/tags', authMiddleware, validate(AddTagSchema), async (req: AuthRequest, res) => {
   try {
     const userId = req.user!.userId;
     const { tagId, tagName, tagType } = req.body;
 
-    if (!tagId || !tagName || !tagType) {
-      return res.status(400).json({ error: 'tagId, tagName, tagType required' });
+    if (!tagId || !tagName) {
+      return res.status(400).json({ error: 'tagId and tagName required' });
     }
 
-    // Check tag limit (10 for premium, 3 for free)
+    // Check tag limit (10 for premium, 1 for free)
     const countResult = await query(
       'SELECT COUNT(*) as count FROM portfolios WHERE user_id = $1',
       [userId]
@@ -145,7 +146,7 @@ router.post('/tags', authMiddleware, validate(AddTagSchema), async (req: AuthReq
       [userId]
     );
     const isPremium = userResult.rows[0]?.subscription_active || false;
-    const maxTags = isPremium ? 10 : 3;
+    const maxTags = isPremium ? 10 : 1;
 
     if (tagCount >= maxTags) {
       return res.status(403).json({
@@ -153,24 +154,22 @@ router.post('/tags', authMiddleware, validate(AddTagSchema), async (req: AuthReq
       });
     }
 
-    const portfolioId = uuidv4();
-
-    if (USE_SQLITE) {
-      await query(
-        `INSERT OR REPLACE INTO portfolios (id, user_id, tag_id, tag_name, tag_type)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [portfolioId, userId, tagId, tagName, tagType]
-      );
-    } else {
-      await query(
-        `INSERT INTO portfolios (id, user_id, tag_id, tag_name, tag_type)
-         VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (user_id, tag_id) DO UPDATE SET tag_name = $4`,
-        [portfolioId, userId, tagId, tagName, tagType]
-      );
+    // Auto-detect type if 'auto' or not provided
+    const result = await createUserTag(userId, tagId, tagName, tagType);
+    if (!result.success) {
+      return res.status(500).json({ error: 'Failed to create tag' });
     }
 
-    res.status(201).json({ tag: { id: portfolioId, tag_id: tagId, tag_name: tagName, tag_type: tagType } });
+    const finalType = result.detectedType || tagType;
+
+    res.status(201).json({
+      tag: {
+        tag_id: tagId,
+        tag_name: tagName,
+        tag_type: finalType,
+        tag_type_label: TAG_TYPE_LABELS[finalType as TagType],
+      },
+    });
   } catch (err) {
     console.error('Add tag error:', err);
     res.status(500).json({ error: 'Failed to add tag' });
@@ -362,11 +361,30 @@ router.get('/tags/related', async (req, res) => {
   }
 });
 
+// GET /api/user/tags/detect-type?tagName=Apple — автоопределение типа (preview)
+router.get('/tags/detect-type', async (req, res) => {
+  try {
+    const tagName = req.query.tagName as string;
+    if (!tagName || tagName.length < 1) {
+      return res.status(400).json({ error: 'tagName required' });
+    }
+
+    const detectedType = await detectTagTypeViaLLM(tagName);
+    res.json({
+      tag_name: tagName,
+      tag_type: detectedType,
+      tag_type_label: TAG_TYPE_LABELS[detectedType],
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/user/tags/custom — создать пользовательский тег + backfill по всей базе
 router.post('/tags/custom', authMiddleware, async (req: AuthRequest, res) => {
   try {
     const userId = req.user!.userId;
-    const { tagName, tagType = 'company' } = req.body;
+    const { tagName, tagType = 'auto' } = req.body;
 
     if (!tagName || tagName.length < 2) {
       return res.status(400).json({ error: 'Tag name must be at least 2 characters' });
@@ -382,9 +400,9 @@ router.post('/tags/custom', authMiddleware, async (req: AuthRequest, res) => {
       return res.status(400).json({ error: 'Invalid tag name' });
     }
 
-    // Создаем тег
-    const success = await createUserTag(userId, tagId, tagName, tagType);
-    if (!success) {
+    // Создаем тег (auto-detect type if tagType = 'auto')
+    const result = await createUserTag(userId, tagId, tagName, tagType);
+    if (!result.success) {
       return res.status(500).json({ error: 'Failed to create tag' });
     }
 
@@ -421,7 +439,8 @@ router.post('/tags/custom', authMiddleware, async (req: AuthRequest, res) => {
         id: tagId,
         tag_id: tagId,
         tag_name: tagName,
-        tag_type: tagType,
+        tag_type: result.detectedType || tagType,
+        tag_type_label: TAG_TYPE_LABELS[(result.detectedType || tagType) as TagType],
         keywords,
       },
       backfill: {

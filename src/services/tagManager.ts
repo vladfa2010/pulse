@@ -10,6 +10,36 @@
  */
 
 import { query } from '../config/db';
+import axios from 'axios';
+
+const KIMI_API_KEY = process.env.KIMI_API_KEY;
+const KIMI_MODEL = process.env.KIMI_MODEL || 'moonshot-v1-8k';
+
+// Допустимые типы тегов
+export const TAG_TYPES = [
+  'company',    // Компания / эмитент (Apple, Tesla, Сбер)
+  'ticker',     // Биржевой тикер (AAPL, TSLA, SBER)
+  'sector',     // Сектор экономики (Технологии, Фарма, Энергетика)
+  'trend',      // Тренд / тема (AI, Крипто, ESG, Космос)
+  'person',     // Ключевая персона (Илон Маск, Пауэлл)
+  'commodity',  // Сырьё / товар (Золото, Нефть, Медь)
+  'index',      // Фондовый индекс (S&P 500, NASDAQ, MOEX)
+  'currency',   // Валюта (USD, EUR, BTC)
+] as const;
+
+export type TagType = typeof TAG_TYPES[number];
+
+// Русские названия типов (для UI)
+export const TAG_TYPE_LABELS: Record<TagType, string> = {
+  company:   'Компания',
+  ticker:    'Тикер',
+  sector:    'Сектор',
+  trend:     'Тренд',
+  person:    'Персона',
+  commodity: 'Сырьё',
+  index:     'Индекс',
+  currency:  'Валюта',
+};
 
 // Генерация keywords для нового тега (правила + базовые формы)
 export function generateTagKeywords(tagName: string): string[] {
@@ -69,9 +99,145 @@ export function generateTagKeywords(tagName: string): string[] {
   return [...new Set(keywords)].filter(k => k.length > 0);
 }
 
-// Создать пользовательский тег
-export async function createUserTag(userId: string, tagId: string, tagName: string, tagType: string): Promise<boolean> {
+// ═══════════════════════════════════════════════════════════════════════════
+// LLM Auto-Detection: определяем тип тега по названию
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Автоопределение типа тега через LLM (Kimi API).
+ * Отправляем название → получаем один из TAG_TYPES.
+ * Fallback: 'company' если LLM недоступен.
+ */
+export async function detectTagTypeViaLLM(tagName: string): Promise<TagType> {
+  if (!KIMI_API_KEY) {
+    console.log('[TagTypeDetect] No KIMI_API_KEY, fallback to company');
+    return 'company';
+  }
+
+  const prompt = `You are a financial tag classifier. Analyze the tag name and return the most appropriate type.
+
+Tag name: "${tagName}"
+
+Available types:
+- company: Company / corporation / business entity (Apple, Tesla, Sberbank, Gazprom)
+- ticker: Stock exchange ticker symbol (AAPL, TSLA, SBER, NVDA, GAZP)
+- sector: Economic sector / industry (Technology, Healthcare, Energy, Finance, Real Estate)
+- trend: Trend / theme / technology trend (AI, Crypto, ESG, Metaverse, Web3, Green Energy)
+- person: Key person / figure in business or finance (Elon Musk, Powell, Zuckerberg)
+- commodity: Raw material / commodity / physical good (Gold, Oil, Copper, Wheat, Silver)
+- index: Stock market index / benchmark (S&P 500, NASDAQ, MOEX, Dow Jones)
+- currency: Currency / fiat or crypto (USD, EUR, Bitcoin, Ethereum, Yuan)
+
+Rules:
+1. Return ONLY the type name, nothing else
+2. Ticker symbols are usually 1-5 uppercase Latin letters (AAPL, SBER)
+3. If ambiguous, prefer "company" over "ticker"
+4. Return ONLY one word from the list above
+
+Response format: company (or ticker, sector, trend, person, commodity, index, currency)`;
+
   try {
+    const response = await axios.post(
+      'https://api.moonshot.ai/v1/chat/completions',
+      {
+        model: KIMI_MODEL,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.1,
+        max_tokens: 10,
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${KIMI_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: 10000,
+      }
+    );
+
+    const content = response.data?.choices?.[0]?.message?.content?.toLowerCase().trim() || '';
+    console.log(`[TagTypeDetect] LLM raw: "${content}" for "${tagName}"`);
+
+    // Extract type from response
+    for (const type of TAG_TYPES) {
+      if (content.includes(type)) {
+        console.log(`[TagTypeDetect] Detected: "${type}" for "${tagName}"`);
+        return type;
+      }
+    }
+
+    // Heuristic fallback (no LLM or ambiguous response)
+    return heuristicTagType(tagName);
+  } catch (err: any) {
+    console.log(`[TagTypeDetect] LLM error: ${err.message?.slice(0, 100)}`);
+    return heuristicTagType(tagName);
+  }
+}
+
+/**
+ * Heuristic type detection (fast, local, no API).
+ * Used as fallback when LLM is unavailable.
+ */
+export function heuristicTagType(tagName: string): TagType {
+  const lower = tagName.toLowerCase().trim();
+
+  // Ticker: 1-5 uppercase Latin letters (or lowercase)
+  if (/^[a-z]{1,5}$/i.test(lower) && !/^(the|and|for|new|big|top)$/i.test(lower)) {
+    // Could be ticker or short company name → check against known patterns
+    // Most 1-5 letter uppercase symbols are tickers
+    return 'ticker';
+  }
+
+  // Person: contains name patterns
+  const personPatterns = [/(^|\s)(musk|bezos|zuckerberg|buffett|gates|jobs|cook|elon|jeff|mark|warren|bill|tim|путин|медведев|набиуллина|тип)|^(илон|марк|джефф|уоррен|тим|сатья)/i];
+  if (personPatterns.some(p => p.test(lower))) {
+    return 'person';
+  }
+
+  // Currency: common currency names/codes
+  const currencyPatterns = [/^(usd|eur|gbp|jpy|rub|cny|btc|eth|bnb|xrp|usdt|bnb|sol|адollar|евро|фунт|йена|рубль|юань|биткоин|эфириум)$/i];
+  if (currencyPatterns.some(p => p.test(lower))) {
+    return 'currency';
+  }
+
+  // Index: contains index patterns
+  if (/\b(s&p|nasdaq|dow|moex|rts|msci|ftse|cac|dax|hang\s*seng)\b/i.test(lower)) {
+    return 'index';
+  }
+
+  // Commodity: raw materials
+  const commodityPatterns = [/^(gold|silver|oil|crude|brent|copper|aluminum|wheat|corn|gas|natural|uranium|platinum|palladium|золото|серебро|нефть|медь|алюминий|пшеница|кукуруза|газ|уран|платина|палладий)$/i];
+  if (commodityPatterns.some(p => p.test(lower))) {
+    return 'commodity';
+  }
+
+  // Sector: broad industry terms
+  const sectorPatterns = [/^(tech|technology|healthcare|pharma|finance|banking|energy|utilities|consumer|industrial|materials|realestate|телеком|фарма|финансы|энергетика|недвижимость|телекоммуникации|потребительские|промышленность|материалы)$/i];
+  if (sectorPatterns.some(p => p.test(lower))) {
+    return 'sector';
+  }
+
+  // Default: company
+  return 'company';
+}
+
+// Создать пользовательский тег
+// Если tagType = 'auto' или пустой — определяем через LLM
+export async function createUserTag(userId: string, tagId: string, tagName: string, tagType: string): Promise<{ success: boolean; detectedType?: TagType }> {
+  try {
+    // Auto-detect type if requested
+    let finalType = tagType;
+    let detectedType: TagType | undefined;
+
+    if (!tagType || tagType === 'auto') {
+      detectedType = await detectTagTypeViaLLM(tagName);
+      finalType = detectedType;
+    }
+
+    // Validate type
+    if (!TAG_TYPES.includes(finalType as TagType)) {
+      finalType = 'company';
+    }
+
     // Сохраняем тег в общую таблицу тегов
     const keywords = generateTagKeywords(tagName);
 
@@ -79,7 +245,7 @@ export async function createUserTag(userId: string, tagId: string, tagName: stri
       `INSERT INTO user_defined_tags (tag_id, tag_name, tag_type, keywords, created_by)
        VALUES ($1, $2, $3, $4, $5)
        ON CONFLICT (tag_id) DO NOTHING`,
-      [tagId, tagName, tagType, keywords, userId]
+      [tagId, tagName, finalType, keywords, userId]
     );
 
     // Добавляем в портфель пользователя
@@ -87,13 +253,13 @@ export async function createUserTag(userId: string, tagId: string, tagName: stri
       `INSERT INTO portfolios (user_id, tag_id, tag_name, tag_type)
        VALUES ($1, $2, $3, $4)
        ON CONFLICT (user_id, tag_id) DO NOTHING`,
-      [userId, tagId, tagName, tagType]
+      [userId, tagId, tagName, finalType]
     );
 
-    return true;
+    return { success: true, detectedType };
   } catch (err: any) {
     console.error('[TagManager] Error creating tag:', err.message);
-    return false;
+    return { success: false };
   }
 }
 
