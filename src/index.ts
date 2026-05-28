@@ -54,8 +54,8 @@ app.get('/', (req, res) => {
 });
 
 // Health check — Render использует это для мониторинга
-app.get('/health', (req, res) => {
-    // Check cron health
+app.get('/health', async (req, res) => {
+  // Check cron health
   let cronStatus = 'unknown';
   try {
     const lastRun = await query(`SELECT started_at FROM cron_log ORDER BY started_at DESC LIMIT 1`);
@@ -825,3 +825,4 @@ start();// deploy-check: 1779921938
 // deploy trigger 1779970311
 // build: 1779986393
 // deploy check: 1779986817
+// build check 1779993464
