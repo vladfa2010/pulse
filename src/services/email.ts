@@ -7,6 +7,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import axios from 'axios';
+// @ts-ignore — nodemailer types not installed
 import nodemailer from 'nodemailer';
 
 const EMAIL_PROVIDER = process.env.EMAIL_PROVIDER || 'none';
