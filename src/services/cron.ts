@@ -53,7 +53,47 @@ function analyzeSentiment(text: string): 'positive' | 'negative' | 'neutral' {
 // ═══════════════════════════════════════════════════════════════════════════
 // processArticles — главная функция: fetch → translate → analyze → save
 // ═══════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
+// Log cron run to database for monitoring
+// ═══════════════════════════════════════════════════════════════════════════
+async function logCronStart(taskName: string): Promise<number> {
+  const USE_SQLITE = process.env.USE_SQLITE === 'true';
+  try {
+    if (USE_SQLITE) {
+      const result = await query(`INSERT INTO cron_log (task_name, status) VALUES (?, 'running') RETURNING id`, [taskName]);
+      return result.rows[0]?.id;
+    } else {
+      const result = await query(`INSERT INTO cron_log (task_name, status) VALUES ($1, 'running') RETURNING id`, [taskName]);
+      return result.rows[0]?.id;
+    }
+  } catch {
+    return 0; // Silent fail — don't break cron if logging fails
+  }
+}
+
+async function logCronFinish(logId: number, fetched: number, saved: number, merged: number, errors: string[]) {
+  if (!logId) return;
+  const USE_SQLITE = process.env.USE_SQLITE === 'true';
+  try {
+    if (USE_SQLITE) {
+      await query(
+        `UPDATE cron_log SET finished_at = datetime('now'), articles_fetched = ?, articles_saved = ?, articles_merged = ?, errors = ?, status = ? WHERE id = ?`,
+        [fetched, saved, merged, errors.join('; ') || null, errors.length > 0 ? 'warning' : 'success', logId]
+      );
+    } else {
+      await query(
+        `UPDATE cron_log SET finished_at = NOW(), articles_fetched = $1, articles_saved = $2, articles_merged = $3, errors = $4, status = $5 WHERE id = $6`,
+        [fetched, saved, merged, errors.join('; ') || null, errors.length > 0 ? 'warning' : 'success', logId]
+      );
+    }
+  } catch {
+    // Silent fail
+  }
+}
+
 export async function processArticles() {
+  const logId = await logCronStart('rss');
+  const errors: string[] = [];
   console.log('[Cron] Starting RSS fetch at', new Date().toISOString());
 
   // 1. Fetch RSS (с защитой от ошибок)
@@ -203,6 +243,7 @@ export async function processArticles() {
   }
 
   console.log(`[Cron] Saved ${saved} new, merged ${merged} duplicates (total ${processed.length})`);
+  await logCronFinish(logId, processed.length, saved, merged, errors);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

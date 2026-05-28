@@ -55,7 +55,26 @@ app.get('/', (req, res) => {
 
 // Health check — Render использует это для мониторинга
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString(), version: '6.3' });
+    // Check cron health
+  let cronStatus = 'unknown';
+  try {
+    const lastRun = await query(`SELECT started_at FROM cron_log ORDER BY started_at DESC LIMIT 1`);
+    if (lastRun.rows.length > 0) {
+      const minutesAgo = (Date.now() - new Date(lastRun.rows[0].started_at).getTime()) / 60000;
+      cronStatus = minutesAgo < 30 ? 'healthy' : minutesAgo < 60 ? 'stale' : 'down';
+    } else {
+      cronStatus = 'no_runs';
+    }
+  } catch {
+    cronStatus = 'error';
+  }
+
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    version: '6.4',
+    cron: cronStatus,
+  });
 });
 
 // TEMP: Backfill: translate existing EN titles to RU via Kimi
@@ -180,6 +199,43 @@ app.get('/debug-telegram', async (req, res) => {
     });
   } catch (err: any) {
     res.json({ configured: false, error: err.message });
+  }
+});
+
+// GET /debug-cron — статус cron (monitoring)
+app.get('/debug-cron', async (req, res) => {
+  try {
+    // Last 5 cron runs
+    const recentRuns = await query(
+      `SELECT task_name, started_at, finished_at, articles_fetched, articles_saved, articles_merged, status, errors
+       FROM cron_log ORDER BY started_at DESC LIMIT 5`
+    );
+
+    // Stats: last 24 hours
+    const dayStats = await query(
+      `SELECT COUNT(*) as total_runs,
+              SUM(articles_saved) as total_saved,
+              SUM(articles_merged) as total_merged,
+              COUNT(*) FILTER (WHERE status = 'success') as success_count,
+              COUNT(*) FILTER (WHERE status = 'warning') as warning_count
+       FROM cron_log WHERE started_at > NOW() - INTERVAL '24 hours'`
+    );
+
+    // Is cron alive? (last run within 30 minutes)
+    const lastRun = await query(
+      `SELECT started_at FROM cron_log ORDER BY started_at DESC LIMIT 1`
+    );
+    const isAlive = lastRun.rows.length > 0 &&
+      (new Date().getTime() - new Date(lastRun.rows[0].started_at).getTime()) < 30 * 60 * 1000;
+
+    res.json({
+      cron_alive: isAlive,
+      last_run: lastRun.rows[0]?.started_at || null,
+      recent_runs: recentRuns.rows,
+      last_24h: dayStats.rows[0],
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -661,6 +717,8 @@ async function start() {
     { sql: `ALTER TABLE notification_settings ADD COLUMN IF NOT EXISTS last_digest_sent TIMESTAMP`, name: 'last_digest_sent' },
     { sql: `ALTER TABLE notification_settings ADD COLUMN IF NOT EXISTS digest_email VARCHAR(255)`, name: 'digest_email' },
     { sql: `ALTER TABLE notification_settings ADD COLUMN IF NOT EXISTS email_digest_enabled BOOLEAN DEFAULT FALSE`, name: 'email_digest_enabled' },
+    { sql: `CREATE TABLE IF NOT EXISTS cron_log (id SERIAL PRIMARY KEY, task_name VARCHAR(50) NOT NULL, started_at TIMESTAMP NOT NULL DEFAULT NOW(), finished_at TIMESTAMP, articles_fetched INTEGER DEFAULT 0, articles_saved INTEGER DEFAULT 0, articles_merged INTEGER DEFAULT 0, errors TEXT, status VARCHAR(20) DEFAULT 'running')`, name: 'cron_log' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_cron_log_started_at ON cron_log(started_at DESC)`, name: 'idx_cron_log_started_at' },
   ];
   for (const m of migrations) {
     try {
