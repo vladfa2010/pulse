@@ -137,10 +137,42 @@ router.post('/telegram', async (req, res) => {
         break;
       }
       case '/now': {
+        // Find user by chatId
+        const userResult = await query(
+          `SELECT user_id FROM user_channels WHERE target = $1 AND channel = 'telegram' AND is_active = TRUE`,
+          [chatId]
+        );
+        if (userResult.rows.length === 0) {
+          await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+            chat_id: chatId,
+            text: '⚠️ Аккаунт не подключен. Войдите на сайт и подключите Telegram в профиле.',
+          });
+          break;
+        }
+        const userId = userResult.rows[0].user_id;
+        
         await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
           chat_id: chatId,
           text: '⏳ Формирую дайджест...',
         });
+        
+        // Send digest (bypass timing check for manual request)
+        try {
+          const { sendDigestToUserNow } = await import('../services/digest');
+          const sent = await sendDigestToUserNow(userId);
+          if (!sent) {
+            await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+              chat_id: chatId,
+              text: '📭 Нет новых непрочитанных новостей по вашим тегам.',
+            });
+          }
+        } catch (err: any) {
+          console.error('[TG Bot] /now error:', err.message);
+          await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+            chat_id: chatId,
+            text: '❌ Ошибка формирования дайджеста.',
+          });
+        }
         break;
       }
     }

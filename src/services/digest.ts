@@ -240,6 +240,52 @@ export async function sendDigestToUser(userId: string): Promise<boolean> {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Send digest NOW (manual request via /now — bypasses timing check)
+// ═══════════════════════════════════════════════════════════════════════════
+export async function sendDigestToUserNow(userId: string): Promise<boolean> {
+  try {
+    console.log(`[Digest] Manual digest for user ${userId}`);
+
+    // Check tariff
+    const premium = await isPremium(userId);
+    const maxTags = premium ? 10 : 1;
+
+    // Build digest
+    const articles = await buildDigest(userId, maxTags);
+    if (articles.length === 0) {
+      console.log(`[Digest] No articles for user ${userId}`);
+      return false;
+    }
+
+    // Get chat_id
+    const chatResult = await query(
+      `SELECT target FROM user_channels WHERE user_id = $1 AND channel = 'telegram' AND is_active = TRUE`,
+      [userId]
+    );
+    if (chatResult.rows.length === 0) return false;
+    const chatId = chatResult.rows[0].target;
+
+    // Format and send
+    const text = formatDigest(articles);
+    const ok = await sendTelegramMessage(chatId, text);
+
+    if (ok) {
+      // Update last_digest_sent
+      await query(
+        `UPDATE notification_settings SET last_digest_sent = NOW() WHERE user_id = $1`,
+        [userId]
+      );
+      console.log(`[Digest] Manual digest sent: ${articles.length} articles to user ${userId}`);
+    }
+
+    return ok;
+  } catch (err) {
+    console.error(`[Digest] Manual digest failed for ${userId}:`, err);
+    return false;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Send digests to ALL eligible users
 // ═══════════════════════════════════════════════════════════════════════════
 export async function sendAllDigests(): Promise<void> {
