@@ -1,8 +1,19 @@
 # PULSE — Методология тегов
 
-> Дата: 2026-05-28
+> Дата: 2026-05-29
 > Файлы: `smartTagMatcher.ts`, `tagManager.ts`
-> Статус: ✅ Реализовано и работает
+> Статус: ✅ Только пользовательские теги + LLM
+
+---
+
+## Архитектурные решения
+
+| # | Решение | Статус |
+|---|---------|--------|
+| 1 | **Нет хардкод тегов** — только пользовательские | ✅ Удалены TAG_KEYWORDS + RELATED_TAGS |
+| 2 | **Related tags через LLM** — динамические связи | ✅ Реализовано |
+| 3 | **Free = 1 тег** — бизнес-правило | ✅ |
+| 4 | **Пользователь создаёт первый тег сам** — нет forced suggestions | ✅ |
 
 ---
 
@@ -12,160 +23,138 @@
 Новость (title + summary)
   │
   ├──> Метод 1: Поиск по словам (быстрый, локальный)
-  │     ├── 18 стандартных тегов (hardcoded)
-  │     └── Пользовательские теги (из БД)
+  │     └── Только пользовательские теги (из БД: user_defined_tags)
   │
   ├──> Метод 2: Умный поиск через AI (Kimi API, медленный)
-  │     └── Только если метод 1 ничего не нашёл
+  │     └── Все теги из БД → LLM решает релевантность
   │
-  └──> Метод 3: Связанные теги (быстрый, локальный)
-        └── Нашли "nvda" → добавляем "tech" + "ai"
+  └──> Метод 3: Связанные теги через LLM (динамические)
+        └── "nvda" → LLM предлагает "tech", "ai" (нет хардкода)
 ```
+
+**Ключевое изменение:** нет стандартных хардкод тегов. Все теги создаются пользователями и хранятся в `user_defined_tags`. Система работает только с теми тегами, которые есть в базе.
 
 ---
 
-## 2. Стандартные теги (TAG_KEYWORDS)
+## 2. Пользовательские теги (единственный источник)
 
-### 2.1 Компании
+### 2.1 Создание
 
-| Тег | Ключевые слова | Пример срабатывания |
-|-----|---------------|-------------------|
-| **sber** | сбербанк, сбер, sberbank, сбербанка, сбережбанк, сбера, сберу | "Сбербанк повысил ставки" |
-| **gazprom** | газпром, gazprom, газпрому, газпрома, газпромовск | "Газпром отчитался о прибыли" |
-| **yandex** | яндекс, yandex, яндекса, яндексу | "Яндекс запустил новую функцию" |
-| **nvda** | nvidia, nvda, енвидиа, видеокарт, geforce, rtx, gpu, графическ | "NVIDIA анонсировала RTX 5090" |
-| **tesla** | tesla, тесла, musk, маск, elon, элон, модель 3, model 3, cybertruck, электромобил | "Tesla открыла завод в Берлине" |
-| **apple** | apple, эпл, iphone, ipad, macbook, mac, ios, app store, тим кук | "Apple представила iPhone 16" |
-| **samsung** | samsung, самсунг, galaxy | "Samsung Galaxy S25 — обзор" |
-| **microsoft** | microsoft, майкрософт, azure, windows | "Microsoft инвестирует в AI" |
-| **google** | google, гугл, alphabet, android | "Google закрыл проект" |
-| **amazon** | amazon, амазон, aws, bezoz, безос | "AWS запустил новый сервис" |
-| **meta** | meta, facebook, instagram, whatsapp, цукерберг, zuckerberg | "Meta отчиталась о выручке" |
-
-### 2.2 Секторы
-
-| Тег | Ключевые слова | Пример |
-|-----|---------------|--------|
-| **tech** | технолог, technology, tech, it-компан, айти, цифров, digital, software, hardware, startup, стартап, silicon valley | "Технологический сектор растёт" |
-| **oil** | нефт, нефть, oil, газ, газов, opec, опек, баррел, barrel, добыч, трубопровод | "Цены на нефть выросли" |
-| **gold** | золот, gold, золото, драгметал, серебр, silver, precious metal | "Золото обновило максимум" |
-| **bank** | банк, bank, банковск, кредит, депозит, ипотек, ставк, цб, центробанк, central bank | "ЦБ снизил ключевую ставку" |
-| **realestate** | недвижимост, real estate, жиль, ипотек, квартиру, застройщик, строительств | "Рынок недвижимости падает" |
-
-### 2.3 Тренды
-
-| Тег | Ключевые слова | Пример |
-|-----|---------------|--------|
-| **crypto** | криптовалют, bitcoin, биткоин, ethereum, эфириум, блокчейн, blockchain, altcoin, binance, coinbase, майнинг, defi, nft, web3 | "Биткоин превысил $100K" |
-| **ai** | искусственный интеллект, ии, нейросет, chatgpt, gpt, llm, machine learning, openai, anthropic, claude, midjourney, stable diffusion, искин, большой языковой модел, generative ai | "ChatGPT-5 обошёл конкурентов" |
-| **fed** | фрс, федеральный резерв, fed, federal reserve, powell, паунел, процентн, ставка, ставки, inflation, инфляц, доллар, usd, treasury, казначейств | "ФРС сохранила ставку" |
-| **greentech** | зелен, green, эколог, eco, возобновляем, renewable, solar, wind, carbon, углерод, climate, климат | "Зелёные технологии на подъёме" |
-| **space** | космос, space, космическ, спутник, rocket, ракет, mars, марс, orbital, наса, nasa, роскосмос | "SpaceX запустила ракету" |
-
-### 2.4 Связанные теги (RELATED_TAGS)
-
-```
-| Тег    | Связанные          | Логика                          |
-|--------|-------------------|--------------------------------|
-| nvda   | tech, ai, gaming  | GPU для AI и игр               |
-| tesla  | tech, ai, elon    | Электромобили + AI автопилот   |
-| apple  | tech, ai          | Технологии + Apple Intelligence|
-| google | tech, ai           | Поиск + AI (Gemini)            |
-| sber   | bank, tech, ai     | Банк с технологиями + GigaChat |
-| crypto | tech, fed, bank    | Зависит от ставок ФРС          |
-| ai     | tech, nvda, google | Ядро — tech, hardware — nvda   |
-| fed    | bank, gold, crypto | Ставки влияют на все           |
-```
-
----
-
-## 3. Алгоритм матчинга (3 метода)
-
-### Метод 1: Поиск по словам (Keyword Search)
-```typescript
-function matchTagsByKeywords(text: string): string[]
-```
-- **Вход:** title + summary (конкатенация в нижний регистр)
-- **Логика:** ищем каждое ключевое слово тега в тексте
-- **Покрытие:** ~60-70% новостей
-- **Скорость:** мгновенно (локально, без интернета)
-- **Порядок:** сначала стандартные теги, потом пользовательские
-
-**Пример:**
-```
-Новость: "Apple представила AI-функции в iPhone"
-Проверяем: "apple"? → ДА → тег "apple"
-           "iphone"? → ДА → тег "apple" (уже есть)
-           "ai"? → ДА → тег "ai"
-Результат: ["apple", "ai"]
-```
-
-### Метод 2: Умный поиск через AI (Smart AI Search)
-```typescript
-function smartMatchTags(title, summary, { useLLM? }): string[]
-```
-- **Условие:** метод 1 ничего не нашёл И useLLM !== false И KIMI_API_KEY установлен
-- **API:** Kimi (api.moonshot.ai)
-- **Как работает:** отправляем текст + список тегов в нейросеть → она решает
-- **Кэш:** `smart_tag_cache` таблица, TTL 7 дней
-- **Скорость:** 1-5 секунд
-- **Покрытие:** оставшиеся 30-40%
-- **Стоимость:** платим за API (токены)
-
-**Пример:**
-```
-Новость: "SoftBank инвестирует в чипы для машинного обучения"
-Метод 1: "softbank" нет в keywords → []
-Метод 2: отправляем в Kimi → ответ: ["nvda", "ai", "tech"]
-```
-
-### Метод 3: Связанные теги (Related Tags)
-```typescript
-function getRelatedTags(tagId: string): string[]
-```
-- **Условие:** всегда после методов 1 или 2
-- **Логика:** если нашли "nvda" → добавляем "tech", "ai", "gaming"
-- **Скорость:** мгновенно (локальная таблица)
-
----
-
-## 4. Пользовательские теги
-
-### 4.1 Создание
 ```
 Пользователь вводит "Лукойл"
   → generateTagKeywords("Лукойл")
     → ["лукойл", "lukoil", "лукойла", "лукойлу", "лукойле", "лукойлом", "лукойлов", ...]
   → INSERT INTO user_defined_tags
   → INSERT INTO portfolios
-  → BACKFILL: scanAllNewsForTag(keywords)
+  → BACKFILL: scanAllNewsForTag(keywords) — по всей базе новостей
 ```
 
-### 4.2 Генерация keywords
+### 2.2 Генерация keywords
+
 ```typescript
 function generateTagKeywords(tagName: string): string[]
 ```
+
 1. Само название (lowercase)
 2. Транслитерация (кириллица → латиница)
 3. Обратная транслитерация (латиница → кириллица)
 4. Склонения: а, у, е, ом, ов, ам, ах
 
-### 4.3 Хранение
+### 2.3 Хранение
+
 - **Таблица:** `user_defined_tags` (tag_id, tag_name, tag_type, keywords[], created_by)
 - **Портфель:** `portfolios` (user_id, tag_id, tag_name, tag_type)
 - **Кэш:** in-memory, TTL 1 минута
 
+### 2.4 Почему нет хардкод тегов
+
+| Было (хардкод) | Стало (пользовательские) |
+|----------------|--------------------------|
+| 18 фиксированных тегов | ∞ тегов — каждый создаёт свои |
+| ~200 keywords в коде | Keywords генерируются автоматически |
+| 17 связей в RELATED_TAGS | LLM определяет связи динамически |
+| Деплой для добавления тега | UI — создал, сразу работает |
+| Не все теги нужны всем | Только те, что интересны пользователю |
+
 ---
 
-## 5. Sentiment Analysis
+## 3. Алгоритм матчинга (3 метода)
 
-### 5.1 Keyword-based (fallback, fast)
+### Метод 1: Поиск по словам (Keyword Search)
+
+```typescript
+function matchTagsByKeywords(text: string): string[]
+```
+
+- **Вход:** title + summary (конкатенация в нижний регистр)
+- **Источник тегов:** `user_defined_tags` из БД (кэш 60 сек)
+- **Логика:** ищем каждое keyword тега в тексте
+- **Покрытие:** ~60-70% новостей (зависит от количества тегов в системе)
+- **Скорость:** мгновенно (локально, без интернета)
+
+**Пример:**
+```
+Новость: "Apple представила AI-функции в iPhone"
+Теги в БД: apple ["apple", "эпл", "iphone", "ipad"], ai ["ai", "искусственный интеллект", ...]
+Проверяем: "apple" keywords → ДА → тег "apple"
+           "ai" keywords → ДА → тег "ai"
+Результат: ["apple", "ai"]
+```
+
+### Метод 2: Умный поиск через AI (Smart AI Search)
+
+```typescript
+function smartMatchTags(title, summary, { useLLM? }): string[]
+```
+
+- **Условие:** метод 1 ничего не нашёл И useLLM !== false И KIMI_API_KEY установлен
+- **API:** Kimi (api.moonshot.ai)
+- **Список тегов:** `getAllTagNames()` — все tag_id из `user_defined_tags`
+- **Как работает:** отправляем текст + список всех тегов в нейросеть → она решает какие подходят
+- **Кэш:** `smart_tag_cache` таблица, TTL 7 дней
+- **Скорость:** 1-5 секунд
+- **Покрытие:** оставшиеся 30-40%
+
+**Пример:**
+```
+Новость: "SoftBank инвестирует в чипы для машинного обучения"
+Теги в БД: nvda, ai, tech, arm, softbank
+Метод 1: ни один keyword не найден → []
+Метод 2: отправляем в Kimi → ответ: ["nvda", "ai", "tech"]
+```
+
+### Метод 3: Связанные теги через LLM (Related Tags)
+
+```typescript
+function getRelatedTags(tagId: string, allTagIds?: string[]): Promise<string[]>
+```
+
+- **Источник:** LLM (Kimi API) — динамические связи, нет хардкода
+- **Кэш:** in-memory Map, TTL 5 минут
+- **Логика:** отправляем tagId + список других тегов → LLM возвращает связанные
+- **Пример:**
+  ```
+  Запрос: getRelatedTags("nvda", ["nvda", "tech", "ai", "gaming", "apple"])
+  LLM ответ: ["tech", "ai"]  // GPU → технологии и AI
+  ```
+
+**Преимущества LLM over хардкод:**
+- Не нужно обновлять код для новых связей
+- Связи адаптируются под текущий набор тегов в системе
+- Может находить неочевидные связи (например, " uranium" → " nuclear" → " energy")
+- Новый тег автоматически участвует в связях
+
+---
+
+## 4. Sentiment Analysis
+
+### 4.1 Keyword-based (fallback, fast)
 ```
 Positive: рост, прибыль, рекорд, превысил, успех, повышение, рали
 Negative: падение, убыток, кризис, снижение, крах, санкции
 ```
 
-### 5.2 LLM-based (Kimi API)
+### 4.2 LLM-based (Kimi API)
 ```typescript
 function analyzeSentimentLLM(title, summary): 'positive' | 'negative' | 'neutral'
 ```
@@ -173,7 +162,7 @@ function analyzeSentimentLLM(title, summary): 'positive' | 'negative' | 'neutral
 - Max tokens: 10
 - Timeout: 10-30 сек
 
-### 5.3 Tag Impact
+### 4.3 Tag Impact
 ```typescript
 function analyzeTagImpact(title, summary, tags): TagImpact[]
 ```
@@ -183,7 +172,7 @@ function analyzeTagImpact(title, summary, tags): TagImpact[]
 
 ---
 
-## 6. Где используются теги
+## 5. Где используются теги
 
 | Компонент | Использование |
 |-----------|--------------|
@@ -194,17 +183,16 @@ function analyzeTagImpact(title, summary, tags): TagImpact[]
 | **Sentiment** | Цвет карточки (green/red/gray) |
 | **Tag Impact** | Pills на карточке (позитив/негатив для тега) |
 | **Telegram Digest** | Только по тегам пользователя |
-| **Weekly Report** | Группировка по тегам |
+| **Related Tags** | LLM-подсказки при создании тега |
 
 ---
 
-## 7. Базы данных
+## 6. Базы данных
 
-### 7.1 Таблицы
+### 6.1 Таблицы
+
 ```sql
--- Стандартные теги: hardcoded в TAG_KEYWORDS (не в БД)
-
--- Пользовательские теги
+-- Пользовательские теги (единственный источник)
 CREATE TABLE user_defined_tags (
   tag_id VARCHAR(50) PRIMARY KEY,
   tag_name VARCHAR(100) NOT NULL,
@@ -223,7 +211,7 @@ CREATE TABLE portfolios (
   PRIMARY KEY (user_id, tag_id)
 );
 
--- Кэш LLM результатов
+-- Кэш LLM результатов (tag matching)
 CREATE TABLE smart_tag_cache (
   text_hash VARCHAR(64) PRIMARY KEY,
   tags TEXT[],
@@ -243,47 +231,89 @@ CREATE TABLE news (
 
 ---
 
-## 8. Статистика (актуальная)
+## 7. Эндпоинты
 
-| Метрика | Значение |
-|---------|----------|
-| Стандартных тегов | 18 |
-| Ключевых слов (всего) | ~200 |
-| Связанных тегов | 9 наборов |
-| Новостей с тегами | ~1,565 из 2,871 (54%) |
-| Топ-тег | ai (1,026 новостей) |
-| Пользовательских тегов | ∞ (через профиль) |
+### GET /api/user/tags/related?tag={tagId}
+
+Возвращает связанные теги через LLM.
+
+```json
+// Запрос: /api/user/tags/related?tag=nvda
+// Теги в БД: nvda, tech, ai, gaming, apple, sber
+{
+  "tag": "nvda",
+  "related": [
+    { "tag_id": "tech", "tag_name": "tech", "tag_type": "sector" },
+    { "tag_id": "ai", "tag_name": "ai", "tag_type": "trend" }
+  ]
+}
+```
 
 ---
 
-## 9. Диагностика
+## 8. Диагностика
 
 ```sql
--- Распределение тегов
+-- Распределение тегов по новостям
 SELECT unnest(matched_tags) as tag, COUNT(*) 
 FROM news GROUP BY tag ORDER BY count DESC;
 
 -- Новости без тегов
 SELECT COUNT(*) FROM news WHERE matched_tags IS NULL OR array_length(matched_tags, 1) = 0;
 
--- Пользовательские теги
+-- Все пользовательские теги
 SELECT * FROM user_defined_tags;
 
--- Кэш LLM
+-- Кэш LLM matching
 SELECT COUNT(*) FROM smart_tag_cache;
 
 -- Теги конкретного пользователя
 SELECT * FROM portfolios WHERE user_id = '...';
+
+-- Сколько тегов в системе
+SELECT COUNT(*) FROM user_defined_tags;
 ```
 
 ---
 
-## 10. Правила модификации
+## 9. Правила модификации
 
-1. **Добавить стандартный тег:** добавить в `TAG_KEYWORDS` + `RELATED_TAGS` → commit → deploy
-2. **Изменить keywords:** отредактировать массив в `TAG_KEYWORDS` → commit → deploy
-3. **Добавить связанные теги:** добавить в `RELATED_TAGS` → commit → deploy
-4. **Пользовательский тег:** через UI (профиль → поиск → создать) — backfill автоматический
+1. **Добавить тег:** пользователь создаёт через UI → автоматический backfill по всей базе
+2. **Изменить keywords:** нет ручного редактирования — keywords генерируются автоматически
+3. **Related tags:** автоматические через LLM — не требуют ручного обновления
+4. **Нет деплоя для тегов:** всё через UI или БД
+
+---
+
+## 10. Технические детали
+
+### Производительность
+
+| Операция | Скорость | Зависимость |
+|----------|----------|-------------|
+| Keyword match | < 1 мс | Количество тегов в БД |
+| LLM tag match | 1-5 сек | Сеть + API |
+| LLM related tags | 1-3 сек | Сеть + API (кэш 5 мин) |
+| Sentiment LLM | 1-3 сек | Сеть + API |
+| Tag impact | 2-5 сек | Сеть + API |
+
+### Кэширование
+
+```
+User tags (keywords):     60 секунд (in-memory)
+LLM matching results:     7 дней (БД: smart_tag_cache)
+LLM related tags:         5 минут (in-memory Map)
+```
+
+### Fallback-цепочка
+
+```
+Новость пришла
+  → Метод 1 (keywords): нашли? → return
+  → Метод 2 (LLM tags): нашли? → return
+  → Метод 3 (LLM related): дополняем найденные
+  → Ничего не нашли → matched_tags = NULL
+```
 
 ---
 
@@ -291,8 +321,8 @@ SELECT * FROM portfolios WHERE user_id = '...';
 
 | # | Проблема | Приоритет |
 |---|----------|-----------|
-| 1 | `ai` слишком широкий (1,026 новостей) — разбить на под-теги | medium |
-| 2 | Нет пересечения тегов (AND logic) — только OR | medium |
-| 3 | Нет весов у keywords — "apple" = "app store" по весу | low |
-| 4 | Нет negative keywords — исключений | low |
-| 5 | Склонения только русские — нужны английские (s, es, ing) | low |
+| 1 | Нет пересечения тегов (AND logic) — только OR | medium |
+| 2 | Нет весов у keywords — "apple" = "app store" по весу | low |
+| 3 | Нет negative keywords — исключений | low |
+| 4 | Склонения только русские — нужны английские (s, es, ing) | low |
+| 5 | LLM related tags: персистентный кэш в БД вместо in-memory | low |

@@ -3,90 +3,36 @@
  * PULSE — Smart Tag Matcher (3-layer matching)
  * =============================================================================
  *
- * Layer 1: Keyword matching (fast, 60-70% coverage)
+ * Architecture: ONLY user-defined tags. No hardcoded keywords.
+ *
+ * Layer 1: Keyword matching via user-defined tags from DB
  * Layer 2: LLM smart matching (for articles without keyword hits)
- * Layer 3: Semantic related tags (nvidia → tech, ai)
+ * Layer 3: LLM-based related tags (dynamic, no hardcoded mappings)
  *
  * Flow:
- *   1. Try keyword matching on title + summary
- *   2. If no matches → call LLM to analyze relevance
- *   3. LLM returns which tags apply (with confidence scores)
- *   4. Cache LLM results to avoid repeated calls
+ *   1. Fetch all user-defined tags with keywords from DB
+ *   2. Try keyword matching on title + summary
+ *   3. If no matches → call LLM to analyze relevance against all known tags
+ *   4. LLM returns which tags apply (with confidence scores)
+ *   5. Cache LLM results to avoid repeated calls
+ *   6. For related tags → LLM suggests semantically connected tags
  */
 
 import axios from 'axios';
 import { query } from '../config/db';
-import { getAllUserDefinedTags } from './tagManager';
+import { getAllUserDefinedTags, getAllTagNames } from './tagManager';
 
 const KIMI_API_KEY = process.env.KIMI_API_KEY;
 const KIMI_MODEL = process.env.KIMI_MODEL || 'moonshot-v1-8k';
-const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Layer 1: Enhanced Keyword Matching (with synonyms + related terms)
+// Layer 1: Keyword Matching (user-defined tags only)
 // ═══════════════════════════════════════════════════════════════════════════
 
-export const TAG_KEYWORDS: Record<string, string[]> = {
-  // Companies
-  'sber': ['сбербанк', 'сбер', 'sberbank', 'sber', 'сбербанка', 'сбережбанк', 'сбера', 'сберу'],
-  'gazprom': ['газпром', 'gazprom', 'газпрому', 'газпрома', 'газпромовск'],
-  'yandex': ['яндекс', 'yandex', 'яндекса', 'яндексу'],
-  'nvda': ['nvidia', 'nvda', 'енвидиа', 'видеокарт', 'geforce', 'rtx ', 'gpu ', 'графическ'],
-  'tesla': ['tesla', 'тесла', 'musk', 'маск', 'elon', 'элон', 'модель 3', 'model 3', 'cybertruck', 'электромобил'],
-  'apple': ['apple', 'эпл', 'iphone', 'ipad', 'macbook', 'mac ', 'ios', 'app store', 'тим кук'],
-  'samsung': ['samsung', 'самсунг', 'galaxy'],
-  'microsoft': ['microsoft', 'майкрософт', 'azure', 'windows'],
-  'google': ['google', 'гугл', 'alphabet', 'android'],
-  'amazon': ['amazon', 'амазон', 'aws', 'bezoz', 'безос'],
-  'meta': ['meta', 'facebook', 'instagram', 'whatsapp', 'цукерберг', 'zuckerberg'],
-
-  // Sectors
-  'tech': ['технолог', 'technology', 'tech ', 'it-компан', 'айти', 'цифров', 'digital', 'software', 'hardware', 'startup', 'стартап', 'silicon valley'],
-  'oil': ['нефт', 'нефть', 'oil', 'газ', 'газов', 'opec', 'опек', 'баррел', 'barrel', 'нфт', 'добыч', 'трубопровод'],
-  'gold': ['золот', 'gold', 'золото', 'драгметал', 'серебр', 'silver', 'precious metal'],
-  'bank': ['банк', 'bank', 'банковск', 'кредит', 'депозит', 'ипотек', 'ставк', 'цб ', 'центробанк', 'central bank'],
-  'realestate': ['недвижимост', 'real estate', 'жиль', 'ипотек', 'квартиру', 'застройщик', 'строительств'],
-
-  // Trends
-  'crypto': ['криптовалют', 'bitcoin', 'биткоин', 'ethereum', 'эфириум', 'блокчейн', 'blockchain', 'altcoin', 'binance', 'coinbase', 'майнинг', 'defi', 'nft ', 'web3'],
-  'ai': ['искусственный интеллект', 'ии ', 'нейросет', 'chatgpt', 'gpt', 'llm', 'machine learning', 'openai', 'anthropic', 'claude', 'midjourney', 'stable diffusion', 'искин', 'большой языковой модел', 'generative ai'],
-  'fed': ['фрс', 'федеральный резерв', 'fed', 'federal reserve', 'powell', 'паунел', 'процентн', 'ставка', 'ставки', 'inflation', 'инфляц', 'доллар', 'usd', 'treasury', 'казначейств'],
-  'greentech': ['зелен', 'green', 'эколог', 'eco', 'возобновляем', 'renewable', 'solar', 'wind', 'carbon', 'углерод', 'climate', 'климат'],
-  'space': ['космос', 'space', 'космическ', 'спутник', 'rocket', 'ракет', 'mars', 'марс', 'orbital', 'наса', 'nasa', 'роскосмос'],
-};
-
-// Related tags — when user adds tag X, suggest these
-export const RELATED_TAGS: Record<string, string[]> = {
-  'nvda': ['tech', 'ai', 'gaming'],
-  'tesla': ['tech', 'ai', 'elon'],
-  'apple': ['tech', 'ai'],
-  'google': ['tech', 'ai'],
-  'microsoft': ['tech', 'ai'],
-  'meta': ['tech', 'ai'],
-  'sber': ['bank', 'tech', 'ai'],
-  'crypto': ['tech', 'fed', 'bank'],
-  'ai': ['tech', 'nvda', 'google', 'microsoft'],
-  'fed': ['bank', 'gold', 'crypto'],
-  'oil': ['gold', 'fed'],
-  'gold': ['fed', 'oil'],
-  'gazprom': ['oil', 'gold'],
-  'yandex': ['tech', 'ai'],
-  'space': ['tech', 'ai'],
-  'greentech': ['tech', 'oil', 'gold'],
-  'amazon': ['tech', 'ai'],
-  'samsung': ['tech', 'ai'],
-};
-
-// Get related tags for a given tag ID
-export function getRelatedTags(tagId: string): string[] {
-  return RELATED_TAGS[tagId] || [];
-}
-
-// Layer 1: Keyword matching
-// Кэш пользовательских тегов (обновляется при вызове)
+// Cache user tags from DB (refresh every 60s)
 let userTagsCache: Record<string, string[]> = {};
 let userTagsCacheTime = 0;
-const USER_TAGS_CACHE_TTL = 60 * 1000; // 1 минута
+const USER_TAGS_CACHE_TTL = 60 * 1000;
 
 async function getCachedUserTags(): Promise<Record<string, string[]>> {
   const now = Date.now();
@@ -101,16 +47,7 @@ export async function matchTagsByKeywords(text: string): Promise<string[]> {
   const lower = text.toLowerCase();
   const matched: string[] = [];
 
-  // Layer 1a: Стандартные теги
-  for (const [tagId, keywords] of Object.entries(TAG_KEYWORDS)) {
-    if (keywords.some(kw => lower.includes(kw.toLowerCase()))) {
-      if (!matched.includes(tagId)) {
-        matched.push(tagId);
-      }
-    }
-  }
-
-  // Layer 1b: Пользовательские теги
+  // Only user-defined tags from DB — no hardcoded keywords
   const userTags = await getCachedUserTags();
   for (const [tagId, keywords] of Object.entries(userTags)) {
     if (keywords.some(kw => lower.includes(kw.toLowerCase()))) {
@@ -159,10 +96,7 @@ async function saveLLMCache(textHash: string, tags: string[]): Promise<void> {
 
 // Build LLM prompt for tag matching
 function buildTagPrompt(title: string, summary: string, availableTags: string[]): string {
-  const tagDescriptions = availableTags.map(id => {
-    const keywords = TAG_KEYWORDS[id];
-    return `- ${id}${keywords ? ` (${keywords.slice(0, 3).join(', ')})` : ''}`;
-  }).join('\n');
+  const tagList = availableTags.map(id => `- ${id}`).join('\n');
 
   return `Analyze this news article and determine which of the following tags apply.
 
@@ -170,7 +104,7 @@ Article title: ${title.slice(0, 200)}
 Article summary: ${summary.slice(0, 400)}
 
 Available tags:
-${tagDescriptions}
+${tagList}
 
 Instructions:
 1. Return ONLY a JSON array of tag IDs that apply to this article
@@ -185,6 +119,11 @@ Response format: ["tag1", "tag2"] or []`;
 async function callLLMForTags(title: string, summary: string, availableTags: string[]): Promise<string[]> {
   if (!KIMI_API_KEY) {
     console.log('[SmartTags] No KIMI_API_KEY, skipping LLM matching');
+    return [];
+  }
+
+  if (availableTags.length === 0) {
+    console.log('[SmartTags] No tags in DB, skipping LLM matching');
     return [];
   }
 
@@ -219,7 +158,7 @@ async function callLLMForTags(title: string, summary: string, availableTags: str
     const content = response.data?.choices?.[0]?.message?.content || '';
 
     // Extract JSON array from response
-    const jsonMatch = content.match(/\[[\s\S]*?\]/);
+    const jsonMatch = content.match(/\[\s\S]*?\]/);
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0]);
       if (Array.isArray(parsed)) {
@@ -238,6 +177,88 @@ async function callLLMForTags(title: string, summary: string, availableTags: str
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Layer 3: LLM-Based Related Tags (replaces hardcoded RELATED_TAGS)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Cache for related tags (tagId → relatedTagIds)
+const relatedTagsCache: Map<string, { tags: string[]; time: number }> = new Map();
+const RELATED_TAGS_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+/**
+ * Get related tags for a given tag using LLM.
+ * Dynamically determines semantic connections — no hardcoded mappings.
+ */
+export async function getRelatedTags(tagId: string, allTagIds?: string[]): Promise<string[]> {
+  // Check cache first
+  const cached = relatedTagsCache.get(tagId);
+  if (cached && Date.now() - cached.time < RELATED_TAGS_CACHE_TTL) {
+    return cached.tags;
+  }
+
+  if (!KIMI_API_KEY) {
+    return [];
+  }
+
+  // Fetch all tag IDs if not provided
+  const availableTags = allTagIds || await getAllTagNames();
+
+  // Exclude the tag itself
+  const otherTags = availableTags.filter(t => t !== tagId);
+  if (otherTags.length === 0) {
+    return [];
+  }
+
+  const prompt = `Given the tag "${tagId}", which of the following tags are semantically related or commonly associated with it?
+
+Candidate tags: ${otherTags.join(', ')}
+
+Instructions:
+1. Return ONLY a JSON array of related tag IDs
+2. Tags are related if they belong to the same sector, industry, or are commonly mentioned together
+3. Be selective — return only strongly related tags (0-5 tags)
+4. Return empty array [] if no strong connections exist
+
+Response format: ["tag1", "tag2"] or []`;
+
+  try {
+    const response = await axios.post(
+      'https://api.moonshot.ai/v1/chat/completions',
+      {
+        model: KIMI_MODEL,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.1,
+        max_tokens: 150,
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${KIMI_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: 15000,
+      }
+    );
+
+    const content = response.data?.choices?.[0]?.message?.content || '';
+    const jsonMatch = content.match(/\[\s\S]*?\]/);
+
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      if (Array.isArray(parsed)) {
+        const validTags = parsed.filter((t: string) => otherTags.includes(t));
+        // Cache result
+        relatedTagsCache.set(tagId, { tags: validTags, time: Date.now() });
+        console.log(`[RelatedTags] LLM related for "${tagId}": ${validTags.join(', ') || 'none'}`);
+        return validTags;
+      }
+    }
+  } catch (err: any) {
+    console.log(`[RelatedTags] LLM error for "${tagId}": ${err.message?.slice(0, 100)}`);
+  }
+
+  return [];
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Main function: 3-layer matching
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -248,7 +269,7 @@ export async function smartMatchTags(
 ): Promise<string[]> {
   const fullText = `${title} ${summary}`;
 
-  // Layer 1: Keyword matching (standard + user-defined tags)
+  // Layer 1: Keyword matching (user-defined tags from DB)
   const keywordTags = await matchTagsByKeywords(fullText);
 
   if (keywordTags.length > 0) {
@@ -256,9 +277,10 @@ export async function smartMatchTags(
     return keywordTags;
   }
 
-  // Layer 2: LLM matching (only if no keyword match AND useLLM is true)
+  // Layer 2: LLM matching (if no keyword match AND useLLM is true)
   if (options.useLLM !== false && KIMI_API_KEY) {
-    const availableTags = Object.keys(TAG_KEYWORDS);
+    // Fetch all tag IDs from DB for LLM
+    const availableTags = await getAllTagNames();
     const llmTags = await callLLMForTags(title, summary, availableTags);
     if (llmTags.length > 0) {
       console.log(`[SmartTags] LLM match: ${llmTags.join(', ')} for "${title.slice(0, 50)}..."`);
@@ -271,7 +293,7 @@ export async function smartMatchTags(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// LLM Sentiment Analysis (more accurate than keyword-based)
+// LLM Sentiment Analysis
 // ═══════════════════════════════════════════════════════════════════════════
 
 export async function analyzeSentimentLLM(title: string, summary: string): Promise<'positive' | 'negative' | 'neutral'> {
@@ -358,7 +380,7 @@ Return ONLY a JSON array:
 
     const content = response.data?.choices?.[0]?.message?.content || '';
     console.log(`[TagImpact] Raw: ${content.slice(0, 200)}`);
-    const jsonMatch = content.match(/\[[\s\S]*?\]/);
+    const jsonMatch = content.match(/\[\s\S]*?\]/);
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0]);
       if (Array.isArray(parsed)) {

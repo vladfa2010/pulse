@@ -26,7 +26,7 @@
 | Backend | Node.js 20, Express, TypeScript |
 | БД | PostgreSQL (Render production) / SQLite (local) |
 | LLM API | Kimi API (api.moonshot.ai, НЕ .cn) — перевод, sentiment, tag matching |
-| RSS | 20+ источников (RU + EN), batch по 4, cron каждые 15 мин |
+| RSS | 20+ источников (RU + EN), batch по 4, cron каждые 5 мин |
 | Auth | JWT + bcryptjs, cookie-based sessions |
 | Telegram Bot | @Insidepulse_bot — webhook, HMAC-secured linking |
 | Payments | YooKassa (REAL + DEMO), triple activation |
@@ -63,9 +63,9 @@ RSS Fetch (20+ sources) → Parse XML → URL Normalize → Translate EN→RU (K
 
 ## 5. Smart Tag Matching — 3 слоя ✅
 
-1. **Keyword matching** — стандартные теги (18 шт) + пользовательские (из `user_defined_tags`), ищет по title + summary
-2. **LLM matching** (Kimi API) — если keywords ничего не нашли, спрашиваем LLM. Кэш: `smart_tag_cache`
-3. **Related tags** — добавляем связанные (nvda→tech,ai)
+1. **Keyword matching** — только пользовательские теги (из `user_defined_tags`), ищет по title + summary
+2. **LLM matching** (Kimi API) — если keywords ничего не нашли, спрашиваем LLM со всеми тегами из БД. Кэш: `smart_tag_cache`
+3. **Related tags (LLM)** — связанные теги определяются динамически через LLM, нет хардкода
 
 ---
 

@@ -3,9 +3,8 @@ import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { query } from '../config/db';
 import { validate } from '../middleware/validate';
 import { AddTagSchema } from '../schemas/user';
-import { getRelatedTags, TAG_KEYWORDS } from '../services/smartTagMatcher';
-import { createUserTag, generateTagKeywords } from '../services/tagManager';
-import { matchTagsByKeywords } from '../services/smartTagMatcher';
+import { getRelatedTags, matchTagsByKeywords } from '../services/smartTagMatcher';
+import { createUserTag, generateTagKeywords, getAllTagNames } from '../services/tagManager';
 
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
@@ -328,7 +327,7 @@ router.post('/channels', authMiddleware, async (req: AuthRequest, res) => {
   }
 });
 
-// GET /api/user/tags/related?tag=nvidia — get related tag suggestions
+// GET /api/user/tags/related?tag=nvidia — get related tag suggestions (LLM-based)
 router.get('/tags/related', async (req, res) => {
   try {
     const tagId = req.query.tag as string;
@@ -336,18 +335,24 @@ router.get('/tags/related', async (req, res) => {
       return res.status(400).json({ error: 'tag parameter required' });
     }
 
-    const related = getRelatedTags(tagId);
-    const availableTags = Object.keys(TAG_KEYWORDS);
+    // Get all tag IDs from DB + find related via LLM
+    const allTagIds = await getAllTagNames();
+    const related = await getRelatedTags(tagId, allTagIds);
 
-    // Build response with tag info
+    // Build response with tag info from DB
+    const result = await query(
+      `SELECT tag_id, tag_name, tag_type FROM user_defined_tags WHERE tag_id = ANY($1)`,
+      [related]
+    );
+    const tagInfoMap = new Map(result.rows.map((r: any) => [r.tag_id, r]));
+
     const relatedWithInfo = related
-      .filter(id => availableTags.includes(id))
       .map(id => {
-        const keywords = TAG_KEYWORDS[id];
+        const info = tagInfoMap.get(id);
         return {
           tag_id: id,
-          tag_name: keywords ? keywords[0] : id,
-          tag_type: 'company' as const,
+          tag_name: info?.tag_name || id,
+          tag_type: info?.tag_type || 'company',
         };
       });
 

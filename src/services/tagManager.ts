@@ -126,3 +126,16 @@ export async function getAllUserDefinedTags(): Promise<Record<string, string[]>>
     return {};
   }
 }
+
+// Получить список всех tag_id для LLM matching
+export async function getAllTagNames(): Promise<string[]> {
+  try {
+    const result = await query(
+      `SELECT tag_id FROM user_defined_tags ORDER BY tag_id`,
+      []
+    );
+    return result.rows.map((row: any) => row.tag_id);
+  } catch {
+    return [];
+  }
+}
