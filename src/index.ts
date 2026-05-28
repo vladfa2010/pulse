@@ -55,7 +55,7 @@ app.get('/', (req, res) => {
 
 // Health check — Render использует это для мониторинга
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString(), version: '5.4' });
+  res.json({ status: 'ok', timestamp: new Date().toISOString(), version: '5.5' });
 });
 
 // TEMP: Backfill: translate existing EN titles to RU via Kimi
@@ -157,6 +157,32 @@ app.get('/backfill-summary', async (req, res) => {
 });
 
 // TEMP: Check env vars (safe — no secrets exposed)
+// GET /debug-telegram — проверка статуса Telegram бота
+app.get('/debug-telegram', async (req, res) => {
+  try {
+    const TG_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+    if (!TG_TOKEN) {
+      return res.json({ configured: false, error: 'TELEGRAM_BOT_TOKEN not set' });
+    }
+    const axios = await import('axios');
+    const meResp = await axios.default.get(`https://api.telegram.org/bot${TG_TOKEN}/getMe`, { timeout: 15000 });
+    const whResp = await axios.default.get(`https://api.telegram.org/bot${TG_TOKEN}/getWebhookInfo`, { timeout: 15000 });
+    res.json({
+      configured: true,
+      bot: meResp.data.ok ? { username: meResp.data.result?.username, name: meResp.data.result?.first_name } : null,
+      webhook: whResp.data.ok ? {
+        url: whResp.data.result?.url,
+        has_custom_certificate: whResp.data.result?.has_custom_certificate,
+        pending_update_count: whResp.data.result?.pending_update_count,
+        last_error_date: whResp.data.result?.last_error_date,
+        last_error_message: whResp.data.result?.last_error_message,
+      } : null,
+    });
+  } catch (err: any) {
+    res.json({ configured: false, error: err.message });
+  }
+});
+
 app.get('/debug-env', async (req, res) => {
   res.json({
     kimi_key_set: !!process.env.KIMI_API_KEY,
@@ -922,6 +948,35 @@ async function start() {
     setTimeout(() => {
       setupYookassaWebhook().catch(err => console.error('[YuKassa] Webhook setup error:', err));
     }, 5000); // Задержка 5с чтобы сервер точно был доступен
+
+    // ─── Шаг 7: Настройка Telegram Bot webhook ────────────────────────
+    setTimeout(async () => {
+      const TG_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+      if (!TG_TOKEN) {
+        console.log('[TG Bot] No TELEGRAM_BOT_TOKEN, skipping webhook setup');
+        return;
+      }
+      const WEBHOOK_URL = `${process.env.BACKEND_URL || 'https://pulse-api-bsov.onrender.com'}/api/webhook/telegram`;
+      try {
+        const axios = await import('axios');
+        // Delete old webhook first
+        await axios.default.post(`https://api.telegram.org/bot${TG_TOKEN}/deleteWebhook`, {}, { timeout: 15000 });
+        // Set new webhook
+        const resp = await axios.default.post(
+          `https://api.telegram.org/bot${TG_TOKEN}/setWebhook`,
+          { url: WEBHOOK_URL },
+          { timeout: 15000 }
+        );
+        if (resp.data.ok) {
+          console.log('[TG Bot] Webhook set:', WEBHOOK_URL);
+        } else {
+          console.error('[TG Bot] Webhook setup failed:', resp.data);
+        }
+      } catch (err: any) {
+        console.error('[TG Bot] Webhook setup error:', err.message);
+      }
+    }, 8000);
+
     startDigestCron(); // ← TG дайджест (каждые 3 часа)
   });
 }
