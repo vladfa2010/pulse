@@ -92,9 +92,12 @@ router.post('/telegram', async (req, res) => {
     const startMatch = text.match(/^\/start\s+(\S+)/i);
     if (startMatch) {
       const payload = startMatch[1];
+      console.log(`[TG Bot] Start payload: ${payload}`);
       const parts = payload.split(':');
       if (parts.length === 2) {
-        if (verifyLinkToken(parts[0], parts[1])) {
+        const tokenValid = verifyLinkToken(parts[0], parts[1]);
+        console.log(`[TG Bot] verifyLinkToken(${parts[0]}, ...): ${tokenValid}`);
+        if (tokenValid) {
           const userId = parts[0];
           // Save connection
           await query(
@@ -146,6 +149,20 @@ router.post('/telegram', async (req, res) => {
   } catch (err: any) {
     console.error('[TG Bot] Webhook error:', err.message);
     res.sendStatus(200); // Always return 200 to Telegram
+  }
+});
+
+// GET /api/webhook/verify-token — проверить HMAC токен (debug)
+router.get('/verify-token', async (req, res) => {
+  try {
+    const { userId, token } = req.query;
+    if (!userId || !token) {
+      return res.status(400).json({ error: 'userId and token required' });
+    }
+    const valid = verifyLinkToken(userId as string, token as string);
+    res.json({ userId, tokenValid: valid });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
 });
 
