@@ -761,4 +761,66 @@ router.get('/summary', authMiddleware, async (req: AuthRequest, res) => {
   }
 });
 
+// ============================================================
+// Stats — общее кол-во новостей + персональное
+// ============================================================
+
+router.get('/stats', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.userId;
+
+    // 1. Общее количество новостей в базе
+    const totalResult = await query(`SELECT COUNT(*)::int as total FROM news`, []);
+    const totalNews = totalResult.rows[0]?.total || 0;
+
+    // 2. Количество новостей за 24ч
+    const dayResult = await query(
+      `SELECT COUNT(*)::int as cnt FROM news WHERE published_at > NOW() - INTERVAL '24 hours'`,
+      []
+    );
+    const last24h = dayResult.rows[0]?.cnt || 0;
+
+    // 3. Теги пользователя
+    const tagsResult = await query(
+      `SELECT tag_name FROM user_defined_tags WHERE user_id = $1`,
+      [userId]
+    );
+    const userTags = tagsResult.rows.map((r: any) => r.tag_name);
+
+    // 4. Новости, подходящие пользователю (matched_tags && user_tags)
+    let personalNews = 0;
+    let personalNews24h = 0;
+
+    if (userTags.length > 0) {
+      // PostgreSQL: проверяем пересечение массивов
+      const personalResult = await query(
+        `SELECT COUNT(*)::int as cnt FROM news
+         WHERE matched_tags && $1::text[]`,
+        [userTags]
+      );
+      personalNews = personalResult.rows[0]?.cnt || 0;
+
+      const personal24hResult = await query(
+        `SELECT COUNT(*)::int as cnt FROM news
+         WHERE matched_tags && $1::text[]
+           AND published_at > NOW() - INTERVAL '24 hours'`,
+        [userTags]
+      );
+      personalNews24h = personal24hResult.rows[0]?.cnt || 0;
+    }
+
+    res.json({
+      total_news: totalNews,
+      total_news_24h: last24h,
+      personal_news: personalNews,
+      personal_news_24h: personalNews24h,
+      user_tags_count: userTags.length,
+      user_tags: userTags,
+    });
+  } catch (err: any) {
+    console.error('[Stats] Error:', err.message);
+    res.status(500).json({ error: 'Failed to get stats' });
+  }
+});
+
 export default router;
