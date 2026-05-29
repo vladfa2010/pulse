@@ -1,5 +1,6 @@
 // ============================================================
-// RSS Sources — 29 total (10 RU + 19 EN)
+// RSS Sources — 36 total (17 RU + 19 EN)
+// Added: Finam RSS feeds (v7.8)
 // ============================================================
 
 export interface RssSource {
@@ -22,6 +23,15 @@ export const RSS_SOURCES: RssSource[] = [
   { id: 'seekingalpha', name: 'Seeking Alpha', url: 'https://seekingalpha.com/feed.xml', lang: 'en', category: 'finance' },
   { id: 'rt', name: 'RT', url: 'https://russian.rt.com/rss', lang: 'ru', category: 'news' },
   { id: 'izvestia', name: 'Известия', url: 'https://iz.ru/xml/rss/all.xml', lang: 'ru', category: 'news' },
+
+  // Finam — 7 RSS feeds (v7.8)
+  { id: 'finam_companies', name: 'Финам: Новости компаний', url: 'https://www.finam.ru/analysis/conews/rsspoint/', lang: 'ru', category: 'finance' },
+  { id: 'finam_news', name: 'Финам: Новости и комментарии', url: 'https://www.finam.ru/analysis/nslent/rsspoint/', lang: 'ru', category: 'finance' },
+  { id: 'finam_forecasts', name: 'Финам: Сценарии и прогнозы', url: 'https://www.finam.ru/analysis/forecasts/rsspoint/', lang: 'ru', category: 'finance' },
+  { id: 'finam_world', name: 'Финам: Мировые рынки', url: 'https://www.finam.ru/international/advanced/rsspoint/', lang: 'ru', category: 'finance' },
+  { id: 'finam_analytics', name: 'Финам: Обзор и идеи', url: 'https://www.finam.ru/analytics/rsspoint/', lang: 'ru', category: 'finance' },
+  { id: 'finam_bonds_news', name: 'Финам: Облигации — Новости', url: 'https://www.finam.ru/bonds-news/rsspoint/', lang: 'ru', category: 'finance' },
+  { id: 'finam_bonds_comments', name: 'Финам: Облигации — Комментарии', url: 'https://www.finam.ru/bonds-comments/rsspoint/', lang: 'ru', category: 'finance' },
 
   // International (12)
   { id: 'reuters', name: 'Reuters', url: 'https://ir.thomsonreuters.com/rss/news-releases.xml?items=50', lang: 'en', category: 'finance' },
@@ -53,4 +63,4 @@ export const RSS_SOURCES: RssSource[] = [
 ];
 
 export const EN_SOURCES = RSS_SOURCES.filter(s => s.lang === 'en');
-export const RU_SOURCES = RSS_SOURCES.filter(s => s.lang === 'ru');
+export const RU_SOURCES = RSS_SOURC
