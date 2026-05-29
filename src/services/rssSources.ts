@@ -63,4 +63,4 @@ export const RSS_SOURCES: RssSource[] = [
 ];
 
 export const EN_SOURCES = RSS_SOURCES.filter(s => s.lang === 'en');
-export const RU_SOURCES = RSS_SOURC
+export const RU_SOURCES = RSS_SOURCES
