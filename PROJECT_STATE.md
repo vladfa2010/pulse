@@ -2,15 +2,17 @@
 
 > **Файл для быстрого входа в контекст после сброса.**
 > **Дата обновления:** 2026-05-29
-> **Версия API:** 7.8
-> **Актуальные коммиты:** backend `a249c22` (Finam RSS), frontend `7ae8053`
+> **Версия API:** 7.9
+> **Актуальные коммиты:** backend `e74f0a5`, frontend `c384967` (v7.9.1)
+> **Finam RSS:** 7 лент активны
+> **Transaq Connector:** v1.0.0 — отдельный сервис (нужен VPS)
 > **Transaq Connector:** v1.0.0 — отдельный сервис реал-тайм новостей Finam (нужен VPS)
 
 ---
 
 ## 1. Что такое PULSE
 
-Агрегатор инвестиционных новостей на русском языке. 3 карусели новостей на главной. RSS из 36 источников → перевод EN→RU → sentiment analysis → smart tag matching → PostgreSQL → React frontend.
+Агрегатор инвестиционных новостей на русском языке. 3 карусели новостей на главной. RSS из 36 источников (включая 7 лент Финам) → перевод EN→RU → sentiment analysis → smart tag matching → PostgreSQL → React frontend.
 
 **URL:** https://pulse-frontend-jt53.onrender.com
 **API:** https://pulse-api-bsov.onrender.com
@@ -367,10 +369,11 @@ Cron парсит RSS → сохраняет в БД → broadcastNews() → SSE
 backend/src/services/
   smartTagMatcher.ts   — 3-layer matching (keywords + LLM + related)
   tagManager.ts        — Tag types (8), auto-detect via LLM, keyword generation
+  rssFetcher.ts        — RSS fetch (native fetch), batch processing, 25s timeout
   cron.ts              — RSS pipeline, cron monitoring, SSE broadcast
   sse.ts               — SSE subscribers + broadcastNews()
 backend/src/routes/
-  user.ts              — Tags CRUD, /summary, /tags/detect-type, /tags/related
+  user.ts              — Tags CRUD, /summary, /stats, /tags/detect-type, /tags/related
   auth.ts              — Login/register (demo login УДАЛЕН)
 frontend/src/components/
   DailySummary.tsx     — AI дайджест под "Вся лента"
@@ -419,8 +422,9 @@ transaq-connector/src/
 12. **SSE Real-Time News** — новости мгновенно в браузер после парсинга
 13. **Transaq News Connector** — отдельный Docker-сервис для реал-тайм новостей Finam (нужен VPS)
 14. **Finam RSS — 7 лент** добавлены в общий поток (v7.8) — работает на Render
-15. **Stats widget в Profile** — показывает объём информации для пользователя (v7.9)
-16. **Каждое изменение = git commit + push + deploy**
+15. **Stats widget в Profile** — показывает объём информации (v7.9)
+16. **Transaq Connector Service v1.0.0** — отдельный сервис реал-тайм новостей
+17. **Каждое изменение = git commit + push + deploy**
 
 ---
 
@@ -713,7 +717,7 @@ docker-compose up -d
 
 ---
 
-## 25. Полная документация
+## 26. Полная документация
 
 | Файл | Где |
 |------|-----|
