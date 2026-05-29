@@ -31,6 +31,7 @@ const USE_SQLITE = process.env.USE_SQLITE === 'true';
 // Smart Tag Matching (imported from smartTagMatcher)
 // ═══════════════════════════════════════════════════════════════════════════
 import { smartMatchTags, analyzeSentimentLLM, analyzeTagImpact, TagImpact } from './smartTagMatcher';
+import { broadcastNews } from './sse';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // analyzeSentiment — простой анализ на основе ключевых слов
@@ -205,12 +206,15 @@ export async function processArticles() {
           }
         } else {
           // Новая новость
+          const newId = crypto.randomUUID();
           await query(
             `INSERT OR IGNORE INTO news (id, title_original, title_ru, summary_ru, source, source_id, url, url_normalized, content_hash, all_sources, source_count, published_at, lang_original, sentiment, sentiment_source, matched_tags, tag_impact)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [crypto.randomUUID(), a.title, title_ru, summary_ru, a.source, a.sourceId, a.url, urlNormalized, contentHash, JSON.stringify([a.source]), 1, a.publishedAt.toISOString(), a.lang, a.sentiment, a.sentiment_source, JSON.stringify(a.matched_tags || []), JSON.stringify(a.tag_impact || [])]
+            [newId, a.title, title_ru, summary_ru, a.source, a.sourceId, a.url, urlNormalized, contentHash, JSON.stringify([a.source]), 1, a.publishedAt.toISOString(), a.lang, a.sentiment, a.sentiment_source, JSON.stringify(a.matched_tags || []), JSON.stringify(a.tag_impact || [])]
           );
           saved++;
+          // Broadcast to SSE subscribers
+          broadcastNews({ id: newId, title_ru, summary_ru, source: a.source, published_at: a.publishedAt, sentiment: a.sentiment, matched_tags: a.matched_tags, url: a.url });
         }
       } else {
         // PostgreSQL: INSERT с ON CONFLICT (content_hash) DO UPDATE
@@ -233,6 +237,8 @@ export async function processArticles() {
 
         if (result.rows.length > 0 && result.rows[0].is_insert === true) {
           saved++;      // Новая запись
+          // Broadcast to SSE subscribers
+          broadcastNews({ id: result.rows[0].id || null, title_ru, summary_ru, source: a.source, published_at: a.publishedAt, sentiment: a.sentiment, matched_tags: a.matched_tags, url: a.url });
         } else {
           merged++;     // Дубликат — обновили all_sources
         }
