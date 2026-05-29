@@ -360,12 +360,134 @@ Cron парсит RSS → сохраняет в БД → broadcastNews() → SSE
 
 ---
 
-## 17. Крон
+## 17. Pipeline: Получение и обработка новостей (v7.10)
+
+### Полный flow от RSS до БД
+
+```
+┌──────────────┐     ┌──────────────────┐     ┌─────────────────┐
+│  RSS Fetch   │────▶│ Per-Source Dedup │────▶│  Global Dedup   │
+│  36 sources  │     │ (rss_source_meta)│     │  (content_hash) │
+│  batch × 4   │     │  pubDate filter  │     │  ON CONFLICT    │
+└──────────────┘     └──────────────────┘     └─────────────────┘
+       │                       │                       │
+       ▼                       ▼                       ▼
+  453 articles            1-3 articles             0-1 новых
+  (20 per source)       (реально новые)         (уникальных)
+```
+
+### Stage 1: RSS Fetch + Timezone Normalization
+
+**Файл:** `backend/src/services/rssFetcher.ts`
+
+```
+fetchAllRSS()
+  ├── loadSourceMetaCache() — загружает rss_source_meta в память
+  ├── batch 1: sources 1-4   → fetchSource() параллельно
+  ├── batch 2: sources 5-8   → fetchSource() параллельно
+  ... (9 batches total, 1500ms delay между batches)
+  └── dedup by title+source  → return articles
+```
+
+**Timezone handling** (`normalizePubDate`):
+
+| RSS формат pubDate | Обработка | Пример |
+|-------------------|-----------|--------|
+| С explicit offset (`+0300`) | Парсим как-is, JS конвертирует в UTC | `22:00 +0300` → `19:00 UTC` |
+| С GMT/UTC | Парсим как-is | `22:00 GMT` → `22:00 UTC` |
+| ISO без timezone (`2026-05-29T22:00:00`) | RU sources → `+03:00`, EN → `+00:00` | RU: `22:00 +03` → `19:00 UTC` |
+| RSS standard без timezone | RU → `+0300`, EN → `+0000` | RU: `22:00 +03` → `19:00 UTC` |
+
+**Все `publishedAt` хранятся в UTC в PostgreSQL.** Не зависит от timezone сервера.
+
+### Stage 2: Per-Source Dedup (v7.10) — КЛЮЧЕВОЙ ОПТИМИЗАЦИЯ
+
+**Проблема до v7.10:** Каждые 5 минут парсили 453 статьи, 100 шли в LLM, 87-99 были дубликатами.
+
+**Решение:** Таблица `rss_source_meta` хранит `last_fetched_at` для каждого из 36 источников.
+
+```sql
+CREATE TABLE rss_source_meta (
+  source_id       VARCHAR(50) PRIMARY KEY,  -- 'finam_companies', 'reuters'...
+  last_fetched_at TIMESTAMP NOT NULL,         -- UTC время последнего парсинга
+  updated_at      TIMESTAMP DEFAULT NOW()
+);
+```
+
+**Flow:**
+```
+fetchSource('finam_companies')
+  ↓
+Парсим 20 items из RSS
+  ↓
+Получаем last_fetched_at для 'finam_companies' из памяти (не БД!)
+  ↓
+Фильтр: items.filter(item.pubDate > last_fetched_at)
+  ↓
+Обычно: 20 → 0 или 1 статья (остальные старее last_fetched_at)
+  ↓
+После успешного парсинга: UPDATE last_fetched_at = NOW()
+```
+
+**In-memory cache:** `Map<string, Date>` загружается ОДИН раз при старте крона. Нет запросов к БД внутри fetch loop = нет deadlock.
+
+**Результат:**
+
+| Метрика | До v7.10 | После v7.10 |
+|---------|----------|-------------|
+| Статей fetched | 100 | **1-3** |
+| LLM-вызовов | 100 | **1-3** |
+| Сохранено новых | 0-15 | **0-1** |
+| Время крона | 3-8 минут | **10-30 секунд** |
+
+### Stage 3: Global Dedup (content_hash)
+
+```sql
+INSERT INTO news (..., content_hash, all_sources)
+VALUES (..., 'a1b2c3', ARRAY['РБК'])
+ON CONFLICT (content_hash) DO UPDATE
+  SET all_sources = array_append(all_sources, EXCLUDED.source),
+      source_count = source_count + 1;
+```
+
+### Stage 4: Smart Tag Matching + Translation + Sentiment
+
+Для каждой реально новой статьи:
+1. **EN→RU перевод** (Kimi API, batch 5)
+2. **Sentiment** (keywords → LLM fallback)
+3. **Tag matching** (3 слоя: keywords → LLM → related)
+4. **INSERT** + **SSE broadcast**
+
+### Мониторинг
+
+**Endpoint:** `GET /debug-cron`
+
+| Поле | Описание |
+|------|----------|
+| `articles_fetched` | Сколько прошло per-source dedup |
+| `articles_saved` | Сколько реально новых (после global dedup) |
+| `articles_merged` | Сколько дубликатов объединено |
+| `status` | `success` / `running` / `error` |
+
+**Пример реальных данных:**
+```
+20:25:00 — fetched=3, saved=1, merged=0, status=success
+20:20:00 — fetched=1, saved=0, merged=1, status=success  ← дубль, объединён
+20:15:00 — fetched=1, saved=1, merged=0, status=success  ← новая уникальная
+```
+
+### Параметры
 
 | Параметр | Значение |
 |----------|----------|
 | Интервал | Каждые 5 минут (`*/5 * * * *`) |
-| Мониторинг | `cron_log` таблица + `/debug-cron` endpoint |
+| Batch size | 4 sources параллельно |
+| Batch delay | 1500ms между batches |
+| Fetch timeout | 25000ms на источник |
+| Per-source limit | 20 items |
+| Global limit | 100 items (редко достигается после dedup) |
+| LLM batch | 5 texts |
+| Мониторинг | `cron_log` + `/debug-cron` |
 
 ---
 
@@ -390,8 +512,11 @@ Cron парсит RSS → сохраняет в БД → broadcastNews() → SSE
 backend/src/services/
   smartTagMatcher.ts   — 3-layer matching (keywords + LLM + related)
   tagManager.ts        — Tag types (8), auto-detect via LLM, keyword generation
-  rssFetcher.ts        — RSS fetch (native fetch), batch processing, 25s timeout
-  cron.ts              — RSS pipeline, cron monitoring, SSE broadcast
+  rssFetcher.ts        — RSS fetch: native fetch, batch × 4, 25s timeout,
+                         normalizePubDate (timezone-aware), per-source dedup
+                         via rss_source_meta cache, in-memory sourceMetaCache
+  cron.ts              — RSS pipeline: fetch → dedup → translate → sentiment
+                         → tag matching → save → SSE broadcast, cron_log
   sse.ts               — SSE subscribers + broadcastNews()
 backend/src/routes/
   user.ts              — Tags CRUD, /summary, /stats, /tags/detect-type, /tags/related
