@@ -3,11 +3,9 @@ import { query } from '../config/db';
 import { normalizeUrl } from '../utils/normalizeUrl';
 import crypto from 'crypto';
 
-// CORS proxy only needed in browser — server makes direct requests
-const CORS_PROXY = '';
-const FETCH_TIMEOUT = 25000; // Render has slow outbound network
+const FETCH_TIMEOUT = 25000;
 const BATCH_SIZE = 4;
-const BATCH_DELAY = 1500; // 1.5s pause between batches
+const BATCH_DELAY = 1500;
 
 export interface ParsedArticle {
   title: string;
@@ -21,7 +19,6 @@ export interface ParsedArticle {
   lang: 'ru' | 'en';
 }
 
-// Quick XML parse — extract items
 function parseRSS(xml: string, source: RssSource): ParsedArticle[] {
   const articles: ParsedArticle[] = [];
   const items = xml.match(/<item>[\s\S]*?<\/item>/g) || [];
@@ -64,12 +61,11 @@ function stripHtml(html: string): string {
     .replace(/&nbsp;/g, ' ');
 }
 
-// Fetch single source with timeout using native fetch (Node 20+)
 async function fetchSource(source: RssSource): Promise<ParsedArticle[]> {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
-    
+
     const response = await fetch(source.url, {
       signal: controller.signal,
       headers: {
@@ -78,35 +74,28 @@ async function fetchSource(source: RssSource): Promise<ParsedArticle[]> {
       },
       redirect: 'follow',
     });
-    
+
     clearTimeout(timeout);
-    
+
     if (!response.ok) {
       console.warn(`RSS failed [${source.id}]: HTTP ${response.status}`);
       return [];
     }
-    
+
     const text = await response.text();
     return parseRSS(text, source);
   } catch (err: any) {
     const code = err.name === 'AbortError' ? 'TIMEOUT' : (err.code || 'ERROR');
-    console.warn(`RSS failed [${source.id}]: ${code} — ${err.message?.substring(0, 80)}`);
+    console.warn(`RSS failed [${source.id}]: ${code}`);
     return [];
   }
 }
 
-// Batch fetch all sources
 export async function fetchAllRSS(): Promise<ParsedArticle[]> {
   const allArticles: ParsedArticle[] = [];
-  let processed = 0;
-
-  console.log(`[RSS] Starting fetch of ${RSS_SOURCES.length} sources, batch size ${BATCH_SIZE}, timeout ${FETCH_TIMEOUT}ms`);
 
   for (let i = 0; i < RSS_SOURCES.length; i += BATCH_SIZE) {
     const batch = RSS_SOURCES.slice(i, i + BATCH_SIZE);
-    const batchNames = batch.map(s => s.id).join(', ');
-    console.log(`[RSS] Batch ${Math.floor(i/BATCH_SIZE) + 1}/${Math.ceil(RSS_SOURCES.length/BATCH_SIZE)}: ${batchNames}`);
-    
     const results = await Promise.allSettled(batch.map(fetchSource));
 
     for (const result of results) {
@@ -114,21 +103,12 @@ export async function fetchAllRSS(): Promise<ParsedArticle[]> {
         allArticles.push(...result.value);
       }
     }
-    
-    processed += batch.length;
-    console.log(`[RSS] Progress: ${processed}/${RSS_SOURCES.length} sources, ${allArticles.length} articles so far`);
-
-    const batchNum = Math.floor(i / BATCH_SIZE) + 1;
-    const totalBatches = Math.ceil(RSS_SOURCES.length / BATCH_SIZE);
-    console.log(`[RSS] Batch ${batchNum}/${totalBatches} done (${Math.min(i + BATCH_SIZE, RSS_SOURCES.length)}/${RSS_SOURCES.length} sources), ${allArticles.length} articles so far`);
 
     if (i + BATCH_SIZE < RSS_SOURCES.length) {
-      console.log(`[RSS] Pausing ${BATCH_DELAY}ms before next batch...`);
       await new Promise(r => setTimeout(r, BATCH_DELAY));
     }
   }
 
-  // Remove duplicates by title+source
   const seen = new Set<string>();
   return allArticles.filter(a => {
     const key = `${a.title}|${a.source}`;
@@ -138,7 +118,6 @@ export async function fetchAllRSS(): Promise<ParsedArticle[]> {
   });
 }
 
-// Simple UUID v4 generator
 function uuidv4(): string {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
     const r = Math.random() * 16 | 0;
@@ -149,7 +128,6 @@ function uuidv4(): string {
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
-// Save articles to DB
 export async function saveArticles(articles: ParsedArticle[]): Promise<number> {
   let count = 0;
   for (const a of articles) {
@@ -166,5 +144,15 @@ export async function saveArticles(articles: ParsedArticle[]): Promise<number> {
       } else {
         await query(
           `INSERT INTO news (title_original, title_ru, summary_ru, source, source_id, url, url_normalized, content_hash, published_at, lang_original)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-           
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+           ON CONFLICT (url) DO NOTHING`,
+          [a.title, a.title_ru || a.title, a.summary_ru || a.summary, a.source, a.sourceId, a.url, urlNormalized, contentHash, a.publishedAt.toISOString(), a.lang]
+        );
+      }
+      count++;
+    } catch (err) {
+      // Skip duplicates / errors
+    }
+  }
+  return count;
+}
