@@ -97,6 +97,21 @@ export async function processArticles() {
   const errors: string[] = [];
   console.log('[Cron] Starting RSS fetch at', new Date().toISOString());
 
+  // 0. Get last successful run time — filter out already-processed articles
+  let lastRunTime = new Date(Date.now() - 24 * 60 * 60 * 1000); // Default: 24h ago
+  try {
+    const lastRunResult = await query(
+      `SELECT MAX(started_at) as last_run FROM cron_log 
+       WHERE job_type = 'rss' AND status = 'success' AND started_at < NOW() - INTERVAL '1 minute'`
+    );
+    if (lastRunResult.rows[0]?.last_run) {
+      lastRunTime = new Date(lastRunResult.rows[0].last_run);
+    }
+  } catch {
+    // Silent fail — use default 24h
+  }
+  console.log('[Cron] Last successful run:', lastRunTime.toISOString());
+
   // 1. Fetch RSS (с защитой от ошибок)
   let articles: any[] = [];
   try {
@@ -106,12 +121,17 @@ export async function processArticles() {
     return;
   }
 
+  // Filter: only articles newer than last successful run (skip already processed)
+  const beforeFilter = articles.length;
+  articles = articles.filter(a => a.publishedAt > lastRunTime);
+  console.log(`[Cron] After time filter: ${articles.length}/${beforeFilter} articles (newer than ${lastRunTime.toISOString()})`);
+
   // Limit to 100 freshest articles per run (prevent LLM timeout overload)
   articles = articles
     .sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime())
     .slice(0, 100);
   
-  console.log(`[Cron] Fetched ${articles.length} articles (limited to 100 freshest)`);
+  console.log(`[Cron] Final batch: ${articles.length} articles to process`);
   
   // Update fetched count immediately
   await query(`UPDATE cron_log SET articles_fetched = $1 WHERE id = $2`, [articles.length, logId]);
