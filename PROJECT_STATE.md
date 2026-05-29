@@ -2,8 +2,8 @@
 
 > **Файл для быстрого входа в контекст после сброса.**
 > **Дата обновления:** 2026-05-29
-> **Версия API:** 7.4
-> **Актуальные коммиты:** backend `cee9f43` (v7.4), frontend `98f822e`
+> **Версия API:** 7.6
+> **Актуальные коммиты:** backend `ea90fe3` (v7.6), frontend `98f822e`
 
 ---
 
@@ -52,8 +52,9 @@
 | 3 | **Free = 1 тег** | Бизнес-правило |
 | 4 | **Пользователь создаёт первый тег сам** | Нет forced suggestions, нет демо-портфеля |
 | 5 | **LLM определяет тип тега** (auto-detect) | 8 типов: company, ticker, sector, trend, person, commodity, index, currency |
-| 6 | **Метод 2 (LLM) ВСЕГДА запускается** после метода 1 | Union результатов: Layer 1 ∪ Layer 2 |
-| 7 | **Demo-режим удалён** | Нет демо-логина, нет демо-портфеля |
+| 6 | **Tag Enrichment через LLM** | Один запрос при создании → synonyms + ticker + products + related entities |
+| 7 | **Метод 2 (LLM) ТОЛЬКО если Layer 1 пустой** | ~60% экономия токенов (оптимизация B) |
+| 8 | **Demo-режим удалён** | Нет демо-логина, нет демо-портфеля |
 
 ---
 
@@ -62,13 +63,32 @@
 ### Flow:
 ```
 Новость (title + summary)
-  ├──> Layer 1: Keyword matching (только user_defined_tags из БД)
-  │     └── Быстро, локально, < 1 мс
-  ├──> Layer 2: LLM Smart Matching (ВСЕГДА запускается после Layer 1)
-  │     └── Union: Layer 1 ∪ Layer 2 (deduplicate)
+  ├──> Layer 1: Keyword matching (enriched keywords, ~50+ на тег)
+  │     └── Быстро, локально, < 1 мс, покрывает ~85-90%
+  ├──> Layer 2: LLM Smart Matching (ТОЛЬКО если Layer 1 пустой)
+  │     └── Fallback: семантический анализ, ~10-15% случаев
   └──> Layer 3: LLM Related Tags (динамические связи через LLM)
         └── Кэш 5 минут
 ```
+
+### Tag Enrichment (v7.5) — ОДИН запрос при создании тега:
+
+При создании тега `enrichTagViaLLM()` делает **один** LLM-запрос и получает:
+
+| Поле | Пример | Зачем |
+|------|--------|-------|
+| `tag_type` | `company` | Тип тега |
+| `ticker` | `NVDA` | Биржевой тикер |
+| `related_entities` | `["AMD", "Intel", "TSMC"]` | Связанные компании |
+| `synonyms_en` | `["nvidia corp", "gpu maker"]` | Английские синонимы |
+| `synonyms_ru` | `["нвидиа", "енвидиа"]` | Русские синонимы |
+| `key_products` | `["geforce", "rtx", "cuda"]` | Ключевые продукты |
+
+**Результат:** `buildEnrichedKeywords()` объединяет base keywords + LLM synonyms → **~50+ keywords на тег** (было ~8).
+
+**Сохранение:** `user_defined_tags.enriched_data` (JSONB).
+
+**Экономия:** Layer 1 теперь ловит 85-90% новостей → Layer 2 редко нужен.
 
 ### Tag Types (Auto-Detection via LLM):
 | Тип | Примеры |
@@ -246,9 +266,10 @@ frontend/src/pages/
 6. **Нет хардкод тегов** — только пользовательские
 7. **Free = 1 тег** — Premium = 10 тегов
 8. **Demo login УДАЛЕН** — нет демо-режима
-9. **LLM matching ВСЕГДА** запускается после keywords
-10. **Tag type auto-detect** — 8 типов через LLM
-11. **Каждое изменение = git commit + push + deploy**
+9. **Tag Enrichment через LLM** — один запрос при создании → synonyms + products + entities
+10. **Layer 2 (LLM) ТОЛЬКО если Layer 1 пустой** — ~60% экономия токенов
+11. **Tag type auto-detect** — 8 типов через LLM
+12. **Каждое изменение = git commit + push + deploy**
 
 ---
 
