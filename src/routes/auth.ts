@@ -114,7 +114,7 @@ router.post('/login', validate(LoginSchema), async (req, res) => {
 
     // ─── Ищем пользователя по email ─────────────────────────────────────
     const result = await query(
-      'SELECT id, email, username, password_hash, is_admin FROM users WHERE email = $1',
+      'SELECT id, email, username, password_hash, is_admin, subscription_active, subscription_expires_at FROM users WHERE email = $1',
       [email]
     );
     if (result.rows.length === 0) {
@@ -148,6 +148,8 @@ router.post('/login', validate(LoginSchema), async (req, res) => {
         email: user.email,
         username: user.username,
         is_admin: user.is_admin === 1 || user.is_admin === true,
+        subscription_active: user.subscription_active,
+        subscription_expires_at: user.subscription_expires_at,
       },
     });
   } catch (err: any) {
