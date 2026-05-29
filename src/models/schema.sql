@@ -183,6 +183,15 @@ CREATE INDEX IF NOT EXISTS idx_user_news_reads_user_id ON user_news_reads (user_
 CREATE INDEX IF NOT EXISTS idx_user_news_reads_news_id ON user_news_reads (news_id);
 
 -- ============================================================
+-- 10. rss_source_meta (SOURCE DEDUP: last fetch time per source)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS rss_source_meta (
+  source_id       VARCHAR(50) PRIMARY KEY,
+  last_fetched_at TIMESTAMP NOT NULL DEFAULT NOW() - INTERVAL '24 hours',
+  updated_at      TIMESTAMP DEFAULT NOW()
+);
+
+-- ============================================================
 -- Индексы (остальные)
 -- ============================================================
 CREATE INDEX IF NOT EXISTS idx_translation_hash ON translation_cache (hash);

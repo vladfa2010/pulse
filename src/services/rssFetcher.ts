@@ -3,6 +3,44 @@ import { query } from '../config/db';
 import { normalizeUrl } from '../utils/normalizeUrl';
 import crypto from 'crypto';
 
+// In-memory cache for last_fetched_at per source (avoids DB query inside fetch loop)
+const sourceMetaCache: Map<string, Date> = new Map();
+let metaCacheLoaded = false;
+
+async function loadSourceMetaCache(): Promise<void> {
+  if (metaCacheLoaded) return;
+  try {
+    const result = await query(`SELECT source_id, last_fetched_at FROM rss_source_meta`, []);
+    for (const row of result.rows) {
+      if (row.last_fetched_at) {
+        sourceMetaCache.set(row.source_id, new Date(row.last_fetched_at));
+      }
+    }
+    metaCacheLoaded = true;
+    console.log(`[RSS] Loaded meta cache for ${sourceMetaCache.size} sources`);
+  } catch {
+    // Table may not exist yet — ignore
+    metaCacheLoaded = true;
+  }
+}
+
+export function getSourceLastFetched(sourceId: string): Date | undefined {
+  return sourceMetaCache.get(sourceId);
+}
+
+export async function updateSourceLastFetched(sourceId: string, fetchedAt: Date): Promise<void> {
+  sourceMetaCache.set(sourceId, fetchedAt);
+  try {
+    await query(
+      `INSERT INTO rss_source_meta (source_id, last_fetched_at) VALUES ($1, $2)
+       ON CONFLICT (source_id) DO UPDATE SET last_fetched_at = EXCLUDED.last_fetched_at`,
+      [sourceId, fetchedAt.toISOString()]
+    );
+  } catch (err: any) {
+    console.warn(`[RSS] Failed to update meta for ${sourceId}:`, err.message);
+  }
+}
+
 const FETCH_TIMEOUT = 25000;
 const BATCH_SIZE = 4;
 const BATCH_DELAY = 1500;
@@ -110,7 +148,19 @@ async function fetchSource(source: RssSource): Promise<ParsedArticle[]> {
     }
 
     const text = await response.text();
-    return parseRSS(text, source);
+    const articles = parseRSS(text, source);
+
+    // Filter: skip articles older than last successful fetch for this source
+    const lastFetched = sourceMetaCache.get(source.id);
+    if (lastFetched) {
+      const filtered = articles.filter(a => a.publishedAt > lastFetched);
+      if (filtered.length < articles.length) {
+        console.log(`[RSS] ${source.id}: ${filtered.length}/${articles.length} articles newer than ${lastFetched.toISOString()}`);
+      }
+      return filtered;
+    }
+
+    return articles;
   } catch (err: any) {
     const code = err.name === 'AbortError' ? 'TIMEOUT' : (err.code || 'ERROR');
     console.warn(`RSS failed [${source.id}]: ${code}`);
@@ -119,15 +169,23 @@ async function fetchSource(source: RssSource): Promise<ParsedArticle[]> {
 }
 
 export async function fetchAllRSS(): Promise<ParsedArticle[]> {
+  // Load source metadata cache before fetching
+  await loadSourceMetaCache();
+
   const allArticles: ParsedArticle[] = [];
+  const fetchTime = new Date(); // UTC timestamp of this fetch
 
   for (let i = 0; i < RSS_SOURCES.length; i += BATCH_SIZE) {
     const batch = RSS_SOURCES.slice(i, i + BATCH_SIZE);
-    const results = await Promise.allSettled(batch.map(fetchSource));
+    const results = await Promise.allSettled(batch.map(s => fetchSource(s)));
 
-    for (const result of results) {
+    for (let j = 0; j < results.length; j++) {
+      const result = results[j];
+      const source = batch[j];
       if (result.status === 'fulfilled') {
         allArticles.push(...result.value);
+        // Update last_fetched_at for successfully parsed sources
+        await updateSourceLastFetched(source.id, fetchTime);
       }
     }
 

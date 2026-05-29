@@ -746,6 +746,7 @@ async function start() {
     { sql: `ALTER TABLE notification_settings ADD COLUMN IF NOT EXISTS email_digest_enabled BOOLEAN DEFAULT FALSE`, name: 'email_digest_enabled' },
     { sql: `CREATE TABLE IF NOT EXISTS cron_log (id SERIAL PRIMARY KEY, task_name VARCHAR(50) NOT NULL, started_at TIMESTAMP NOT NULL DEFAULT NOW(), finished_at TIMESTAMP, articles_fetched INTEGER DEFAULT 0, articles_saved INTEGER DEFAULT 0, articles_merged INTEGER DEFAULT 0, errors TEXT, status VARCHAR(20) DEFAULT 'running')`, name: 'cron_log' },
     { sql: `CREATE INDEX IF NOT EXISTS idx_cron_log_started_at ON cron_log(started_at DESC)`, name: 'idx_cron_log_started_at' },
+    { sql: `CREATE TABLE IF NOT EXISTS rss_source_meta (source_id VARCHAR(50) PRIMARY KEY, last_fetched_at TIMESTAMP NOT NULL DEFAULT NOW() - INTERVAL '24 hours', updated_at TIMESTAMP DEFAULT NOW())`, name: 'rss_source_meta' },
   ];
   for (const m of migrations) {
     try {
