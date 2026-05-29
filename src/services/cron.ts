@@ -106,7 +106,15 @@ export async function processArticles() {
     return;
   }
 
-  console.log(`[Cron] Fetched ${articles.length} articles`);
+  // Limit to 100 freshest articles per run (prevent LLM timeout overload)
+  articles = articles
+    .sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime())
+    .slice(0, 100);
+  
+  console.log(`[Cron] Fetched ${articles.length} articles (limited to 100 freshest)`);
+  
+  // Update fetched count immediately
+  await query(`UPDATE cron_log SET articles_fetched = $1 WHERE id = $2`, [articles.length, logId]);
 
   // 2. Translate EN → RU
   const toTranslate = articles.filter(a => a.lang === 'en');
