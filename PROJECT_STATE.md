@@ -266,6 +266,26 @@ Cron парсит RSS → сохраняет в БД → broadcastNews() → SSE
 | `refreshUser` после оплаты | ✅ |
 | `subscription_active = TRUE` | ✅ |
 
+### Баг: Premium пропадал после перезахода (v7.6.2) 🐛
+
+**Причина:** `POST /auth/login` не возвращал `subscription_active` и `subscription_expires_at`.
+
+**Цепочка бага:**
+
+| Шаг | Действие | subscription.active |
+|-----|----------|---------------------|
+| 1 | Пользователь оплачивает | ✅ TRUE в БД |
+| 2 | `refreshUser()` → `/auth/me` | ✅ true (видно) |
+| 3 | Перезаход → `login()` | ❌ undefined → false |
+
+**Исправления:**
+
+| Файл | Что сделано |
+|------|-------------|
+| `auth.ts` login | SELECT добавлены `subscription_active`, `subscription_expires_at` |
+| `auth.ts` login | Response включает оба subscription поля |
+| `PaymentReturn.tsx` | `refreshUser()` вызывается после force-check подтверждения |
+
 ---
 
 ## 14. Mobile Layout Optimization ✅
@@ -393,7 +413,67 @@ frontend/src/pages/
 
 ---
 
-## 21. Полная документация
+## 21. SSE Real-Time News (v7.7) ✅
+
+### Архитектура
+
+```
+Cron (каждые 5 мин) → RSS fetch → translate → sentiment → save to DB
+                                                              ↓
+                                                    broadcastNews() — SSE
+                                                              ↓
+                                                    Browser (EventSource)
+                                                              ↓
+                                                    React Query cache обновляется
+                                                              ↓
+                                                    Новость появляется на экране БЕЗ F5
+```
+
+### Почему SSE (не WebSocket)
+
+| SSE | WebSocket |
+|-----|-----------|
+| Однонаправленный (server → browser) | Двунаправленный |
+| Работает через HTTP | Нужен upgrade протокола |
+| Auto-reconnect встроен в браузер | Ручная реализация |
+| Проще в реализации | Сложнее |
+
+### Компоненты
+
+| Компонент | Файл | Роль |
+|-----------|------|------|
+| **SSE Service** | `backend/src/services/sse.ts` | Subscribers Set + broadcastNews() |
+| **SSE Endpoint** | `GET /api/news/stream` | EventSource connection, heartbeat 30s |
+| **Broadcast trigger** | `cron.ts` — после каждого INSERT новой новости | Отправляет новость всем подписчикам |
+| **Frontend hook** | `frontend/src/hooks/useSseNews.ts` | EventSource + React Query integration |
+| **Integration** | `Home.tsx` — `useSseNews(isLoggedIn)` | Подключение при логине |
+
+### Параметры
+
+| Параметр | Значение |
+|----------|----------|
+| Heartbeat | 30 секунд (`event: ping`) |
+| Auto-reconnect | 5 секунд после disconnect |
+| Дедупликация клиента | Проверка `id` перед добавлением в cache |
+| Мониторинг | `sse_subscribers` в `/health` |
+
+### Почему "новости час назад"
+
+`published_at` = время публикации на **источнике**, не время парсинга:
+
+| Время | Событие |
+|-------|---------|
+| 14:00 | Apple отчиталась |
+| 14:15 | CNN написал статью |
+| 14:30 | CNN опубликовал в RSS |
+| 14:31 | Наш крон спарсил |
+| 14:31 | SSE доставил в браузер |
+
+SSE доставляет **мгновенно**, но `published_at` показывает время CNN.
+
+---
+
+## 22. Полная документация
 
 | Файл | Где |
 |------|-----|

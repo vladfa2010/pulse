@@ -185,31 +185,43 @@
 ✅ v7.6.2 деплоен, Premium сохраняется после перезахода.
 ```
 
-### Пример 2: Деплой новой фичи
+### Пример 2: Деплой новой фичи (SSE)
 
 ```
-## 🆕 AI Daily Summary деплоен!
+## 🆕 SSE Real-Time News деплоен! (v7.7)
 
-### Backend (v7.4)
-
-| Endpoint | Описание |
-|----------|----------|
-| `GET /api/user/summary` | AI-саммари за 12ч |
-| `GET /api/user/summary?refresh=1` | Принудительный перезапрос |
-
-### Flow
+### Архитектура
 
 ```
-1. Берём теги пользователя из portfolios
-2. Ищем новости: published_at > NOW() - 12 hours
-3. Отправляем в LLM → 80-150 слов
-4. Кэш: 10 минут
+Cron → RSS → translate → sentiment → save to DB → broadcastNews() → SSE → Browser
 ```
+
+### Backend
+
+| Компонент | Файл | Роль |
+|-----------|------|------|
+| SSE Service | `sse.ts` | Subscribers Set + broadcast |
+| SSE Endpoint | `GET /api/news/stream` | EventSource + heartbeat 30s |
+| Broadcast trigger | `cron.ts` | После каждого INSERT новой новости |
+
+### Frontend
+
+| Компонент | Файл |
+|-----------|------|
+| **Hook** | `useSseNews.ts` — EventSource + React Query |
+| **Integration** | `Home.tsx` — `useSseNews(isLoggedIn)` |
+
+### Почему SSE (не WebSocket)
+
+| SSE | WebSocket |
+|-----|-----------|
+| Однонаправленный | Двунаправленный |
+| Auto-reconnect встроен | Ручная реализация |
 
 ### Результат
 
-🔗 https://pulse-frontend-jt53.onrender.com/#/instructions
-✅ API 7.4, cron healthy
+✅ API 7.7, `sse_subscribers` в /health
+✅ Новости мгновенно в браузер после парсинга
 ```
 
 ---
@@ -244,4 +256,4 @@
 ---
 
 *Последнее обновление: 2026-05-29*
-*Версия SOUL: 1.1*
+*Версия SOUL: 1.2*
