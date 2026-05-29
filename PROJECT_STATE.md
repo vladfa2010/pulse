@@ -2,8 +2,8 @@
 
 > **Файл для быстрого входа в контекст после сброса.**
 > **Дата обновления:** 2026-05-29
-> **Версия API:** 7.6
-> **Актуальные коммиты:** backend `41998c5`, frontend `7aaca39` (Profile liquid glass redesign)
+> **Версия API:** 7.6.2
+> **Актуальные коммиты:** backend `41998c5`, frontend `1c08cef` (Mobile layout optimization)
 
 ---
 
@@ -225,7 +225,45 @@
 
 ---
 
-## 14. UI: Hero padding (для залогиненных)
+## 14. Mobile Layout Optimization ✅
+
+### Проблемы
+
+| # | Проблема | Причина |
+|---|----------|---------|
+| 1 | **Страница шире экрана iPhone** — можно сдвинуть влево/вправо | `NewsCard` использовал `w-[425px]` — шире iPhone (375px) |
+| 2 | **Подёргивание при скролле** | Тяжёлый `backdrop-filter: blur(20px)` на каждой карточке |
+| 3 | **Нет ощущения премиального сайта** | 300ms tap delay, нет GPU acceleration |
+
+### Исправления
+
+| Файл | Что сделано |
+|------|-------------|
+| `index.html` | `viewport-fit=cover`, `maximum-scale=1.0`, `user-scalable=no` для iPhone X+ |
+| `index.css` | `overflow-x: hidden` на html/body, `max-width: 100vw`, `touch-action: manipulation` |
+| `index.css` | `-webkit-tap-highlight-color: transparent`, `-webkit-overflow-scrolling: touch` |
+| `index.css` | `@media (max-width: 768px)` — уменьшенный `backdrop-filter` blur (16px→8px, 6px→4px) |
+| `index.css` | `.gpu-layer` — `will-change: transform`, `translateZ(0)`, `backface-visibility: hidden` |
+| `index.css` | `.scroll-container` — `-webkit-overflow-scrolling: touch`, `overscroll-behavior-y: contain` |
+| `index.css` | `@media (prefers-reduced-motion)` — отключение анимаций для accessibility |
+| `Layout.tsx` | `overflow-x-hidden`, `max-w-[100vw]` на контейнере |
+| `NewsCarousel.tsx` | `scroll-container` + `gpu-layer`, fade overlays скрыты на мобильных |
+| `NewsCard.tsx` | **Responsive width**: `w-[85vw] sm:w-[425px]` и `w-[75vw] sm:w-[275px]` |
+| `NewsCard.tsx` | `gpu-layer` для GPU acceleration анимаций |
+| `Navbar.tsx` | `gpu-layer`, `env(safe-area-inset-top)` для iPhone notch |
+
+### Результат
+
+| До | После |
+|----|-------|
+| `w-[425px]` фиксировано | `w-[85vw]` на мобильном, `sm:w-[425px]` на десктопе |
+| `backdrop-filter: blur(20px)` всегда | `blur(8px)` на мобильных |
+| Нет GPU acceleration | `will-change: transform` + `translateZ(0)` |
+| 300ms tap delay | `touch-action: manipulation` — мгновенный отклик |
+
+---
+
+## 15. UI: Hero padding (для залогиненных)
 
 | Параметр | Залогинен | Без логина |
 |----------|-----------|------------|
@@ -235,7 +273,7 @@
 
 ---
 
-## 15. Крон
+## 16. Крон
 
 | Параметр | Значение |
 |----------|----------|
@@ -244,7 +282,7 @@
 
 ---
 
-## 16. Debug endpoints
+## 17. Debug endpoints
 
 | Endpoint | Описание |
 |----------|----------|
@@ -259,7 +297,7 @@
 
 ---
 
-## 17. Где что в коде
+## 18. Где что в коде
 
 ```
 backend/src/services/
@@ -279,7 +317,7 @@ frontend/src/pages/
 
 ---
 
-## 18. Git репозитории
+## 19. Git репозитории
 
 | Репо | URL | Локально |
 |------|-----|----------|
@@ -291,7 +329,7 @@ frontend/src/pages/
 
 ---
 
-## 19. Ключевые договорённости
+## 20. Ключевые договорённости
 
 1. **ТОЛЬКО реальные новости** из RSS — мок-данные ЗАПРЕЩЕНЫ
 2. **Kimi API endpoint:** `api.moonshot.ai` — .cn возвращает 401
@@ -308,7 +346,7 @@ frontend/src/pages/
 
 ---
 
-## 20. Полная документация
+## 21. Полная документация
 
 | Файл | Где |
 |------|-----|
