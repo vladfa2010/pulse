@@ -6,7 +6,7 @@ import crypto from 'crypto';
 
 // CORS proxy only needed in browser — server makes direct requests
 const CORS_PROXY = '';
-const FETCH_TIMEOUT = 8000;
+const FETCH_TIMEOUT = 25000; // Render has slow outbound network
 const BATCH_SIZE = 4;
 const BATCH_DELAY = 1500; // 1.5s pause between batches
 
@@ -79,7 +79,8 @@ async function fetchSource(source: RssSource): Promise<ParsedArticle[]> {
     });
     return parseRSS(response.data, source);
   } catch (err: any) {
-    console.warn(`RSS fetch failed for ${source.id}: ${err.message?.substring(0, 100)}`);
+    const status = err.response?.status;
+    console.warn(`RSS failed [${source.id}]: ${err.code || status || 'unknown'} — ${err.message?.substring(0, 80)}`);
     return [];
   }
 }
@@ -87,9 +88,15 @@ async function fetchSource(source: RssSource): Promise<ParsedArticle[]> {
 // Batch fetch all sources
 export async function fetchAllRSS(): Promise<ParsedArticle[]> {
   const allArticles: ParsedArticle[] = [];
+  let processed = 0;
+
+  console.log(`[RSS] Starting fetch of ${RSS_SOURCES.length} sources, batch size ${BATCH_SIZE}, timeout ${FETCH_TIMEOUT}ms`);
 
   for (let i = 0; i < RSS_SOURCES.length; i += BATCH_SIZE) {
     const batch = RSS_SOURCES.slice(i, i + BATCH_SIZE);
+    const batchNames = batch.map(s => s.id).join(', ');
+    console.log(`[RSS] Batch ${Math.floor(i/BATCH_SIZE) + 1}/${Math.ceil(RSS_SOURCES.length/BATCH_SIZE)}: ${batchNames}`);
+    
     const results = await Promise.allSettled(batch.map(fetchSource));
 
     for (const result of results) {
@@ -97,6 +104,9 @@ export async function fetchAllRSS(): Promise<ParsedArticle[]> {
         allArticles.push(...result.value);
       }
     }
+    
+    processed += batch.length;
+    console.log(`[RSS] Progress: ${processed}/${RSS_SOURCES.length} sources, ${allArticles.length} articles so far`);
 
     const batchNum = Math.floor(i / BATCH_SIZE) + 1;
     const totalBatches = Math.ceil(RSS_SOURCES.length / BATCH_SIZE);
