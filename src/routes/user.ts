@@ -780,12 +780,12 @@ router.get('/stats', authMiddleware, async (req: AuthRequest, res) => {
     );
     const last24h = dayResult.rows[0]?.cnt || 0;
 
-    // 3. Теги пользователя
+    // 3. Теги пользователя (from portfolios) — matched_tags stores tag_id!
     const tagsResult = await query(
-      `SELECT tag_name FROM user_defined_tags WHERE user_id = $1`,
+      `SELECT tag_id FROM portfolios WHERE user_id = $1`,
       [userId]
     );
-    const userTags = tagsResult.rows.map((r: any) => r.tag_name);
+    const userTags = tagsResult.rows.map((r: any) => r.tag_id);
 
     // 4. Новости, подходящие пользователю (matched_tags && user_tags)
     let personalNews = 0;
