@@ -2,8 +2,8 @@
 
 > **Файл для быстрого входа в контекст после сброса.**
 > **Дата обновления:** 2026-05-29
-> **Версия API:** 7.6.2
-> **Актуальные коммиты:** backend `41998c5`, frontend `1c08cef` (Mobile layout optimization)
+> **Версия API:** 7.7
+> **Актуальные коммиты:** backend `2b670a5`, frontend `7ae8053` (SSE real-time news)
 
 ---
 
@@ -41,6 +41,25 @@
 | 2 | **"Вся лента"** | matched_tags && user_tags, прочитанные (DESC) | Залогиненным | AllNewsCarousel.tsx |
 | 3 | **"Общая лента"** | Без фильтра тегов, все новости | Всем | GlobalNewsCarousel.tsx |
 
+### Доставка новостей
+
+**Раньше:** Только polling (React Query refetch interval) → новости видны после F5 или таймаута  
+**Сейчас:** SSE (Server-Sent Events) + React Query → новости **мгновенно** после парсинга cron
+
+```
+Cron (каждые 5 мин) → RSS fetch → translate → sentiment → save to DB
+                                                              ↓
+                                                    broadcastNews() — SSE
+                                                              ↓
+                                                    Browser (EventSource)
+                                                              ↓
+                                                    React Query cache обновляется
+                                                              ↓
+                                                    Новость появляется на экране
+```
+
+**Почему "новости час назад":** `published_at` = время публикации на источнике, не время парсинга. Источники сами публикуют с задержкой. SSE доставляет мгновенно, но время события — от источника.
+
 ---
 
 ## 4. Главные архитектурные решения (ВАЖНО)
@@ -54,7 +73,8 @@
 | 5 | **LLM определяет тип тега** (auto-detect) | 8 типов: company, ticker, sector, trend, person, commodity, index, currency |
 | 6 | **Tag Enrichment через LLM** | Один запрос при создании → synonyms + ticker + products + related entities |
 | 7 | **Метод 2 (LLM) ТОЛЬКО если Layer 1 пустой** | ~60% экономия токенов (оптимизация B) |
-| 8 | **Demo-режим удалён** | Нет демо-логина, нет демо-портфеля |
+| 8 | **SSE Real-Time News** | Мгновенная доставка новостей в браузер |
+| 9 | **Demo-режим удалён** | Нет демо-логина, нет демо-портфеля |
 
 ---
 
@@ -104,6 +124,29 @@
 
 **Endpoint:** `GET /api/user/tags/detect-type?tagName=X`
 **Fallback:** heuristicTagType() (регулярки) если LLM недоступен
+
+### SSE Real-Time News (v7.7) — Мгновенная доставка
+
+```
+Cron парсит RSS → сохраняет в БД → broadcastNews() → SSE → Browser
+                                                              ↓
+                                                    React Query cache обновляется
+                                                              ↓
+                                                    Новость появляется на экране БЕЗ F5
+```
+
+| Компонент | Файл |
+|-----------|------|
+| **SSE Service** | `backend/src/services/sse.ts` — subscribers Set + broadcast |
+| **SSE Endpoint** | `GET /api/news/stream` — EventSource connection |
+| **Broadcast trigger** | `cron.ts` — после каждого INSERT новой новости |
+| **Frontend hook** | `frontend/src/hooks/useSseNews.ts` — EventSource + React Query |
+| **Integration** | `Home.tsx` — `useSseNews(isLoggedIn)` |
+
+**Heartbeat:** каждые 30 секунд (сервер → клиент `event: ping`)  
+**Auto-reconnect:** 5 секунд после disconnect  
+**Фильтр дубликатов:** на клиенте (проверка `id` перед добавлением в cache)  
+**Подписчиков:** `sse_subscribers` в `/health`
 
 ---
 
@@ -303,16 +346,19 @@
 backend/src/services/
   smartTagMatcher.ts   — 3-layer matching (keywords + LLM + related)
   tagManager.ts        — Tag types (8), auto-detect via LLM, keyword generation
-  cron.ts              — RSS pipeline, cron monitoring
+  cron.ts              — RSS pipeline, cron monitoring, SSE broadcast
+  sse.ts               — SSE subscribers + broadcastNews()
 backend/src/routes/
   user.ts              — Tags CRUD, /summary, /tags/detect-type, /tags/related
   auth.ts              — Login/register (demo login УДАЛЕН)
 frontend/src/components/
   DailySummary.tsx     — AI дайджест под "Вся лента"
+frontend/src/hooks/
+  useSseNews.ts        — EventSource connection + React Query integration
 frontend/src/pages/
   Instructions.tsx     — /instructions — как работают теги
   Profile.tsx          — /profile — liquid glass дизайн, 4 таба
-  Home.tsx             — Hero padding conditional (isLoggedIn)
+  Home.tsx             — Hero padding conditional (isLoggedIn), useSseNews()
 ```
 
 ---
@@ -342,7 +388,8 @@ frontend/src/pages/
 9. **Tag Enrichment через LLM** — один запрос при создании → synonyms + products + entities
 10. **Layer 2 (LLM) ТОЛЬКО если Layer 1 пустой** — ~60% экономия токенов
 11. **Tag type auto-detect** — 8 типов через LLM
-12. **Каждое изменение = git commit + push + deploy**
+12. **SSE Real-Time News** — новости мгновенно в браузер после парсинга
+13. **Каждое изменение = git commit + push + deploy**
 
 ---
 
