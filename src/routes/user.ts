@@ -362,6 +362,43 @@ router.get('/tags/related', async (req, res) => {
   }
 });
 
+// GET /api/user/tags/:tagName/enrichment — enriched data for a tag
+router.get('/tags/:tagName/enrichment', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.userId;
+    const tagName = req.params.tagName;
+
+    const result = await query(
+      `SELECT tag_name, tag_type, enriched_data, created_at
+       FROM user_defined_tags
+       WHERE user_id = $1 AND tag_name = $2`,
+      [userId, tagName]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Tag not found' });
+    }
+
+    const row = result.rows[0];
+    const enriched = row.enriched_data || {};
+
+    res.json({
+      tag_name: row.tag_name,
+      tag_type: row.tag_type || enriched.tag_type || 'company',
+      ticker: enriched.ticker || null,
+      synonyms_en: enriched.synonyms_en || [],
+      synonyms_ru: enriched.synonyms_ru || [],
+      key_products: enriched.key_products || [],
+      related_entities: enriched.related_entities || [],
+      description: enriched.description || null,
+      created_at: row.created_at,
+    });
+  } catch (err: any) {
+    console.error('[TagEnrichment] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/user/tags/detect-type?tagName=Apple — автоопределение типа (preview)
 router.get('/tags/detect-type', async (req, res) => {
   try {
