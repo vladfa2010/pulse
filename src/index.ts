@@ -72,7 +72,7 @@ app.get('/health', async (req, res) => {
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
-    version: '7.5',
+    version: '7.6',
     cron: cronStatus,
   });
 });

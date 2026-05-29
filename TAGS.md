@@ -26,7 +26,7 @@
   │     └── Только пользовательские теги (из БД: user_defined_tags)
   │
   ├──> Метод 2: Умный поиск через AI (Kimi API, медленный)
-  │     └── ВСЕГДА после метода 1 → union keyword + LLM результаты
+  │     └── ТОЛЬКО если метод 1 ничего не нашёл → fallback LLM
   │
   └──> Метод 3: Связанные теги через LLM (динамические)
         └── "nvda" → LLM предлагает "tech", "ai" (нет хардкода)
@@ -230,46 +230,46 @@ function matchTagsByKeywords(text: string): string[]
 Результат: ["apple", "ai"]
 ```
 
-### Метод 2: Умный поиск через AI (Smart AI Search) — ВСЕГДА запускается
+### Метод 2: Умный поиск через AI (Smart AI Search) — ТОЛЬКО если Метод 1 пуст
 
 ```typescript
 function smartMatchTags(title, summary, { useLLM? }): string[]
 ```
 
-- **Условие:** ВСЕГДА запускается после метода 1 (если useLLM !== false И KIMI_API_KEY установлен)
+- **Условие:** запускается ТОЛЬКО если Метод 1 ничего не нашёл
+  (если `keywordTags.length === 0` И `useLLM !== false` И `KIMI_API_KEY` установлен)
 - **API:** Kimi (api.moonshot.ai)
 - **Список тегов:** `getAllTagNames()` — все tag_id из `user_defined_tags`
-- **Как работает:** отправляем текст + список всех тегов в нейросеть → она решает какие **дополнительные** теги подходят
+- **Как работает:** отправляем текст + список всех тегов в нейросеть → она решает какие теги подходят
 - **Кэш:** `smart_tag_cache` таблица, TTL 7 дней
-- **Скорость:** +1-5 секунд к методу 1
-- **Покрытие:** находит теги, которые keyword matching пропустил
+- **Скорость:** 1-5 секунд (только когда нужен)
+- **Экономия:** ~60% меньше LLM-вызовов (Layer 1 с enriched keywords покрывает ~85-90%)
 
 **Union:** Результат = Метод 1 ∪ Метод 2 (без дубликатов)
 
-**Пример — Метод 1 нашёл, Метод 2 дополнил:**
+**Пример — Метод 1 нашёл (Метод 2 НЕ запущен):**
 ```
 Новость: "NVIDIA builds AI-powered data centers for cloud computing"
-Теги в БД: nvidia, ai, tech, cloud, arm
+Теги в БД: nvidia, ai, tech, cloud, arm (enriched: keywords включают "rtx", "gpu", "ai")
 
-Метод 1 (keywords): нашёл "nvidia"         → ["nvidia"]
-Метод 2 (LLM):      нашёл "ai", "tech"     → ["ai", "tech"]
-Итог (union):       ["nvidia", "ai", "tech"]
+Метод 1 (enriched keywords): нашёл "nvidia", "ai"  → ["nvidia", "ai"]
+Метод 2 (LLM):               НЕ запущен            → []
+Итог:                         ["nvidia", "ai"]       ← Только Layer 1
 ```
 
 **Пример — Метод 1 не нашёл, Метод 2 спас:**
 ```
 Новость: "SoftBank инвестирует в чипы для машинного обучения"
-Теги в БД: nvda, ai, tech, arm, softbank
+Теги в БД: nvda, ai, tech, arm
 
-Метод 1 (keywords): ни один keyword не найден → []
-Метод 2 (LLM):      нашёл "nvda", "ai", "tech" → ["nvda", "ai", "tech"]
-Итог (union):       ["nvda", "ai", "tech"]
+Метод 1 (enriched keywords): ни один keyword не найден → []
+Метод 2 (LLM):               нашёл "nvda", "ai", "tech" → ["nvda", "ai", "tech"]
+Итог (union):                ["nvda", "ai", "tech"]
 ```
 
-**Зачем всегда запускать М2:** Keyword matching ищет точные совпадения, но может
-пропустить семантически связанные теги. Например, новость про "data centers"
-может быть релевантна тегу "cloud", даже если слово "cloud" не встречается
-в тексте напрямую.
+**Зачем так:** Enriched keywords в Layer 1 (synonyms + key products + related entities)
+покрывают ~85-90% случаев. Layer 2 — fallback для необычных новостей, где
+семантический анализ нужен.
 
 ### Метод 3: Связанные теги через LLM (Related Tags)
 

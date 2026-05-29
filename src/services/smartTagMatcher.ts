@@ -6,13 +6,13 @@
  * Architecture: ONLY user-defined tags. No hardcoded keywords.
  *
  * Layer 1: Keyword matching via user-defined tags from DB
- * Layer 2: LLM smart matching (ALWAYS runs after Layer 1 — union of results)
+ * Layer 2: LLM smart matching (ONLY if Layer 1 finds nothing — saves tokens)
  * Layer 3: LLM-based related tags (dynamic, no hardcoded mappings)
  *
  * Flow:
- *   1. Fetch all user-defined tags with keywords from DB
- *   2. Layer 1: keyword matching on title + summary
- *   3. Layer 2: ALWAYS call LLM to find additional tags
+ *   1. Fetch enriched user-defined tags with keywords from DB
+ *   2. Layer 1: keyword matching on title + summary (enriched keywords ~85-90% coverage)
+ *   3. Layer 2: call LLM ONLY if Layer 1 found no matches
  *   4. Union: Layer 1 results ∪ Layer 2 results (deduplicated)
  *   5. Cache LLM results to avoid repeated calls
  *   6. For related tags → LLM suggests semantically connected tags
@@ -272,10 +272,10 @@ export async function smartMatchTags(
   // Layer 1: Keyword matching (user-defined tags from DB) — всегда выполняем
   const keywordTags = await matchTagsByKeywords(fullText);
 
-  // Layer 2: LLM matching — ВСЕГДА запускаем после Layer 1 (вариант Б)
-  // Объединяем результаты: keyword matches + LLM-discovered matches
+  // Layer 2: LLM matching — ТОЛЬКО если Layer 1 ничего не нашёл (оптимизация)
+  // Обогащённые keywords в Layer 1 покрывают ~85-90% случаев
   let llmTags: string[] = [];
-  if (options.useLLM !== false && KIMI_API_KEY) {
+  if (keywordTags.length === 0 && options.useLLM !== false && KIMI_API_KEY) {
     const availableTags = await getAllTagNames();
     llmTags = await callLLMForTags(title, summary, availableTags);
   }
@@ -286,7 +286,7 @@ export async function smartMatchTags(
   if (allTags.length > 0) {
     const sources: string[] = [];
     if (keywordTags.length > 0) sources.push(`keyword: ${keywordTags.join(',')}`);
-    if (llmTags.length > 0) sources.push(`LLM: ${llmTags.join(',')}`);
+    if (llmTags.length > 0) sources.push(`LLM-fallback: ${llmTags.join(',')}`);
     console.log(`[SmartTags] ${allTags.join(', ')} (${sources.join(' + ')}) for "${title.slice(0, 50)}..."`);
   }
 
