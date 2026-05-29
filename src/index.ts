@@ -305,6 +305,22 @@ app.get('/cleanup-content-dups', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// CLEANUP: Reset stuck cron jobs
+// ═══════════════════════════════════════════════════════════════════════════
+app.post('/cron-cleanup', async (req, res) => {
+  const secret = req.headers['x-trigger-secret'] || req.query.secret;
+  const expected = process.env.CRON_SECRET_KEY || 'pulse-dev-key';
+  if (secret !== expected) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    const { query } = await import('./config/db');
+    await query(`UPDATE cron_log SET status = 'stuck_reset', finished_at = NOW() WHERE status = 'running' AND started_at < NOW() - INTERVAL '10 minutes'`);
+    res.json({ status: 'cleaned', message: 'Stuck cron jobs reset' });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // TRIGGER: Manual RSS fetch (protected by secret key)
 // ═══════════════════════════════════════════════════════════════════════════
 app.post('/trigger-rss', async (req, res) => {
