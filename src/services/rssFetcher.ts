@@ -19,6 +19,33 @@ export interface ParsedArticle {
   lang: 'ru' | 'en';
 }
 
+// Normalize pubDate to UTC regardless of server timezone
+// RSS sources may have: explicit offset (+0300), GMT, or no timezone at all
+function normalizePubDate(pubDate: string, sourceLang: 'ru' | 'en'): Date {
+  const str = pubDate.trim();
+
+  // Already has timezone offset (+0300, GMT, etc.) — JavaScript parses correctly
+  if (/[+-]\d{4}|\bGMT\b|\bUTC\b/i.test(str)) {
+    return new Date(str);
+  }
+
+  // ISO format without timezone: 2026-05-29T22:25:25
+  // Assume Moscow +0300 for RU sources, UTC for EN sources
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(str)) {
+    const offset = sourceLang === 'ru' ? '+03:00' : '+00:00';
+    return new Date(str + offset);
+  }
+
+  // RSS standard format without timezone: Fri, 29 May 2026 22:25:25
+  if (/^\w{3},\s+\d{1,2}\s+\w{3}\s+\d{4}/.test(str)) {
+    const offset = sourceLang === 'ru' ? ' +0300' : ' +0000';
+    return new Date(str + offset);
+  }
+
+  // Fallback — try native parse (may depend on server timezone!)
+  return new Date(str);
+}
+
 function parseRSS(xml: string, source: RssSource): ParsedArticle[] {
   const articles: ParsedArticle[] = [];
   const items = xml.match(/<item>[\s\S]*?<\/item>/g) || [];
@@ -35,7 +62,7 @@ function parseRSS(xml: string, source: RssSource): ParsedArticle[] {
       title: stripHtml(title),
       summary: stripHtml(description || title).slice(0, 300),
       url: link || '',
-      publishedAt: pubDate ? new Date(pubDate) : new Date(),
+      publishedAt: pubDate ? normalizePubDate(pubDate, source.lang) : new Date(),
       source: source.name,
       sourceId: source.id,
       lang: source.lang,
