@@ -1,4 +1,3 @@
-import axios from 'axios';
 import { RSS_SOURCES, RssSource } from './rssSources';
 import { query } from '../config/db';
 import { normalizeUrl } from '../utils/normalizeUrl';
@@ -65,22 +64,33 @@ function stripHtml(html: string): string {
     .replace(/&nbsp;/g, ' ');
 }
 
-// Fetch single source with timeout (direct — no CORS proxy on server)
+// Fetch single source with timeout using native fetch (Node 20+)
 async function fetchSource(source: RssSource): Promise<ParsedArticle[]> {
   try {
-    const response = await axios.get(source.url, {
-      timeout: FETCH_TIMEOUT,
-      responseType: 'text',
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
+    
+    const response = await fetch(source.url, {
+      signal: controller.signal,
       headers: {
         'User-Agent': 'Mozilla/5.0 (compatible; PULSE RSS Bot/1.0)',
         'Accept': 'application/rss+xml, application/xml, text/xml, */*',
       },
-      maxRedirects: 5,
+      redirect: 'follow',
     });
-    return parseRSS(response.data, source);
+    
+    clearTimeout(timeout);
+    
+    if (!response.ok) {
+      console.warn(`RSS failed [${source.id}]: HTTP ${response.status}`);
+      return [];
+    }
+    
+    const text = await response.text();
+    return parseRSS(text, source);
   } catch (err: any) {
-    const status = err.response?.status;
-    console.warn(`RSS failed [${source.id}]: ${err.code || status || 'unknown'} — ${err.message?.substring(0, 80)}`);
+    const code = err.name === 'AbortError' ? 'TIMEOUT' : (err.code || 'ERROR');
+    console.warn(`RSS failed [${source.id}]: ${code} — ${err.message?.substring(0, 80)}`);
     return [];
   }
 }
@@ -157,14 +167,4 @@ export async function saveArticles(articles: ParsedArticle[]): Promise<number> {
         await query(
           `INSERT INTO news (title_original, title_ru, summary_ru, source, source_id, url, url_normalized, content_hash, published_at, lang_original)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-           ON CONFLICT (url) DO NOTHING`,
-          [a.title, a.title_ru || a.title, a.summary_ru || a.summary, a.source, a.sourceId, a.url, urlNormalized, contentHash, a.publishedAt, a.lang]
-        );
-      }
-      count++;
-    } catch (err) {
-      // Skip duplicates / errors
-    }
-  }
-  return count;
-}
+           
