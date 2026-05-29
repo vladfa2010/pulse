@@ -4,8 +4,8 @@ import { query } from '../config/db';
 import { validate } from '../middleware/validate';
 import { AddTagSchema } from '../schemas/user';
 import { getRelatedTags, matchTagsByKeywords } from '../services/smartTagMatcher';
-import { createUserTag, generateTagKeywords, getAllTagNames, detectTagTypeViaLLM, TAG_TYPE_LABELS } from '../services/tagManager';
-import type { TagType } from '../services/tagManager';
+import { createUserTag, generateTagKeywords, getAllTagNames, detectTagTypeViaLLM, TAG_TYPE_LABELS, buildEnrichedKeywords } from '../services/tagManager';
+import type { TagType, TagEnrichment } from '../services/tagManager';
 import axios from 'axios';
 
 const router = Router();
@@ -401,16 +401,19 @@ router.post('/tags/custom', authMiddleware, async (req: AuthRequest, res) => {
       return res.status(400).json({ error: 'Invalid tag name' });
     }
 
-    // Создаем тег (auto-detect type if tagType = 'auto')
+    // Создаем тег (auto-detect type + LLM enrichment)
     const result = await createUserTag(userId, tagId, tagName, tagType);
     if (!result.success) {
       return res.status(500).json({ error: 'Failed to create tag' });
     }
 
-    const keywords = generateTagKeywords(tagName);
+    // Use enriched keywords for backfill (LLM synonyms + products + related entities)
+    const keywords = result.enrichment
+      ? buildEnrichedKeywords(tagName, result.enrichment)
+      : generateTagKeywords(tagName);
 
     // BACKFILL: Ищем по ВСЕЙ базе новостей и привязываем тег
-    console.log(`[TagBackfill] Starting backfill for "${tagId}"...`);
+    console.log(`[TagBackfill] Starting backfill for "${tagId}" with ${keywords.length} keywords...`);
     const allNews = await query(
       `SELECT id, title_ru, summary_ru, matched_tags FROM news ORDER BY published_at DESC`,
       []
@@ -443,7 +446,9 @@ router.post('/tags/custom', authMiddleware, async (req: AuthRequest, res) => {
         tag_type: result.detectedType || tagType,
         tag_type_label: TAG_TYPE_LABELS[(result.detectedType || tagType) as TagType],
         keywords,
+        enriched: !!result.enrichment,
       },
+      enrichment: result.enrichment || null,
       backfill: {
         scanned: allNews.rows.length,
         matched,

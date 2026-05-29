@@ -41,6 +41,133 @@ export const TAG_TYPE_LABELS: Record<TagType, string> = {
   currency:  'Валюта',
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Tag Enrichment — LLM-powered enrichment (ONE call per tag creation)
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface TagEnrichment {
+  tag_type: TagType;           // company, ticker, sector, etc.
+  ticker?: string;             // AAPL, SBER, NVDA (if applicable)
+  related_entities: string[];  // Related companies/sectors/people
+  synonyms_en: string[];       // English synonyms & aliases
+  synonyms_ru: string[];       // Russian synonyms & aliases
+  key_products: string[];      // Key products, services, terms
+  description?: string;        // Brief description
+}
+
+/**
+ * Enrich tag via LLM (SINGLE call per tag creation).
+ * Returns: type, ticker, related entities, synonyms, key products.
+ * This is called ONCE when tag is created — not per-news.
+ */
+export async function enrichTagViaLLM(tagName: string): Promise<TagEnrichment | null> {
+  if (!KIMI_API_KEY) {
+    console.log('[TagEnrich] No KIMI_API_KEY, skipping enrichment');
+    return null;
+  }
+
+  const prompt = `You are a financial data enrichment system. Analyze this tag and return structured data.
+
+Tag name: "${tagName}"
+
+Return ONLY a JSON object with this exact structure:
+{
+  "tag_type": "company",        // One of: company, ticker, sector, trend, person, commodity, index, currency
+  "ticker": "AAPL",             // Stock ticker if applicable, else null
+  "related_entities": ["Microsoft", "Google"],  // Related companies, sectors, or people (5-10 items)
+  "synonyms_en": ["Apple Inc", "iPhone maker", "Cupertino"],  // English synonyms/aliases (5-10 items)
+  "synonyms_ru": ["Эпл", "эппл", "яблочная компания"],       // Russian synonyms/aliases (5-10 items)
+  "key_products": ["iPhone", "iPad", "Mac", "App Store", "Apple Watch"],  // Key products/services (5-10 items)
+  "description": "American technology company..."  // Brief 1-sentence description
+}
+
+Rules:
+1. Return ONLY valid JSON, no markdown, no extra text
+2. If tag is a person: ticker=null, related_entities=their companies, key_products=their initiatives
+3. If tag is a sector/index/trend: ticker=null, related_entities=major constituents
+4. synonyms_ru must include common Russian transliterations and nicknames
+5. All arrays must have at least 3 items, at most 15 items
+6. tag_type MUST be one of: company, ticker, sector, trend, person, commodity, index, currency`;
+
+  try {
+    const response = await axios.post(
+      'https://api.moonshot.ai/v1/chat/completions',
+      {
+        model: KIMI_MODEL,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.1,
+        max_tokens: 800,
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${KIMI_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: 20000,
+      }
+    );
+
+    const content = response.data?.choices?.[0]?.message?.content || '';
+
+    // Extract JSON object
+    const jsonMatch = content.match(/\{[\s\S]*?\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+
+      // Validate and normalize
+      const enrichment: TagEnrichment = {
+        tag_type: TAG_TYPES.includes(parsed.tag_type) ? parsed.tag_type : 'company',
+        ticker: parsed.ticker || undefined,
+        related_entities: Array.isArray(parsed.related_entities) ? parsed.related_entities : [],
+        synonyms_en: Array.isArray(parsed.synonyms_en) ? parsed.synonyms_en : [],
+        synonyms_ru: Array.isArray(parsed.synonyms_ru) ? parsed.synonyms_ru : [],
+        key_products: Array.isArray(parsed.key_products) ? parsed.key_products : [],
+        description: parsed.description || undefined,
+      };
+
+      console.log(`[TagEnrich] Enriched "${tagName}": type=${enrichment.tag_type}, ticker=${enrichment.ticker || 'none'}, synonyms=${enrichment.synonyms_en.length + enrichment.synonyms_ru.length}, products=${enrichment.key_products.length}`);
+      return enrichment;
+    }
+  } catch (err: any) {
+    console.log(`[TagEnrich] LLM error for "${tagName}": ${err.message?.slice(0, 100)}`);
+  }
+
+  return null;
+}
+
+/**
+ * Build enriched keywords from TagEnrichment + generateTagKeywords.
+ * Combines: base keywords + LLM synonyms + key products + related entities.
+ */
+export function buildEnrichedKeywords(tagName: string, enrichment: TagEnrichment | null): string[] {
+  // Base keywords (translit + declensions)
+  const baseKeywords = generateTagKeywords(tagName);
+
+  if (!enrichment) {
+    return baseKeywords;
+  }
+
+  // LLM-enriched keywords
+  const enriched: string[] = [
+    ...baseKeywords,
+    // Synonyms (both languages, lowercase)
+    ...enrichment.synonyms_en.map(s => s.toLowerCase()),
+    ...enrichment.synonyms_ru.map(s => s.toLowerCase()),
+    // Key products (both languages, lowercase)
+    ...enrichment.key_products.map(s => s.toLowerCase()),
+    // Related entities (both languages, lowercase)
+    ...enrichment.related_entities.map(s => s.toLowerCase()),
+  ];
+
+  // Add ticker as keyword if present
+  if (enrichment.ticker) {
+    enriched.push(enrichment.ticker.toLowerCase());
+  }
+
+  // Deduplicate + filter
+  return [...new Set(enriched)].filter(k => k.length > 1);
+}
+
 // Генерация keywords для нового тега (правила + базовые формы)
 export function generateTagKeywords(tagName: string): string[] {
   const lower = tagName.toLowerCase().trim();
@@ -221,16 +348,23 @@ export function heuristicTagType(tagName: string): TagType {
 }
 
 // Создать пользовательский тег
-// Если tagType = 'auto' или пустой — определяем через LLM
-export async function createUserTag(userId: string, tagId: string, tagName: string, tagType: string): Promise<{ success: boolean; detectedType?: TagType }> {
+// Если tagType = 'auto' или пустой — определяем через LLM + enrichment
+export async function createUserTag(userId: string, tagId: string, tagName: string, tagType: string): Promise<{ success: boolean; detectedType?: TagType; enrichment?: TagEnrichment }> {
   try {
-    // Auto-detect type if requested
+    // Single LLM call: type detection + enrichment (synonyms, ticker, products)
     let finalType = tagType;
     let detectedType: TagType | undefined;
+    let enrichment: TagEnrichment | null = null;
 
     if (!tagType || tagType === 'auto') {
-      detectedType = await detectTagTypeViaLLM(tagName);
-      finalType = detectedType;
+      enrichment = await enrichTagViaLLM(tagName);
+      if (enrichment) {
+        detectedType = enrichment.tag_type;
+        finalType = enrichment.tag_type;
+      } else {
+        detectedType = await detectTagTypeViaLLM(tagName);
+        finalType = detectedType;
+      }
     }
 
     // Validate type
@@ -238,14 +372,21 @@ export async function createUserTag(userId: string, tagId: string, tagName: stri
       finalType = 'company';
     }
 
-    // Сохраняем тег в общую таблицу тегов
-    const keywords = generateTagKeywords(tagName);
+    // Build enriched keywords (base + LLM synonyms + products + related entities)
+    const keywords = enrichment
+      ? buildEnrichedKeywords(tagName, enrichment)
+      : generateTagKeywords(tagName);
 
+    // Save tag with enrichment data
     await query(
-      `INSERT INTO user_defined_tags (tag_id, tag_name, tag_type, keywords, created_by)
-       VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (tag_id) DO NOTHING`,
-      [tagId, tagName, finalType, keywords, userId]
+      `INSERT INTO user_defined_tags (tag_id, tag_name, tag_type, keywords, enriched_data, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (tag_id) DO UPDATE SET
+         tag_name = $2,
+         tag_type = $3,
+         keywords = $4,
+         enriched_data = $5`,
+      [tagId, tagName, finalType, keywords, enrichment ? JSON.stringify(enrichment) : null, userId]
     );
 
     // Добавляем в портфель пользователя
@@ -256,7 +397,9 @@ export async function createUserTag(userId: string, tagId: string, tagName: stri
       [userId, tagId, tagName, finalType]
     );
 
-    return { success: true, detectedType };
+    console.log(`[TagManager] Created tag "${tagId}": type=${finalType}, keywords=${keywords.length}${enrichment ? ', enriched' : ''}`);
+
+    return { success: true, detectedType, enrichment: enrichment || undefined };
   } catch (err: any) {
     console.error('[TagManager] Error creating tag:', err.message);
     return { success: false };
@@ -276,15 +419,29 @@ export async function getUserTags(userId: string): Promise<any[]> {
   }
 }
 
-// Получить все пользовательские теги для smart matching
+// Получить все пользовательские теги для smart matching (Layer 1)
+// Returns enriched keywords: base + LLM synonyms + key products + related entities
 export async function getAllUserDefinedTags(): Promise<Record<string, string[]>> {
   try {
     const result = await query(
-      `SELECT tag_id, keywords FROM user_defined_tags`,
+      `SELECT tag_id, keywords, enriched_data FROM user_defined_tags`,
       []
     );
     const tags: Record<string, string[]> = {};
     for (const row of result.rows) {
+      // Use enriched keywords if available, otherwise fall back to base keywords
+      if (row.enriched_data) {
+        try {
+          const enrichment: TagEnrichment = JSON.parse(row.enriched_data);
+          const enrichedKeywords = buildEnrichedKeywords(row.tag_id, enrichment);
+          // Merge with stored keywords (deduplicate)
+          const storedKeywords: string[] = row.keywords || [];
+          tags[row.tag_id] = [...new Set([...enrichedKeywords, ...storedKeywords])];
+          continue;
+        } catch {
+          // JSON parse failed, fall through to base keywords
+        }
+      }
       tags[row.tag_id] = row.keywords || [row.tag_id];
     }
     return tags;
