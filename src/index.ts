@@ -78,7 +78,7 @@ app.get('/health', async (req, res) => {
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
-    version: '7.15.5',
+    version: '7.15.8',
     cron: cronStatus,
     sse_subscribers: getSubscriberCount(),
   });
@@ -256,10 +256,13 @@ app.get('/debug-cron', async (req, res) => {
 
 app.get('/debug-env', async (req, res) => {
   res.json({
+    has_database_url: !!process.env.DATABASE_URL,
+    database_url_prefix: process.env.DATABASE_URL ? process.env.DATABASE_URL.slice(0, 20) + '...' : null,
+    use_sqlite: process.env.USE_SQLITE === 'true',
     kimi_key_set: !!process.env.KIMI_API_KEY,
     kimi_key_length: process.env.KIMI_API_KEY ? process.env.KIMI_API_KEY.length : 0,
     kimi_key_prefix: process.env.KIMI_API_KEY ? process.env.KIMI_API_KEY.slice(0, 12) + '...' : null,
-    kimi_model: process.env.KIMI_MODEL || 'kimi-k2 (default)',
+    kimi_model: process.env.KIMI_MODEL || 'moonshot-v1-32k (default)',
     cron_secret_set: !!process.env.CRON_SECRET_KEY,
     telegram_bot_set: !!process.env.TELEGRAM_BOT_TOKEN,
     telegram_bot_prefix: process.env.TELEGRAM_BOT_TOKEN ? process.env.TELEGRAM_BOT_TOKEN.split(':')[0] + ':...' : null,
