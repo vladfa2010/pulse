@@ -78,7 +78,7 @@ app.get('/health', async (req, res) => {
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
-    version: '7.15.8',
+    version: '7.15.9',
     cron: cronStatus,
     sse_subscribers: getSubscriberCount(),
   });
@@ -272,6 +272,23 @@ app.get('/debug-env', async (req, res) => {
     frontend_url: process.env.FRONTEND_URL || 'https://pulse-frontend-jt53.onrender.com',
     node_env: process.env.NODE_ENV || 'development',
   });
+});
+
+// TEMP: Diagnostic endpoint — check DB health, cron locks, test insert
+app.get('/debug-system', async (req, res) => {
+  try {
+    const lockResult = await query(`SELECT * FROM cron_locks WHERE job_name = 'rss-aggregator'`);
+    const lock = lockResult.rows[0] || null;
+    const newsCount = await query(`SELECT COUNT(*) as count FROM news`);
+    const cronLog = await query(`SELECT * FROM cron_log ORDER BY started_at DESC LIMIT 3`);
+    let testInsert = 'not_attempted';
+    try {
+      await query(`INSERT INTO news (id, title_original, title_ru, summary_ru, source, source_id, url, url_normalized, content_hash, all_sources, source_count, published_at, lang_original, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, matched_tags, tag_impact) VALUES ('test-debug', 'Test', 'Тест', 'Тест', 'test', 'test', 'http://test', 'test', 'test-hash-debug', ARRAY['test'], 1, NOW(), 'ru', 'neutral', 0, NULL, 'keyword', ARRAY[]::text[], '{}') ON CONFLICT (content_hash) DO NOTHING`);
+      testInsert = 'success';
+      await query(`DELETE FROM news WHERE content_hash = 'test-hash-debug'`);
+    } catch (e: any) { testInsert = `failed: ${e.message?.slice(0, 100)}`; }
+    res.json({ database_url_present: !!process.env.DATABASE_URL, lock: lock ? { job_name: lock.job_name, locked_by: lock.locked_by?.slice(0, 30), locked_at: lock.locked_at, expires_at: lock.expires_at } : null, news_count: parseInt(newsCount.rows[0]?.count || '0'), cron_logs: cronLog.rows.map((r: any) => ({ id: r.id, task: r.task_name, started: r.started_at, status: r.status, fetched: r.articles_fetched, saved: r.articles_saved })), test_insert: testInsert });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
 // TEMP: Cleanup duplicate news by content_hash (keep first, merge sources)
