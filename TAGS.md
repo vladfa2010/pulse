@@ -1,8 +1,9 @@
 # PULSE — Методология тегов
 
-> Дата: 2026-05-29
+> Дата: 2026-05-30
 > Файлы: `smartTagMatcher.ts`, `tagManager.ts`
 > Статус: ✅ Только пользовательские теги + LLM
+> Последнее обновление: v7.10.5 — related_entities убраны из keywords matching
 
 ---
 
@@ -267,9 +268,14 @@ function smartMatchTags(title, summary, { useLLM? }): string[]
 Итог (union):                ["nvda", "ai", "tech"]
 ```
 
-**Зачем так:** Enriched keywords в Layer 1 (synonyms + key products + related entities)
+**Зачем так:** Enriched keywords в Layer 1 (base + synonyms RU/EN + key products + ticker)
 покрывают ~85-90% случаев. Layer 2 — fallback для необычных новостей, где
 семантический анализ нужен.
+
+> **Note (v7.10.5):** `related_entities` из LLM enrichment **НЕ** используются для
+> keyword matching. Они отображаются в UI ("связанные компании"), но не добавляются
+> в keywords — это предотвращает ложные срабатывания (например, новость "Сбер повысил
+> ставки" не получит тег "Яндекс" только потому, что Сбер в `related_entities` Яндекса).
 
 ### Метод 3: Связанные теги через LLM (Related Tags)
 
