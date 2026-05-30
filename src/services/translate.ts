@@ -4,9 +4,10 @@ import { query } from '../config/db';
 const KIMI_API_KEY = process.env.KIMI_API_KEY;
 
 // Model selection via env var:
-//   moonshot-v1-8k  — fast, cheap, flexible temperature (default)
-//   kimi-k2.5       — best quality, temperature MUST be 1, ~5x more tokens
-const KIMI_MODEL = process.env.KIMI_MODEL || 'moonshot-v1-8k';
+//   kimi-k2         — best quality, temperature MUST be 1 (default)
+//   kimi-k2.5       — top quality, temperature MUST be 1, ~5x more tokens
+//   moonshot-v1-8k  — fast, cheap, older knowledge (legacy)
+const KIMI_MODEL = process.env.KIMI_MODEL || 'kimi-k2';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Kimi Translation (primary)
