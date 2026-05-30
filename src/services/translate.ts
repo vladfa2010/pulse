@@ -2,6 +2,32 @@ import axios from 'axios';
 import { query } from '../config/db';
 
 const KIMI_API_KEY = process.env.KIMI_API_KEY;
+const MAX_RETRIES = 3;
+const RETRY_DELAY_MS = 2000;
+
+// Retry helper for LLM API calls (429/502/timeout)
+async function llmRequestWithRetry<T>(fn: () => Promise<T>, label: string): Promise<T> {
+  let lastError: any;
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      lastError = err;
+      const status = err.response?.status;
+      const isRetryable = status === 429 || status === 502 || err.code === 'ECONNRESET' || err.code === 'ETIMEDOUT';
+      if (!isRetryable) throw err;
+      if (attempt < MAX_RETRIES) {
+        const delay = RETRY_DELAY_MS * Math.pow(2, attempt - 1);
+        console.log(`[${label}] Attempt ${attempt}/${MAX_RETRIES} failed (status=${status}). Retrying in ${delay}ms...`);
+        await new Promise(r => setTimeout(r, delay));
+      } else {
+        console.error(`[${label}] All ${MAX_RETRIES} attempts failed. Giving up.`);
+        throw err;
+      }
+    }
+  }
+  throw lastError;
+}
 
 // Model selection via env var:
 //   moonshot-v1-32k — best available model, temperature 0.1 (default)
@@ -59,30 +85,34 @@ export async function translateWithKimi(texts: string[]): Promise<string[]> {
     const numberedInput = validTexts.map((t, idx) => `${idx + 1}. ${t}`).join('\n');
 
     try {
-      const response = await axios.post(
-        'https://api.moonshot.ai/v1/chat/completions',
-        {
-          model: KIMI_MODEL,
-          messages: [
-            {
-              role: 'system',
-              content: TRANSLATION_PROMPT,
-            },
-            {
-              role: 'user',
-              content: `Translate these ${validTexts.length} financial news headlines to Russian. Return as JSON array in same order:\n${numberedInput}`
-            }
-          ],
-          temperature: TEMP,
-          max_tokens: isK2 ? 4000 : 3000,
-        },
-        {
-          headers: {
-            'Authorization': `Bearer ${KIMI_API_KEY}`,
-            'Content-Type': 'application/json',
+      const response = await llmRequestWithRetry(
+        () => axios.post(
+          'https://api.moonshot.ai/v1/chat/completions',
+          {
+            model: KIMI_MODEL,
+            messages: [
+              {
+                role: 'system',
+                content: TRANSLATION_PROMPT,
+              },
+              {
+                role: 'user',
+                content: `Translate these ${validTexts.length} financial news headlines to Russian. Return as JSON array in same order:\n${numberedInput}`
+              }
+            ],
+            temperature: TEMP,
+            max_tokens: isK2 ? 4000 : 3000,
+            response_format: { type: 'json_object' },
           },
-          timeout: isK2 ? 60000 : 30000,
-        }
+          {
+            headers: {
+              'Authorization': `Bearer ${KIMI_API_KEY}`,
+              'Content-Type': 'application/json',
+            },
+            timeout: isK2 ? 60000 : 30000,
+          }
+        ),
+        `TranslateBatch${Math.floor(i / BATCH) + 1}`
       );
 
       let content = response.data?.choices?.[0]?.message?.content || '';
