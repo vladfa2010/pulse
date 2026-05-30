@@ -2,6 +2,21 @@ import { RSS_SOURCES, RssSource } from './rssSources';
 import { query } from '../config/db';
 import { normalizeUrl } from '../utils/normalizeUrl';
 import crypto from 'crypto';
+import http from 'http';
+import https from 'https';
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HTTP Keep-Alive Agent — reuse TCP connections across RSS fetches
+// 36 sources → 1-2 TCP connections instead of 36 handshakes
+// ═══════════════════════════════════════════════════════════════════════════
+const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 10 });
+const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 10 });
+
+function getAgentForUrl(url: string): http.Agent | https.Agent | undefined {
+  if (url.startsWith('https:')) return httpsAgent;
+  if (url.startsWith('http:')) return httpAgent;
+  return undefined;
+}
 
 // In-memory cache for last_fetched_at per source (avoids DB query inside fetch loop)
 const sourceMetaCache: Map<string, Date> = new Map();
@@ -131,6 +146,8 @@ async function fetchSource(source: RssSource): Promise<ParsedArticle[]> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
 
+    const agent = getAgentForUrl(source.url);
+
     const response = await fetch(source.url, {
       signal: controller.signal,
       headers: {
@@ -138,7 +155,8 @@ async function fetchSource(source: RssSource): Promise<ParsedArticle[]> {
         'Accept': 'application/rss+xml, application/xml, text/xml, */*',
       },
       redirect: 'follow',
-    });
+      ...(agent ? { dispatcher: agent as any } : {}),
+    } as any);
 
     clearTimeout(timeout);
 
