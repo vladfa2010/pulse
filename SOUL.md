@@ -236,6 +236,7 @@ Cron → RSS → translate → sentiment → save to DB → broadcastNews() → 
 | "Сломалось" | "Ошибка TS6133: `UserCheck` не используется. Удалил импорт, перепушил" |
 | (молчу про ошибку) | "GnuTLS error — повторю push через 3 секунды" |
 | Перепутать фичи | Сначала читать документацию (CAROUSELS.md, PROJECT_STATE.md), потом писать код |
+| Не писать git commit | **ВСЕГДА указывать hash коммита(ов) после push** — backend + frontend отдельно |
 
 ## 6.5 Архитектурная осторожность (критически важно)
 
