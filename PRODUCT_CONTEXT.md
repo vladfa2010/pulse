@@ -19,7 +19,7 @@
 - **Все английские новости обязательно переводятся на русский**
 - Пользователь видит **только русский текст** -- заголовки и описания
 - Русские источники (13) -- без изменений
-- Английские источники (19) -- перевод через Kimi API (moonshot-v1-8k)
+- Английские источники (19) -- перевод через Kimi API (moonshot-v1-32k)
 - **Перевод не делается на клиенте** -- требуется backend + API-ключ
 - ❌ ЗАПРЕЩЕНО показывать английские заголовки без перевода
 - ❌ ЗАПРЕЩЕНО смешивать русские и английские новости в одной ленте без перевода
@@ -52,7 +52,7 @@
 ### Правило: перевод через Kimi API
 - Google Translate **ЗАБЛОКИРОВАН** на Render → используем Kimi API (api.moonshot.ai)
 - **Endpoint**: `api.moonshot.ai` (НЕ `.cn` -- возвращает 401)
-- **Модель**: `moonshot-v1-8k`
+- **Модель**: `moonshot-v1-32k` (kimi-k2/k2.5 недоступны на текущем плане)
 - **Batch size**: 5 текстов за запрос
 - ❌ ЗАПРЕЩЕНО использовать Google Translate на Render
 - ❌ ЗАПРЕЩЕНО использовать api.moonshot.cn -- 401 Unauthorized
@@ -201,7 +201,7 @@ cd /mnt/agents/projects/frontend && git push origin main
 - ✅ **Explicit read only:** новость прочитана только по клику/кнопке/2сек viewport
 - ✅ **Liquid glass UI:** sentiment-цветные карточки с `backdrop-filter: blur`
 - ✅ **User-defined tags:** поиск → создание → авто-keywords → backfill → автопоказ в ленте
-- ✅ **Translation fix:** Google Translate blocked → Kimi API (api.moonshot.ai)
+- ✅ **Translation fix:** Google Translate blocked → Kimi API (moonshot-v1-32k)
 - ✅ **Smart tag matching:** keyword + LLM + related tags, ищет по title + summary
 - ✅ **Tag impact analysis:** LLM определяет влияние новости на каждый тег
 - ✅ **RSS: 20+ источников**, batch processing каждые 15 минут
@@ -245,7 +245,7 @@ cd /mnt/agents/projects/frontend && git push origin main
 - ✅ **10 таблиц:** `users`, `portfolios`, `payments`, `news`, `user_sessions`, `user_channels`, `notification_settings`, `translation_cache`, `user_defined_tags`, `smart_tag_cache`
 - ✅ **7 API routes:** `auth`, `news`, `payment`, `user`, `translate`, `webhook`, `admin`
 - ✅ **RSS aggregator:** 20+ источников (RU + EN), batch по 5, cron каждые 15 минут
-- ✅ **Translation:** Kimi API (moonshot-v1-8k) + `translation_cache` таблица
+- ✅ **Translation:** Kimi API (moonshot-v1-32k) + `translation_cache` таблица
 - ✅ **Weekly reports:** Воскресенье 13:00 MSK, Telegram Bot + Email (SendGrid)
 - ✅ **Docker:** `docker-compose.yml` (PostgreSQL 16 + Redis 7 + Backend), Dockerfile multi-stage Node 20 Alpine
 - ✅ **Git branch:** `stable`

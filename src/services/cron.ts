@@ -190,6 +190,8 @@ export async function processArticles() {
       title_ru,
       summary_ru,
       sentiment,
+      sentiment_score,
+      sentiment_reasoning,
       sentiment_source,
       matched_tags,
       tag_impact,

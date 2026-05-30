@@ -23,7 +23,7 @@ import { query } from '../config/db';
 import { getAllUserDefinedTags, getAllTagNames } from './tagManager';
 
 const KIMI_API_KEY = process.env.KIMI_API_KEY;
-const KIMI_MODEL = process.env.KIMI_MODEL || 'moonshot-v1-8k';
+const KIMI_MODEL = process.env.KIMI_MODEL || 'moonshot-v1-32k';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Layer 1: Keyword Matching (user-defined tags only)
