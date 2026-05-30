@@ -30,7 +30,7 @@ const USE_SQLITE = process.env.USE_SQLITE === 'true';
 // ═══════════════════════════════════════════════════════════════════════════
 // Smart Tag Matching (imported from smartTagMatcher)
 // ═══════════════════════════════════════════════════════════════════════════
-import { smartMatchTags, analyzeSentimentLLM, analyzeTagImpact, TagImpact } from './smartTagMatcher';
+import { smartMatchTags, analyzeSentimentLLM, analyzeTagImpact, TagImpact, SentimentResult } from './smartTagMatcher';
 import { broadcastNews } from './sse';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -149,19 +149,24 @@ export async function processArticles() {
     const summary_ru = a.summary_ru || a.summary;
     const text = `${title_ru} ${summary_ru}`;
 
-    // Sentiment: LLM if key exists, otherwise keyword-based (fast, no timeouts)
+    // Sentiment: LLM score (-10..+10) if key exists, otherwise keyword-based
     let sentiment: 'positive' | 'negative' | 'neutral';
+    let sentiment_score: number | null = null;
     let sentiment_source: 'llm' | 'keyword';
     if (llmAvailable) {
       try {
-        sentiment = await analyzeSentimentLLM(title_ru, summary_ru);
+        const result = await analyzeSentimentLLM(title_ru, summary_ru);
+        sentiment = result.sentiment;
+        sentiment_score = result.score;
         sentiment_source = 'llm';
       } catch {
         sentiment = analyzeSentiment(text);
+        sentiment_score = sentiment === 'positive' ? 5 : sentiment === 'negative' ? -5 : 0;
         sentiment_source = 'keyword';
       }
     } else {
       sentiment = analyzeSentiment(text);
+      sentiment_score = sentiment === 'positive' ? 5 : sentiment === 'negative' ? -5 : 0;
       sentiment_source = 'keyword';
     }
 
@@ -216,9 +221,9 @@ export async function processArticles() {
           // Новая новость
           const newId = crypto.randomUUID();
           await query(
-            `INSERT OR IGNORE INTO news (id, title_original, title_ru, summary_ru, source, source_id, url, url_normalized, content_hash, all_sources, source_count, published_at, lang_original, sentiment, sentiment_source, matched_tags, tag_impact)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [newId, a.title, title_ru, summary_ru, a.source, a.sourceId, a.url, urlNormalized, contentHash, JSON.stringify([a.source]), 1, a.publishedAt.toISOString(), a.lang, a.sentiment, a.sentiment_source, JSON.stringify(a.matched_tags || []), JSON.stringify(a.tag_impact || [])]
+            `INSERT OR IGNORE INTO news (id, title_original, title_ru, summary_ru, source, source_id, url, url_normalized, content_hash, all_sources, source_count, published_at, lang_original, sentiment, sentiment_score, sentiment_source, matched_tags, tag_impact)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [newId, a.title, title_ru, summary_ru, a.source, a.sourceId, a.url, urlNormalized, contentHash, JSON.stringify([a.source]), 1, a.publishedAt.toISOString(), a.lang, a.sentiment, a.sentiment_score, a.sentiment_source, JSON.stringify(a.matched_tags || []), JSON.stringify(a.tag_impact || [])]
           );
           saved++;
           // Broadcast to SSE subscribers
@@ -228,8 +233,8 @@ export async function processArticles() {
         // PostgreSQL: INSERT с ON CONFLICT (content_hash) DO UPDATE
         // Ключевой момент: дубликат по content_hash → добавляем источник, НЕ создаём новую запись
         const result = await query(
-          `INSERT INTO news (title_original, title_ru, summary_ru, source, source_id, url, url_normalized, content_hash, all_sources, source_count, published_at, lang_original, sentiment, sentiment_source, matched_tags, tag_impact)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text[], $10, $11, $12, $13, $14, $15, $16)
+          `INSERT INTO news (title_original, title_ru, summary_ru, source, source_id, url, url_normalized, content_hash, all_sources, source_count, published_at, lang_original, sentiment, sentiment_score, sentiment_source, matched_tags, tag_impact)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text[], $10, $11, $12, $13, $14, $15, $16, $17)
            ON CONFLICT (content_hash) DO UPDATE
              SET all_sources = CASE
                WHEN news.all_sources @> ARRAY[EXCLUDED.source]::text[] THEN news.all_sources
@@ -240,7 +245,7 @@ export async function processArticles() {
                ELSE news.source_count + 1
              END
            RETURNING (xmax = 0) as is_insert`,
-          [a.title, title_ru, summary_ru, a.source, a.sourceId, a.url, urlNormalized, contentHash, [a.source], 1, a.publishedAt, a.lang, a.sentiment, a.sentiment_source, a.matched_tags || [], JSON.stringify(a.tag_impact || [])]
+          [a.title, title_ru, summary_ru, a.source, a.sourceId, a.url, urlNormalized, contentHash, [a.source], 1, a.publishedAt, a.lang, a.sentiment, a.sentiment_score, a.sentiment_source, a.matched_tags || [], JSON.stringify(a.tag_impact || [])]
         );
 
         if (result.rows.length > 0 && result.rows[0].is_insert === true) {

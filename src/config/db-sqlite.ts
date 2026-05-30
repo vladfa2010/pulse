@@ -183,6 +183,7 @@ export async function initSQLiteSchema(): Promise<void> {
       published_at TEXT,
       fetched_at TEXT DEFAULT (datetime('now')),
       sentiment TEXT,
+      sentiment_score INTEGER,
       matched_tags TEXT,
       created_at TEXT DEFAULT (datetime('now'))
     );

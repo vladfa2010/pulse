@@ -294,21 +294,43 @@ export async function smartMatchTags(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// LLM Sentiment Analysis
+// LLM Sentiment Analysis — Investment Analyst Score (-10 to +10)
 // ═══════════════════════════════════════════════════════════════════════════
 
-export async function analyzeSentimentLLM(title: string, summary: string): Promise<'positive' | 'negative' | 'neutral'> {
+export interface SentimentResult {
+  sentiment: 'positive' | 'negative' | 'neutral';
+  score: number; // -10 to +10
+}
+
+export async function analyzeSentimentLLM(title: string, summary: string): Promise<SentimentResult> {
   if (!KIMI_API_KEY) {
     console.log('[SentimentLLM] No KIMI_API_KEY');
-    return 'neutral';
+    return { sentiment: 'neutral', score: 0 };
   }
 
-  const prompt = `Analyze the sentiment of this financial news article.
+  const prompt = `You are an experienced investment analyst. Evaluate the sentiment of this financial news article regarding the company/companies mentioned.
 
 Title: ${title.slice(0, 200)}
 Summary: ${summary.slice(0, 400)}
 
-Return ONLY one word: positive, negative, or neutral.`;
+Rate the sentiment on a scale from -10 to +10:
+-10 = Maximum negative (bankruptcy, massive fraud, catastrophic loss)
+-5  = Strong negative (major losses, sanctions, scandal)
+-1  = Mild negative (minor setback, weak results)
+ 0  = Neutral (no significant impact, routine news)
++1  = Mild positive (small contract, minor growth)
++5  = Strong positive (major deal, strong earnings, breakthrough)
++10 = Maximum positive (acquisition at premium, record profits, game-changer)
+
+Return ONLY a JSON object in this exact format:
+{"score": 5, "reasoning": "brief one-sentence explanation"}
+
+Rules:
+1. Consider the article ONLY from an investor's perspective
+2. A "layoff" announcement is usually negative for employees but may be positive for investors (cost cutting)
+3. A "lawsuit" is negative regardless of who initiated it
+4. Routine operations or minor updates = 0
+5. Return ONLY valid JSON, no markdown, no extra text`;
 
   try {
     const response = await axios.post(
@@ -317,7 +339,7 @@ Return ONLY one word: positive, negative, or neutral.`;
         model: KIMI_MODEL,
         messages: [{ role: 'user', content: prompt }],
         temperature: KIMI_MODEL.startsWith('kimi-k') ? 1 : 0.1,
-        max_tokens: 10,
+        max_tokens: 80,
       },
       {
         headers: { 'Authorization': `Bearer ${KIMI_API_KEY}`, 'Content-Type': 'application/json' },
@@ -325,14 +347,36 @@ Return ONLY one word: positive, negative, or neutral.`;
       }
     );
 
-    const content = response.data?.choices?.[0]?.message?.content?.toLowerCase() || '';
+    const content = response.data?.choices?.[0]?.message?.content || '';
     console.log(`[SentimentLLM] Raw: "${content}" for "${title.slice(0, 30)}..."`);
-    if (content.includes('positive')) return 'positive';
-    if (content.includes('negative')) return 'negative';
-    return 'neutral';
+
+    // Parse JSON response
+    let score = 0;
+    try {
+      const match = content.match(/\{[\s\S]*?\}/);
+      if (match) {
+        const parsed = JSON.parse(match[0]);
+        score = typeof parsed.score === 'number' ? Math.max(-10, Math.min(10, Math.round(parsed.score))) : 0;
+      }
+    } catch {
+      // Fallback: try to extract number from text
+      const numMatch = content.match(/(-?\d+)/);
+      if (numMatch) {
+        score = Math.max(-10, Math.min(10, parseInt(numMatch[1])));
+      }
+    }
+
+    // Map score to sentiment category for backward compatibility
+    let sentiment: 'positive' | 'negative' | 'neutral';
+    if (score <= -1) sentiment = 'negative';
+    else if (score >= 1) sentiment = 'positive';
+    else sentiment = 'neutral';
+
+    console.log(`[SentimentLLM] Score: ${score} → ${sentiment}`);
+    return { sentiment, score };
   } catch (err: any) {
     console.error(`[SentimentLLM] Error: ${err.message?.slice(0, 100)}`);
-    return 'neutral';
+    return { sentiment: 'neutral', score: 0 };
   }
 }
 
