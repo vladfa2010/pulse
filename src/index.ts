@@ -491,6 +491,100 @@ app.get('/source-stats', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
+// Sentiment Stats — sentiment delta by day per tag (for analytics dashboard)
+// ═══════════════════════════════════════════════════════════════════════════
+app.get('/sentiment-stats', async (req, res) => {
+  try {
+    const userId = req.query.userId as string;
+    const days = parseInt(req.query.days as string) || 7;
+    if (!userId) {
+      return res.status(400).json({ error: 'userId required' });
+    }
+
+    // 1. Get user's tags
+    const tagsResult = await query(
+      `SELECT tag_id, tag_name FROM portfolios WHERE user_id = $1`,
+      [userId]
+    );
+    const tags = tagsResult.rows;
+    if (tags.length === 0) {
+      return res.json({ tags: [], daily: [], summary: {} });
+    }
+
+    const tagIds = tags.map((t: any) => t.tag_id);
+
+    // 2. Daily sentiment counts per tag
+    const dailyResult = await query(
+      `SELECT
+         DATE(published_at) as day,
+         UNNEST(matched_tags) as tag,
+         sentiment,
+         COUNT(*) as count
+       FROM news
+       WHERE published_at > NOW() - INTERVAL '${days} days'
+         AND matched_tags && $1
+         AND sentiment IS NOT NULL
+       GROUP BY DATE(published_at), UNNEST(matched_tags), sentiment
+       ORDER BY day DESC, tag`,
+      [tagIds]
+    );
+
+    // 3. Summary: total pos/neg/neutral per tag
+    const summaryResult = await query(
+      `SELECT
+         UNNEST(matched_tags) as tag,
+         sentiment,
+         COUNT(*) as count
+       FROM news
+       WHERE published_at > NOW() - INTERVAL '${days} days'
+         AND matched_tags && $1
+         AND sentiment IS NOT NULL
+       GROUP BY UNNEST(matched_tags), sentiment`,
+      [tagIds]
+    );
+
+    // Build summary per tag
+    const summary: Record<string, { positive: number; negative: number; neutral: number; total: number }> = {};
+    for (const row of summaryResult.rows) {
+      if (!tagIds.includes(row.tag)) continue;
+      if (!summary[row.tag]) summary[row.tag] = { positive: 0, negative: 0, neutral: 0, total: 0 };
+      summary[row.tag][row.sentiment as 'positive' | 'negative' | 'neutral'] += parseInt(row.count);
+      summary[row.tag].total += parseInt(row.count);
+    }
+
+    // Build daily timeline
+    const dailyMap: Record<string, Record<string, { positive: number; negative: number; neutral: number; delta: number }>> = {};
+    for (const row of dailyResult.rows) {
+      if (!tagIds.includes(row.tag)) continue;
+      const day = row.day;
+      const tag = row.tag;
+      if (!dailyMap[day]) dailyMap[day] = {};
+      if (!dailyMap[day][tag]) dailyMap[day][tag] = { positive: 0, negative: 0, neutral: 0, delta: 0 };
+      dailyMap[day][tag][row.sentiment as 'positive' | 'negative' | 'neutral'] += parseInt(row.count);
+    }
+    // Calculate delta (positive - negative) for each day/tag
+    const daily: any[] = [];
+    for (const [day, tagsData] of Object.entries(dailyMap)) {
+      for (const [tag, data] of Object.entries(tagsData)) {
+        data.delta = data.positive - data.negative;
+        daily.push({ day, tag, ...data });
+      }
+    }
+    daily.sort((a, b) => b.day.localeCompare(a.day));
+
+    res.json({
+      tags: tags.map((t: any) => ({ id: t.tag_id, name: t.tag_name })),
+      days,
+      summary,
+      daily,
+    });
+  } catch (err: any) {
+    console.error('[SentimentStats] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // API Routes — все эндпоинты начинаются с /api/
 // ═══════════════════════════════════════════════════════════════════════════
 app.use('/api/auth', authLimiter, authRoutes);  // Строгий лимит (5/15min) — защита от брутфорса
