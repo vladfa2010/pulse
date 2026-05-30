@@ -78,7 +78,7 @@ app.get('/health', async (req, res) => {
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
-    version: '7.17.1',
+    version: '7.17.2',
     cron: cronStatus,
     sse_subscribers: getSubscriberCount(),
   });
@@ -296,10 +296,10 @@ app.get('/backfill-sentiment', async (req, res) => {
     console.log(`[Backfill] Processing ${articles.length} articles...`);
     const startTime = Date.now();
 
-    // Process in batches of 10
-    const { analyzeSentimentBatch } = await import('./services/smartTagMatcher');
-    const results = await analyzeSentimentBatch(
-      articles.map(a => ({ title: a.title_ru || '', summary: a.summary_ru || '' }))
+    // Process in batches of 10 using unified batch (sentiment + tag_impact + is_political)
+    const { analyzeUnifiedBatch } = await import('./services/smartTagMatcher');
+    const results = await analyzeUnifiedBatch(
+      articles.map(a => ({ title: a.title_ru || '', summary: a.summary_ru || '', tags: [] }))
     );
 
     // Update DB
