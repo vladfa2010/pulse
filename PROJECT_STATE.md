@@ -1,18 +1,17 @@
 # PULSE — Project State (Session Resume)
 
 > **Файл для быстрого входа в контекст после сброса.**
-> **Дата обновления:** 2026-05-29
+> **Дата:** 2026-05-30
 > **Версия API:** 7.9
-> **Актуальные коммиты:** backend `e74f0a5`, frontend `c384967` (v7.9.1)
-> **Finam RSS:** 7 лент активны
-> **Transaq Connector:** v1.0.0 — отдельный сервис (нужен VPS)
-> **Transaq Connector:** v1.0.0 — отдельный сервис реал-тайм новостей Finam (нужен VPS)
+> **Актуальные коммиты:** backend `76c0f8a`, frontend `6b707ce`
+>
+> ⚠️ **После отката (см. раздел 12)**
 
 ---
 
 ## 1. Что такое PULSE
 
-Агрегатор инвестиционных новостей на русском языке. 3 карусели новостей на главной. RSS из 36 источников (включая 7 лент Финам) → перевод EN→RU → sentiment analysis → smart tag matching → PostgreSQL → React frontend.
+Агрегатор инвестиционных новостей на русском языке. 3 карусели новостей на главной. RSS из 20+ источников → перевод EN→RU → sentiment analysis → smart tag matching → PostgreSQL → React frontend.
 
 **URL:** https://pulse-frontend-jt53.onrender.com
 **API:** https://pulse-api-bsov.onrender.com
@@ -23,16 +22,14 @@
 
 | Слой | Технологии |
 |------|-----------|
-| Frontend | React 19, TypeScript, Vite, Tailwind CSS v3.4 |
-| Анимации | Framer Motion, CSS keyframes |
-| Кэш | React Query (@tanstack/react-query) — optimistic updates |
+| Frontend | React 19, TypeScript, Vite, Tailwind CSS v3.4, shadcn/ui |
+| Анимации | Framer Motion, CSS keyframes (newsSlideIn, fadeInSlide) |
+| Кэш | React Query (@tanstack/react-query) — optimistic updates, background refetch |
 | Backend | Node.js 20, Express, TypeScript |
 | БД | PostgreSQL (Render production) / SQLite (local) |
-| LLM API | Kimi API (api.moonshot.ai) — перевод, sentiment, tags, summary |
-| RSS | 36 источников (17 RU + 19 EN), batch по 4, cron каждые 5 мин. Timezone-aware parsing (RU=+0300, EN=+0000) |
+| LLM API | Kimi API (api.moonshot.ai, НЕ .cn) — перевод, sentiment, tag matching |
+| RSS | 20+ источников (RU + EN), batch по 4, cron каждые 15 мин |
 | Auth | JWT + bcryptjs, cookie-based sessions |
-| Telegram Bot | @Insidepulse_bot — webhook, HMAC-secured linking |
-| Payments | YooKassa (REAL + DEMO), triple activation |
 
 ---
 
@@ -40,875 +37,269 @@
 
 | # | Название | Фильтр | Для кого | Компонент |
 |---|----------|--------|----------|-----------|
-| 1 | **"Это вы ещё не видели"** | matched_tags && user_tags, НЕ прочитанные | Залогиненным | UnreadNewsCarousel.tsx |
-| 2 | **"Вся лента"** | matched_tags && user_tags, прочитанные (DESC) | Залогиненным | AllNewsCarousel.tsx |
-| 3 | **"Общая лента"** | Без фильтра тегов, все новости | Всем | GlobalNewsCarousel.tsx |
+| 1 | **"Это вы ещё не видели"** | matched_tags && user_tags, НЕ прочитанные | Только залогиненным | UnreadNewsCarousel.tsx |
+| 2 | **"Вся лента"** | matched_tags && user_tags, прочитанные (DESC) | Только залогиненным | AllNewsCarousel.tsx |
+| 3 | **"Общая лента"** | Без фильтра тегов, все новости | Всем (без логина) | GlobalNewsCarousel.tsx |
 
-### Доставка новостей
-
-**Раньше:** Только polling (React Query refetch interval) → новости видны после F5 или таймаута  
-**Сейчас:** SSE (Server-Sent Events) + React Query → новости **мгновенно** после парсинга cron
-
-```
-Cron (каждые 5 мин) → RSS fetch → translate → sentiment → save to DB
-                                                              ↓
-                                                    broadcastNews() — SSE
-                                                              ↓
-                                                    Browser (EventSource)
-                                                              ↓
-                                                    React Query cache обновляется
-                                                              ↓
-                                                    Новость появляется на экране
-```
-
-**Почему "новости час назад":** `published_at` = время публикации на источнике, не время парсинга. Источники сами публикуют с задержкой. SSE доставляет мгновенно, но время события — от источника.
+**API endpoints:**
+- `GET /api/news` — карусель 1 (непрочитанные по тегам)
+- `GET /api/news?history=true` — карусель 2 (прочитанные по тегам, DESC)
+- `GET /api/news?global=true` — карусель 3 (все новости)
 
 ---
 
-## 4. Главные архитектурные решения (ВАЖНО)
+## 4. News Pipeline (RSS → БД)
 
-| # | Решение | Почему |
-|---|---------|--------|
-| 1 | **Нет хардкод тегов** (удалены TAG_KEYWORDS + RELATED_TAGS) | Каждый пользователь создаёт теги сам |
-| 2 | **Related tags через LLM** (динамические связи) | Нет хардкода, адаптируется под набор тегов |
-| 3 | **Free = 1 тег** | Бизнес-правило |
-| 4 | **Пользователь создаёт первый тег сам** | Нет forced suggestions, нет демо-портфеля |
-| 5 | **LLM определяет тип тега** (auto-detect) | 8 типов: company, ticker, sector, trend, person, commodity, index, currency |
-| 6 | **Tag Enrichment через LLM** | Один запрос при создании → synonyms + ticker + products + related entities |
-| 7 | **Метод 2 (LLM) ТОЛЬКО если Layer 1 пустой** | ~60% экономия токенов (оптимизация B) |
-| 8 | **SSE Real-Time News** | Мгновенная доставка новостей в браузер |
-| 9 | **Demo-режим удалён** | Нет демо-логина, нет демо-портфеля |
+```
+RSS Fetch (20+ sources) → Parse XML → URL Normalize → Translate EN→RU (Kimi API)
+→ Sentiment Analysis (keyword + LLM) → Smart Tag Matching (3-layer)
+→ Tag Impact Analysis (LLM per tag) → Deduplicate (content_hash)
+→ Save to PostgreSQL
+```
+
+**Скорость:** ~38-48 секунд на весь batch
 
 ---
 
 ## 5. Smart Tag Matching — 3 слоя
 
-### Flow:
-```
-Новость (title + summary)
-  ├──> Layer 1: Keyword matching (enriched keywords, ~50+ на тег)
-  │     └── Быстро, локально, < 1 мс, покрывает ~85-90%
-  ├──> Layer 2: LLM Smart Matching (ТОЛЬКО если Layer 1 пустой)
-  │     └── Fallback: семантический анализ, ~10-15% случаев
-  └──> Layer 3: LLM Related Tags (динамические связи через LLM)
-        └── Кэш 5 минут
-```
-
-### Tag Enrichment (v7.5) — ОДИН запрос при создании тега:
-
-При создании тега `enrichTagViaLLM()` делает **один** LLM-запрос и получает:
-
-| Поле | Пример | Зачем |
-|------|--------|-------|
-| `tag_type` | `company` | Тип тега |
-| `ticker` | `NVDA` | Биржевой тикер |
-| `related_entities` | `["AMD", "Intel", "TSMC"]` | Связанные компании |
-| `synonyms_en` | `["nvidia corp", "gpu maker"]` | Английские синонимы |
-| `synonyms_ru` | `["нвидиа", "енвидиа"]` | Русские синонимы |
-| `key_products` | `["geforce", "rtx", "cuda"]` | Ключевые продукты |
-
-**Результат:** `buildEnrichedKeywords()` объединяет base keywords + LLM synonyms → **~50+ keywords на тег** (было ~8).
-
-**Сохранение:** `user_defined_tags.enriched_data` (JSONB).
-
-**Экономия:** Layer 1 теперь ловит 85-90% новостей → Layer 2 редко нужен.
-
-### Tag Types (Auto-Detection via LLM):
-| Тип | Примеры |
-|-----|---------|
-| `company` | Apple, Tesla, Сбербанк |
-| `ticker` | AAPL, TSLA, SBER |
-| `sector` | Технологии, Фарма, Энергетика |
-| `trend` | AI, Крипто, ESG |
-| `person` | Илон Маск, Пауэлл |
-| `commodity` | Золото, Нефть, Медь |
-| `index` | S&P 500, NASDAQ, MOEX |
-| `currency` | USD, EUR, BTC |
-
-**Endpoint:** `GET /api/user/tags/detect-type?tagName=X`
-**Fallback:** heuristicTagType() (регулярки) если LLM недоступен
-
-### SSE Real-Time News (v7.7) — Мгновенная доставка
-
-```
-Cron парсит RSS → сохраняет в БД → broadcastNews() → SSE → Browser
-                                                              ↓
-                                                    React Query cache обновляется
-                                                              ↓
-                                                    Новость появляется на экране БЕЗ F5
-```
-
-| Компонент | Файл |
-|-----------|------|
-| **SSE Service** | `backend/src/services/sse.ts` — subscribers Set + broadcast |
-| **SSE Endpoint** | `GET /api/news/stream` — EventSource connection |
-| **Broadcast trigger** | `cron.ts` — после каждого INSERT новой новости |
-| **Frontend hook** | `frontend/src/hooks/useSseNews.ts` — EventSource + React Query |
-| **Integration** | `Home.tsx` — `useSseNews(isLoggedIn)` |
-
-**Heartbeat:** каждые 30 секунд (сервер → клиент `event: ping`)  
-**Auto-reconnect:** 5 секунд после disconnect  
-**Фильтр дубликатов:** на клиенте (проверка `id` перед добавлением в cache)  
-**Подписчиков:** `sse_subscribers` в `/health`
+1. **Keyword matching** — стандартные теги (18 шт) + пользовательские (из `user_defined_tags`), ищет по title + summary
+2. **LLM matching** (Kimi API) — если keywords ничего не нашли, спрашиваем LLM. Кэш: `smart_tag_cache`
+3. **Related tags** — добавляем связанные (nvda→tech,ai)
 
 ---
 
-## 6. Тег — это не категория
+## 6. Sentiment + Liquid Glass
 
-| У вас тег | Новость | Попадет? |
-|-----------|---------|----------|
-| `sber` | "Сбербанк повысил ставки" | ✅ ДА |
-| `sber` | "ВТБ запустил новый продукт" | ❌ НЕТ |
-| `bank` | "ВТБ повысил ставки" | ✅ ДА |
-| `bank` | "Сбербанк отчитался" | ✅ ДА |
+| Sentiment | Цвет | CSS glow |
+|-----------|------|----------|
+| positive | `#34D399` зелёный | `0 4px 20px -4px rgba(52,211,153,0.15)` |
+| negative | `#F87171` красный | `0 4px 20px -4px rgba(248,113,113,0.15)` |
+| neutral | `#9CA3AF` серый | `0 4px 20px -4px rgba(156,163,175,0.1)` |
 
-**Правило:** Тег — точечный поисковый запрос. `sber` ≠ `bank` ≠ `finance`. Пользователь сам выбирает гранулярность.
+**2 уровня определения:**
+- L1: Keyword-based (быстро, без API) — sentiment_source='keyword'
+- L2: LLM через Kimi API — sentiment_source='llm'
 
----
-
-## 7. Общая база vs Персональная лента
-
-**Матчинг:** новость проверяется против ВСЕХ тегов всех пользователей
-**Карусели 1+2:** только новости по ВАШИМ тегам
-**Карусель 3 (общая):** все новости со всеми тегами
+**Tag Impact:** `tag_impact` JSONB в БД — `{ tag, impact, reasoning }[]`
 
 ---
 
-## 8. AI Daily Summary (v7.4)
+## 7. Translation
 
-**Endpoint:** `GET /api/user/summary` (auth required)
-**Query params:** `?hours=12` (default), `?refresh=1` (ignore cache)
-
-**Flow:**
-1. Берёт теги пользователя из `portfolios`
-2. Ищет новости: `published_at > NOW() - 12 hours`, `matched_tags && user_tags`
-3. Отправляет в LLM — стиль инвестиционного аналитика, 80-150 слов, русский
-4. Кэш: 10 минут на пользователя (in-memory)
-
-**Frontend:** `DailySummary.tsx` — liquid glass карточка под "Вся лента"
-**Кнопка:** "Обновить" с `?refresh=1` — игнорирует кэш, идёт в LLM
+- **Kimi API** (api.moonshot.ai, модель moonshot-v1-8k)
+- Google Translate **заблокирован** на Render (не работает)
+- Batch size: 5 текстов, задержка 500ms между batch
+- Фильтр: `hasLatin && !hasCyrillic && length > 5`
+- Кэш: `translation_cache` таблица
 
 ---
 
-## 9. Страница "Инструкция" (/instructions)
+## 8. User-Defined Tags
 
-**Компонент:** `frontend/src/pages/Instructions.tsx`
-**URL:** `/#/instructions`
-**Содержит:**
-1. Тег — это не категория
-2. Гранулярность: узко/средне/широко
-3. Как система находит новости (Keyword + LLM)
-4. Общая база vs Персональная лента
-5. Практические советы
+Flow создания:
+1. Пользователь вводит название в поиск → "Создать тег 'X'"
+2. `POST /api/user/tags/custom` → backend:
+   - `generateTagKeywords(tagName)` → keywords + транслит + склонения
+   - INSERT в `user_defined_tags`
+   - INSERT в `portfolios`
+   - **BACKFILL:** сканирует ВСЕ новости, обновляет `matched_tags`
+3. `tagVersion++` → `invalidateQueries(['unreadNews', 'historyNews'])`
+4. Карусели автоматически перезагружаются
 
----
-
-## 10. Sentiment + Liquid Glass ✅
-
-| Sentiment | Цвет |
-|-----------|------|
-| positive | `#34D399` зелёный |
-| negative | `#F87171` красный |
-| neutral | `#9CA3AF` серый |
+**Таблица:** `user_defined_tags` (tag_id, tag_name, tag_type, keywords[], created_by, created_at)
 
 ---
 
-## 11. Дизайн профиля (Liquid Glass) ✅
+## 9. Optimistic Updates
 
-Страница `/profile` полностью переписана в стиле главной страницы.
-
-### Компоненты:
-
-| Компонент | Описание |
-|-----------|----------|
-| `GlassCard` | Reusable liquid glass карточка: `backdrop-filter: blur(12px) saturate(180%)` + опциональный accent glow |
-| `Toggle` | Переключатель с customizable active color (`#00D4FF`, `#F59E0B`, etc.) |
-
-### Дизайн-элементы:
-
-| Элемент | Реализация |
-|---------|-----------|
-| **Hero header** | Радиальный градиент glow + большой аватар (60×60) с градиентной рамкой |
-| **Карточки** | Liquid glass: `rgba(255,255,255,0.02)` + `backdropFilter: blur(12px)` + accent color glow |
-| **Табы** | Подсветка `#00D4FF` при активации, плавные переходы |
-| **Переключение** | Framer Motion `AnimatePresence` — fade + slide анимация |
-| **Теги** | Pills с `#00D4FF` акцентом, `Trash2` иконка для удаления |
-| **Платежи** | Карточки вместо таблицы, цветные статус-бейджи |
-| **Премиум бейдж** | Градиентный фон + иконка Zap рядом с именем |
-
-### Табы:
-
-| # | Название | Содержимое |
-|---|----------|-----------|
-| 1 | **Профиль** | Аватар, имя, email, Premium badge, теги (pills), выход |
-| 2 | **Уведомления** | Telegram (подключение, частота, тихие часы), Email digest |
-| 3 | **Тариф** | Free/Premium статус, прогресс-бар дней, список фич |
-| 4 | **Платежи** | История платежей в виде карточек |
+Когда пользователь отмечает новость прочитанной:
+1. **Мгновенно** (350ms fade-out) — карточка исчезает из карусели 1
+2. **Мгновенно** — появляется в карусели 2 (fade-in)
+3. **В фоне** — `POST /api/news/:id/read`
+4. Реализация: `queryClient.setQueryData()` без ожидания API
 
 ---
 
-## 12. Telegram Bot @Insidepulse_bot ✅
+## 10. "Прочитано" — только явное
 
-| Фича | Статус |
-|------|--------|
-| Webhook auto-setup | ✅ |
-| HMAC-secured linking | ✅ |
-| Desktop fallback | ✅ |
-| Premium-only access | ✅ |
-| Команды: /start, /now, /stop | ✅ |
+Новость считается прочитанной ТОЛЬКО если:
+- Клик на карточку (открытие URL + markAsRead)
+- Кнопка ✓ на карточке
+- 2 секунды в viewport при 80%+ видимости (IntersectionObserver)
 
----
-
-## 13. Платежи (YooKassa) ✅
-
-| Фича | Статус |
-|------|--------|
-| DEMO режим | ✅ |
-| YooKassa REAL | ✅ |
-| Triple activation | ✅ |
-| `refreshUser` после оплаты | ✅ |
-| `subscription_active = TRUE` | ✅ |
-
-### Баг: Premium пропадал после перезахода (v7.6.2) 🐛
-
-**Причина:** `POST /auth/login` не возвращал `subscription_active` и `subscription_expires_at`.
-
-**Цепочка бага:**
-
-| Шаг | Действие | subscription.active |
-|-----|----------|---------------------|
-| 1 | Пользователь оплачивает | ✅ TRUE в БД |
-| 2 | `refreshUser()` → `/auth/me` | ✅ true (видно) |
-| 3 | Перезаход → `login()` | ❌ undefined → false |
-
-**Исправления:**
-
-| Файл | Что сделано |
-|------|-------------|
-| `auth.ts` login | SELECT добавлены `subscription_active`, `subscription_expires_at` |
-| `auth.ts` login | Response включает оба subscription поля |
-| `PaymentReturn.tsx` | `refreshUser()` вызывается после force-check подтверждения |
+Простой скролл **НЕ** считает прочитанным.
 
 ---
 
-## 14. Mobile Layout Optimization ✅
+## 11. Таблицы БД (10 штук)
 
-### Проблемы
+`users`, `portfolios`, `payments`, `news`, `user_sessions`, `user_channels`, `notification_settings`, `translation_cache`, `smart_tag_cache`, `user_defined_tags`
 
-| # | Проблема | Причина |
-|---|----------|---------|
-| 1 | **Страница шире экрана iPhone** — можно сдвинуть влево/вправо | `NewsCard` использовал `w-[425px]` — шире iPhone (375px) |
-| 2 | **Подёргивание при скролле** | Тяжёлый `backdrop-filter: blur(20px)` на каждой карточке |
-| 3 | **Нет ощущения премиального сайта** | 300ms tap delay, нет GPU acceleration |
-
-### Исправления
-
-| Файл | Что сделано |
-|------|-------------|
-| `index.html` | `viewport-fit=cover`, `maximum-scale=1.0`, `user-scalable=no` для iPhone X+ |
-| `index.css` | `overflow-x: hidden` на html/body, `max-width: 100vw`, `touch-action: manipulation` |
-| `index.css` | `-webkit-tap-highlight-color: transparent`, `-webkit-overflow-scrolling: touch` |
-| `index.css` | `@media (max-width: 768px)` — уменьшенный `backdrop-filter` blur (16px→8px, 6px→4px) |
-| `index.css` | `.gpu-layer` — `will-change: transform`, `translateZ(0)`, `backface-visibility: hidden` |
-| `index.css` | `.scroll-container` — `-webkit-overflow-scrolling: touch`, `overscroll-behavior-y: contain` |
-| `index.css` | `@media (prefers-reduced-motion)` — отключение анимаций для accessibility |
-| `Layout.tsx` | `overflow-x-hidden`, `max-w-[100vw]` на контейнере |
-| `NewsCarousel.tsx` | `scroll-container` + `gpu-layer`, fade overlays скрыты на мобильных |
-| `NewsCard.tsx` | **Responsive width**: `w-[85vw] sm:w-[425px]` и `w-[75vw] sm:w-[275px]` |
-| `NewsCard.tsx` | `gpu-layer` для GPU acceleration анимаций |
-| `Navbar.tsx` | `gpu-layer`, `env(safe-area-inset-top)` для iPhone notch |
-
-### Результат
-
-| До | После |
-|----|-------|
-| `w-[425px]` фиксировано | `w-[85vw]` на мобильном, `sm:w-[425px]` на десктопе |
-| `backdrop-filter: blur(20px)` всегда | `blur(8px)` на мобильных |
-| Нет GPU acceleration | `will-change: transform` + `translateZ(0)` |
-| 300ms tap delay | `touch-action: manipulation` — мгновенный отклик |
+**Ключевые колонки в `news`:** id, title_ru, summary_ru, title_original, lang_original, source, url, published_at, sentiment, sentiment_source, matched_tags, tag_impact, content_hash, all_sources, source_count
 
 ---
 
-## 15. UI: Hero padding (для залогиненных)
+## 12. Тестовый доступ
 
-| Параметр | Залогинен | Без логина |
-|----------|-----------|------------|
-| Top padding | pt-8 (32px) | pt-24 (96px) |
-| Bottom padding | pb-5 (20px) | pb-12 (48px) |
-| Subtitle | ❌ скрыт | ✅ виден |
+- **Email:** vladfa@ya.ru
+- **Password:** !1234567890
+- **URL:** https://pulse-frontend-jt53.onrender.com
 
 ---
 
-## 16. Timezone Handling (v7.9.4)
+## 13. Debug endpoints
 
-**Проблема:** `new Date(pubDate)` без timezone интерпретирует как локальное время сервера.
+| Endpoint | Что показывает |
+|----------|---------------|
+| `GET /health` | Версия API, статус |
+| `GET /debug-env` | KIMI_API_KEY установлен? cron_secret? |
+| `GET /debug-db` | Колонки, count, constraints, db_size |
+| `GET /tag-stats` | Распределение тегов |
+| `POST /trigger-rss?secret=` | Ручной запуск RSS (background) |
+| `GET /backfill-tags?secret=` | Ретегирование статей без тегов |
+| `GET /backfill-translate?secret=` | Перевод EN заголовков (limit 50) |
 
-| Сервер | `new Date('2026-05-29T22:00')` | Результат |
-|--------|--------------------------------|-----------|
-| Render (UTC) | 22:00 local = 22:00 UTC | ✅ Корректно |
-| Sandbox (CST +8) | 22:00 local = 14:00 UTC | ❌ 8 часов ошибка! |
-
-**Решение:** `normalizePubDate()` в `rssFetcher.ts`:
-
-| RSS формат | Обработка |
-|------------|-----------|
-| С explicit timezone (`+0300`, `GMT`) | Парсим как-is |
-| ISO без timezone (`2026-05-29T22:00:00`) | RU → `+03:00`, EN → `+00:00` |
-| RSS стандарт без timezone (`Fri, 29 May 2026 22:00:00`) | RU → `+0300`, EN → `+0000` |
-
-**Все даты хранятся в UTC в PostgreSQL.**
+**Secret:** `pulse-dev-key` (или `CRON_SECRET_KEY` из env)
 
 ---
 
-## 17. Pipeline: Получение и обработка новостей (v7.10)
-
-### Полный flow от RSS до БД
+## 14. Где что в коде
 
 ```
-┌──────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│  RSS Fetch   │────▶│ Per-Source Dedup │────▶│  Global Dedup   │
-│  36 sources  │     │ (rss_source_meta)│     │  (content_hash) │
-│  batch × 4   │     │  pubDate filter  │     │  ON CONFLICT    │
-└──────────────┘     └──────────────────┘     └─────────────────┘
-       │                       │                       │
-       ▼                       ▼                       ▼
-  453 articles            1-3 articles             0-1 новых
-  (20 per source)       (реально новые)         (уникальных)
-```
+backend/src/
+  services/
+    cron.ts              — RSS pipeline (fetch → translate → tag → save)
+    smartTagMatcher.ts   — 3-layer tag matching + sentiment + tag impact
+    rssFetcher.ts        — RSS fetch + XML parse
+    rssSources.ts        — 20+ RSS sources config
+    translate.ts         — Kimi API translation (api.moonshot.ai)
+    tagManager.ts        — User-defined tags + keyword generation + backfill
+    reports.ts           — Weekly email reports
+  routes/
+    news.ts              — 3 режима ленты
+    user.ts              — Tags CRUD + custom tag creation
+    auth.ts              — Login/register
+  index.ts               — Entry point, debug endpoints, migrations
 
-### Stage 1: RSS Fetch + Timezone Normalization
-
-**Файл:** `backend/src/services/rssFetcher.ts`
-
-```
-fetchAllRSS()
-  ├── loadSourceMetaCache() — загружает rss_source_meta в память
-  ├── batch 1: sources 1-4   → fetchSource() параллельно
-  ├── batch 2: sources 5-8   → fetchSource() параллельно
-  ... (9 batches total, 1500ms delay между batches)
-  └── dedup by title+source  → return articles
-```
-
-**Timezone handling** (`normalizePubDate`):
-
-| RSS формат pubDate | Обработка | Пример |
-|-------------------|-----------|--------|
-| С explicit offset (`+0300`) | Парсим как-is, JS конвертирует в UTC | `22:00 +0300` → `19:00 UTC` |
-| С GMT/UTC | Парсим как-is | `22:00 GMT` → `22:00 UTC` |
-| ISO без timezone (`2026-05-29T22:00:00`) | RU sources → `+03:00`, EN → `+00:00` | RU: `22:00 +03` → `19:00 UTC` |
-| RSS standard без timezone | RU → `+0300`, EN → `+0000` | RU: `22:00 +03` → `19:00 UTC` |
-
-**Все `publishedAt` хранятся в UTC в PostgreSQL.** Не зависит от timezone сервера.
-
-### Stage 2: Per-Source Dedup (v7.10) — КЛЮЧЕВОЙ ОПТИМИЗАЦИЯ
-
-**Проблема до v7.10:** Каждые 5 минут парсили 453 статьи, 100 шли в LLM, 87-99 были дубликатами.
-
-**Решение:** Таблица `rss_source_meta` хранит `last_fetched_at` для каждого из 36 источников.
-
-```sql
-CREATE TABLE rss_source_meta (
-  source_id       VARCHAR(50) PRIMARY KEY,  -- 'finam_companies', 'reuters'...
-  last_fetched_at TIMESTAMP NOT NULL,         -- UTC время последнего парсинга
-  updated_at      TIMESTAMP DEFAULT NOW()
-);
-```
-
-**Flow:**
-```
-fetchSource('finam_companies')
-  ↓
-Парсим 20 items из RSS
-  ↓
-Получаем last_fetched_at для 'finam_companies' из памяти (не БД!)
-  ↓
-Фильтр: items.filter(item.pubDate > last_fetched_at)
-  ↓
-Обычно: 20 → 0 или 1 статья (остальные старее last_fetched_at)
-  ↓
-После успешного парсинга: UPDATE last_fetched_at = NOW()
-```
-
-**In-memory cache:** `Map<string, Date>` загружается ОДИН раз при старте крона. Нет запросов к БД внутри fetch loop = нет deadlock.
-
-**Результат:**
-
-| Метрика | До v7.10 | После v7.10 |
-|---------|----------|-------------|
-| Статей fetched | 100 | **1-3** |
-| LLM-вызовов | 100 | **1-3** |
-| Сохранено новых | 0-15 | **0-1** |
-| Время крона | 3-8 минут | **10-30 секунд** |
-
-### Stage 3: Global Dedup (content_hash)
-
-```sql
-INSERT INTO news (..., content_hash, all_sources)
-VALUES (..., 'a1b2c3', ARRAY['РБК'])
-ON CONFLICT (content_hash) DO UPDATE
-  SET all_sources = array_append(all_sources, EXCLUDED.source),
-      source_count = source_count + 1;
-```
-
-### Stage 4: Smart Tag Matching + Translation + Sentiment
-
-Для каждой реально новой статьи:
-1. **EN→RU перевод** (Kimi API, batch 5)
-2. **Sentiment** (keywords → LLM fallback)
-3. **Tag matching** (3 слоя: keywords → LLM → related)
-4. **INSERT** + **SSE broadcast**
-
-### Мониторинг
-
-**Endpoint:** `GET /debug-cron`
-
-| Поле | Описание |
-|------|----------|
-| `articles_fetched` | Сколько прошло per-source dedup |
-| `articles_saved` | Сколько реально новых (после global dedup) |
-| `articles_merged` | Сколько дубликатов объединено |
-| `status` | `success` / `running` / `error` |
-
-**Пример реальных данных:**
-```
-20:25:00 — fetched=3, saved=1, merged=0, status=success
-20:20:00 — fetched=1, saved=0, merged=1, status=success  ← дубль, объединён
-20:15:00 — fetched=1, saved=1, merged=0, status=success  ← новая уникальная
-```
-
-### Параметры
-
-| Параметр | Значение |
-|----------|----------|
-| Интервал | Каждые 5 минут (`*/5 * * * *`) |
-| Batch size | 4 sources параллельно |
-| Batch delay | 1500ms между batches |
-| Fetch timeout | 25000ms на источник |
-| Per-source limit | 20 items |
-| Global limit | 100 items (редко достигается после dedup) |
-| LLM batch | 5 texts |
-| Мониторинг | `cron_log` + `/debug-cron` |
-
----
-
-## 18. Debug endpoints
-
-| Endpoint | Описание |
-|----------|----------|
-| `GET /health` | Версия API, статус, cron health |
-| `GET /debug-cron` | Статус cron (last_run, articles_fetched) |
-| `GET /debug-env` | Проверка env vars |
-| `GET /debug-db` | Состояние БД |
-| `POST /trigger-rss?secret=` | Ручной запуск RSS |
-| `GET /backfill-tags?secret=` | Ретегирование статей |
-
-**Secret:** `pulse-dev-key`
-
----
-
-## 19. Где что в коде
-
-```
-backend/src/services/
-  smartTagMatcher.ts   — 3-layer matching (keywords + LLM + related)
-  tagManager.ts        — Tag types (8), auto-detect via LLM, keyword generation
-  rssFetcher.ts        — RSS fetch: native fetch, batch × 4, 25s timeout,
-                         normalizePubDate (timezone-aware), per-source dedup
-                         via rss_source_meta cache, in-memory sourceMetaCache
-  cron.ts              — RSS pipeline: fetch → dedup → translate → sentiment
-                         → tag matching → save → SSE broadcast, cron_log
-  sse.ts               — SSE subscribers + broadcastNews()
-backend/src/routes/
-  user.ts              — Tags CRUD, /summary, /stats, /tags/detect-type, /tags/related
-  auth.ts              — Login/register (demo login УДАЛЕН)
-frontend/src/components/
-  DailySummary.tsx     — AI дайджест под "Вся лента"
-frontend/src/hooks/
-  useSseNews.ts        — EventSource connection + React Query integration
-frontend/src/pages/
-  Instructions.tsx     — /instructions — как работают теги
-  Profile.tsx          — /profile — liquid glass дизайн, 4 таба
-  Home.tsx             — Hero padding conditional (isLoggedIn), useSseNews()
-transaq-connector/src/
-  index.ts             — Entry point, wiring компонентов
-  connector.ts         — DLL wrapper (ffi-napi) + XML коммуникация
-  connectionManager.ts — State machine + авто-реконнект
-  newsProcessor.ts     — Парсинг news_header/body + нормализация
-  pulseClient.ts       — HTTP push в PULSE (batch + circuit breaker)
+frontend/src/
+  components/
+    UnreadNewsCarousel.tsx   — Карусель 1 (optimistic updates)
+    AllNewsCarousel.tsx      — Карусель 2 (fade-in animation)
+    GlobalNewsCarousel.tsx   — Карусель 3 (все новости)
+    NewsCard.tsx             — Liquid glass sentiment card
+    NewsCarousel.tsx         — Universal carousel wrapper
+  hooks/
+    useNewsStream.ts         — Новые статьи → isNew → CSS анимация
+  pages/
+    Home.tsx                 — 3 карусели + tag search + create tag
 ```
 
 ---
 
-## 20. Git репозитории
+## 15. Известные проблемы / TODO
 
-| Репо | URL | Локально |
-|------|-----|----------|
+| # | Проблема | Приоритет | Примечание |
+|---|----------|-----------|------------|
+| 1 | `summary_ru` не переводится (только title_ru) | medium | Нужно добавить перевод summary в translateBatch |
+| 2 | Tag impact генерируется но не отображается в UI | medium | Данные в БД, нужен компонент отображения |
+| 3 | Карусель 2 DESC сортировка — проверить на фронте | low | Backend отдаёт DESC, проверить что фронт не переворачивает |
+| 4 | 300 статей без matched_tags | low | `/backfill-tags` для ретегирования |
+| 5 | `content_hash` может быть NULL у старых записей | low | Не критично, UNIQUE constraint пропускает NULL |
+
+---
+
+## 16. Git репозитории
+
+| Репо | URL | Путь локально |
+|------|-----|---------------|
 | Backend | https://github.com/vladfa2010/pulse | `/mnt/agents/projects/backend` |
 | Frontend | https://github.com/vladfa2010/pulse-frontend | `/mnt/agents/projects/frontend` |
-| Transaq Connector | (входит в backend репо) | `/mnt/agents/projects/transaq-connector` |
 
 **Push:** `GIT_HTTP_LOW_SPEED_TIME=300 git push origin main`
-**При GnuTLS error:** повторить через 3 секунды
+**При ошибке GnuTLS:** повторить через 3 секунды
 
 ---
 
-## 21. Ключевые договорённости
+## 17. Ключевые договорённости (не нарушать)
 
 1. **ТОЛЬКО реальные новости** из RSS — мок-данные ЗАПРЕЩЕНЫ
-2. **Kimi API endpoint:** `api.moonshot.ai` — .cn возвращает 401
-3. **Optimistic updates** — UI мгновенно, API в фоне
-4. **Explicit read only** — скролл НЕ считает прочитанным
-5. **Liquid glass UI** — все карточки с sentiment-цветами
-6. **Нет хардкод тегов** — только пользовательские
-7. **Free = 1 тег** — Premium = 10 тегов
-8. **Demo login УДАЛЕН** — нет демо-режима
-9. **Tag Enrichment через LLM** — один запрос при создании → synonyms + products + entities
-10. **Layer 2 (LLM) ТОЛЬКО если Layer 1 пустой** — ~60% экономия токенов
-11. **Tag type auto-detect** — 8 типов через LLM
-12. **SSE Real-Time News** — новости мгновенно в браузер после парсинга
-13. **Transaq News Connector** — отдельный Docker-сервис для реал-тайм новостей Finam (нужен VPS)
-14. **Finam RSS — 7 лент** добавлены в общий поток (v7.8) — работает на Render
-15. **Stats widget в Profile** — показывает объём информации (v7.9)
-16. **Transaq Connector Service v1.0.0** — отдельный сервис реал-тайм новостей
-17. **TagEnrichment в ленте** — расшифровка LLM-обогащения тега при клике (v7.11)
-18. **Каждое изменение = git commit + push + deploy**
+2. **Все EN новости переводятся** на русский — пользователь видит только RU
+3. **Kimi API endpoint: api.moonshot.ai** — .cn возвращает 401
+4. **Optimistic updates** — UI обновляется мгновенно, API в фоне
+5. **Explicit read only** — скролл НЕ считает прочитанным
+6. **Liquid glass UI** — все карточки с sentiment-цветами
+7. **User-defined tags** — пользователь может создать ЛЮБОЙ тег
+8. **Каждое изменение = git commit + push + deploy**
 
 ---
 
-## 22. Stats Widget в Profile (v7.9) ✅
+## 18. ⚠️ ИНЦИДЕНТ: TagEnrichment — перепутаны NewsFeed и Карусели (2026-05-30)
 
-**Endpoint:** `GET /api/user/stats` (auth required)
+### Что произошло
 
-**Показывает в личном кабинете:**
+При попытке добавить `TagEnrichment` (показ логики матчинга — почему новость попала в ленту) AI-ассистент перепутал **две независимые фичи**:
 
-| Метрика | Описание |
-|---------|----------|
-| **Всего новостей** | Общее количество в базе (например, 5,560) |
-| **По вашим тегам** | Сколько новостей подходят под теги пользователя |
-| **+ за 24ч** | Сколько новых за сутки всего |
-| **+ по тегам за 24ч** | Сколько новых по тегам за сутки |
+| Фича | NewsFeed (`/news`) | Карусели (Home.tsx) |
+|------|-------------------|---------------------|
+| Тип | Отдельная страница | Компоненты на главной |
+| Навигация | `navigate('/news')` | Нет отдельного URL |
+| API | Свой endpoint | `GET /api/news` и вариации |
+| Компонент | `NewsFeed.tsx` | `UnreadNewsCarousel.tsx`, `AllNewsCarousel.tsx`, `GlobalNewsCarousel.tsx` |
 
-**Дизайн:** Liquid Glass карточка с зелёным акцентом (`#10B981`), 4 цифры в сетке 2×2.
+**Ошибка:** AI начал менять карусели ради фичи, которая относилась к NewsFeed. В результате:
+- `NewsFeed.tsx` — получил несвойственную ему логику
+- `GET /api/news` — был модифицирован (tag filter, auth), что сломало карусели
+- Auth requirements менялись public → auth → public — ломало всё
+- Frontend не деплоился из-за каскадных TS ошибок
 
-**Файлы:**
-- Backend: `backend/src/routes/user.ts` — `/stats` endpoint
-- Frontend: `frontend/src/pages/Profile.tsx` — StatsCard в табе Profile
+### Последствия
 
----
+- Карусели перестали загружать новости
+- NewsFeed показывал пустоту
+- Auth токены сбрасывались на 401
+- ~15 итераций фиксов, каждый ломал что-то новое
+- Frontend не деплоился на Render
 
-## 23. TagEnrichment в ленте (v7.11) ✅
+### Решение — ОТКАТ
 
-**Контекст:** Пользователь кликает на тег на главной → попадает в ленту по этому тегу → видит расшифровку LLM-обогащения.
+| Репозиторий | Откат до коммита | Версия | Что содержит |
+|-------------|-----------------|--------|--------------|
+| Frontend | `6b707ce` | v7.11.1 | Рабочие карусели, NewsFeed, без TagEnrichment |
+| Backend | `76c0f8a` | v7.9 | API до всех TagEnrichment изменений |
 
-**Что показываем:**
+### Что было удалено при откате
 
-| Поле | Иконка | Пример |
-|------|--------|--------|
-| **tag_type** | Tag | "Компания" |
-| **ticker** | Hash | SBER |
-| **synonyms_ru** | Globe | Сбер, Сбербанк России |
-| **synonyms_en** | Globe | Sberbank, Sber |
-| **key_products** | Package | СберБанк Онлайн, СберПрайм |
-| **related_entities** | Link2 | ЦБ РФ, ВТБ, Тинькофф |
+- ❌ Компонент `TagEnrichment.tsx` (frontend)
+- ❌ Endpoint `GET /tags/:tagName/enrichment` (backend)
+- ❌ Tag filter в `GET /api/news` (backend)
+- ❌ Optional auth в news API (backend)
+- ❌ Time filter 90d→365d (backend)
+- ❌ JWT import fixes, tagIds fixes (backend)
+- ❌ Stats widget в Profile (frontend — часть отката)
 
-**Дизайн:** Liquid glass плашка над лентой новостей. Компактный вид — тип + тикер + 3 синонима. "Подробнее" раскрывает все поля в сетке 2×2.
+### Правило на будущее
 
-**Endpoint:** `GET /api/user/tags/:tagName/enrichment` (auth required)
+> **NewsFeed и Карусели — ИЗОЛИРОВАННЫЕ системы. Изменения в одной НЕ должны затрагивать другую.**
+>
+> Если нужен Tag Matching Logic:
+> - Вариант А: Tooltip/Modal при наведении на тег в карточке карусели
+> - Вариант Б: Отдельная страница `/tag/:tagName/explain` со своим API
+> - Вариант В: Расширение ТОЛЬКО NewsFeed.tsx + ТОЛЬКО новый endpoint
+>
+> **Запрещено:** менять карусели ради NewsFeed и наоборот.
 
-**Файлы:**
-- Backend: `backend/src/routes/user.ts` — `/tags/:tagName/enrichment`
-- Frontend: `frontend/src/components/TagEnrichment.tsx` — плашка
-- Frontend: `frontend/src/pages/NewsFeed.tsx` — интеграция над лентой
+### Полная документация разграничения
 
----
-
-## 24. Finam RSS Feeds (v7.8) ✅
-
-**Проблема:** Transaq Connector требует DLL + Wine → не работает на Render.
-**Решение:** Использовать открытые RSS-ленты Финам (7 штук), которые парсятся существующим cron.
-
-| # | Название | URL | Категория |
-|---|----------|-----|-----------|
-| 1 | **Новости компаний** | `finam.ru/analysis/conews/rsspoint/` | finance |
-| 2 | **Новости и комментарии** | `finam.ru/analysis/nslent/rsspoint/` | finance |
-| 3 | **Сценарии и прогнозы** | `finam.ru/analysis/forecasts/rsspoint/` | finance |
-| 4 | **Мировые рынки** | `finam.ru/international/advanced/rsspoint/` | finance |
-| 5 | **Обзор и идеи** | `finam.ru/analytics/rsspoint/` | finance |
-| 6 | **Облигации — Новости** | `finam.ru/bonds-news/rsspoint/` | finance |
-| 7 | **Облигации — Комментарии** | `finam.ru/bonds-comments/rsspoint/` | finance |
-
-**Преимущества:**
-- Работает на Render прямо сейчас (обычный HTTP RSS)
-- Русский язык — не нужен перевод
-- Инвестиционная аналитика высокого качества
-- Тикеры в заголовках (легкий tag matching)
-- Полный текст через `<description>` + ссылка на полную статью
-
-**Файл:** `backend/src/services/rssSources.ts` — добавлены 7 источников в `RSS_SOURCES[]`
+См. `CAROUSELS.md` → раздел "⚠️ КРИТИЧЕСКОЕ РАЗГРАНИЧЕНИЕ: NewsFeed vs Карусели"
 
 ---
 
-## 25. SSE Real-Time News (v7.7) ✅
+## 19. Полная документация (ссылки)
 
-### Архитектура
-
-```
-Cron (каждые 5 мин) → RSS fetch → translate → sentiment → save to DB
-                                                              ↓
-                                                    broadcastNews() — SSE
-                                                              ↓
-                                                    Browser (EventSource)
-                                                              ↓
-                                                    React Query cache обновляется
-                                                              ↓
-                                                    Новость появляется на экране БЕЗ F5
-```
-
-### Почему SSE (не WebSocket)
-
-| SSE | WebSocket |
-|-----|-----------|
-| Однонаправленный (server → browser) | Двунаправленный |
-| Работает через HTTP | Нужен upgrade протокола |
-| Auto-reconnect встроен в браузер | Ручная реализация |
-| Проще в реализации | Сложнее |
-
-### Компоненты
-
-| Компонент | Файл | Роль |
-|-----------|------|------|
-| **SSE Service** | `backend/src/services/sse.ts` | Subscribers Set + broadcastNews() |
-| **SSE Endpoint** | `GET /api/news/stream` | EventSource connection, heartbeat 30s |
-| **Broadcast trigger** | `cron.ts` — после каждого INSERT новой новости | Отправляет новость всем подписчикам |
-| **Frontend hook** | `frontend/src/hooks/useSseNews.ts` | EventSource + React Query integration |
-| **Integration** | `Home.tsx` — `useSseNews(isLoggedIn)` | Подключение при логине |
-
-### Параметры
-
-| Параметр | Значение |
-|----------|----------|
-| Heartbeat | 30 секунд (`event: ping`) |
-| Auto-reconnect | 5 секунд после disconnect |
-| Дедупликация клиента | Проверка `id` перед добавлением в cache |
-| Мониторинг | `sse_subscribers` в `/health` |
-
-### Почему "новости час назад"
-
-`published_at` = время публикации на **источнике**, не время парсинга:
-
-| Время | Событие |
-|-------|---------|
-| 14:00 | Apple отчиталась |
-| 14:15 | CNN написал статью |
-| 14:30 | CNN опубликовал в RSS |
-| 14:31 | Наш крон спарсил |
-| 14:31 | SSE доставил в браузер |
-
-SSE доставляет **мгновенно**, но `published_at` показывает время CNN.
-
----
-
-## 26. Transaq News Connector Service (v1.0.0) — Новый сервис
-
-**Отдельная сущность** — Docker-контейнер, который подключается к Finam через `txmlconnector.dll`, получает реал-тайм новости и пушит их в бэкенд PULSE.
-
-### Архитектура
-
-```
-Finam Servers (tr1.finam.ru:3900)
-  ↓ XML over TCP (TXmlConnector DLL)
-Transaq News Connector Service (Docker)
-  ├─ ffi-napi → загружает txmlconnector.dll (через Wine на Linux)
-  ├─ Connection Manager → авто-реконнект, health checks
-  ├─ News Processor → парсинг news_header + запрос news_body
-  ├─ PULSE Client → HTTP POST в бэкенд (batch + circuit breaker)
-  └─ Health endpoint → GET /health (port 8080)
-  ↓ HTTP POST
-PULSE Backend
-  ├─ Сохранение в БД (таблица news)
-  ├─ Перевод EN→RU (если нужно)
-  ├─ Sentiment analysis
-  ├─ Smart tag matching (3 слоя)
-  └─ SSE broadcast → мгновенная доставка в браузер
-```
-
-### Структура проекта
-
-```
-transaq-connector/
-├── src/
-│   ├── index.ts              # Entry point, wiring всех компонентов
-│   ├── config.ts             # Env vars + валидация
-│   ├── logger.ts             # Winston structured logging
-│   ├── types.ts              # TypeScript интерфейсы
-│   ├── connector.ts          # DLL wrapper (ffi-napi) + XML коммуникация
-│   ├── connectionManager.ts  # Connection state machine + авто-реконнект
-│   ├── newsProcessor.ts      # Парсинг + нормализация новостей
-│   └── pulseClient.ts        # HTTP client → PULSE backend
-├── Dockerfile                # Multi-stage build с Wine
-├── docker-compose.yml        # Деплой
-├── .env.example              # Шаблон конфигурации
-├── package.json
-└── tsconfig.json
-```
-
-### DLL API (из документации TXmlConnector 6.47.2.26.4)
-
-| Функция | Назначение |
-|---------|------------|
-| `Initialize(logPath, logLevel)` | Инициализация библиотеки |
-| `UnInitialize()` | Очистка перед выгрузкой |
-| `SetCallback(callback)` | Callback для асинхронных сообщений от сервера |
-| `SendCommand(XML)` | Отправка XML-команды |
-| `FreeMemory(ptr)` | Освобождение памяти, выделенной DLL |
-| `SetLogLevel(level)` | Уровень логирования |
-
-### Поток новостей (из документации)
-
-```
-1. Connect → сервер авто-отправляет news_header (id, source, title, time_stamp)
-2. Запрашиваем get_news_body по news_id
-3. Сервер возвращает полный текст новости
-4. Нормализуем и пушим в PULSE через HTTP POST
-```
-
-### Connection Manager — State Machine
-
-| Состояние | Описание |
-|-----------|----------|
-| `disconnected` | Начальное состояние |
-| `connecting` | Загрузка DLL + initialize + callback + connect |
-| `connected` | Активное соединение, получаем новости |
-| `reconnecting` | Потеря связи, планируем reconnect |
-| `error` | Max reconnect attempts reached |
-
-**Авто-реконнект:** configurable interval (default 10s), max attempts (0 = бесконечно)
-**Health check:** каждые 30s, если нет активности → force reconnect
-
-### PULSE Client — Circuit Breaker
-
-| Компонент | Описание |
-|-----------|----------|
-| **Batch** | Накапливает до `PULSE_BATCH_SIZE` (default 10) или `PULSE_PUSH_INTERVAL_MS` (5s) |
-| **Retry** | До 3 попыток с экспоненциальным backoff |
-| **Circuit Breaker** | 5 failures подряд → OPEN (30s cooldown) → HALF-OPEN → CLOSED |
-
-### Health Endpoint
-
-```bash
-curl http://localhost:8080/health
-```
-
-Возвращает JSON: status, connection state, news metrics, pulse metrics.
-
-### DLL — 3 способа загрузки
-
-| Способ | Когда использовать | Как |
-|--------|-------------------|-----|
-| **Volume mount** | Локальный Docker | `docker run -v ./dll:/app/dll` |
-| **Яндекс.Диск** | Render, облако | `TRANSAQ_DLL_URL=https://disk.yandex.ru/d/WG7ysyuV9WQkrw` |
-| **Прямая ссылка** | Любое хранилище | `TRANSAQ_DLL_URL=https://example.com/file.dll` |
-
-**Яндекс.Диск** — лучший вариант для России. Скрипт `download-dll.sh` при старте:
-1. Распознаёт ссылку Яндекс.Диска (по домену `disk.yandex.ru` или `yadi.sk`)
-2. Вызывает API `cloud-api.yandex.net/v1/disk/public/resources/download` с `public_key`
-3. Получает временную прямую ссылку (автоматически, при каждом старте — не протухает)
-4. Скачивает файл, валидирует размер (>1KB) и заголовок PE (Windows DLL)
-
-### Конфигурация (environment variables)
-
-| Переменная | Описание | Default |
-|------------|----------|---------|
-| `TRANSAQ_LOGIN` | Логин Finam | — |
-| `TRANSAQ_PASSWORD` | Пароль Finam | — |
-| `TRANSAQ_HOST` | Сервер | `tr1.finam.ru` |
-| `TRANSAQ_PORT` | Порт | `3900` |
-| `TRANSAQ_DLL_PATH` | Путь к DLL внутри контейнера | `/app/dll/txmlconnector.dll` |
-| `TRANSAQ_DLL_URL` | URL для скачивания DLL (Yandex Disk или прямая) | — |
-| `PULSE_API_URL` | URL бэкенда | — |
-| `PULSE_API_KEY` | API ключ | — |
-| `PULSE_BATCH_SIZE` | Размер батча | `10` |
-| `RECONNECT_INTERVAL_MS` | Интервал реконнекта | `10000` |
-| `MAX_RECONNECT_ATTEMPTS` | Макс. попыток (0=∞) | `0` |
-
-### Деплой
-
-#### Render (Production) — Blueprint
-
-```bash
-# 1. Запушь репо на GitHub
-git add .
-git commit -m "Add Transaq Connector v1.0.0"
-git push origin main
-
-# 2. Render Dashboard → New → Blueprint → Paste repo URL
-
-# 3. Заполни Secrets (Environment Variables):
-#    TRANSAQ_LOGIN=FZTC33538A
-#    TRANSAQ_PASSWORD=NyCy5j8D
-#    PULSE_API_KEY=твой_ключ
-
-# 4. Deploy — Render сам скачает DLL с Яндекс.Диска
-```
-
-#### Локально (Docker Compose)
-
-```bash
-cd transaq-connector
-cp .env.example .env  # заполнить
-mkdir -p dll && cp txmlconnector.dll dll/  # или TRANSAQ_DLL_URL
-docker-compose up -d
-```
-
-### Зачем отдельный сервис
-
-1. **DLL это Windows-библиотека** — нужен Wine, тяжёлый runtime
-2. **Изоляция** — падение DLL не ломает основной backend
-3. **Масштабируемость** — можно запустить несколько инстансов
-4. **Независимый деплой** — обновления connector без трогания backend
-
----
-
-## 27. Будущие задачи (TODO)
-
-| # | Задача | Приоритет | Зависимости |
-|---|--------|-----------|-------------|
-| 1 | **VPS: Купить Hetzner/DigitalOcean** | 🔴 Высокий | €3.79/мес |
-| 2 | **VPS: Задеплоить transaq-connector с DLL** | 🔴 Высокий | Шаг 1 |
-| 3 | **VPS: Загрузить txmlconnector64.dll** | 🔴 Высокий | Шаг 2 |
-| 4 | **VPS: Настроить .env (креды Finam)** | 🟡 Средний | Шаг 3 |
-| 5 | **VPS: Протестировать end-to-end** | 🟡 Средний | Шаг 4 |
-| | | | |
-| | **Результат:** Реал-тайм новости из Transaq → PULSE → браузер | | |
-
-**Почему VPS, а не Render:**
-- Wine требует `SYS_ADMIN` capabilities → managed containers (Render) не подходят
-- DLL — Windows PE executable → нужна Wine эмуляция
-- RSS Финам (7 лент) работает на Render как временное решение
-
-**Когда запускать:** Когда решишь купить VPS. Hetzner CX11 — €3.79/мес, 2GB RAM.
-
-### Оптимизация: RSS dedup по времени источника (idea)
-
-**Проблема:** Каждые 5 мин крон парсит 36×20=720 статей, берёт 100 свежих, делает LLM для всех 100. При этом 87-99 — дубликаты (уже в базе). Тратим LLM-токены впустую.
-
-**Предложение:** Для каждого RSS-источника хранить `last_fetched_at`. При парсинге — пропускать `<item>` с `pubDate < source.last_fetched_at`. Обрабатывать только реально новые (10-30 за запуск).
-
-**Реализация:**
-- Таблица `rss_source_meta` (source_id, last_fetched_at TIMESTAMP)
-- Обновлять после успешного парсинга каждого источника
-- Без запроса к БД внутри processArticles — обновление вне процесса
-
-**Экономия:** ~70-90% меньше LLM-вызовов, быстрее крон, дешевле.
-
-**Статус:** Отложено — первый подход (запрос к cron_log) создал deadlock. Нужен правильный подход.
-
----
-
-## 28. Полная документация
-
-| Файл | Где |
-|------|-----|
-| `CAROUSELS.md` | `/mnt/agents/projects/frontend/CAROUSELS.md` |
-| `TAGS.md` | `/mnt/agents/projects/backend/TAGS.md` — полная методология тегов |
-| `ARCHITECTURE.md` | `/mnt/agents/projects/backend/ARCHITECTU
+| Файл | Где | Описание |
+|------|-----|----------|
+| `CAROUSELS.md` | `/mnt/agents/projects/frontend/CAROUSELS.md` | Логика 3 каруселей, sentiment, optimistic updates, user tags, **NewsFeed vs Карусели** |
+| `ARCHITECTURE.md` | `/mnt/agents/projects/backend/ARCHITECTURE.md` | Pipeline, smart matching, translation, sentiment, API design |
+| `DEPLOYMENT.md` | `/mnt/agents/projects/backend/DEPLOYMENT.md` | Инфраструктура, env vars, тестовый логин, troubleshooting |
+| `PRODUCT_CONTEXT.md` | `/mnt/agents/projects/backend/PRODUCT_CONTEXT.md` | Критические правила, договорённости, тарифы, workflow |
