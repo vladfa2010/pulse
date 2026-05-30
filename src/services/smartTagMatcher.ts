@@ -300,12 +300,33 @@ export async function smartMatchTags(
 export interface SentimentResult {
   sentiment: 'positive' | 'negative' | 'neutral';
   score: number; // -10 to +10
+  reasoning: string; // 2 paragraphs from LLM (what happened + why it matters)
+}
+
+// Parse sentiment score + reasoning from LLM response
+function parseSentimentResponse(content: string): { score: number; reasoning: string } {
+  let score = 0;
+  let reasoning = '';
+  try {
+    const match = content.match(/\{[\s\S]*?\}/);
+    if (match) {
+      const parsed = JSON.parse(match[0]);
+      score = typeof parsed.score === 'number' ? Math.max(-10, Math.min(10, Math.round(parsed.score))) : 0;
+      reasoning = typeof parsed.reasoning === 'string' ? parsed.reasoning.slice(0, 500) : '';
+    }
+  } catch {
+    const numMatch = content.match(/(-?\d+)/);
+    if (numMatch) {
+      score = Math.max(-10, Math.min(10, parseInt(numMatch[1])));
+    }
+  }
+  return { score, reasoning };
 }
 
 export async function analyzeSentimentLLM(title: string, summary: string): Promise<SentimentResult> {
   if (!KIMI_API_KEY) {
     console.log('[SentimentLLM] No KIMI_API_KEY');
-    return { sentiment: 'neutral', score: 0 };
+    return { sentiment: 'neutral', score: 0, reasoning: '' };
   }
 
   const prompt = `You are an experienced investment analyst. Evaluate the sentiment of this financial news article regarding the company/companies mentioned.
@@ -323,14 +344,15 @@ Rate the sentiment on a scale from -10 to +10:
 +10 = Maximum positive (acquisition at premium, record profits, game-changer)
 
 Return ONLY a JSON object in this exact format:
-{"score": 5, "reasoning": "brief one-sentence explanation"}
+{"score": 5, "reasoning": "Paragraph 1: what happened.\\n\\nParagraph 2: why it matters to investors"}
 
 Rules:
 1. Consider the article ONLY from an investor's perspective
 2. A "layoff" announcement is usually negative for employees but may be positive for investors (cost cutting)
 3. A "lawsuit" is negative regardless of who initiated it
 4. Routine operations or minor updates = 0
-5. Return ONLY valid JSON, no markdown, no extra text`;
+5. reasoning: Write 2 paragraphs separated by \\n\\n. Paragraph 1 = what happened (facts). Paragraph 2 = investment significance (why investors care)
+6. Return ONLY valid JSON, no markdown, no extra text`;
 
   try {
     const response = await axios.post(
@@ -339,7 +361,7 @@ Rules:
         model: KIMI_MODEL,
         messages: [{ role: 'user', content: prompt }],
         temperature: KIMI_MODEL.startsWith('kimi-k') ? 1 : 0.1,
-        max_tokens: 80,
+        max_tokens: 200,
       },
       {
         headers: { 'Authorization': `Bearer ${KIMI_API_KEY}`, 'Content-Type': 'application/json' },
@@ -348,35 +370,20 @@ Rules:
     );
 
     const content = response.data?.choices?.[0]?.message?.content || '';
-    console.log(`[SentimentLLM] Raw: "${content}" for "${title.slice(0, 30)}..."`);
+    console.log(`[SentimentLLM] Raw: "${content.slice(0, 120)}..." for "${title.slice(0, 30)}..."`);
 
-    // Parse JSON response
-    let score = 0;
-    try {
-      const match = content.match(/\{[\s\S]*?\}/);
-      if (match) {
-        const parsed = JSON.parse(match[0]);
-        score = typeof parsed.score === 'number' ? Math.max(-10, Math.min(10, Math.round(parsed.score))) : 0;
-      }
-    } catch {
-      // Fallback: try to extract number from text
-      const numMatch = content.match(/(-?\d+)/);
-      if (numMatch) {
-        score = Math.max(-10, Math.min(10, parseInt(numMatch[1])));
-      }
-    }
+    const { score, reasoning } = parseSentimentResponse(content);
 
-    // Map score to sentiment category for backward compatibility
     let sentiment: 'positive' | 'negative' | 'neutral';
     if (score <= -1) sentiment = 'negative';
     else if (score >= 1) sentiment = 'positive';
     else sentiment = 'neutral';
 
-    console.log(`[SentimentLLM] Score: ${score} → ${sentiment}`);
-    return { sentiment, score };
+    console.log(`[SentimentLLM] Score: ${score}, reasoning: ${reasoning.slice(0, 60)}... → ${sentiment}`);
+    return { sentiment, score, reasoning };
   } catch (err: any) {
     console.error(`[SentimentLLM] Error: ${err.message?.slice(0, 100)}`);
-    return { sentiment: 'neutral', score: 0 };
+    return { sentiment: 'neutral', score: 0, reasoning: '' };
   }
 }
 

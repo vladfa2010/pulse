@@ -73,7 +73,7 @@ app.get('/health', async (req, res) => {
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
-    version: '7.11',
+    version: '7.12',
     cron: cronStatus,
     sse_subscribers: getSubscriberCount(),
   });
@@ -936,6 +936,7 @@ async function start() {
     { sql: `ALTER TABLE news ADD COLUMN IF NOT EXISTS tag_impact JSONB DEFAULT '[]'`, name: 'tag_impact' },
     { sql: `ALTER TABLE news ADD COLUMN IF NOT EXISTS sentiment_source VARCHAR(20) DEFAULT 'keyword'`, name: 'sentiment_source' },
     { sql: `ALTER TABLE news ADD COLUMN IF NOT EXISTS sentiment_score INTEGER`, name: 'sentiment_score' },
+    { sql: `ALTER TABLE news ADD COLUMN IF NOT EXISTS sentiment_reasoning TEXT`, name: 'sentiment_reasoning' },
     { sql: `CREATE TABLE IF NOT EXISTS user_defined_tags (tag_id VARCHAR(50) PRIMARY KEY, tag_name VARCHAR(100) NOT NULL, tag_type VARCHAR(20) DEFAULT 'company', keywords TEXT[] DEFAULT '{}', enriched_data JSONB, created_by UUID REFERENCES users(id), created_at TIMESTAMP DEFAULT NOW())`, name: 'user_defined_tags' },
     // Telegram digest settings
     { sql: `ALTER TABLE notification_settings ADD COLUMN IF NOT EXISTS tg_digest_enabled BOOLEAN DEFAULT FALSE`, name: 'tg_digest_enabled' },
