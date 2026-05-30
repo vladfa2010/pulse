@@ -78,7 +78,7 @@ app.get('/health', async (req, res) => {
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
-    version: '7.17',
+    version: '7.17.1',
     cron: cronStatus,
     sse_subscribers: getSubscriberCount(),
   });
@@ -314,9 +314,10 @@ app.get('/backfill-sentiment', async (req, res) => {
         SET sentiment = $1,
             sentiment_score = $2,
             sentiment_reasoning = $3,
-            sentiment_source = 'llm'
+            sentiment_source = 'llm',
+            is_political = $5
         WHERE id = $4
-      `, [result.sentiment, result.score, result.reasoning || null, article.id]);
+      `, [result.sentiment, result.score, result.reasoning || null, article.id, result.is_political || false]);
       updated++;
     }
 
@@ -331,6 +332,7 @@ app.get('/backfill-sentiment', async (req, res) => {
         title: articles[i].title_ru?.slice(0, 40),
         score: r.score,
         sentiment: r.sentiment,
+        is_political: r.is_political,
         reasoning: r.reasoning?.slice(0, 60),
       })),
     });
