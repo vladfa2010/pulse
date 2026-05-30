@@ -30,7 +30,7 @@ const USE_SQLITE = process.env.USE_SQLITE === 'true';
 // ═══════════════════════════════════════════════════════════════════════════
 // Smart Tag Matching (imported from smartTagMatcher)
 // ═══════════════════════════════════════════════════════════════════════════
-import { smartMatchTags, analyzeSentimentLLM, analyzeSentimentBatch, analyzeTagImpact, TagImpact, SentimentResult } from './smartTagMatcher';
+import { smartMatchTags, analyzeSentimentLLM, analyzeSentimentBatch, analyzeTagImpact, analyzeTagImpactBatch, TagImpact, SentimentResult } from './smartTagMatcher';
 import { broadcastNews } from './sse';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -177,44 +177,82 @@ export async function processArticles() {
   }
   console.log(`[Cron] Batch sentiment done: ${sentimentResults.length} results in ${Date.now() - sentimentBatchStart}ms`);
 
-  // 3b. Smart tag matching + tag impact (per article — sequential, can't batch)
+  // 3b. Smart tag matching (keyword-based, fast — sequential OK)
+  console.log('[Cron] Starting smart tag matching...');
+  const matchStart = Date.now();
+  const matchedTagsList: string[][] = [];
+  for (const a of articles) {
+    const title_ru = a.title_ru || a.title;
+    const summary_ru = a.summary_ru || a.summary;
+    const tags = await smartMatchTags(title_ru, summary_ru);
+    matchedTagsList.push(tags);
+  }
+  console.log(`[Cron] Tag matching done: ${matchedTagsList.filter(t => t.length > 0).length}/${articles.length} with tags in ${Date.now() - matchStart}ms`);
+
+  // 3c. Batch tag impact — only for articles WITH matched tags (10 per LLM request)
+  let tagImpactResults: TagImpact[][] = [];
+  if (llmAvailable) {
+    const articlesWithTags = articles
+      .map((a, i) => ({ a, idx: i, tags: matchedTagsList[i] }))
+      .filter(item => item.tags.length > 0);
+
+    if (articlesWithTags.length > 0) {
+      console.log(`[Cron] Starting batch tag impact for ${articlesWithTags.length} articles...`);
+      const impactStart = Date.now();
+      try {
+        const batchResults = await analyzeTagImpactBatch(
+          articlesWithTags.map(item => ({
+            title: item.a.title_ru || item.a.title,
+            summary: item.a.summary_ru || item.a.summary,
+            tags: item.tags,
+          }))
+        );
+        // Map batch results back to article indices
+        const impactMap: Record<number, TagImpact[]> = {};
+        articlesWithTags.forEach((item, batchIdx) => {
+          impactMap[item.idx] = batchResults[batchIdx] || item.tags.map(t => ({ tag: t, impact: 'neutral' as const, reasoning: '' }));
+        });
+        for (let i = 0; i < articles.length; i++) {
+          tagImpactResults.push(impactMap[i] || []);
+        }
+        console.log(`[Cron] Batch tag impact done in ${Date.now() - impactStart}ms`);
+      } catch (err: any) {
+        console.error(`[Cron] Batch tag impact failed: ${err.message?.slice(0, 100)}`);
+        // Fallback: neutral for all
+        for (let i = 0; i < articles.length; i++) {
+          tagImpactResults.push(matchedTagsList[i].map(t => ({ tag: t, impact: 'neutral' as const, reasoning: '' })));
+        }
+      }
+    } else {
+      // No articles with tags
+      for (let i = 0; i < articles.length; i++) {
+        tagImpactResults.push([]);
+      }
+      console.log('[Cron] No articles with matched tags, skipping tag impact');
+    }
+  } else {
+    // No LLM — neutral for all
+    for (let i = 0; i < articles.length; i++) {
+      tagImpactResults.push(matchedTagsList[i].map(t => ({ tag: t, impact: 'neutral' as const, reasoning: '' })));
+    }
+  }
+
+  // 3d. Merge all results
   const processed = [];
   for (let i = 0; i < articles.length; i++) {
     const a = articles[i];
-    const title_ru = a.title_ru || a.title;
-    const summary_ru = a.summary_ru || a.summary;
-    const text = `${title_ru} ${summary_ru}`;
-
-    // Apply batch sentiment result
     const sentimentResult = sentimentResults[i] || { sentiment: 'neutral' as const, score: 0, reasoning: '' };
-    const sentiment = sentimentResult.sentiment;
-    const sentiment_score = sentimentResult.score;
-    const sentiment_reasoning = sentimentResult.reasoning || null;
-    const sentiment_source = llmAvailable ? 'llm' as const : 'keyword' as const;
-
-    // Smart matching: keywords → LLM → related tags
-    const matched_tags = await smartMatchTags(title_ru, summary_ru);
-
-    // Tag impact: LLM only if key exists
-    let tag_impact: TagImpact[] = [];
-    if (llmAvailable && matched_tags.length > 0) {
-      try {
-        tag_impact = await analyzeTagImpact(title_ru, summary_ru, matched_tags);
-      } catch {
-        tag_impact = matched_tags.map(t => ({ tag: t, impact: 'neutral' as const, reasoning: '' }));
-      }
-    }
 
     processed.push({
       ...a,
-      title_ru,
-      summary_ru,
-      sentiment,
-      sentiment_score,
-      sentiment_reasoning,
-      sentiment_source,
-      matched_tags,
-      tag_impact,
+      title_ru: a.title_ru || a.title,
+      summary_ru: a.summary_ru || a.summary,
+      sentiment: sentimentResult.sentiment,
+      sentiment_score: sentimentResult.score,
+      sentiment_reasoning: sentimentResult.reasoning || null,
+      sentiment_source: llmAvailable ? 'llm' as const : 'keyword' as const,
+      matched_tags: matchedTagsList[i],
+      tag_impact: tagImpactResults[i],
     });
   }
 

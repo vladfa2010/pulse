@@ -485,6 +485,7 @@ function parseSentimentResponse(content: string): { score: number; reasoning: st
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Tag Impact Analysis — how does the news affect each tag?
+// BATCH mode: 10 articles per request (10x speedup)
 // ═══════════════════════════════════════════════════════════════════════════
 
 export interface TagImpact {
@@ -493,59 +494,118 @@ export interface TagImpact {
   reasoning: string;
 }
 
-export async function analyzeTagImpact(title: string, summary: string, tags: string[]): Promise<TagImpact[]> {
-  if (!KIMI_API_KEY || tags.length === 0) {
-    return tags.map(t => ({ tag: t, impact: 'neutral', reasoning: '' }));
+interface TagImpactBatchItem {
+  title: string;
+  summary: string;
+  tags: string[];
+}
+
+export async function analyzeTagImpactBatch(items: TagImpactBatchItem[]): Promise<TagImpact[][]> {
+  if (!KIMI_API_KEY || items.length === 0) {
+    return items.map(it => it.tags.map(t => ({ tag: t, impact: 'neutral' as const, reasoning: '' })));
   }
 
-  const prompt = `Analyze how this financial news article affects the following tags.
+  const results: TagImpact[][] = [];
 
-Article title: ${title.slice(0, 200)}
-Article summary: ${summary.slice(0, 400)}
+  for (let i = 0; i < items.length; i += BATCH_SIZE) {
+    const batch = items.slice(i, i + BATCH_SIZE);
+    const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+    const totalBatches = Math.ceil(items.length / BATCH_SIZE);
 
-Tags to analyze: ${tags.join(', ')}
-
-For each tag, determine if the news is positive, negative, or neutral for it.
-Example: "Tesla stock drops 10%" → tesla: negative, nvda: neutral
-
-Return ONLY a JSON array:
-[{"tag":"tesla","impact":"negative","reasoning":"Stock price dropped"}, ...]`;
-
-  try {
-    const response = await axios.post(
-      'https://api.moonshot.ai/v1/chat/completions',
-      {
-        model: KIMI_MODEL,
-        messages: [{ role: 'user', content: prompt }],
-        temperature: KIMI_MODEL.startsWith('kimi-k') ? 1 : 0.1,
-        max_tokens: 500,
-      },
-      {
-        headers: { 'Authorization': `Bearer ${KIMI_API_KEY}`, 'Content-Type': 'application/json' },
-        timeout: KIMI_MODEL.startsWith('kimi-k') ? 30000 : 15000,
-      }
-    );
-
-    const content = response.data?.choices?.[0]?.message?.content || '';
-    console.log(`[TagImpact] Raw: ${content.slice(0, 200)}`);
-    const jsonMatch = content.match(/\[\s\S]*?\]/);
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]);
-      if (Array.isArray(parsed)) {
-        const result = parsed
-          .filter((p: any) => tags.includes(p.tag))
-          .map((p: any) => ({
-            tag: p.tag,
-            impact: ['positive', 'negative'].includes(p.impact) ? p.impact : 'neutral',
-            reasoning: p.reasoning || '',
-          }));
-        console.log(`[TagImpact] Result: ${JSON.stringify(result)}`);
-        return result;
+    try {
+      console.log(`[TagImpactBatch] Processing batch ${batchNum}/${totalBatches} (${batch.length} articles)`);
+      const batchResults = await analyzeTagImpactBatchChunk(batch);
+      results.push(...batchResults);
+    } catch (err: any) {
+      console.error(`[TagImpactBatch] Batch ${batchNum} failed: ${err.message?.slice(0, 100)}`);
+      // Fallback: neutral for all tags in this batch
+      for (const it of batch) {
+        results.push(it.tags.map(t => ({ tag: t, impact: 'neutral' as const, reasoning: '' })));
       }
     }
-  } catch (err: any) {
-    console.error(`[TagImpact] Error: ${err.message?.slice(0, 100)}`);
   }
 
-  return tags.map(t => ({ tag: t, impact: 'neutral', reasoning: '' }));
+  return results;
+}
+
+async function analyzeTagImpactBatchChunk(batch: TagImpactBatchItem[]): Promise<TagImpact[][]> {
+  // Build numbered prompt with all articles and their tags
+  let articlesText = '';
+  batch.forEach((it, i) => {
+    articlesText += `\n[${i + 1}] Title: ${it.title.slice(0, 120)}\nSummary: ${it.summary.slice(0, 200)}\nTags: ${it.tags.join(', ')}\n`;
+  });
+
+  const prompt = `Analyze how each financial news article affects its tags. Return impact (positive/negative/neutral) + brief reasoning for EACH tag.
+
+${articlesText}
+
+Return ONLY a JSON array. Each element is an array of tag impacts for that article, in SAME order as articles above:
+[
+  [{"tag":"tesla","impact":"negative","reasoning":"Stock dropped"}, {"tag":"nvda","impact":"neutral","reasoning":"No direct effect"}],
+  [{"tag":"apple","impact":"positive","reasoning":"Strong earnings"}]
+]
+
+Rules:
+1. Return EXACTLY ${batch.length} inner arrays — same order as articles
+2. Each inner array must have one object per tag from that article
+3. Consider ONLY investor perspective
+4. Return ONLY JSON array, no markdown, no extra text`;
+
+  const response = await axios.post(
+    'https://api.moonshot.ai/v1/chat/completions',
+    {
+      model: KIMI_MODEL,
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.1,
+      max_tokens: 300 * batch.length,
+    },
+    {
+      headers: { 'Authorization': `Bearer ${KIMI_API_KEY}`, 'Content-Type': 'application/json' },
+      timeout: 30000,
+    }
+  );
+
+  const content = response.data?.choices?.[0]?.message?.content || '';
+  console.log(`[TagImpactBatch] Raw: "${content.slice(0, 200)}..."`);
+
+  // Parse JSON array of arrays
+  const results: TagImpact[][] = [];
+  try {
+    const match = content.match(/\[[\s\S]*\]/);
+    if (match) {
+      const parsed = JSON.parse(match[0]);
+      if (Array.isArray(parsed)) {
+        for (const itemArr of parsed) {
+          if (Array.isArray(itemArr)) {
+            const impacts: TagImpact[] = itemArr
+              .filter((p: any) => p && typeof p.tag === 'string')
+              .map((p: any) => ({
+                tag: p.tag,
+                impact: ['positive', 'negative'].includes(p.impact) ? p.impact : 'neutral',
+                reasoning: typeof p.reasoning === 'string' ? p.reasoning.slice(0, 200) : '',
+              }));
+            results.push(impacts);
+          } else {
+            results.push([]);
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.error(`[TagImpactBatch] Parse error: ${(e as Error).message?.slice(0, 100)}`);
+  }
+
+  // Fill missing results
+  while (results.length < batch.length) {
+    const idx = results.length;
+    results.push(batch[idx].tags.map(t => ({ tag: t, impact: 'neutral' as const, reasoning: '' })));
+  }
+
+  return results.slice(0, batch.length);
+}
+
+// Single-article tag impact (backward compatibility)
+export async function analyzeTagImpact(title: string, summary: string, tags: string[]): Promise<TagImpact[]> {
+  const results = await analyzeTagImpactBatch([{ title, summary, tags }]);
+  return results[0];
 }
