@@ -93,6 +93,21 @@ async function logCronFinish(logId: number, fetched: number, saved: number, merg
 }
 
 export async function processArticles() {
+  // Job lock: prevents parallel execution across instances
+  const acquired = await acquireCronLock('rss-aggregator');
+  if (!acquired) {
+    console.log('[Cron] ⏳ Another instance is already running. Skipping.');
+    return;
+  }
+
+  try {
+    await processArticlesLocked();
+  } finally {
+    await releaseCronLock('rss-aggregator');
+  }
+}
+
+async function processArticlesLocked() {
   const logId = await logCronStart('rss');
   const errors: string[] = [];
   console.log('[Cron] Starting RSS fetch at', new Date().toISOString());
@@ -328,7 +343,54 @@ export async function processArticles() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Start cron: every 5 minutes (first run delayed by 2 min)
+// Cron Job Lock — prevents parallel runs via PostgreSQL
+// ═══════════════════════════════════════════════════════════════════════════
+
+const LOCK_TTL_MINUTES = 30; // Lock auto-expires after 30 min (crash safety)
+const INSTANCE_ID = `${process.env.RENDER_INSTANCE_ID || 'local'}-${process.pid}-${Date.now()}`;
+
+async function acquireCronLock(jobName: string): Promise<boolean> {
+  try {
+    // Try to acquire: either the lock is free OR expired
+    const result = await query(`
+      INSERT INTO cron_locks (job_name, locked_at, locked_by, expires_at)
+      VALUES ($1, NOW(), $2, NOW() + INTERVAL '${LOCK_TTL_MINUTES} minutes')
+      ON CONFLICT (job_name) DO UPDATE
+        SET locked_at = NOW(),
+            locked_by = EXCLUDED.locked_by,
+            expires_at = NOW() + INTERVAL '${LOCK_TTL_MINUTES} minutes'
+        WHERE cron_locks.expires_at < NOW()
+      RETURNING locked_by
+    `, [jobName, INSTANCE_ID]);
+
+    const acquired = result.rows.length > 0 && result.rows[0].locked_by === INSTANCE_ID;
+    if (acquired) {
+      console.log(`[CronLock] ✅ Acquired lock for "${jobName}" (instance: ${INSTANCE_ID.slice(0, 30)}...)`);
+    } else {
+      console.log(`[CronLock] ⏳ Lock "${jobName}" is held by another instance. Skipping this run.`);
+    }
+    return acquired;
+  } catch (err: any) {
+    console.error(`[CronLock] Error acquiring lock: ${err.message?.slice(0, 100)}`);
+    return false; // Fail-safe: don't run if lock fails
+  }
+}
+
+async function releaseCronLock(jobName: string): Promise<void> {
+  try {
+    await query(`
+      UPDATE cron_locks
+      SET expires_at = NOW() -- Expire immediately
+      WHERE job_name = $1 AND locked_by = $2
+    `, [jobName, INSTANCE_ID]);
+    console.log(`[CronLock] 🔓 Released lock for "${jobName}"`);
+  } catch (err: any) {
+    console.error(`[CronLock] Error releasing lock: ${err.message?.slice(0, 100)}`);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Start cron: every 15 minutes (first run delayed by 2 min)
 // ═══════════════════════════════════════════════════════════════════════════
 export function startCron() {
   console.log('[Cron] RSS aggregator scheduled every 15 minutes');
