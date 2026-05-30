@@ -41,6 +41,11 @@ const PORT = process.env.PORT || 3001;
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
 // ═══════════════════════════════════════════════════════════════════════════
+// PostgreSQL vs SQLite datetime helpers for migrations
+// ═══════════════════════════════════════════════════════════════════════════
+const _SQL_NOW = USE_SQLITE ? "datetime('now')" : 'NOW()';
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Middleware — обработка входящих запросов
 // ═══════════════════════════════════════════════════════════════════════════
 app.use(cors());
@@ -937,7 +942,7 @@ async function start() {
     { sql: `ALTER TABLE news ADD COLUMN IF NOT EXISTS sentiment_source VARCHAR(20) DEFAULT 'keyword'`, name: 'sentiment_source' },
     { sql: `ALTER TABLE news ADD COLUMN IF NOT EXISTS sentiment_score INTEGER`, name: 'sentiment_score' },
     { sql: `ALTER TABLE news ADD COLUMN IF NOT EXISTS sentiment_reasoning TEXT`, name: 'sentiment_reasoning' },
-    { sql: `CREATE TABLE IF NOT EXISTS cron_locks (job_name VARCHAR(50) PRIMARY KEY, locked_at TIMESTAMP, locked_by VARCHAR(100), expires_at TIMESTAMP)`, name: 'cron_locks' },
+    { sql: `CREATE TABLE IF NOT EXISTS cron_locks (job_name VARCHAR(50) PRIMARY KEY, locked_at TIMESTAMP, locked_by VARCHAR(100), expires_at TIMESTAMP DEFAULT ${_SQL_NOW})`, name: 'cron_locks' },
     { sql: `CREATE TABLE IF NOT EXISTS user_defined_tags (tag_id VARCHAR(50) PRIMARY KEY, tag_name VARCHAR(100) NOT NULL, tag_type VARCHAR(20) DEFAULT 'company', keywords TEXT[] DEFAULT '{}', enriched_data JSONB, created_by UUID REFERENCES users(id), created_at TIMESTAMP DEFAULT NOW())`, name: 'user_defined_tags' },
     // Telegram digest settings
     { sql: `ALTER TABLE notification_settings ADD COLUMN IF NOT EXISTS tg_digest_enabled BOOLEAN DEFAULT FALSE`, name: 'tg_digest_enabled' },
@@ -946,9 +951,9 @@ async function start() {
     { sql: `ALTER TABLE notification_settings ADD COLUMN IF NOT EXISTS last_digest_sent TIMESTAMP`, name: 'last_digest_sent' },
     { sql: `ALTER TABLE notification_settings ADD COLUMN IF NOT EXISTS digest_email VARCHAR(255)`, name: 'digest_email' },
     { sql: `ALTER TABLE notification_settings ADD COLUMN IF NOT EXISTS email_digest_enabled BOOLEAN DEFAULT FALSE`, name: 'email_digest_enabled' },
-    { sql: `CREATE TABLE IF NOT EXISTS cron_log (id SERIAL PRIMARY KEY, task_name VARCHAR(50) NOT NULL, started_at TIMESTAMP NOT NULL DEFAULT NOW(), finished_at TIMESTAMP, articles_fetched INTEGER DEFAULT 0, articles_saved INTEGER DEFAULT 0, articles_merged INTEGER DEFAULT 0, errors TEXT, status VARCHAR(20) DEFAULT 'running')`, name: 'cron_log' },
+    { sql: `CREATE TABLE IF NOT EXISTS cron_log (id ${USE_SQLITE ? 'INTEGER PRIMARY KEY AUTOINCREMENT' : 'SERIAL PRIMARY KEY'}, task_name VARCHAR(50) NOT NULL, started_at TIMESTAMP NOT NULL DEFAULT ${_SQL_NOW}, finished_at TIMESTAMP, articles_fetched INTEGER DEFAULT 0, articles_saved INTEGER DEFAULT 0, articles_merged INTEGER DEFAULT 0, errors TEXT, status VARCHAR(20) DEFAULT 'running')`, name: 'cron_log' },
     { sql: `CREATE INDEX IF NOT EXISTS idx_cron_log_started_at ON cron_log(started_at DESC)`, name: 'idx_cron_log_started_at' },
-    { sql: `CREATE TABLE IF NOT EXISTS rss_source_meta (source_id VARCHAR(50) PRIMARY KEY, last_fetched_at TIMESTAMP NOT NULL DEFAULT NOW() - INTERVAL '24 hours', updated_at TIMESTAMP DEFAULT NOW())`, name: 'rss_source_meta' },
+    { sql: `CREATE TABLE IF NOT EXISTS rss_source_meta (source_id VARCHAR(50) PRIMARY KEY, last_fetched_at TIMESTAMP NOT NULL DEFAULT ${USE_SQLITE ? "datetime('now', '-24 hours')" : "NOW() - INTERVAL '24 hours'"}, updated_at TIMESTAMP DEFAULT ${_SQL_NOW})`, name: 'rss_source_meta' },
   ];
   for (const m of migrations) {
     try {

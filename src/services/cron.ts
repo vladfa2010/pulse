@@ -362,17 +362,24 @@ async function processArticlesLocked() {
 const LOCK_TTL_MINUTES = 15; // Lock auto-expires after 15 min (cron runs in ~2-3 min, 15 = safety margin)
 const INSTANCE_ID = `${process.env.RENDER_INSTANCE_ID || 'local'}-${process.pid}-${Date.now()}`;
 
+// PostgreSQL vs SQLite datetime helpers (for cron lock SQL)
+const IS_SQLITE = process.env.USE_SQLITE === 'true';
+const SQL_NOW = IS_SQLITE ? "datetime('now')" : 'NOW()';
+const SQL_INTERVAL_15MIN = IS_SQLITE
+  ? "datetime('now', '+15 minutes')"
+  : "NOW() + INTERVAL '15 minutes'";
+
 async function acquireCronLock(jobName: string): Promise<boolean> {
   try {
     // Try to acquire: either the lock is free OR expired
     const result = await query(`
       INSERT INTO cron_locks (job_name, locked_at, locked_by, expires_at)
-      VALUES ($1, NOW(), $2, NOW() + INTERVAL '${LOCK_TTL_MINUTES} minutes')
+      VALUES ($1, ${SQL_NOW}, $2, ${SQL_INTERVAL_15MIN})
       ON CONFLICT (job_name) DO UPDATE
-        SET locked_at = NOW(),
+        SET locked_at = ${SQL_NOW},
             locked_by = EXCLUDED.locked_by,
-            expires_at = NOW() + INTERVAL '${LOCK_TTL_MINUTES} minutes'
-        WHERE cron_locks.expires_at < NOW()
+            expires_at = ${SQL_INTERVAL_15MIN}
+        WHERE cron_locks.expires_at < ${SQL_NOW}
       RETURNING locked_by
     `, [jobName, INSTANCE_ID]);
 
