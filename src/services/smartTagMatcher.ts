@@ -310,6 +310,40 @@ interface BatchArticle {
 }
 
 const BATCH_SIZE = 10;
+const MAX_RETRIES = 3;
+const RETRY_DELAY_MS = 2000; // 2s base delay
+
+// Retry helper: retries on 429 (rate limit) or 502 (bad gateway) with exponential backoff
+async function llmRequestWithRetry<T>(
+  fn: () => Promise<T>,
+  label: string,
+): Promise<T> {
+  let lastError: any;
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      lastError = err;
+      const status = err.response?.status;
+      const isRetryable = status === 429 || status === 502 || err.code === 'ECONNRESET' || err.code === 'ETIMEDOUT';
+
+      if (!isRetryable) {
+        console.error(`[${label}] Non-retryable error (status=${status}): ${err.message?.slice(0, 100)}`);
+        throw err; // Don't retry non-retryable errors
+      }
+
+      if (attempt < MAX_RETRIES) {
+        const delay = RETRY_DELAY_MS * Math.pow(2, attempt - 1); // 2s, 4s, 8s
+        console.log(`[${label}] Attempt ${attempt}/${MAX_RETRIES} failed (status=${status}). Retrying in ${delay}ms...`);
+        await new Promise(r => setTimeout(r, delay));
+      } else {
+        console.error(`[${label}] All ${MAX_RETRIES} attempts failed. Giving up.`);
+        throw err;
+      }
+    }
+  }
+  throw lastError;
+}
 
 export async function analyzeSentimentBatch(articles: BatchArticle[]): Promise<SentimentResult[]> {
   if (!KIMI_API_KEY) {
@@ -378,18 +412,21 @@ Rules:
 4. Lawsuits = always negative
 5. Return ONLY JSON array, no markdown, no extra text`;
 
-  const response = await axios.post(
-    'https://api.moonshot.ai/v1/chat/completions',
-    {
-      model: KIMI_MODEL,
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.1,
-      max_tokens: 200 * batch.length, // ~200 tokens per article
-    },
-    {
-      headers: { 'Authorization': `Bearer ${KIMI_API_KEY}`, 'Content-Type': 'application/json' },
-      timeout: 30000, // 30s for batch
-    }
+  const response = await llmRequestWithRetry(
+    () => axios.post(
+      'https://api.moonshot.ai/v1/chat/completions',
+      {
+        model: KIMI_MODEL,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.1,
+        max_tokens: 200 * batch.length,
+      },
+      {
+        headers: { 'Authorization': `Bearer ${KIMI_API_KEY}`, 'Content-Type': 'application/json' },
+        timeout: 30000,
+      }
+    ),
+    'SentimentBatchChunk'
   );
 
   const content = response.data?.choices?.[0]?.message?.content || '';
@@ -551,18 +588,21 @@ Rules:
 3. Consider ONLY investor perspective
 4. Return ONLY JSON array, no markdown, no extra text`;
 
-  const response = await axios.post(
-    'https://api.moonshot.ai/v1/chat/completions',
-    {
-      model: KIMI_MODEL,
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.1,
-      max_tokens: 300 * batch.length,
-    },
-    {
-      headers: { 'Authorization': `Bearer ${KIMI_API_KEY}`, 'Content-Type': 'application/json' },
-      timeout: 30000,
-    }
+  const response = await llmRequestWithRetry(
+    () => axios.post(
+      'https://api.moonshot.ai/v1/chat/completions',
+      {
+        model: KIMI_MODEL,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.1,
+        max_tokens: 300 * batch.length,
+      },
+      {
+        headers: { 'Authorization': `Bearer ${KIMI_API_KEY}`, 'Content-Type': 'application/json' },
+        timeout: 30000,
+      }
+    ),
+    'TagImpactBatchChunk'
   );
 
   const content = response.data?.choices?.[0]?.message?.content || '';
