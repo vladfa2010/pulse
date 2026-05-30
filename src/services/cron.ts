@@ -110,16 +110,22 @@ export async function processArticles() {
 async function processArticlesLocked() {
   const logId = await logCronStart('rss');
   const errors: string[] = [];
-  console.log('[Cron] Starting RSS fetch at', new Date().toISOString());
-
-  // 1. Fetch RSS (с защитой от ошибок)
   let articles: any[] = [];
+  let processed: any[] = [];
+  let saved = 0;
+  let merged = 0;
+
   try {
-    articles = await fetchAllRSS();
-  } catch (err: any) {
-    console.error('[Cron] RSS fetch failed:', err.message);
-    return;
-  }
+    console.log('[Cron] Starting RSS fetch at', new Date().toISOString());
+
+    // 1. Fetch RSS (с защитой от ошибок)
+    try {
+      articles = await fetchAllRSS();
+    } catch (err: any) {
+      console.error('[Cron] RSS fetch failed:', err.message);
+      errors.push(`fetch: ${err.message}`);
+      return; // Exit early — finally still runs
+    }
 
   // Limit to 100 freshest articles per run (prevent LLM timeout overload)
   articles = articles
@@ -253,7 +259,7 @@ async function processArticlesLocked() {
   }
 
   // 3d. Merge all results
-  const processed = [];
+  processed = [];
   for (let i = 0; i < articles.length; i++) {
     const a = articles[i];
     const sentimentResult = sentimentResults[i] || { sentiment: 'neutral' as const, score: 0, reasoning: '' };
@@ -272,8 +278,8 @@ async function processArticlesLocked() {
   }
 
   // 4. Save to DB (с защитой от дубликатов по content_hash)
-  let saved = 0;
-  let merged = 0;
+  saved = 0;
+  merged = 0;
 
   for (const a of processed) {
     try {
@@ -338,8 +344,15 @@ async function processArticlesLocked() {
     }
   }
 
-  console.log(`[Cron] Saved ${saved} new, merged ${merged} duplicates (total ${processed.length})`);
-  await logCronFinish(logId, processed.length, saved, merged, errors);
+    console.log(`[Cron] Saved ${saved} new, merged ${merged} duplicates (total ${processed.length})`);
+  } catch (err: any) {
+    console.error(`[Cron] Fatal error in processArticlesLocked: ${err.message}`);
+    errors.push(`fatal: ${err.message}`);
+  } finally {
+    // Гарантированно логируем финиш — даже при ошибке
+    await logCronFinish(logId, processed.length, saved, merged, errors);
+    console.log(`[Cron] Finished. Logged: ${processed.length} processed, ${saved} saved, ${merged} merged, ${errors.length} errors`);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
