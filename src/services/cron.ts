@@ -379,11 +379,10 @@ async function acquireCronLock(jobName: string): Promise<boolean> {
 async function releaseCronLock(jobName: string): Promise<void> {
   try {
     await query(`
-      UPDATE cron_locks
-      SET expires_at = NOW() -- Expire immediately
+      DELETE FROM cron_locks
       WHERE job_name = $1 AND locked_by = $2
     `, [jobName, INSTANCE_ID]);
-    console.log(`[CronLock] 🔓 Released lock for "${jobName}"`);
+    console.log(`[CronLock] 🔓 Released lock for "${jobName}" (row deleted)`);
   } catch (err: any) {
     console.error(`[CronLock] Error releasing lock: ${err.message?.slice(0, 100)}`);
   }
