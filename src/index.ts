@@ -492,6 +492,61 @@ app.get('/source-stats', async (req, res) => {
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ═══════════════════════════════════════════════════════════════════════════
+// Sentiment Total — overall sentiment delta for ALL news (no tag filter)
+// ═══════════════════════════════════════════════════════════════════════════
+app.get('/sentiment-total', async (req, res) => {
+  try {
+    const days = parseInt(req.query.days as string) || 7;
+
+    // Daily sentiment counts for ALL news
+    const dailyResult = await query(`
+      SELECT
+        DATE(published_at) as day,
+        sentiment,
+        COUNT(*) as count
+      FROM news
+      WHERE published_at > NOW() - INTERVAL '${days} days'
+        AND sentiment IS NOT NULL
+      GROUP BY DATE(published_at), sentiment
+      ORDER BY day
+    `, []);
+
+    // Build response: day -> {positive, negative, neutral, delta}
+    const dailyMap: Record<string, {positive: number; negative: number; neutral: number; delta: number}> = {};
+    for (const row of dailyResult.rows) {
+      let dayKey = row.day;
+      if (typeof dayKey === 'object' && dayKey !== null) {
+        dayKey = new Date(dayKey).toISOString().split('T')[0];
+      }
+      if (!dailyMap[dayKey]) dailyMap[dayKey] = {positive: 0, negative: 0, neutral: 0, delta: 0};
+      dailyMap[dayKey][row.sentiment as 'positive' | 'negative' | 'neutral'] += parseInt(row.count);
+    }
+
+    // Calculate delta and build array
+    const daily: any[] = [];
+    for (const [day, data] of Object.entries(dailyMap)) {
+      data.delta = data.positive - data.negative;
+      daily.push({day, ...data});
+    }
+    daily.sort((a, b) => a.day.localeCompare(b.day));
+
+    // Totals
+    const totalPos = daily.reduce((s, d) => s + d.positive, 0);
+    const totalNeg = daily.reduce((s, d) => s + d.negative, 0);
+    const totalNeu = daily.reduce((s, d) => s + d.neutral, 0);
+
+    res.json({
+      days,
+      total: {positive: totalPos, negative: totalNeg, neutral: totalNeu, delta: totalPos - totalNeg},
+      daily,
+    });
+  } catch (err: any) {
+    console.error('[SentimentTotal] Error:', err.message);
+    res.status(500).json({error: err.message});
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Sentiment Stats — sentiment delta by day per tag (for analytics dashboard)
 // ═══════════════════════════════════════════════════════════════════════════
 app.get('/sentiment-stats', async (req, res) => {
