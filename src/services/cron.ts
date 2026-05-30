@@ -30,7 +30,7 @@ const USE_SQLITE = process.env.USE_SQLITE === 'true';
 // ═══════════════════════════════════════════════════════════════════════════
 // Smart Tag Matching (imported from smartTagMatcher)
 // ═══════════════════════════════════════════════════════════════════════════
-import { smartMatchTags, analyzeSentimentLLM, analyzeSentimentBatch, analyzeTagImpact, analyzeTagImpactBatch, TagImpact, SentimentResult } from './smartTagMatcher';
+import { smartMatchTags, analyzeSentimentLLM, analyzeSentimentBatch, analyzeTagImpact, analyzeTagImpactBatch, analyzeUnifiedBatch, TagImpact, SentimentResult, UnifiedResult } from './smartTagMatcher';
 import { broadcastNews } from './sse';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -163,42 +163,7 @@ async function processArticlesLocked() {
   const llmAvailable = !!process.env.KIMI_API_KEY;
   console.log(`[Cron] LLM sentiment: ${llmAvailable ? 'ENABLED (batch x10)' : 'DISABLED (keyword-based)'}`);
 
-  // 3a. Batch sentiment analysis — 10 articles per LLM request (10x speedup)
-  console.log('[Cron] Starting batch sentiment analysis...');
-  const sentimentBatchStart = Date.now();
-  let sentimentResults: SentimentResult[] = [];
-  if (llmAvailable) {
-    try {
-      sentimentResults = await analyzeSentimentBatch(
-        articles.map(a => ({ title: a.title_ru || a.title, summary: a.summary_ru || a.summary }))
-      );
-    } catch (err: any) {
-      console.error(`[Cron] Batch sentiment failed: ${err.message?.slice(0, 100)}`);
-      // Fallback: keyword-based for all
-      sentimentResults = articles.map(a => {
-        const text = `${a.title_ru || a.title} ${a.summary_ru || a.summary}`;
-        const sent = analyzeSentiment(text);
-        return {
-          sentiment: sent,
-          score: sent === 'positive' ? 5 : sent === 'negative' ? -5 : 0,
-          reasoning: '',
-        };
-      });
-    }
-  } else {
-    sentimentResults = articles.map(a => {
-      const text = `${a.title_ru || a.title} ${a.summary_ru || a.summary}`;
-      const sent = analyzeSentiment(text);
-      return {
-        sentiment: sent,
-        score: sent === 'positive' ? 5 : sent === 'negative' ? -5 : 0,
-        reasoning: '',
-      };
-    });
-  }
-  console.log(`[Cron] Batch sentiment done: ${sentimentResults.length} results in ${Date.now() - sentimentBatchStart}ms`);
-
-  // 3b. Smart tag matching (keyword-based, fast — sequential OK)
+  // 3a-c. UNIFIED BATCH — 1 LLM request = sentiment + tag_impact + is_political (v7.16)
   console.log('[Cron] Starting smart tag matching...');
   const matchStart = Date.now();
   const matchedTagsList: string[][] = [];
@@ -210,70 +175,51 @@ async function processArticlesLocked() {
   }
   console.log(`[Cron] Tag matching done: ${matchedTagsList.filter(t => t.length > 0).length}/${articles.length} with tags in ${Date.now() - matchStart}ms`);
 
-  // 3c. Batch tag impact — only for articles WITH matched tags (10 per LLM request)
-  let tagImpactResults: TagImpact[][] = [];
+  // Unified LLM batch — sentiment + tag_impact + is_political in ONE request
+  console.log('[Cron] Starting UNIFIED batch (sentiment + tag_impact + is_political)...');
+  const unifiedStart = Date.now();
+  let unifiedResults: UnifiedResult[] = [];
   if (llmAvailable) {
-    const articlesWithTags = articles
-      .map((a, i) => ({ a, idx: i, tags: matchedTagsList[i] }))
-      .filter(item => item.tags.length > 0);
-
-    if (articlesWithTags.length > 0) {
-      console.log(`[Cron] Starting batch tag impact for ${articlesWithTags.length} articles...`);
-      const impactStart = Date.now();
-      try {
-        const batchResults = await analyzeTagImpactBatch(
-          articlesWithTags.map(item => ({
-            title: item.a.title_ru || item.a.title,
-            summary: item.a.summary_ru || item.a.summary,
-            tags: item.tags,
-          }))
-        );
-        // Map batch results back to article indices
-        const impactMap: Record<number, TagImpact[]> = {};
-        articlesWithTags.forEach((item, batchIdx) => {
-          impactMap[item.idx] = batchResults[batchIdx] || item.tags.map(t => ({ tag: t, impact: 'neutral' as const, reasoning: '' }));
-        });
-        for (let i = 0; i < articles.length; i++) {
-          tagImpactResults.push(impactMap[i] || []);
-        }
-        console.log(`[Cron] Batch tag impact done in ${Date.now() - impactStart}ms`);
-      } catch (err: any) {
-        console.error(`[Cron] Batch tag impact failed: ${err.message?.slice(0, 100)}`);
-        // Fallback: neutral for all
-        for (let i = 0; i < articles.length; i++) {
-          tagImpactResults.push(matchedTagsList[i].map(t => ({ tag: t, impact: 'neutral' as const, reasoning: '' })));
-        }
-      }
-    } else {
-      // No articles with tags
-      for (let i = 0; i < articles.length; i++) {
-        tagImpactResults.push([]);
-      }
-      console.log('[Cron] No articles with matched tags, skipping tag impact');
+    try {
+      unifiedResults = await analyzeUnifiedBatch(
+        articles.map((a, i) => ({
+          title: a.title_ru || a.title,
+          summary: a.summary_ru || a.summary,
+          tags: matchedTagsList[i],
+        }))
+      );
+    } catch (err: any) {
+      console.error(`[Cron] Unified batch failed: ${err.message?.slice(0, 100)}`);
+      unifiedResults = articles.map((a, i) => ({
+        sentiment: 'neutral' as const, score: 0, reasoning: '', is_political: false,
+        tag_impacts: matchedTagsList[i].map(t => ({ tag: t, impact: 'neutral' as const, reasoning: '' })),
+      }));
     }
   } else {
-    // No LLM — neutral for all
-    for (let i = 0; i < articles.length; i++) {
-      tagImpactResults.push(matchedTagsList[i].map(t => ({ tag: t, impact: 'neutral' as const, reasoning: '' })));
-    }
+    unifiedResults = articles.map((a, i) => ({
+      sentiment: 'neutral' as const, score: 0, reasoning: '', is_political: false,
+      tag_impacts: matchedTagsList[i].map(t => ({ tag: t, impact: 'neutral' as const, reasoning: '' })),
+    }));
   }
+  console.log(`[Cron] Unified batch done: ${unifiedResults.length} results in ${Date.now() - unifiedStart}ms`);
 
   // 3d. Merge all results
   processed = [];
   for (let i = 0; i < articles.length; i++) {
     const a = articles[i];
-    const sentimentResult = sentimentResults[i] || { sentiment: 'neutral' as const, score: 0, reasoning: '' };
+    const u = unifiedResults[i] || { sentiment: 'neutral' as const, score: 0, reasoning: '', is_political: false, tag_impacts: [] };
 
     processed.push({
       ...a,
       title_ru: a.title_ru || a.title,
       summary_ru: a.summary_ru || a.summary,
-      sentiment: sentimentResult.sentiment,
-      sentiment_score: sentimentResult.score,
-      sentiment_reasoning: sentimentResult.reasoning || null,
+      sentiment: u.sentiment,
+      sentiment_score: u.score,
+      sentiment_reasoning: u.reasoning || null,
       sentiment_source: llmAvailable ? 'llm' as const : 'keyword' as const,
+      is_political: u.is_political,
       matched_tags: matchedTagsList[i],
-      tag_impact: tagImpactResults[i],
+      tag_impact: u.tag_impacts || [],
     });
   }
 
@@ -304,9 +250,9 @@ async function processArticlesLocked() {
           // Новая новость
           const newId = crypto.randomUUID();
           await query(
-            `INSERT OR IGNORE INTO news (id, title_original, title_ru, summary_ru, source, source_id, url, url_normalized, content_hash, all_sources, source_count, published_at, lang_original, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, matched_tags, tag_impact)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [newId, a.title, title_ru, summary_ru, a.source, a.sourceId, a.url, urlNormalized, contentHash, JSON.stringify([a.source]), 1, a.publishedAt.toISOString(), a.lang, a.sentiment, a.sentiment_score, a.sentiment_reasoning, a.sentiment_source, JSON.stringify(a.matched_tags || []), JSON.stringify(a.tag_impact || [])]
+            `INSERT OR IGNORE INTO news (id, title_original, title_ru, summary_ru, source, source_id, url, url_normalized, content_hash, all_sources, source_count, published_at, lang_original, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, matched_tags, tag_impact)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [newId, a.title, title_ru, summary_ru, a.source, a.sourceId, a.url, urlNormalized, contentHash, JSON.stringify([a.source]), 1, a.publishedAt.toISOString(), a.lang, a.sentiment, a.sentiment_score, a.sentiment_reasoning, a.sentiment_source, a.is_political ? 1 : 0, JSON.stringify(a.matched_tags || []), JSON.stringify(a.tag_impact || [])]
           );
           saved++;
           // Broadcast to SSE subscribers
@@ -316,8 +262,8 @@ async function processArticlesLocked() {
         // PostgreSQL: INSERT с ON CONFLICT (content_hash) DO UPDATE
         // Ключевой момент: дубликат по content_hash → добавляем источник, НЕ создаём новую запись
         const result = await query(
-          `INSERT INTO news (title_original, title_ru, summary_ru, source, source_id, url, url_normalized, content_hash, all_sources, source_count, published_at, lang_original, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, matched_tags, tag_impact)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text[], $10, $11, $12, $13, $14, $15, $16, $17, $18)
+          `INSERT INTO news (title_original, title_ru, summary_ru, source, source_id, url, url_normalized, content_hash, all_sources, source_count, published_at, lang_original, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, matched_tags, tag_impact)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text[], $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
            ON CONFLICT (content_hash) DO UPDATE
              SET all_sources = CASE
                WHEN news.all_sources @> ARRAY[EXCLUDED.source]::text[] THEN news.all_sources
@@ -328,7 +274,7 @@ async function processArticlesLocked() {
                ELSE news.source_count + 1
              END
            RETURNING (xmax = 0) as is_insert`,
-          [a.title, title_ru, summary_ru, a.source, a.sourceId, a.url, urlNormalized, contentHash, [a.source], 1, a.publishedAt, a.lang, a.sentiment, a.sentiment_score, a.sentiment_reasoning, a.sentiment_source, a.matched_tags || [], JSON.stringify(a.tag_impact || [])]
+          [a.title, title_ru, summary_ru, a.source, a.sourceId, a.url, urlNormalized, contentHash, [a.source], 1, a.publishedAt, a.lang, a.sentiment, a.sentiment_score, a.sentiment_reasoning, a.sentiment_source, a.is_political, a.matched_tags || [], JSON.stringify(a.tag_impact || [])]
         );
 
         if (result.rows.length > 0 && result.rows[0].is_insert === true) {

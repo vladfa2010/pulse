@@ -653,3 +653,140 @@ export async function analyzeTagImpact(title: string, summary: string, tags: str
   const results = await analyzeTagImpactBatch([{ title, summary, tags }]);
   return results[0];
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// UNIFIED BATCH — 1 LLM request = sentiment + tag_impact + is_political
+// Replaces 2-3 separate calls with 1 call. 2-3x speedup.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface UnifiedResult {
+  sentiment: 'positive' | 'negative' | 'neutral';
+  score: number; // -10..+10
+  reasoning: string;
+  is_political: boolean;
+  tag_impacts: TagImpact[];
+}
+
+interface UnifiedBatchItem {
+  title: string;
+  summary: string;
+  tags: string[];
+}
+
+export async function analyzeUnifiedBatch(items: UnifiedBatchItem[]): Promise<UnifiedResult[]> {
+  if (!KIMI_API_KEY || items.length === 0) {
+    return items.map(() => ({
+      sentiment: 'neutral' as const, score: 0, reasoning: '', is_political: false, tag_impacts: [],
+    }));
+  }
+
+  const results: UnifiedResult[] = [];
+  for (let i = 0; i < items.length; i += BATCH_SIZE) {
+    const batch = items.slice(i, i + BATCH_SIZE);
+    try {
+      const batchResults = await analyzeUnifiedBatchChunk(batch);
+      results.push(...batchResults);
+    } catch (err: any) {
+      console.error(`[UnifiedBatch] Batch failed: ${err.message?.slice(0, 100)}`);
+      for (const it of batch) {
+        results.push({ sentiment: 'neutral', score: 0, reasoning: '', is_political: false, tag_impacts: it.tags.map(t => ({ tag: t, impact: 'neutral' as const, reasoning: '' })) });
+      }
+    }
+  }
+  return results;
+}
+
+async function analyzeUnifiedBatchChunk(batch: UnifiedBatchItem[]): Promise<UnifiedResult[]> {
+  let articlesText = '';
+  batch.forEach((it, idx) => {
+    articlesText += `\n[${idx + 1}] Title: ${it.title.slice(0, 120)}\nSummary: ${it.summary.slice(0, 200)}\nTags: ${it.tags.join(', ')}\n`;
+  });
+
+  const prompt = `You are an experienced investment analyst. Analyze ${batch.length} financial news articles. For each article provide:
+
+1. **sentiment score** (-10 to +10): investment impact from investor's perspective
+2. **reasoning** (2 paragraphs): "What happened.\\n\\nWhy it matters to investors."
+3. **is_political** (true/false): Is this primarily about politics, war, elections, sanctions, geopolitics? (not about companies, earnings, products)
+4. **tag_impacts**: For EACH tag — is the news positive, negative, or neutral for that tag?
+
+Articles:
+${articlesText}
+
+Return ONLY JSON with "results" array (one per article, same order):
+{"results": [
+  {
+    "score": 5,
+    "reasoning": "Apple reported record earnings.\\n\\nThis signals strong growth for investors.",
+    "is_political": false,
+    "tag_impacts": [
+      {"tag": "apple", "impact": "positive", "reasoning": "Record earnings"},
+      {"tag": "nvda", "impact": "neutral", "reasoning": "No direct effect"}
+    ]
+  }
+]}
+
+Rules:
+- Return EXACTLY ${batch.length} objects
+- is_political: true ONLY for politics/war/elections/sanctions. False for company news/earnings/products.
+- score from investor perspective: layoff may be positive (cost cutting), lawsuit always negative
+- Return ONLY JSON, no markdown`;
+
+  const response = await llmRequestWithRetry(
+    () => axios.post(
+      'https://api.moonshot.ai/v1/chat/completions',
+      {
+        model: KIMI_MODEL,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.1,
+        max_tokens: 400 * batch.length,
+        response_format: { type: 'json_object' },
+      },
+      {
+        headers: { 'Authorization': `Bearer ${KIMI_API_KEY}`, 'Content-Type': 'application/json' },
+        timeout: 30000,
+      }
+    ),
+    'UnifiedBatchChunk'
+  );
+
+  const content = response.data?.choices?.[0]?.message?.content || '';
+  console.log(`[UnifiedBatch] Raw: "${content.slice(0, 200)}..."`);
+
+  // Parse JSON: { results: [{score, reasoning, is_political, tag_impacts}] }
+  const results: UnifiedResult[] = [];
+  try {
+    const match = content.match(/\{[\s\S]*\]/);
+    if (match) {
+      const parsed = JSON.parse(match[0]);
+      const items = parsed.results || parsed;
+      const arr = Array.isArray(items) ? items : [];
+      for (const item of arr) {
+        const score = typeof item.score === 'number' ? Math.max(-10, Math.min(10, Math.round(item.score))) : 0;
+        const reasoning = typeof item.reasoning === 'string' ? item.reasoning.slice(0, 500) : '';
+        const is_political = item.is_political === true;
+        let sentiment: 'positive' | 'negative' | 'neutral';
+        if (score <= -1) sentiment = 'negative';
+        else if (score >= 1) sentiment = 'positive';
+        else sentiment = 'neutral';
+
+        const tag_impacts: TagImpact[] = (Array.isArray(item.tag_impacts) ? item.tag_impacts : [])
+          .filter((p: any) => p && typeof p.tag === 'string')
+          .map((p: any) => ({
+            tag: p.tag,
+            impact: ['positive', 'negative'].includes(p.impact) ? p.impact : 'neutral',
+            reasoning: typeof p.reasoning === 'string' ? p.reasoning.slice(0, 200) : '',
+          }));
+
+        results.push({ sentiment, score, reasoning, is_political, tag_impacts });
+      }
+    }
+  } catch (e) {
+    console.error(`[UnifiedBatch] Parse error: ${(e as Error).message?.slice(0, 100)}`);
+  }
+
+  while (results.length < batch.length) {
+    const idx = results.length;
+    results.push({ sentiment: 'neutral', score: 0, reasoning: '', is_political: false, tag_impacts: batch[idx].tags.map(t => ({ tag: t, impact: 'neutral' as const, reasoning: '' })) });
+  }
+  return results.slice(0, batch.length);
+}
