@@ -401,11 +401,11 @@ For each article, rate sentiment on scale -10 to +10:
 +5 = Strong positive (major deal, strong earnings)
 +10 = Maximum positive (acquisition at premium, record profits)
 
-Return ONLY a JSON array in this exact format (one object per article, in same order):
-[
+Return ONLY a JSON object with "results" key containing an array (one object per article, in same order):
+{"results": [
   {"score": 5, "reasoning": "What happened.\\n\\nWhy it matters to investors."},
   {"score": -3, "reasoning": "What happened.\\n\\nWhy it matters to investors."}
-]
+]}
 
 Rules:
 1. Return EXACTLY ${batch.length} objects — same order as articles above
@@ -435,26 +435,26 @@ Rules:
   const content = response.data?.choices?.[0]?.message?.content || '';
   console.log(`[SentimentBatch] Raw: "${content.slice(0, 200)}..."`);
 
-  // Parse JSON array
+  // Parse JSON: { results: [{score, reasoning}, ...] }
   const results: SentimentResult[] = [];
   try {
-    const match = content.match(/\[[\s\S]*?\]/);
+    const match = content.match(/\{[\s\S]*\}/);
     if (match) {
       const parsed = JSON.parse(match[0]);
-      if (Array.isArray(parsed)) {
-        for (const item of parsed) {
-          const score = typeof item.score === 'number'
-            ? Math.max(-10, Math.min(10, Math.round(item.score)))
-            : 0;
-          const reasoning = typeof item.reasoning === 'string'
-            ? item.reasoning.slice(0, 500)
-            : '';
-          let sentiment: 'positive' | 'negative' | 'neutral';
-          if (score <= -1) sentiment = 'negative';
-          else if (score >= 1) sentiment = 'positive';
-          else sentiment = 'neutral';
-          results.push({ sentiment, score, reasoning });
-        }
+      const items = parsed.results || parsed;
+      const arr = Array.isArray(items) ? items : [];
+      for (const item of arr) {
+        const score = typeof item.score === 'number'
+          ? Math.max(-10, Math.min(10, Math.round(item.score)))
+          : 0;
+        const reasoning = typeof item.reasoning === 'string'
+          ? item.reasoning.slice(0, 500)
+          : '';
+        let sentiment: 'positive' | 'negative' | 'neutral';
+        if (score <= -1) sentiment = 'negative';
+        else if (score >= 1) sentiment = 'positive';
+        else sentiment = 'neutral';
+        results.push({ sentiment, score, reasoning });
       }
     }
   } catch (e) {
@@ -579,11 +579,11 @@ async function analyzeTagImpactBatchChunk(batch: TagImpactBatchItem[]): Promise<
 
 ${articlesText}
 
-Return ONLY a JSON array. Each element is an array of tag impacts for that article, in SAME order as articles above:
-[
+Return ONLY a JSON object with "results" key. Each element in results is an array of tag impacts for that article, in SAME order as articles above:
+{"results": [
   [{"tag":"tesla","impact":"negative","reasoning":"Stock dropped"}, {"tag":"nvda","impact":"neutral","reasoning":"No direct effect"}],
   [{"tag":"apple","impact":"positive","reasoning":"Strong earnings"}]
-]
+]}
 
 Rules:
 1. Return EXACTLY ${batch.length} inner arrays — same order as articles
@@ -612,26 +612,26 @@ Rules:
   const content = response.data?.choices?.[0]?.message?.content || '';
   console.log(`[TagImpactBatch] Raw: "${content.slice(0, 200)}..."`);
 
-  // Parse JSON array of arrays
+  // Parse JSON: { results: [[{tag, impact, reasoning}], ...] }
   const results: TagImpact[][] = [];
   try {
-    const match = content.match(/\[[\s\S]*\]/);
+    const match = content.match(/\{[\s\S]*\]/);
     if (match) {
       const parsed = JSON.parse(match[0]);
-      if (Array.isArray(parsed)) {
-        for (const itemArr of parsed) {
-          if (Array.isArray(itemArr)) {
-            const impacts: TagImpact[] = itemArr
-              .filter((p: any) => p && typeof p.tag === 'string')
-              .map((p: any) => ({
-                tag: p.tag,
-                impact: ['positive', 'negative'].includes(p.impact) ? p.impact : 'neutral',
-                reasoning: typeof p.reasoning === 'string' ? p.reasoning.slice(0, 200) : '',
-              }));
-            results.push(impacts);
-          } else {
-            results.push([]);
-          }
+      const items = parsed.results || parsed;
+      const arr = Array.isArray(items) ? items : [];
+      for (const itemArr of arr) {
+        if (Array.isArray(itemArr)) {
+          const impacts: TagImpact[] = itemArr
+            .filter((p: any) => p && typeof p.tag === 'string')
+            .map((p: any) => ({
+              tag: p.tag,
+              impact: ['positive', 'negative'].includes(p.impact) ? p.impact : 'neutral',
+              reasoning: typeof p.reasoning === 'string' ? p.reasoning.slice(0, 200) : '',
+            }));
+          results.push(impacts);
+        } else {
+          results.push([]);
         }
       }
     }
