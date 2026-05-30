@@ -387,11 +387,12 @@ router.get('/tags/:tagName/enrichment', async (req, res) => {
       tag_name: row.tag_name,
       tag_type: row.tag_type || enriched.tag_type || 'company',
       ticker: enriched.ticker || null,
+      website: enriched.website || null,
       synonyms_en: enriched.synonyms_en || [],
       synonyms_ru: enriched.synonyms_ru || [],
       key_products: enriched.key_products || [],
       related_entities: enriched.related_entities || [],
-      description: enriched.description || null,
+      description_ru: enriched.description_ru || enriched.description || null,
       created_at: row.created_at,
     });
   } catch (err: any) {

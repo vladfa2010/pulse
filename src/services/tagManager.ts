@@ -48,11 +48,12 @@ export const TAG_TYPE_LABELS: Record<TagType, string> = {
 export interface TagEnrichment {
   tag_type: TagType;           // company, ticker, sector, etc.
   ticker?: string;             // AAPL, SBER, NVDA (if applicable)
+  website?: string;            // Official website (e.g. https://www.apple.com)
   related_entities: string[];  // Related companies/sectors/people
   synonyms_en: string[];       // English synonyms & aliases
   synonyms_ru: string[];       // Russian synonyms & aliases
   key_products: string[];      // Key products, services, terms
-  description?: string;        // Brief description
+  description_ru: string;      // 2-paragraph description in Russian
 }
 
 /**
@@ -74,20 +75,24 @@ Return ONLY a JSON object with this exact structure:
 {
   "tag_type": "company",        // One of: company, ticker, sector, trend, person, commodity, index, currency
   "ticker": "AAPL",             // Stock ticker if applicable, else null
+  "website": "https://www.apple.com",  // Official company website. null if not a company/person, or unknown
   "related_entities": ["Microsoft", "Google"],  // Related companies, sectors, or people (5-10 items)
   "synonyms_en": ["Apple Inc", "iPhone maker", "Cupertino"],  // English synonyms/aliases (5-10 items)
   "synonyms_ru": ["Эпл", "эппл", "яблочная компания"],       // Russian synonyms/aliases (5-10 items)
   "key_products": ["iPhone", "iPad", "Mac", "App Store", "Apple Watch"],  // Key products/services (5-10 items)
-  "description": "American technology company..."  // Brief 1-sentence description
+  "description_ru": "Apple — американская технологическая корпорация, специализирующаяся на производстве потребительской электроники, программного обеспечения и онлайн-сервисов. Компания была основана Стивом Джобсом, Стивом Возняком и Рональдом Уэйном в 1976 году в Калифорнии.\\n\\nСегодня Apple является одной из крупнейших компаний мира по рыночной капитализации. Её основные продукты включают смартфоны iPhone, компьютеры Mac, планшеты iPad, а также сервисы App Store, Apple Music и iCloud. Акции компании торгуются на NASDAQ под тикером AAPL."
 }
 
 Rules:
 1. Return ONLY valid JSON, no markdown, no extra text
-2. If tag is a person: ticker=null, related_entities=their companies, key_products=their initiatives
-3. If tag is a sector/index/trend: ticker=null, related_entities=major constituents
-4. synonyms_ru must include common Russian transliterations and nicknames
-5. All arrays must have at least 3 items, at most 15 items
-6. tag_type MUST be one of: company, ticker, sector, trend, person, commodity, index, currency`;
+2. description_ru: Write 2 paragraphs in RUSSIAN. Paragraph 1 = what the company/person/sector is (origin, founding). Paragraph 2 = current status, main activities, stock exchange if applicable. Use \\n\\n between paragraphs.
+3. website: Official company/person website URL starting with https://. null if unknown or not a company/person.
+4. If tag is a person: ticker=null, website=personal site or Wikipedia link, related_entities=their companies, key_products=their initiatives
+5. If tag is a sector/index/trend: ticker=null, website=null, related_entities=major constituents
+6. synonyms_ru must include common Russian transliterations and nicknames
+7. All arrays must have at least 3 items, at most 15 items
+8. tag_type MUST be one of: company, ticker, sector, trend, person, commodity, index, currency
+9. description_ru must be written in natural, fluent Russian (not translated from English)`;
 
   try {
     const response = await axios.post(
@@ -96,7 +101,7 @@ Rules:
         model: KIMI_MODEL,
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.1,
-        max_tokens: 800,
+        max_tokens: 1200,
       },
       {
         headers: {
@@ -118,11 +123,12 @@ Rules:
       const enrichment: TagEnrichment = {
         tag_type: TAG_TYPES.includes(parsed.tag_type) ? parsed.tag_type : 'company',
         ticker: parsed.ticker || undefined,
+        website: parsed.website || undefined,
         related_entities: Array.isArray(parsed.related_entities) ? parsed.related_entities : [],
         synonyms_en: Array.isArray(parsed.synonyms_en) ? parsed.synonyms_en : [],
         synonyms_ru: Array.isArray(parsed.synonyms_ru) ? parsed.synonyms_ru : [],
         key_products: Array.isArray(parsed.key_products) ? parsed.key_products : [],
-        description: parsed.description || undefined,
+        description_ru: parsed.description_ru || parsed.description || '',
       };
 
       console.log(`[TagEnrich] Enriched "${tagName}": type=${enrichment.tag_type}, ticker=${enrichment.ticker || 'none'}, synonyms=${enrichment.synonyms_en.length + enrichment.synonyms_ru.length}, products=${enrichment.key_products.length}`);
