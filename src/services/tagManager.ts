@@ -13,7 +13,7 @@ import { query } from '../config/db';
 import axios from 'axios';
 
 const KIMI_API_KEY = process.env.KIMI_API_KEY;
-const KIMI_MODEL = process.env.KIMI_MODEL || 'kimi-k2';
+const KIMI_MODEL = process.env.KIMI_MODEL || 'moonshot-v1-32k';
 
 // Допустимые типы тегов
 export const TAG_TYPES = [
@@ -92,7 +92,11 @@ Rules:
 6. synonyms_ru must include common Russian transliterations and nicknames
 7. All arrays must have at least 3 items, at most 15 items
 8. tag_type MUST be one of: company, ticker, sector, trend, person, commodity, index, currency
-9. description_ru must be written in natural, fluent Russian (not translated from English)`;
+9. description_ru must be written in natural, fluent Russian (not translated from English)
+10. Use CURRENT data as of 2026 — stock exchange listings, company status, ownership should reflect 2026 reality`;
+
+// Reset to v1-32k (kimi-k2 may not be available on current plan)
+// User can override via KIMI_MODEL env var
 
   try {
     const response = await axios.post(
