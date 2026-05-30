@@ -1,7 +1,7 @@
 # PULSE — Backend Architecture
 
 > Техническая документация бэкенда. Логика, flow, принятие решений.
-> Последнее обновление: 2026-06-25
+> Последнее обновление: 2026-05-30 (v7.15 — batch processing + job lock)
 
 ---
 
@@ -671,3 +671,74 @@ src/
 │   └── rateLimit.ts         # Rate limiting
 └── index.ts                 # Entry point, routes, cron
 ```
+
+---
+
+## 11. Batch Processing & Job Lock (v7.13-7.15)
+
+### Batch Sentiment (v7.13)
+
+```typescript
+// 10 статей за 1 LLM-запрос вместо 10 отдельных
+analyzeSentimentBatch(articles: {title, summary}[])
+  → analyzeSentimentBatchChunk(10 articles)
+    → 1 axios.post to Kimi API
+    → returns: [{sentiment, score, reasoning}] × 10
+```
+
+**Prompt:** `response_format: { type: "json_object" }` — гарантия валидного JSON.
+
+### Batch Tag Impact (v7.14)
+
+```typescript
+// 10 статей за 1 LLM-запрос вместо 10 отдельных
+analyzeTagImpactBatch(items: {title, summary, tags}[])
+  → analyzeTagImpactBatchChunk(10 articles)
+    → returns: [[{tag, impact, reasoning}]] × 10
+```
+
+### Retry Logic (v7.14.1)
+
+```typescript
+llmRequestWithRetry(fn, label):
+  for attempt 1..3:
+    try: return await fn()
+    catch err:
+      if status NOT IN [429, 502, ECONNRESET, ETIMEDOUT]: throw
+      delay = 2s × 2^(attempt-1)  // 2s, 4s, 8s
+      sleep(delay); retry
+```
+
+### Distributed Job Lock (v7.15)
+
+```sql
+CREATE TABLE cron_locks (
+  job_name VARCHAR(50) PRIMARY KEY,
+  locked_at TIMESTAMP,
+  locked_by VARCHAR(100),
+  expires_at TIMESTAMP
+);
+```
+
+**Acquire:**
+```sql
+INSERT INTO cron_locks (job_name, locked_at, locked_by, expires_at)
+VALUES ('rss-aggregator', NOW(), 'instance-id', NOW() + 15min)
+ON CONFLICT (job_name) DO UPDATE
+  SET locked_at = NOW(), locked_by = 'instance-id', expires_at = NOW() + 15min
+  WHERE cron_locks.expires_at < NOW()  -- only if expired
+RETURNING locked_by
+```
+
+**Release:** `DELETE FROM cron_locks WHERE job_name = 'rss-aggregator' AND locked_by = 'instance-id'`
+
+**TTL:** 15 минут (cron runs ~2-3 min, 15 = safety margin for crash recovery).
+
+### Performance Comparison
+
+| Метрика | v7.12 (sequential) | v7.14 (batch) | Ускорение |
+|---------|---------------------|---------------|-----------|
+| Sentiment (10 articles) | 10 × 500ms = 5s | 1 × 2000ms = 2s | **2.5×** |
+| Tag Impact (10 articles) | 10 × 500ms = 5s | 1 × 2000ms = 2s | **2.5×** |
+| **Total LLM time** | **~10s** | **~4s** | **2.5×** |
+| Cron interval | 5 min | 15 min | — |

@@ -2,10 +2,10 @@
 
 > **Файл для быстрого входа в контекст после сброса.**
 > **Дата:** 2026-05-30
-> **Версия API:** 7.11
-> **Актуальные коммиты:** backend `b0426af`, frontend `775d546`
+> **Версия API:** 7.15
+> **Актуальные коммиты:** backend `45d1629`, frontend `775d546`
 >
-> ✅ Все изменения за сегодня задокументированы
+> ✅ Batch sentiment + batch tag impact + retry logic + job lock
 
 ---
 
@@ -27,7 +27,7 @@
 | Кэш | React Query (@tanstack/react-query) — optimistic updates, background refetch |
 | Backend | Node.js 20, Express, TypeScript |
 | БД | PostgreSQL (Render production) / SQLite (local) |
-| LLM API | Kimi API (api.moonshot.ai, НЕ .cn) — перевод, sentiment, tag matching |
+| LLM API | Kimi API (moonshot-v1-32k, api.moonshot.ai, НЕ .cn) |
 | RSS | 20+ источников (RU + EN), batch по 4, cron каждые 15 мин |
 | Auth | JWT + bcryptjs, cookie-based sessions |
 
@@ -51,16 +51,37 @@
 
 ---
 
-## 4. News Pipeline (RSS → БД)
+## 4. News Pipeline (RSS → БД) — v7.15
 
 ```
-RSS Fetch (20+ sources) → Parse XML → URL Normalize → Translate EN→RU (Kimi API)
-→ Sentiment Analysis (keyword + LLM) → Smart Tag Matching (3-layer)
-→ Tag Impact Analysis (LLM per tag) → Deduplicate (content_hash)
-→ Save to PostgreSQL
+Phase 1: RSS Fetch (32 sources, batch×4, 1500ms) → Parse XML → URL Normalize
+Phase 2: Translate EN→RU (Kimi API, moonshot-v1-32k)
+Phase 3a: BATCH SENTIMENT (v7.13) — 10 статей/LLM-запрос, score -10..+10 + reasoning
+Phase 3b: Smart Tag Matching (3-layer: keywords → LLM → related)
+Phase 3c: BATCH TAG IMPACT (v7.14) — 10 статей/LLM-запрос, impact per tag
+Phase 4: Save (INSERT ON CONFLICT content_hash) → SSE broadcast
 ```
 
-**Скорость:** ~38-48 секунд на весь batch
+**Batch Processing (v7.13-7.14):**
+| Фаза | Было (v7.12) | Стало (v7.14) | Ускорение |
+|------|-------------|---------------|-----------|
+| Sentiment | 10 × 500ms = 5s | 1 × 2s = 2s | **2.5×** |
+| Tag Impact | 10 × 500ms = 5s | 1 × 2s = 2s | **2.5×** |
+| **Итого LLM** | **~10s** | **~4s** | **2.5×** |
+
+**Retry Logic (v7.14.1):** 3 попытки при 429/502/ECONNRESET/ETIMEDOUT. Backoff: 2s→4s→8s. Fallback: keyword-based neutral.
+
+**JSON Guarantee (v7.14.2):** `response_format: { type: "json_object" }` — LLM всегда возвращает валидный JSON.
+
+**Job Lock (v7.15):** PostgreSQL `cron_locks` таблица. `acquireCronLock('rss-aggregator')` + `releaseCronLock(DELETE)`. TTL = 15 минут. Предотвращает parallel runs.
+
+**Cron:** `*/15 * * * *` (15 минут). Первый запуск через 2 минуты после старта.
+
+**Dedup:** `content_hash` MD5 на title+summary. `ON CONFLICT DO UPDATE` — добавляем источник в `all_sources[]`.
+
+**Ограничение:** max 100 свежих статей за цикл.
+
+**Скорость:** ~15-25 секунд на весь batch (v7.14+, batch mode)
 
 ---
 
@@ -110,7 +131,7 @@ LLM оценивает новость как опытный инвестицио
 
 ## 7. Translation
 
-- **Kimi API** (api.moonshot.ai, модель moonshot-v1-8k)
+- **Kimi API** (api.moonshot.ai, модель moonshot-v1-32k)
 - Google Translate **заблокирован** на Render (не работает)
 - Batch size: 5 текстов, задержка 500ms между batch
 - Фильтр: `hasLatin && !hasCyrillic && length > 5`
@@ -196,7 +217,7 @@ backend/src/
     smartTagMatcher.ts   — 3-layer tag matching + sentiment + tag impact
     rssFetcher.ts        — RSS fetch + XML parse
     rssSources.ts        — 20+ RSS sources config
-    translate.ts         — Kimi API translation (api.moonshot.ai)
+    translate.ts         — Kimi API translation (moonshot-v1-32k)
     tagManager.ts        — User-defined tags + keyword generation + backfill
     reports.ts           — Weekly email reports
   routes/
