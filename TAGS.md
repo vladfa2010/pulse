@@ -3,7 +3,7 @@
 > Дата: 2026-05-30
 > Файлы: `smartTagMatcher.ts`, `tagManager.ts`
 > Статус: ✅ Только пользовательские теги + LLM
-> Последнее обновление: v7.10.5 — related_entities убраны из keywords matching
+> Последнее обновление: v7.11 — sentiment score −10..+10
 
 ---
 
@@ -415,6 +415,81 @@ CREATE TABLE news (
   ]
 }
 ```
+
+---
+
+## 11. Диагностика
+
+```sql
+-- Распределение тегов по новостям
+SELECT unnest(matched_tags) as tag, COUNT(*) 
+FROM news GROUP BY tag ORDER BY count DESC;
+
+-- Новости без тегов
+SELECT COUNT(*) FROM news WHERE matched_tags IS NULL OR array_length(matched_tags, 1) = 0;
+
+-- Все пользовательские теги
+SELECT * FROM user_defined_tags;
+
+-- Кэш LLM matching
+SELECT COUNT(*) FROM smart_tag_cache;
+
+## 12. Sentiment Score — инвестиционная оценка (v7.11)
+
+### Шкала
+
+| Score | Интерпретация | Цвет в UI |
+|-------|---------------|-----------|
+| −10 | Катастрофа — банкротство, массовое мошенничество | 🔴 Красный |
+| −5 | Сильный негатив — крупные убытки, санкции, скандал | 🔴 Красный |
+| −1 | Слабый негатив — небольшой негатив | 🔴 Красный |
+| 0 | Нейтрально — никакого внимания | ⚪ Серый |
+| +1 | Слабый позитив — небольшой позитив | 🟢 Зелёный |
+| +5 | Сильный позитив — крупная сделка, сильная отчётность, прорыв | 🟢 Зелёный |
+| +10 | Максимум — поглощение с премией, рекордные прибыли, game-changer | 🟢 Зелёный |
+
+### Prompt (LLM)
+
+```
+You are an experienced investment analyst. Evaluate the sentiment of this
+financial news article regarding the company/companies mentioned.
+
+Rate the sentiment on a scale from -10 to +10 from an investor's perspective.
+
+Return ONLY JSON: {"score": 5, "reasoning": "brief explanation"}
+
+Rules:
+1. Layoff = may be positive for investors (cost cutting)
+2. Lawsuit = negative regardless
+3. Routine operations = 0
+```
+
+### В БД
+
+```sql
+ALTER TABLE news ADD COLUMN sentiment_score INTEGER;
+-- + sentiment TEXT (positive/negative/neutral)
+-- + sentiment_source TEXT ('llm' | 'keyword')
+```
+
+### В UI
+
+Плашка сантимента: `[↑] Позитив +5` или `[↓] Негатив -3`
+
+Цвет плашки:
+- −10..−1: красный (`#EF4444`)
+- 0: серый (`#9CA3AF`)
+- +1..+10: зелёный (`#34D399`)
+
+---
+
+## 13. Аналитика endpoint'ы (v7.10.6+)
+
+| Endpoint | Параметры | Что возвращает |
+|----------|-----------|----------------|
+| `GET /sentiment-stats` | `userId`, `days` | Дельта по тегам |
+| `GET /sentiment-total` | `days` | Общая дельта всех новостей |
+| `GET /source-stats` | — | Новости по источникам |
 
 ---
 
