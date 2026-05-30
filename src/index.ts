@@ -440,6 +440,56 @@ app.get('/debug-db', async (req, res) => {
 
 
 
+// TEMP: Source stats — news count per source for today
+app.get('/source-stats', async (req, res) => {
+  try {
+    const finamSources = [
+      'finam_companies', 'finam_news', 'finam_forecasts', 'finam_world',
+      'finam_analytics', 'finam_bonds_news', 'finam_bonds_comments'
+    ];
+    // Count per finam source today
+    const todayCounts = await query(`
+      SELECT source_id, COUNT(*) as count
+      FROM news
+      WHERE source_id = ANY($1)
+        AND fetched_at > NOW() - INTERVAL '24 hours'
+      GROUP BY source_id
+      ORDER BY count DESC
+    `, [finamSources]);
+    // Total finam today
+    const totalFinam = await query(`
+      SELECT COUNT(*) as count
+      FROM news
+      WHERE source_id LIKE 'finam_%'
+        AND fetched_at > NOW() - INTERVAL '24 hours'
+    `);
+    // Top 10 sources today (all)
+    const topSources = await query(`
+      SELECT source_id, COUNT(*) as count
+      FROM news
+      WHERE fetched_at > NOW() - INTERVAL '24 hours'
+      GROUP BY source_id
+      ORDER BY count DESC
+      LIMIT 10
+    `);
+    // Total all sources today
+    const totalToday = await query(`
+      SELECT COUNT(*) as count
+      FROM news
+      WHERE fetched_at > NOW() - INTERVAL '24 hours'
+    `);
+    res.json({
+      finam_today: parseInt(totalFinam.rows[0]?.count || '0'),
+      finam_breakdown: todayCounts.rows,
+      all_top_sources_today: topSources.rows,
+      all_total_today: parseInt(totalToday.rows[0]?.count || '0'),
+      date: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // API Routes — все эндпоинты начинаются с /api/
 // ═══════════════════════════════════════════════════════════════════════════
