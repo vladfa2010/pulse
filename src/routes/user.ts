@@ -362,17 +362,18 @@ router.get('/tags/related', async (req, res) => {
   }
 });
 
-// GET /api/user/tags/:tagName/enrichment — enriched data for a tag
-router.get('/tags/:tagName/enrichment', authMiddleware, async (req: AuthRequest, res) => {
+// GET /api/user/tags/:tagName/enrichment — enriched data for a tag (PUBLIC)
+router.get('/tags/:tagName/enrichment', async (req, res) => {
   try {
-    const userId = req.user!.userId;
     const tagName = req.params.tagName;
 
     const result = await query(
       `SELECT tag_name, tag_type, enriched_data, created_at
        FROM user_defined_tags
-       WHERE user_id = $1 AND tag_name = $2`,
-      [userId, tagName]
+       WHERE tag_name = $1
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [tagName]
     );
 
     if (result.rows.length === 0) {
