@@ -78,7 +78,7 @@ app.get('/health', async (req, res) => {
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
-    version: '7.15.9',
+    version: '7.16',
     cron: cronStatus,
     sse_subscribers: getSubscriberCount(),
   });
@@ -272,6 +272,72 @@ app.get('/debug-env', async (req, res) => {
     frontend_url: process.env.FRONTEND_URL || 'https://pulse-frontend-jt53.onrender.com',
     node_env: process.env.NODE_ENV || 'development',
   });
+});
+
+// TEMP: Backfill sentiment for existing news — run LLM on last N articles
+app.get('/backfill-sentiment', async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
+    // Get articles without sentiment_score (or all if force=true)
+    const force = req.query.force === 'true';
+    const articlesResult = await query(`
+      SELECT id, title_ru, summary_ru, sentiment, sentiment_score
+      FROM news
+      ${force ? '' : 'WHERE sentiment_score IS NULL'}
+      ORDER BY published_at DESC
+      LIMIT $1
+    `, [limit]);
+
+    const articles = articlesResult.rows;
+    if (articles.length === 0) {
+      return res.json({ message: 'No articles to process', processed: 0 });
+    }
+
+    console.log(`[Backfill] Processing ${articles.length} articles...`);
+    const startTime = Date.now();
+
+    // Process in batches of 10
+    const { analyzeSentimentBatch } = await import('./services/smartTagMatcher');
+    const results = await analyzeSentimentBatch(
+      articles.map(a => ({ title: a.title_ru || '', summary: a.summary_ru || '' }))
+    );
+
+    // Update DB
+    let updated = 0;
+    for (let i = 0; i < articles.length; i++) {
+      const article = articles[i];
+      const result = results[i];
+      if (!result) continue;
+
+      await query(`
+        UPDATE news
+        SET sentiment = $1,
+            sentiment_score = $2,
+            sentiment_reasoning = $3,
+            sentiment_source = 'llm'
+        WHERE id = $4
+      `, [result.sentiment, result.score, result.reasoning || null, article.id]);
+      updated++;
+    }
+
+    const duration = Date.now() - startTime;
+    console.log(`[Backfill] Done: ${updated}/${articles.length} updated in ${duration}ms`);
+
+    res.json({
+      processed: articles.length,
+      updated,
+      duration_ms: duration,
+      sample: results.slice(0, 3).map((r, i) => ({
+        title: articles[i].title_ru?.slice(0, 40),
+        score: r.score,
+        sentiment: r.sentiment,
+        reasoning: r.reasoning?.slice(0, 60),
+      })),
+    });
+  } catch (err: any) {
+    console.error('[Backfill] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // TEMP: Diagnostic endpoint — check DB health, cron locks, test insert
