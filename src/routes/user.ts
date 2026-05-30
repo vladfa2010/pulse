@@ -440,6 +440,21 @@ router.post('/tags/custom', authMiddleware, async (req: AuthRequest, res) => {
       return res.status(400).json({ error: 'Invalid tag name' });
     }
 
+    // Check if user already has a tag with the same name (case-insensitive)
+    const existingNameCheck = await query(
+      `SELECT tag_id, tag_name FROM portfolios 
+       WHERE user_id = $1 AND LOWER(tag_name) = LOWER($2)
+       LIMIT 1`,
+      [userId, tagName]
+    );
+    if (existingNameCheck.rows.length > 0) {
+      return res.status(409).json({
+        error: 'Tag already exists',
+        existing_tag_id: existingNameCheck.rows[0].tag_id,
+        existing_tag_name: existingNameCheck.rows[0].tag_name,
+      });
+    }
+
     // Создаем тег (auto-detect type + LLM enrichment)
     const result = await createUserTag(userId, tagId, tagName, tagType);
     if (!result.success) {
