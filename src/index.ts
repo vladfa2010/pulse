@@ -62,7 +62,7 @@ app.get('/health', async (req, res) => {
     const lastRun = await query(`SELECT started_at FROM cron_log ORDER BY started_at DESC LIMIT 1`);
     if (lastRun.rows.length > 0) {
       const minutesAgo = (Date.now() - new Date(lastRun.rows[0].started_at).getTime()) / 60000;
-      cronStatus = minutesAgo < 15 ? 'healthy' : minutesAgo < 30 ? 'stale' : 'down';
+      cronStatus = minutesAgo < 30 ? 'healthy' : minutesAgo < 60 ? 'stale' : 'down';
     } else {
       cronStatus = 'no_runs';
     }
@@ -73,7 +73,7 @@ app.get('/health', async (req, res) => {
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
-    version: '7.13',
+    version: '7.13.1',
     cron: cronStatus,
     sse_subscribers: getSubscriberCount(),
   });
@@ -231,12 +231,12 @@ app.get('/debug-cron', async (req, res) => {
        FROM cron_log WHERE started_at > NOW() - INTERVAL '24 hours'`
     );
 
-    // Is cron alive? (last run within 15 minutes for 5-min schedule)
+    // Is cron alive? (last run within 30 minutes for 15-min schedule)
     const lastRun = await query(
       `SELECT started_at FROM cron_log ORDER BY started_at DESC LIMIT 1`
     );
     const isAlive = lastRun.rows.length > 0 &&
-      (new Date().getTime() - new Date(lastRun.rows[0].started_at).getTime()) < 15 * 60 * 1000;
+      (new Date().getTime() - new Date(lastRun.rows[0].started_at).getTime()) < 30 * 60 * 1000;
 
     res.json({
       cron_alive: isAlive,

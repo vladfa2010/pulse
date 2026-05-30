@@ -293,9 +293,9 @@ export async function processArticles() {
 // Start cron: every 5 minutes (first run delayed by 2 min)
 // ═══════════════════════════════════════════════════════════════════════════
 export function startCron() {
-  console.log('[Cron] RSS aggregator scheduled every 5 minutes');
+  console.log('[Cron] RSS aggregator scheduled every 15 minutes');
 
-  cron.schedule('*/5 * * * *', async () => {
+  cron.schedule('*/15 * * * *', async () => {
     try {
       await processArticles();
     } catch (err: any) {
