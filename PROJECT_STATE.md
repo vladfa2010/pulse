@@ -2,10 +2,10 @@
 
 > **Файл для быстрого входа в контекст после сброса.**
 > **Дата:** 2026-05-30
-> **Версия API:** 7.9
-> **Актуальные коммиты:** backend `76c0f8a`, frontend `6b707ce`
+> **Версия API:** 7.11
+> **Актуальные коммиты:** backend `b0426af`, frontend `775d546`
 >
-> ⚠️ **После отката (см. раздел 12)**
+> ✅ Все изменения за сегодня задокументированы
 
 ---
 
@@ -45,6 +45,9 @@
 - `GET /api/news` — карусель 1 (непрочитанные по тегам)
 - `GET /api/news?history=true` — карусель 2 (прочитанные по тегам, DESC)
 - `GET /api/news?global=true` — карусель 3 (все новости)
+- `GET /sentiment-stats?userId={uuid}&days={N}` — дельта сантимента по тегам
+- `GET /sentiment-total?days={N}` — общая дельта всех новостей
+- `GET /source-stats` — статистика по источникам RSS
 
 ---
 
@@ -69,17 +72,37 @@ RSS Fetch (20+ sources) → Parse XML → URL Normalize → Translate EN→RU (K
 
 ---
 
-## 6. Sentiment + Liquid Glass
+## 6. Sentiment + Liquid Glass (v7.11)
+
+### Sentiment Score — инвестиционная оценка (новое в v7.11)
+
+LLM оценивает новость как опытный инвестиционный аналитик: **−10 до +10**
+
+| Score | Значение | Цвет |
+|-------|----------|------|
+| −10 | Катастрофа (банкротство, скандал) | 🔴 Красный |
+| −5 | Сильный негатив (убытки, санкции) | 🔴 Красный |
+| −1 | Слабый негатив | 🔴 Красный |
+| 0 | Нейтрально | ⚪ Серый |
+| +1 | Слабый позитив | 🟢 Зелёный |
+| +5 | Сильный позитив (сделка, рост) | 🟢 Зелёный |
+| +10 | Максимум (поглощение, рекорд) | 🟢 Зелёный |
+
+**В UI:** плашка `Позитив +5` или `Негатив -3` (иконка + текст + цифра)  
+**В БД:** `news.sentiment_score INTEGER` (v7.11 миграция)  
+**API:** все `/api/news/*` endpoint'ы возвращают `sentiment_score`
+
+### 2 уровня определения
+- L1: Keyword-based (быстро, без API) — `sentiment_source='keyword'`, score = ±5
+- L2: LLM через Kimi API — `sentiment_source='llm'`, score = −10..+10
+
+### Legacy sentiment (backward compatibility)
 
 | Sentiment | Цвет | CSS glow |
 |-----------|------|----------|
-| positive | `#34D399` зелёный | `0 4px 20px -4px rgba(52,211,153,0.15)` |
-| negative | `#F87171` красный | `0 4px 20px -4px rgba(248,113,113,0.15)` |
-| neutral | `#9CA3AF` серый | `0 4px 20px -4px rgba(156,163,175,0.1)` |
-
-**2 уровня определения:**
-- L1: Keyword-based (быстро, без API) — sentiment_source='keyword'
-- L2: LLM через Kimi API — sentiment_source='llm'
+| positive | `#34D399` | `0 4px 20px -4px rgba(52,211,153,0.15)` |
+| negative | `#F87171` | `0 4px 20px -4px rgba(248,113,113,0.15)` |
+| neutral | `#9CA3AF` | `0 4px 20px -4px rgba(156,163,175,0.1)` |
 
 **Tag Impact:** `tag_impact` JSONB в БД — `{ tag, impact, reasoning }[]`
 
