@@ -158,6 +158,9 @@ export function buildEnrichedKeywords(tagName: string, enrichment: TagEnrichment
   }
 
   // LLM-enriched keywords
+  // NOTE: related_entities are NOT included here (see TODO.md #1)
+  // They are displayed in UI but NOT used for matching to prevent
+  // false positives (e.g. "Sberbank" news tagged as "Yandex")
   const enriched: string[] = [
     ...baseKeywords,
     // Synonyms (both languages, lowercase)
@@ -165,8 +168,6 @@ export function buildEnrichedKeywords(tagName: string, enrichment: TagEnrichment
     ...enrichment.synonyms_ru.map(s => s.toLowerCase()),
     // Key products (both languages, lowercase)
     ...enrichment.key_products.map(s => s.toLowerCase()),
-    // Related entities (both languages, lowercase)
-    ...enrichment.related_entities.map(s => s.toLowerCase()),
   ];
 
   // Add ticker as keyword if present
