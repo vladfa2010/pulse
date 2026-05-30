@@ -145,6 +145,7 @@ async function callLLMForTags(title: string, summary: string, availableTags: str
         messages: [{ role: 'user', content: prompt }],
         temperature: KIMI_MODEL.startsWith('kimi-k') ? 1 : 0.1,
         max_tokens: 200,
+        response_format: { type: 'json_object' },
       },
       {
         headers: {
@@ -228,6 +229,7 @@ Response format: ["tag1", "tag2"] or []`;
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.1,
         max_tokens: 150,
+        response_format: { type: 'json_object' },
       },
       {
         headers: {
@@ -420,6 +422,7 @@ Rules:
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.1,
         max_tokens: 200 * batch.length,
+        response_format: { type: 'json_object' },
       },
       {
         headers: { 'Authorization': `Bearer ${KIMI_API_KEY}`, 'Content-Type': 'application/json' },
@@ -596,6 +599,7 @@ Rules:
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.1,
         max_tokens: 300 * batch.length,
+        response_format: { type: 'json_object' },
       },
       {
         headers: { 'Authorization': `Bearer ${KIMI_API_KEY}`, 'Content-Type': 'application/json' },
