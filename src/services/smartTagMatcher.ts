@@ -295,12 +295,172 @@ export async function smartMatchTags(
 
 // ═══════════════════════════════════════════════════════════════════════════
 // LLM Sentiment Analysis — Investment Analyst Score (-10 to +10)
+// BATCH mode: 10 articles per request (10x speedup)
 // ═══════════════════════════════════════════════════════════════════════════
 
 export interface SentimentResult {
   sentiment: 'positive' | 'negative' | 'neutral';
   score: number; // -10 to +10
   reasoning: string; // 2 paragraphs from LLM (what happened + why it matters)
+}
+
+interface BatchArticle {
+  title: string;
+  summary: string;
+}
+
+const BATCH_SIZE = 10;
+
+export async function analyzeSentimentBatch(articles: BatchArticle[]): Promise<SentimentResult[]> {
+  if (!KIMI_API_KEY) {
+    console.log('[SentimentBatch] No KIMI_API_KEY');
+    return articles.map(() => ({ sentiment: 'neutral' as const, score: 0, reasoning: '' }));
+  }
+
+  const results: SentimentResult[] = [];
+
+  for (let i = 0; i < articles.length; i += BATCH_SIZE) {
+    const batch = articles.slice(i, i + BATCH_SIZE);
+    const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+    const totalBatches = Math.ceil(articles.length / BATCH_SIZE);
+
+    try {
+      console.log(`[SentimentBatch] Processing batch ${batchNum}/${totalBatches} (${batch.length} articles)`);
+      const batchResults = await analyzeSentimentBatchChunk(batch);
+      results.push(...batchResults);
+    } catch (err: any) {
+      console.error(`[SentimentBatch] Batch ${batchNum} failed: ${err.message?.slice(0, 100)}`);
+      // Fallback: keyword-based for this batch
+      for (const a of batch) {
+        const sentiment = analyzeSentimentFallback(`${a.title} ${a.summary}`);
+        results.push({
+          sentiment,
+          score: sentiment === 'positive' ? 5 : sentiment === 'negative' ? -5 : 0,
+          reasoning: '',
+        });
+      }
+    }
+  }
+
+  return results;
+}
+
+async function analyzeSentimentBatchChunk(batch: BatchArticle[]): Promise<SentimentResult[]> {
+  // Build numbered prompt
+  let articlesText = '';
+  batch.forEach((a, i) => {
+    articlesText += `\n[${i + 1}] Title: ${a.title.slice(0, 150)}\nSummary: ${a.summary.slice(0, 250)}\n`;
+  });
+
+  const prompt = `You are an experienced investment analyst. Evaluate the sentiment of ${batch.length} financial news articles from an investor's perspective.
+
+${articlesText}
+
+For each article, rate sentiment on scale -10 to +10:
+-10 = Catastrophic (bankruptcy, massive fraud)
+-5 = Strong negative (major losses, sanctions)
+-1 = Mild negative (minor setback)
+0 = Neutral (no significant impact)
++1 = Mild positive (small contract, minor growth)
++5 = Strong positive (major deal, strong earnings)
++10 = Maximum positive (acquisition at premium, record profits)
+
+Return ONLY a JSON array in this exact format (one object per article, in same order):
+[
+  {"score": 5, "reasoning": "What happened.\\n\\nWhy it matters to investors."},
+  {"score": -3, "reasoning": "What happened.\\n\\nWhy it matters to investors."}
+]
+
+Rules:
+1. Return EXACTLY ${batch.length} objects — same order as articles above
+2. Each reasoning: 2 paragraphs separated by \\n\\n. P1 = facts. P2 = investment significance.
+3. Consider ONLY investor perspective (layoff may be positive for investors = cost cutting)
+4. Lawsuits = always negative
+5. Return ONLY JSON array, no markdown, no extra text`;
+
+  const response = await axios.post(
+    'https://api.moonshot.ai/v1/chat/completions',
+    {
+      model: KIMI_MODEL,
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.1,
+      max_tokens: 200 * batch.length, // ~200 tokens per article
+    },
+    {
+      headers: { 'Authorization': `Bearer ${KIMI_API_KEY}`, 'Content-Type': 'application/json' },
+      timeout: 30000, // 30s for batch
+    }
+  );
+
+  const content = response.data?.choices?.[0]?.message?.content || '';
+  console.log(`[SentimentBatch] Raw: "${content.slice(0, 200)}..."`);
+
+  // Parse JSON array
+  const results: SentimentResult[] = [];
+  try {
+    const match = content.match(/\[[\s\S]*?\]/);
+    if (match) {
+      const parsed = JSON.parse(match[0]);
+      if (Array.isArray(parsed)) {
+        for (const item of parsed) {
+          const score = typeof item.score === 'number'
+            ? Math.max(-10, Math.min(10, Math.round(item.score)))
+            : 0;
+          const reasoning = typeof item.reasoning === 'string'
+            ? item.reasoning.slice(0, 500)
+            : '';
+          let sentiment: 'positive' | 'negative' | 'neutral';
+          if (score <= -1) sentiment = 'negative';
+          else if (score >= 1) sentiment = 'positive';
+          else sentiment = 'neutral';
+          results.push({ sentiment, score, reasoning });
+        }
+      }
+    }
+  } catch (e) {
+    console.error(`[SentimentBatch] Parse error: ${(e as Error).message?.slice(0, 100)}`);
+  }
+
+  // Fill missing results with fallback
+  while (results.length < batch.length) {
+    const idx = results.length;
+    const a = batch[idx];
+    const sentiment = analyzeSentimentFallback(`${a.title} ${a.summary}`);
+    results.push({
+      sentiment,
+      score: sentiment === 'positive' ? 5 : sentiment === 'negative' ? -5 : 0,
+      reasoning: '',
+    });
+  }
+
+  // Trim if too many
+  const finalResults = results.slice(0, batch.length);
+  console.log(`[SentimentBatch] Batch done: ${finalResults.length} results`);
+  return finalResults;
+}
+
+// Fallback keyword-based sentiment (local, no API)
+function analyzeSentimentFallback(text: string): 'positive' | 'negative' | 'neutral' {
+  const positiveWords = ['рост', 'прибыль', 'рекорд', 'превысил', 'успех', 'позитив', 'повышение', 'рали', 'bull'];
+  const negativeWords = ['падение', 'убыток', 'кризис', 'снижение', 'крах', 'негатив', 'санкции', 'bear', 'крах'];
+
+  const lower = text.toLowerCase();
+  let score = 0;
+  positiveWords.forEach(w => { if (lower.includes(w)) score++ });
+  negativeWords.forEach(w => { if (lower.includes(w)) score-- });
+
+  if (score > 0) return 'positive';
+  if (score < 0) return 'negative';
+  return 'neutral';
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Single-article sentiment (kept for backward compatibility)
+// ═══════════════════════════════════════════════════════════════════════════
+
+export async function analyzeSentimentLLM(title: string, summary: string): Promise<SentimentResult> {
+  const results = await analyzeSentimentBatch([{ title, summary }]);
+  return results[0];
 }
 
 // Parse sentiment score + reasoning from LLM response
@@ -321,70 +481,6 @@ function parseSentimentResponse(content: string): { score: number; reasoning: st
     }
   }
   return { score, reasoning };
-}
-
-export async function analyzeSentimentLLM(title: string, summary: string): Promise<SentimentResult> {
-  if (!KIMI_API_KEY) {
-    console.log('[SentimentLLM] No KIMI_API_KEY');
-    return { sentiment: 'neutral', score: 0, reasoning: '' };
-  }
-
-  const prompt = `You are an experienced investment analyst. Evaluate the sentiment of this financial news article regarding the company/companies mentioned.
-
-Title: ${title.slice(0, 200)}
-Summary: ${summary.slice(0, 400)}
-
-Rate the sentiment on a scale from -10 to +10:
--10 = Maximum negative (bankruptcy, massive fraud, catastrophic loss)
--5  = Strong negative (major losses, sanctions, scandal)
--1  = Mild negative (minor setback, weak results)
- 0  = Neutral (no significant impact, routine news)
-+1  = Mild positive (small contract, minor growth)
-+5  = Strong positive (major deal, strong earnings, breakthrough)
-+10 = Maximum positive (acquisition at premium, record profits, game-changer)
-
-Return ONLY a JSON object in this exact format:
-{"score": 5, "reasoning": "Paragraph 1: what happened.\\n\\nParagraph 2: why it matters to investors"}
-
-Rules:
-1. Consider the article ONLY from an investor's perspective
-2. A "layoff" announcement is usually negative for employees but may be positive for investors (cost cutting)
-3. A "lawsuit" is negative regardless of who initiated it
-4. Routine operations or minor updates = 0
-5. reasoning: Write 2 paragraphs separated by \\n\\n. Paragraph 1 = what happened (facts). Paragraph 2 = investment significance (why investors care)
-6. Return ONLY valid JSON, no markdown, no extra text`;
-
-  try {
-    const response = await axios.post(
-      'https://api.moonshot.ai/v1/chat/completions',
-      {
-        model: KIMI_MODEL,
-        messages: [{ role: 'user', content: prompt }],
-        temperature: KIMI_MODEL.startsWith('kimi-k') ? 1 : 0.1,
-        max_tokens: 200,
-      },
-      {
-        headers: { 'Authorization': `Bearer ${KIMI_API_KEY}`, 'Content-Type': 'application/json' },
-        timeout: KIMI_MODEL.startsWith('kimi-k') ? 30000 : 10000,
-      }
-    );
-
-    const content = response.data?.choices?.[0]?.message?.content || '';
-    console.log(`[SentimentLLM] Raw: "${content.slice(0, 120)}..." for "${title.slice(0, 30)}..."`);
-
-    const { score, reasoning } = parseSentimentResponse(content);
-
-    let sentiment: 'positive' | 'negative' | 'neutral';
-    if (score <= -1) sentiment = 'negative';
-    else if (score >= 1) sentiment = 'positive';
-    else sentiment = 'neutral';
-
-    console.log(`[SentimentLLM] Score: ${score}, reasoning: ${reasoning.slice(0, 60)}... → ${sentiment}`);
-    return { sentiment, score, reasoning };
-  } catch (err: any) {
-    console.error(`[SentimentLLM] Error: ${err.message?.slice(0, 100)}`);
-    return { sentiment: 'neutral', score: 0, reasoning: '' };
-  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -30,7 +30,7 @@ const USE_SQLITE = process.env.USE_SQLITE === 'true';
 // ═══════════════════════════════════════════════════════════════════════════
 // Smart Tag Matching (imported from smartTagMatcher)
 // ═══════════════════════════════════════════════════════════════════════════
-import { smartMatchTags, analyzeSentimentLLM, analyzeTagImpact, TagImpact, SentimentResult } from './smartTagMatcher';
+import { smartMatchTags, analyzeSentimentLLM, analyzeSentimentBatch, analyzeTagImpact, TagImpact, SentimentResult } from './smartTagMatcher';
 import { broadcastNews } from './sse';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -140,37 +140,57 @@ export async function processArticles() {
 
   // 3. Check if LLM is available (check once, not per article)
   const llmAvailable = !!process.env.KIMI_API_KEY;
-  console.log(`[Cron] LLM sentiment: ${llmAvailable ? 'ENABLED' : 'DISABLED (keyword-based)'}`);
+  console.log(`[Cron] LLM sentiment: ${llmAvailable ? 'ENABLED (batch x10)' : 'DISABLED (keyword-based)'}`);
 
-  // Analyze sentiment + smart tag matching
+  // 3a. Batch sentiment analysis — 10 articles per LLM request (10x speedup)
+  console.log('[Cron] Starting batch sentiment analysis...');
+  const sentimentBatchStart = Date.now();
+  let sentimentResults: SentimentResult[] = [];
+  if (llmAvailable) {
+    try {
+      sentimentResults = await analyzeSentimentBatch(
+        articles.map(a => ({ title: a.title_ru || a.title, summary: a.summary_ru || a.summary }))
+      );
+    } catch (err: any) {
+      console.error(`[Cron] Batch sentiment failed: ${err.message?.slice(0, 100)}`);
+      // Fallback: keyword-based for all
+      sentimentResults = articles.map(a => {
+        const text = `${a.title_ru || a.title} ${a.summary_ru || a.summary}`;
+        const sent = analyzeSentiment(text);
+        return {
+          sentiment: sent,
+          score: sent === 'positive' ? 5 : sent === 'negative' ? -5 : 0,
+          reasoning: '',
+        };
+      });
+    }
+  } else {
+    sentimentResults = articles.map(a => {
+      const text = `${a.title_ru || a.title} ${a.summary_ru || a.summary}`;
+      const sent = analyzeSentiment(text);
+      return {
+        sentiment: sent,
+        score: sent === 'positive' ? 5 : sent === 'negative' ? -5 : 0,
+        reasoning: '',
+      };
+    });
+  }
+  console.log(`[Cron] Batch sentiment done: ${sentimentResults.length} results in ${Date.now() - sentimentBatchStart}ms`);
+
+  // 3b. Smart tag matching + tag impact (per article — sequential, can't batch)
   const processed = [];
-  for (const a of articles) {
+  for (let i = 0; i < articles.length; i++) {
+    const a = articles[i];
     const title_ru = a.title_ru || a.title;
     const summary_ru = a.summary_ru || a.summary;
     const text = `${title_ru} ${summary_ru}`;
 
-    // Sentiment: LLM score (-10..+10) + reasoning if key exists, otherwise keyword-based
-    let sentiment: 'positive' | 'negative' | 'neutral';
-    let sentiment_score: number | null = null;
-    let sentiment_reasoning: string | null = null;
-    let sentiment_source: 'llm' | 'keyword';
-    if (llmAvailable) {
-      try {
-        const result = await analyzeSentimentLLM(title_ru, summary_ru);
-        sentiment = result.sentiment;
-        sentiment_score = result.score;
-        sentiment_reasoning = result.reasoning || null;
-        sentiment_source = 'llm';
-      } catch {
-        sentiment = analyzeSentiment(text);
-        sentiment_score = sentiment === 'positive' ? 5 : sentiment === 'negative' ? -5 : 0;
-        sentiment_source = 'keyword';
-      }
-    } else {
-      sentiment = analyzeSentiment(text);
-      sentiment_score = sentiment === 'positive' ? 5 : sentiment === 'negative' ? -5 : 0;
-      sentiment_source = 'keyword';
-    }
+    // Apply batch sentiment result
+    const sentimentResult = sentimentResults[i] || { sentiment: 'neutral' as const, score: 0, reasoning: '' };
+    const sentiment = sentimentResult.sentiment;
+    const sentiment_score = sentimentResult.score;
+    const sentiment_reasoning = sentimentResult.reasoning || null;
+    const sentiment_source = llmAvailable ? 'llm' as const : 'keyword' as const;
 
     // Smart matching: keywords → LLM → related tags
     const matched_tags = await smartMatchTags(title_ru, summary_ru);
