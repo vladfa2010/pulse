@@ -346,7 +346,7 @@ async function processArticlesLocked() {
 // Cron Job Lock — prevents parallel runs via PostgreSQL
 // ═══════════════════════════════════════════════════════════════════════════
 
-const LOCK_TTL_MINUTES = 30; // Lock auto-expires after 30 min (crash safety)
+const LOCK_TTL_MINUTES = 15; // Lock auto-expires after 15 min (cron runs in ~2-3 min, 15 = safety margin)
 const INSTANCE_ID = `${process.env.RENDER_INSTANCE_ID || 'local'}-${process.pid}-${Date.now()}`;
 
 async function acquireCronLock(jobName: string): Promise<boolean> {
