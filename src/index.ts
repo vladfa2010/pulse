@@ -78,7 +78,7 @@ app.get('/health', async (req, res) => {
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
-    version: '7.17.2',
+    version: '7.17.3',
     cron: cronStatus,
     sse_subscribers: getSubscriberCount(),
   });
@@ -357,6 +357,69 @@ app.get('/debug-system', async (req, res) => {
     } catch (e: any) { testInsert = `failed: ${e.message?.slice(0, 100)}`; }
     res.json({ database_url_present: !!process.env.DATABASE_URL, lock: lock ? { job_name: lock.job_name, locked_by: lock.locked_by?.slice(0, 30), locked_at: lock.locked_at, expires_at: lock.expires_at } : null, news_count: parseInt(newsCount.rows[0]?.count || '0'), cron_logs: cronLog.rows.map((r: any) => ({ id: r.id, task: r.task_name, started: r.started_at, status: r.status, fetched: r.articles_fetched, saved: r.articles_saved })), test_insert: testInsert });
   } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /debug-rss — detailed per-source RSS diagnostics
+app.get('/debug-rss', async (req, res) => {
+  try {
+    const { RSS_SOURCES } = await import('./services/rssSources');
+    const { getLastFetchStats } = await import('./services/rssFetcher');
+    const { query } = await import('./config/db');
+
+    // Source meta cache state
+    const metaResult = await query(`SELECT source_id, last_fetched_at FROM rss_source_meta ORDER BY source_id`);
+    const metaRows = metaResult.rows || [];
+
+    // Latest article per source
+    const latestResult = await query(`
+      SELECT source_id, MAX(published_at) as latest, COUNT(*) as total
+      FROM news
+      GROUP BY source_id
+    `);
+    const latestMap: Record<string, { latest: string; total: string }> = {};
+    for (const row of latestResult.rows || []) {
+      latestMap[row.source_id] = { latest: row.latest, total: row.total };
+    }
+
+    // Build per-source report
+    const sourceReport = RSS_SOURCES.map(s => {
+      const meta = metaRows.find((m: any) => m.source_id === s.id);
+      const latest = latestMap[s.id];
+      return {
+        id: s.id,
+        name: s.name,
+        url: s.url,
+        lang: s.lang,
+        last_fetched_at: meta?.last_fetched_at || null,
+        latest_article: latest?.latest || null,
+        article_count: latest ? parseInt(latest.total) : 0,
+      };
+    });
+
+    // Last fetch stats (from most recent cron run)
+    const fetchStats = getLastFetchStats();
+
+    // Summary
+    const okSources = fetchStats.filter(s => s.status === 'ok');
+    const errorSources = fetchStats.filter(s => s.status !== 'ok');
+
+    res.json({
+      total_sources: RSS_SOURCES.length,
+      meta_cache_entries: metaRows.length,
+      source_report: sourceReport,
+      last_fetch_stats: {
+        timestamp: new Date().toISOString(),
+        total_attempted: fetchStats.length,
+        successful: okSources.length,
+        failed: errorSources.length,
+        total_articles_found: okSources.reduce((sum, s) => sum + s.items, 0),
+        total_articles_kept: okSources.reduce((sum, s) => sum + s.kept, 0),
+        per_source: fetchStats,
+      },
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // TEMP: Cleanup duplicate news by content_hash (keep first, merge sources)

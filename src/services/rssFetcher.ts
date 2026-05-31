@@ -60,6 +60,15 @@ const FETCH_TIMEOUT = 25000;
 const BATCH_SIZE = 4;
 const BATCH_DELAY = 1500;
 
+// ═══════════════════════════════════════════════════════════════════════════
+// RSS Debug stats — accumulated per fetch cycle for /debug-rss endpoint
+// ═══════════════════════════════════════════════════════════════════════════
+let lastFetchStats: { source: string; status: string; items: number; filtered: number; kept: number; error?: string; httpStatus?: number }[] = [];
+
+export function getLastFetchStats() {
+  return lastFetchStats;
+}
+
 export interface ParsedArticle {
   title: string;
   summary: string;
@@ -73,11 +82,21 @@ export interface ParsedArticle {
 }
 
 // Normalize pubDate to UTC regardless of server timezone
-// RSS sources may have: explicit offset (+0300), GMT, or no timezone at all
+// RSS sources may have: explicit offset (+0300), GMT, ISO 8601 (Z/+00:00), or no timezone
 function normalizePubDate(pubDate: string, sourceLang: 'ru' | 'en'): Date {
   const str = pubDate.trim();
 
-  // Already has timezone offset (+0300, GMT, etc.) — JavaScript parses correctly
+  // ISO 8601 with Z: 2026-05-29T22:25:25Z — JavaScript parses correctly as UTC
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[Zz]$/.test(str)) {
+    return new Date(str);
+  }
+
+  // ISO 8601 with offset: 2026-05-29T22:25:25+03:00 — JavaScript parses correctly
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$/.test(str)) {
+    return new Date(str);
+  }
+
+  // Already has timezone offset (+0300, GMT, UTC) — JavaScript parses correctly
   if (/[+-]\d{4}|\bGMT\b|\bUTC\b/i.test(str)) {
     return new Date(str);
   }
@@ -96,18 +115,47 @@ function normalizePubDate(pubDate: string, sourceLang: 'ru' | 'en'): Date {
   }
 
   // Fallback — try native parse (may depend on server timezone!)
-  return new Date(str);
+  const fallback = new Date(str);
+  if (!isNaN(fallback.getTime())) return fallback;
+
+  // Ultimate fallback: now (so article isn't lost)
+  console.warn(`[RSS] Unparseable date "${str.slice(0, 50)}", using now`);
+  return new Date();
 }
 
 function parseRSS(xml: string, source: RssSource): ParsedArticle[] {
   const articles: ParsedArticle[] = [];
-  const items = xml.match(/<item>[\s\S]*?<\/item>/g) || [];
+
+  // Detect Atom vs RSS 2.0
+  const isAtom = xml.includes('<feed') && xml.includes('<entry');
+  const items = isAtom
+    ? (xml.match(/<entry>[\s\S]*?<\/entry>/g) || [])
+    : (xml.match(/<item>[\s\S]*?<\/item>/g) || []);
 
   for (const item of items.slice(0, 20)) {
-    const title = extractTag(item, 'title');
-    const description = extractTag(item, 'description');
-    const link = extractTag(item, 'link');
-    const pubDate = extractTag(item, 'pubDate');
+    let title: string;
+    let description: string;
+    let link: string;
+    let pubDate: string;
+
+    if (isAtom) {
+      // Atom format
+      title = extractTag(item, 'title');
+      description = extractTag(item, 'summary') || extractTag(item, 'content');
+      link = extractTag(item, 'id');  // Atom uses <id> for URL
+      if (!link || !link.startsWith('http')) {
+        // Try to find href in <link>
+        const linkMatch = item.match(/<link[^>]*href="([^"]*)"[^>]*\/?>/i);
+        link = linkMatch ? linkMatch[1] : '';
+      }
+      pubDate = extractTag(item, 'updated') || extractTag(item, 'published');
+    } else {
+      // RSS 2.0 format
+      title = extractTag(item, 'title');
+      description = extractTag(item, 'description');
+      link = extractTag(item, 'link');
+      pubDate = extractTag(item, 'pubDate');
+    }
 
     if (!title) continue;
 
@@ -126,8 +174,19 @@ function parseRSS(xml: string, source: RssSource): ParsedArticle[] {
 }
 
 function extractTag(xml: string, tag: string): string {
-  const match = xml.match(new RegExp(`<${tag}>([^<]*)</${tag}>`, 'i'));
-  return match ? match[1].trim() : '';
+  // Try plain tag first: <title>Foo</title>
+  const plainMatch = xml.match(new RegExp(`<${tag}>([^<]*)</${tag}>`, 'i'));
+  if (plainMatch) return plainMatch[1].trim();
+
+  // Try CDATA: <title><![CDATA[Foo]]></title>
+  const cdataMatch = xml.match(new RegExp(`<${tag}>\\s*<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>\\s*</${tag}>`, 'i'));
+  if (cdataMatch) return cdataMatch[1].trim();
+
+  // Try with namespace: <dc:title>Foo</dc:title>
+  const nsMatch = xml.match(new RegExp(`<[^:]*?:${tag}>([^<]*)</[^:]*?:${tag}>`, 'i'));
+  if (nsMatch) return nsMatch[1].trim();
+
+  return '';
 }
 
 function stripHtml(html: string): string {
@@ -142,11 +201,10 @@ function stripHtml(html: string): string {
 }
 
 async function fetchSource(source: RssSource): Promise<ParsedArticle[]> {
+  const stat: typeof lastFetchStats[0] = { source: source.id, status: 'pending', items: 0, filtered: 0, kept: 0 };
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
-
-    const agent = getAgentForUrl(source.url);
 
     const response = await fetch(source.url, {
       signal: controller.signal,
@@ -155,33 +213,59 @@ async function fetchSource(source: RssSource): Promise<ParsedArticle[]> {
         'Accept': 'application/rss+xml, application/xml, text/xml, */*',
       },
       redirect: 'follow',
-      ...(agent ? { dispatcher: agent as any } : {}),
-    } as any);
+    });
 
     clearTimeout(timeout);
 
+    stat.httpStatus = response.status;
+
     if (!response.ok) {
-      console.warn(`RSS failed [${source.id}]: HTTP ${response.status}`);
+      stat.status = `http_${response.status}`;
+      console.warn(`[RSS] ❌ [${source.id}]: HTTP ${response.status}`);
+      lastFetchStats.push(stat);
       return [];
     }
 
     const text = await response.text();
+
+    // Sanity check: must look like XML
+    if (!text.includes('<') || text.length < 50) {
+      stat.status = 'not_xml';
+      console.warn(`[RSS] ❌ [${source.id}]: Response is not XML (len=${text.length})`);
+      lastFetchStats.push(stat);
+      return [];
+    }
+
     const articles = parseRSS(text, source);
+    stat.items = articles.length;
 
     // Filter: skip articles older than last successful fetch for this source
     const lastFetched = sourceMetaCache.get(source.id);
     if (lastFetched) {
       const filtered = articles.filter(a => a.publishedAt > lastFetched);
+      stat.filtered = articles.length - filtered.length;
+      stat.kept = filtered.length;
+      stat.status = 'ok';
       if (filtered.length < articles.length) {
-        console.log(`[RSS] ${source.id}: ${filtered.length}/${articles.length} articles newer than ${lastFetched.toISOString()}`);
+        console.log(`[RSS] ✅ [${source.id}]: ${filtered.length}/${articles.length} new (filtered ${stat.filtered} older than ${lastFetched.toISOString()})`);
+      } else {
+        console.log(`[RSS] ✅ [${source.id}]: ${filtered.length}/${articles.length} new`);
       }
+      lastFetchStats.push(stat);
       return filtered;
     }
 
+    stat.kept = articles.length;
+    stat.status = 'ok';
+    console.log(`[RSS] ✅ [${source.id}]: ${articles.length} articles (no last_fetched filter)`);
+    lastFetchStats.push(stat);
     return articles;
   } catch (err: any) {
-    const code = err.name === 'AbortError' ? 'TIMEOUT' : (err.code || 'ERROR');
-    console.warn(`RSS failed [${source.id}]: ${code}`);
+    const code = err.name === 'AbortError' ? 'TIMEOUT' : (err.code || err.message || 'ERROR');
+    stat.status = 'error';
+    stat.error = String(code).slice(0, 100);
+    console.warn(`[RSS] ❌ [${source.id}]: ${code}`);
+    lastFetchStats.push(stat);
     return [];
   }
 }
@@ -190,8 +274,10 @@ export async function fetchAllRSS(): Promise<ParsedArticle[]> {
   // Load source metadata cache before fetching
   await loadSourceMetaCache();
 
+  // Reset stats for this fetch cycle
+  lastFetchStats = [];
+
   const allArticles: ParsedArticle[] = [];
-  const fetchTime = new Date(); // UTC timestamp of this fetch
 
   for (let i = 0; i < RSS_SOURCES.length; i += BATCH_SIZE) {
     const batch = RSS_SOURCES.slice(i, i + BATCH_SIZE);
@@ -201,9 +287,16 @@ export async function fetchAllRSS(): Promise<ParsedArticle[]> {
       const result = results[j];
       const source = batch[j];
       if (result.status === 'fulfilled') {
-        allArticles.push(...result.value);
-        // Update last_fetched_at for successfully parsed sources
-        await updateSourceLastFetched(source.id, fetchTime);
+        const articles = result.value;
+        allArticles.push(...articles);
+
+        // Update last_fetched_at ONLY if we got articles, and to the MAX publishedAt — not fetchTime
+        // This ensures we don't skip articles that appeared between the last article time and now
+        if (articles.length > 0) {
+          const maxPubDate = new Date(Math.max(...articles.map(a => a.publishedAt.getTime())));
+          await updateSourceLastFetched(source.id, maxPubDate);
+        }
+        // If 0 articles: DON'T update last_fetched_at — try again next run
       }
     }
 
@@ -212,13 +305,17 @@ export async function fetchAllRSS(): Promise<ParsedArticle[]> {
     }
   }
 
+  // Deduplicate by title+source
   const seen = new Set<string>();
-  return allArticles.filter(a => {
+  const deduped = allArticles.filter(a => {
     const key = `${a.title}|${a.source}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
   });
+
+  console.log(`[RSS] Total: ${allArticles.length} articles from ${lastFetchStats.filter(s => s.kept > 0).length} sources, ${deduped.length} after dedup`);
+  return deduped;
 }
 
 function uuidv4(): string {

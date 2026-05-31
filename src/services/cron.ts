@@ -133,7 +133,13 @@ async function processArticlesLocked() {
     .slice(0, 100);
   
   console.log(`[Cron] Fetched ${articles.length} articles (limited to 100 freshest)`);
-  
+
+  if (articles.length === 0) {
+    console.warn('[Cron] ⚠️ ZERO articles fetched from ALL sources. Check /debug-rss for per-source diagnostics');
+    errors.push('zero_articles: No articles fetched from any source');
+    return; // Early exit — finally still runs
+  }
+
   // Update fetched count immediately
   await query(`UPDATE cron_log SET articles_fetched = $1 WHERE id = $2`, [articles.length, logId]);
 
