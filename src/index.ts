@@ -391,6 +391,37 @@ app.get('/debug-news-recent', async (req, res) => {
   }
 });
 
+// GET /debug-latest-reasoning — last 3 articles with full sentiment data
+app.get('/debug-latest-reasoning', async (req, res) => {
+  try {
+    const { query } = await import('./config/db');
+    const result = await query(`
+      SELECT title_ru, source, sentiment, sentiment_score, sentiment_reasoning, 
+             article_type, is_political, matched_tags, tag_impact, published_at
+      FROM news
+      ORDER BY published_at DESC
+      LIMIT 3
+    `);
+    res.json({
+      articles: (result.rows || []).map((r: any) => ({
+        title: r.title_ru?.slice(0, 80),
+        source: r.source,
+        sentiment: r.sentiment,
+        score: r.sentiment_score,
+        article_type: r.article_type,
+        is_political: r.is_political,
+        published_at: r.published_at,
+        tags: r.matched_tags || [],
+        tag_impacts: r.tag_impact || [],
+        reasoning: r.sentiment_reasoning,
+        reasoning_preview: r.sentiment_reasoning ? r.sentiment_reasoning.slice(0, 200) + (r.sentiment_reasoning.length > 200 ? '...' : '') : '(empty)',
+      })),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /debug-rss — detailed per-source RSS diagnostics
 app.get('/debug-rss', async (req, res) => {
   try {
