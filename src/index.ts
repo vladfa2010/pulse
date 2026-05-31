@@ -78,7 +78,7 @@ app.get('/health', async (req, res) => {
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
-    version: '7.17.9',
+    version: '7.17.10',
     cron: cronStatus,
     sse_subscribers: getSubscriberCount(),
   });
