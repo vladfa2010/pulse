@@ -780,7 +780,12 @@ MANDATORY:
   try {
     const match = content.match(/\{[\s\S]*\]/);
     if (match) {
-      const parsed = JSON.parse(match[0]);
+      // Fix literal newlines/tabs inside JSON string values that LLM may output
+      const normalized = match[0]
+        .replace(/\n/g, '\\n')
+        .replace(/\r/g, '\\r')
+        .replace(/\t/g, '\\t');
+      const parsed = JSON.parse(normalized);
       const items = parsed.results || parsed;
       const arr = Array.isArray(items) ? items : [];
       for (const item of arr) {
