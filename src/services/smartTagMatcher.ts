@@ -662,7 +662,7 @@ export async function analyzeTagImpact(title: string, summary: string, tags: str
 export interface UnifiedResult {
   sentiment: 'positive' | 'negative' | 'neutral';
   score: number; // -10..+10
-  reasoning: string; // 3 paragraphs
+  reasoning: string; // 3 paragraphs: facts + direct impact + secondary effects
   is_political: boolean;
   article_type: 'micro' | 'macro';
   tag_impacts: TagImpact[];
@@ -761,7 +761,7 @@ MANDATORY:
         model: KIMI_MODEL,
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.1,
-        max_tokens: 500 * batch.length,
+        max_tokens: 500 * batch.length, // 3 paragraphs reasoning + detailed tag_impacts
         response_format: { type: 'json_object' },
       },
       {
@@ -778,36 +778,30 @@ MANDATORY:
   // Parse JSON: { results: [{score, reasoning, is_political, tag_impacts}] }
   const results: UnifiedResult[] = [];
   try {
-    const match = content.match(/\{[\s\S]*\]/);
-    if (match) {
-      // Fix literal newlines/tabs inside JSON string values that LLM may output
-      const normalized = match[0]
-        .replace(/\n/g, '\\n')
-        .replace(/\r/g, '\\r')
-        .replace(/\t/g, '\\t');
-      const parsed = JSON.parse(normalized);
-      const items = parsed.results || parsed;
-      const arr = Array.isArray(items) ? items : [];
-      for (const item of arr) {
-        const score = typeof item.score === 'number' ? Math.max(-10, Math.min(10, Math.round(item.score))) : 0;
-        const reasoning = typeof item.reasoning === 'string' ? item.reasoning.slice(0, 500) : '';
-        const is_political = item.is_political === true;
-        const article_type = item.article_type === 'macro' ? 'macro' as const : 'micro' as const;
-        let sentiment: 'positive' | 'negative' | 'neutral';
-        if (score <= -1) sentiment = 'negative';
-        else if (score >= 1) sentiment = 'positive';
-        else sentiment = 'neutral';
+    let raw = content.trim().replace(/^```json\s*/, '').replace(/\s*```$/, '');
+    raw = raw.replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
+    const parsed = JSON.parse(raw);
+    const items = parsed.results || parsed;
+    const arr = Array.isArray(items) ? items : [];
+    for (const item of arr) {
+      const score = typeof item.score === 'number' ? Math.max(-10, Math.min(10, Math.round(item.score))) : 0;
+      const reasoning = typeof item.reasoning === 'string' ? item.reasoning.slice(0, 500) : '';
+      const is_political = item.is_political === true;
+      const article_type = item.article_type === 'macro' ? 'macro' as const : 'micro' as const;
+      let sentiment: 'positive' | 'negative' | 'neutral';
+      if (score <= -1) sentiment = 'negative';
+      else if (score >= 1) sentiment = 'positive';
+      else sentiment = 'neutral';
 
-        const tag_impacts: TagImpact[] = (Array.isArray(item.tag_impacts) ? item.tag_impacts : [])
-          .filter((p: any) => p && typeof p.tag === 'string')
-          .map((p: any) => ({
-            tag: p.tag,
-            impact: ['positive', 'negative'].includes(p.impact) ? p.impact : 'neutral',
-            reasoning: typeof p.reasoning === 'string' ? p.reasoning.slice(0, 200) : '',
-          }));
+      const tag_impacts: TagImpact[] = (Array.isArray(item.tag_impacts) ? item.tag_impacts : [])
+        .filter((p: any) => p && typeof p.tag === 'string')
+        .map((p: any) => ({
+          tag: p.tag,
+          impact: ['positive', 'negative'].includes(p.impact) ? p.impact : 'neutral',
+          reasoning: typeof p.reasoning === 'string' ? p.reasoning.slice(0, 200) : '',
+        }));
 
-        results.push({ sentiment, score, reasoning, is_political, article_type, tag_impacts });
-      }
+      results.push({ sentiment, score, reasoning, is_political, article_type, tag_impacts });
     }
   } catch (e) {
     console.error(`[UnifiedBatch] Parse error: ${(e as Error).message?.slice(0, 100)}`);
