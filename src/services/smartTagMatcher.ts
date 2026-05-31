@@ -662,8 +662,9 @@ export async function analyzeTagImpact(title: string, summary: string, tags: str
 export interface UnifiedResult {
   sentiment: 'positive' | 'negative' | 'neutral';
   score: number; // -10..+10
-  reasoning: string;
+  reasoning: string; // 3 paragraphs
   is_political: boolean;
+  article_type: 'micro' | 'macro';
   tag_impacts: TagImpact[];
 }
 
@@ -676,7 +677,7 @@ interface UnifiedBatchItem {
 export async function analyzeUnifiedBatch(items: UnifiedBatchItem[]): Promise<UnifiedResult[]> {
   if (!KIMI_API_KEY || items.length === 0) {
     return items.map(() => ({
-      sentiment: 'neutral' as const, score: 0, reasoning: '', is_political: false, tag_impacts: [],
+      sentiment: 'neutral' as const, score: 0, reasoning: '', is_political: false, article_type: 'micro' as const, tag_impacts: [],
     }));
   }
 
@@ -689,7 +690,7 @@ export async function analyzeUnifiedBatch(items: UnifiedBatchItem[]): Promise<Un
     } catch (err: any) {
       console.error(`[UnifiedBatch] Batch failed: ${err.message?.slice(0, 100)}`);
       for (const it of batch) {
-        results.push({ sentiment: 'neutral', score: 0, reasoning: '', is_political: false, tag_impacts: it.tags.map(t => ({ tag: t, impact: 'neutral' as const, reasoning: '' })) });
+        results.push({ sentiment: 'neutral', score: 0, reasoning: '', is_political: false, article_type: 'micro', tag_impacts: it.tags.map(t => ({ tag: t, impact: 'neutral' as const, reasoning: '' })) });
       }
     }
   }
@@ -702,34 +703,56 @@ async function analyzeUnifiedBatchChunk(batch: UnifiedBatchItem[]): Promise<Unif
     articlesText += `\n[${idx + 1}] Title: ${it.title.slice(0, 120)}\nSummary: ${it.summary.slice(0, 200)}\nTags: ${it.tags.join(', ')}\n`;
   });
 
-  const prompt = `You are an experienced investment analyst. Analyze ${batch.length} financial news articles. For each article provide:
+  const prompt = `You are a senior portfolio manager at Bridgewater Associates. Analyze ${batch.length} financial news articles from a STRICT INVESTOR perspective.
 
-1. **sentiment score** (-10 to +10): investment impact from investor's perspective
-2. **reasoning** (2 paragraphs): "What happened.\\n\\nWhy it matters to investors."
-3. **is_political** (true/false): Is this primarily about politics, war, elections, sanctions, geopolitics? (not about companies, earnings, products)
-4. **tag_impacts**: For EACH tag — is the news positive, negative, or neutral for that tag?
+For each article you MUST provide:
+
+1. **article_type** ("micro" | "macro"): Company-specific news (micro) or economy/politics/markets (macro)?
+2. **sentiment score** (-10 to +10): Use this EXACT scale:
+
+   MICRO (company-specific) — full scale:
+   -10 = Catastrophe: bankruptcy, massive fraud, license revoked, bond default
+    -8 = Severe crisis: major sanctions ($1B+), criminal CEO investigation, product ban
+    -5 = Significant negative: losses >20% vs forecast, dividend cut 50%+, major recall
+    -3 = Moderate negative: growth slowdown, client exodus, regulatory fine
+    -1 = Minor negative: small fine, slight guidance reduction
+     0 = Neutral: in-line report, pure informational news
+    +1 = Minor positive: small contract, slight guidance raise
+    +3 = Moderate positive: buyback, new market entry, partnership
+    +5 = Significant positive: earnings beat >20%, $5B+ contract, FDA approval
+    +8 = Strong positive: industry-transforming strategic partnership
+   +10 = Maximum: acquisition 50%+ premium, sector-defining breakthrough
+
+   MACRO (economy/politics) — score ALWAYS 0, sentiment "neutral". Detailed tag_impacts show WHO benefits/suffers.
+
+3. **reasoning** (3 paragraphs separated by \\n\\n):
+   P1: What happened (facts)
+   P2: Direct investment impact
+   P3: Secondary/cascade effects (suppliers, competitors, sector)
+
+4. **is_political** (true/false)
+5. **tag_impacts**: For EACH tag — impact + why (1 sentence with numbers)
+
+   Context-aware rules:
+   - M&A: target = positive (+5..+10), acquirer = ambiguous (-2..+5)
+   - Layoff for restructuring = positive. Layoff for demand collapse = negative
+   - Oil UP: oil companies positive, airlines negative
+   - Competitor's failure: positive for market leader
 
 Articles:
 ${articlesText}
 
-Return ONLY JSON with "results" array (one per article, same order):
-{"results": [
-  {
-    "score": 5,
-    "reasoning": "Apple reported record earnings.\\n\\nThis signals strong growth for investors.",
-    "is_political": false,
-    "tag_impacts": [
-      {"tag": "apple", "impact": "positive", "reasoning": "Record earnings"},
-      {"tag": "nvda", "impact": "neutral", "reasoning": "No direct effect"}
-    ]
-  }
-]}
+Return ONLY JSON with "results" array:
+{"results": [{"score": 5, "article_type": "micro", "reasoning": "P1\\n\\nP2\\n\\nP3", "is_political": false, "tag_impacts": [{"tag": "apple", "impact": "positive", "reasoning": "Earnings beat 25%"}]}]}
 
-Rules:
-- Return EXACTLY ${batch.length} objects
-- is_political: true ONLY for politics/war/elections/sanctions. False for company news/earnings/products.
-- score from investor perspective: layoff may be positive (cost cutting), lawsuit always negative
-- Return ONLY JSON, no markdown`;
+MANDATORY:
+- EXACTLY ${batch.length} objects
+- MICRO: full -10..+10 scale. MACRO: score ALWAYS 0
+- Reasoning MUST have 3 paragraphs separated by \\n\\n
+- Tag impacts MUST be context-aware
+- ONLY JSON, no markdown`;
+
+  console.log(`[UnifiedBatch] Prompt: ${prompt.length} chars for ${batch.length} articles`);
 
   const response = await llmRequestWithRetry(
     () => axios.post(
@@ -738,7 +761,7 @@ Rules:
         model: KIMI_MODEL,
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.1,
-        max_tokens: 400 * batch.length,
+        max_tokens: 500 * batch.length,
         response_format: { type: 'json_object' },
       },
       {
@@ -764,6 +787,7 @@ Rules:
         const score = typeof item.score === 'number' ? Math.max(-10, Math.min(10, Math.round(item.score))) : 0;
         const reasoning = typeof item.reasoning === 'string' ? item.reasoning.slice(0, 500) : '';
         const is_political = item.is_political === true;
+        const article_type = item.article_type === 'macro' ? 'macro' as const : 'micro' as const;
         let sentiment: 'positive' | 'negative' | 'neutral';
         if (score <= -1) sentiment = 'negative';
         else if (score >= 1) sentiment = 'positive';
@@ -777,7 +801,7 @@ Rules:
             reasoning: typeof p.reasoning === 'string' ? p.reasoning.slice(0, 200) : '',
           }));
 
-        results.push({ sentiment, score, reasoning, is_political, tag_impacts });
+        results.push({ sentiment, score, reasoning, is_political, article_type, tag_impacts });
       }
     }
   } catch (e) {
@@ -786,7 +810,7 @@ Rules:
 
   while (results.length < batch.length) {
     const idx = results.length;
-    results.push({ sentiment: 'neutral', score: 0, reasoning: '', is_political: false, tag_impacts: batch[idx].tags.map(t => ({ tag: t, impact: 'neutral' as const, reasoning: '' })) });
+    results.push({ sentiment: 'neutral', score: 0, reasoning: '', is_political: false, article_type: 'micro', tag_impacts: batch[idx].tags.map(t => ({ tag: t, impact: 'neutral' as const, reasoning: '' })) });
   }
   return results.slice(0, batch.length);
 }

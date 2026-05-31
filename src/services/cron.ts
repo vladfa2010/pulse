@@ -197,13 +197,13 @@ async function processArticlesLocked() {
     } catch (err: any) {
       console.error(`[Cron] Unified batch failed: ${err.message?.slice(0, 100)}`);
       unifiedResults = articles.map((a, i) => ({
-        sentiment: 'neutral' as const, score: 0, reasoning: '', is_political: false,
+        sentiment: 'neutral' as const, score: 0, reasoning: '', is_political: false, article_type: 'micro' as const,
         tag_impacts: matchedTagsList[i].map(t => ({ tag: t, impact: 'neutral' as const, reasoning: '' })),
       }));
     }
   } else {
     unifiedResults = articles.map((a, i) => ({
-      sentiment: 'neutral' as const, score: 0, reasoning: '', is_political: false,
+      sentiment: 'neutral' as const, score: 0, reasoning: '', is_political: false, article_type: 'micro' as const,
       tag_impacts: matchedTagsList[i].map(t => ({ tag: t, impact: 'neutral' as const, reasoning: '' })),
     }));
   }
@@ -224,6 +224,7 @@ async function processArticlesLocked() {
       sentiment_reasoning: u.reasoning || null,
       sentiment_source: llmAvailable ? 'llm' as const : 'keyword' as const,
       is_political: u.is_political,
+      article_type: u.article_type || 'micro',
       matched_tags: matchedTagsList[i],
       tag_impact: u.tag_impacts || [],
     });
@@ -256,9 +257,9 @@ async function processArticlesLocked() {
           // Новая новость
           const newId = crypto.randomUUID();
           await query(
-            `INSERT OR IGNORE INTO news (id, title_original, title_ru, summary_ru, source, source_id, url, url_normalized, content_hash, all_sources, source_count, published_at, lang_original, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, matched_tags, tag_impact)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [newId, a.title, title_ru, summary_ru, a.source, a.sourceId, a.url, urlNormalized, contentHash, JSON.stringify([a.source]), 1, a.publishedAt.toISOString(), a.lang, a.sentiment, a.sentiment_score, a.sentiment_reasoning, a.sentiment_source, a.is_political ? 1 : 0, JSON.stringify(a.matched_tags || []), JSON.stringify(a.tag_impact || [])]
+            `INSERT OR IGNORE INTO news (id, title_original, title_ru, summary_ru, source, source_id, url, url_normalized, content_hash, all_sources, source_count, published_at, lang_original, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags, tag_impact)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [newId, a.title, title_ru, summary_ru, a.source, a.sourceId, a.url, urlNormalized, contentHash, JSON.stringify([a.source]), 1, a.publishedAt.toISOString(), a.lang, a.sentiment, a.sentiment_score, a.sentiment_reasoning, a.sentiment_source, a.is_political ? 1 : 0, a.article_type || 'micro', JSON.stringify(a.matched_tags || []), JSON.stringify(a.tag_impact || [])]
           );
           saved++;
           // Broadcast to SSE subscribers
@@ -268,8 +269,8 @@ async function processArticlesLocked() {
         // PostgreSQL: INSERT с ON CONFLICT (content_hash) DO UPDATE
         // Ключевой момент: дубликат по content_hash → добавляем источник, НЕ создаём новую запись
         const result = await query(
-          `INSERT INTO news (title_original, title_ru, summary_ru, source, source_id, url, url_normalized, content_hash, all_sources, source_count, published_at, lang_original, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, matched_tags, tag_impact)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text[], $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+          `INSERT INTO news (title_original, title_ru, summary_ru, source, source_id, url, url_normalized, content_hash, all_sources, source_count, published_at, lang_original, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags, tag_impact)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text[], $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
            ON CONFLICT (content_hash) DO UPDATE
              SET all_sources = CASE
                WHEN news.all_sources @> ARRAY[EXCLUDED.source]::text[] THEN news.all_sources
@@ -280,7 +281,7 @@ async function processArticlesLocked() {
                ELSE news.source_count + 1
              END
            RETURNING (xmax = 0) as is_insert`,
-          [a.title, title_ru, summary_ru, a.source, a.sourceId, a.url, urlNormalized, contentHash, [a.source], 1, a.publishedAt, a.lang, a.sentiment, a.sentiment_score, a.sentiment_reasoning, a.sentiment_source, a.is_political, a.matched_tags || [], JSON.stringify(a.tag_impact || [])]
+          [a.title, title_ru, summary_ru, a.source, a.sourceId, a.url, urlNormalized, contentHash, [a.source], 1, a.publishedAt, a.lang, a.sentiment, a.sentiment_score, a.sentiment_reasoning, a.sentiment_source, a.is_political, a.article_type || 'micro', a.matched_tags || [], JSON.stringify(a.tag_impact || [])]
         );
 
         if (result.rows.length > 0 && result.rows[0].is_insert === true) {
