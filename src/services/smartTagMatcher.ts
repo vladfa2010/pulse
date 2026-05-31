@@ -726,9 +726,9 @@ For each article you MUST provide:
    MACRO (economy/politics) — score ALWAYS 0, sentiment "neutral". Detailed tag_impacts show WHO benefits/suffers.
 
 3. **reasoning** (3 paragraphs separated by \\n\\n):
-   P1: What happened (facts)
-   P2: Direct investment impact
-   P3: Secondary/cascade effects (suppliers, competitors, sector)
+   Paragraph 1: What happened — factual summary (1-2 sentences)
+   Paragraph 2: Direct investment impact — why it matters to holders of affected assets
+   Paragraph 3: Secondary/cascade effects — implications for suppliers, competitors, and the broader sector
 
 4. **is_political** (true/false)
 5. **tag_impacts**: For EACH tag — impact + why (1 sentence with numbers)
