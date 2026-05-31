@@ -17,6 +17,7 @@
 8. [Sentiment Analysis](#8-sentiment-analysis)
 9. [User-Defined Tags](#9-user-defined-tags)
 10. [API Design](#10-api-design)
+10a. [Daily Summary](#10a-daily-summary--ai-саммари-для-пользователя)
 11. [Cron Jobs](#11-cron-jobs)
 12. [Services Map](#12-services-map)
 13. [Batch Processing & Job Lock](#13-batch-processing--job-lock)
@@ -747,6 +748,153 @@ GET /backfill-translate?secret=pulse-dev-key
 GET /backfill-tags?secret=pulse-dev-key
 |---> Ретегирование статей без matched_tags (3-layer matching)
 ```
+
+---
+
+## 10a. Daily Summary — AI-саммари для пользователя
+
+### Назначение
+Персональный AI-дайджест для авторизованного пользователя. Анализирует новости за последние 12 часов, совпадающие с тегами пользователя, и генерирует краткое текстовое саммари от лица инвестиционного аналитика.
+
+**Только для авторизованных пользователей.** Блок отображается на главной странице над каруселями.
+
+### Архитектура
+
+```
+┌─────────────────────┐
+│   DailySummary.tsx  │  ← Frontend, главная страница
+│   (src/components)  │
+└────────┬────────────┘
+         │ GET /api/user/summary?hours=12
+         ▼
+┌─────────────────────┐
+│   user.ts:710       │  ← Backend route
+│   /api/user/summary │
+└────────┬────────────┘
+         │
+    ┌────┴────┐
+    ▼         ▼
+┌───────┐ ┌──────────┐
+│ Cache │ │  LLM     │  ← Kimi API (если cache miss)
+│(5 min)│ │  (30s)   │
+└───────┘ └──────────┘
+```
+
+### API
+
+```
+GET /api/user/summary
+Headers: Authorization: Bearer <JWT>
+Query: ?hours=12 (default) | ?refresh=1 (skip cache)
+
+Response:
+{
+  "summary": "За последние 12 часов в фокусе...",
+  "cached": false,
+  "generated_at": "2026-05-31T08:00:00.000Z",
+  "articles_count": 14
+}
+```
+
+### Flow
+
+```
+1. Frontend: DailySummary.tsx монтируется
+   → вызывает GET /api/user/summary
+
+2. Backend: проверяет кэш (in-memory Map, TTL 5 минут)
+   ├── Cache HIT → возвращает cached ответ
+   └── Cache MISS → продолжаем
+
+3. Backend: получает теги пользователя из portfolios
+   SELECT tag_id, tag_name FROM portfolios WHERE user_id = $1
+
+4. Backend: ищет новости за 12 часов по тегам пользователя
+   SELECT title_ru, summary_ru, matched_tags, sentiment
+   FROM news
+   WHERE published_at > NOW() - INTERVAL '12 hours'
+     AND matched_tags && $userTags
+   ORDER BY published_at DESC
+   LIMIT 30
+
+5. Backend: формирует prompt для LLM
+   Активы клиента: Apple, Nvidia, Tesla...
+   Новости:
+   1. 🟢 Apple отчиталась о рекордной выручке
+      Теги: apple, tech
+   2. 🔴 Нефть упала на фоне слабых данных Китая
+      Теги: oil
+   ...
+
+6. Backend: отправляет в Kimi API
+   model: moonshot-v1-32k
+   temperature: 0.3
+   max_tokens: 500
+   timeout: 30 сек
+
+7. Backend: парсит ответ, сохраняет в кэш
+
+8. Frontend: отображает summary + articles_count
+```
+
+### LLM Prompt
+
+```typescript
+function buildSummaryPrompt(tagNames: string[], articles: Article[]): string {
+  return `Ты — инвестиционный аналитик PULSE. Подготовь краткое саммари 
+для клиента о событиях, затрагивающих его активы.
+
+Активы клиента: ${tagNames.join(', ')}
+
+Новости за последние 12 часов:
+${articles.map((a, i) => {
+  const emoji = a.sentiment === 'positive' ? '🟢' 
+    : a.sentiment === 'negative' ? '🔴' : '⚪';
+  return `${i+1}. ${emoji} ${a.title}\n   ${a.summary.slice(0,200)}\n   Теги: ${a.tags?.join(', ') || ''}`;
+}).join('\n\n')}
+
+Требования к саммари:
+1. Напиши на русском языке
+2. Общий объем — 80-150 слов (3-5 коротких абзацев)
+3. Стиль: уверенный аналитический, без воды, конкретные выводы
+4. Укажи ключевые события и их влияние на активы клиента
+5. Если новостей нет — "За последние 12 часов значимых событий не зафиксировано."
+6. Не используй markdown-заголовки, списки, эмодзи — только плавный текст
+7. Начинай с фразы типа "За последние 12 часов..." или "В фокусе..."
+
+Саммари:`;
+}
+```
+
+### Что НЕ используется (даже если есть в БД)
+
+| Поле | Почему не используется |
+|------|------------------------|
+| `sentiment_score` (-10..+10) | Саммари — текстовый, не нужен числовой score |
+| `is_political` | Нет фильтрации политики в саммари |
+| `tag_impact.reasoning` | Не показываем почему тег повлиял — только сводку |
+| `sentiment_reasoning` | LLM генерирует своё reasoning в контексте всех новостей |
+
+### Кэширование
+
+```typescript
+const SUMMARY_CACHE_TTL = 5 * 60 * 1000; // 5 минут
+const summaryCache = new Map<string, { text: string; time: number; generatedAt: string }>();
+```
+
+Кэш in-memory (не в Redis/DB) — допустимо, т.к. саммари персональный и часто обновляется.
+
+### Отличие от Telegram Digest
+
+| Аспект | Daily Summary (Web) | Telegram Digest |
+|--------|---------------------|-----------------|
+| **Канал** | Frontend (DailySummary.tsx) | Telegram Bot |
+| **Endpoint** | `GET /api/user/summary` | `POST /webhook/telegram` |
+| **Формат** | Текст на странице | Сообщение в TG |
+| **Период** | 12 часов (фиксировано) | 3/6/12/24 часа (настраивается) |
+| **Кэш** | 5 минут | Нет |
+| **Автоматика** | Только по запросу (refresh) | Cron по расписанию |
+| **Пользователь** | Только авторизованный | Подключённый TG |
 
 ---
 
