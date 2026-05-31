@@ -311,26 +311,26 @@ async function processArticlesLocked() {
 // Cron Job Lock — prevents parallel runs via PostgreSQL
 // ═══════════════════════════════════════════════════════════════════════════
 
-const LOCK_TTL_MINUTES = 15; // Lock auto-expires after 15 min (cron runs in ~2-3 min, 15 = safety margin)
+const LOCK_TTL_MINUTES = 10; // Lock auto-expires after 10 min (cron runs in ~2-3 min, 5+5 = safety margin)
 const INSTANCE_ID = `${process.env.RENDER_INSTANCE_ID || 'local'}-${process.pid}-${Date.now()}`;
 
 // PostgreSQL vs SQLite datetime helpers (for cron lock SQL)
 const IS_SQLITE = process.env.USE_SQLITE === 'true';
 const SQL_NOW = IS_SQLITE ? "datetime('now')" : 'NOW()';
-const SQL_INTERVAL_15MIN = IS_SQLITE
-  ? "datetime('now', '+15 minutes')"
-  : "NOW() + INTERVAL '15 minutes'";
+const SQL_INTERVAL_10MIN = IS_SQLITE
+  ? "datetime('now', '+10 minutes')"
+  : "NOW() + INTERVAL '10 minutes'";
 
 async function acquireCronLock(jobName: string): Promise<boolean> {
   try {
     // Try to acquire: either the lock is free OR expired
     const result = await query(`
       INSERT INTO cron_locks (job_name, locked_at, locked_by, expires_at)
-      VALUES ($1, ${SQL_NOW}, $2, ${SQL_INTERVAL_15MIN})
+      VALUES ($1, ${SQL_NOW}, $2, ${SQL_INTERVAL_10MIN})
       ON CONFLICT (job_name) DO UPDATE
         SET locked_at = ${SQL_NOW},
             locked_by = EXCLUDED.locked_by,
-            expires_at = ${SQL_INTERVAL_15MIN}
+            expires_at = ${SQL_INTERVAL_10MIN}
         WHERE cron_locks.expires_at < ${SQL_NOW}
       RETURNING locked_by
     `, [jobName, INSTANCE_ID]);
@@ -361,12 +361,12 @@ async function releaseCronLock(jobName: string): Promise<void> {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Start cron: every 15 minutes (first run delayed by 2 min)
+// Start cron: every 5 minutes (first run delayed by 2 min)
 // ═══════════════════════════════════════════════════════════════════════════
 export function startCron() {
-  console.log('[Cron] RSS aggregator scheduled every 15 minutes');
+  console.log('[Cron] RSS aggregator scheduled every 5 minutes');
 
-  cron.schedule('*/15 * * * *', async () => {
+  cron.schedule('*/5 * * * *', async () => {
     try {
       await processArticles();
     } catch (err: any) {
