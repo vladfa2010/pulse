@@ -447,9 +447,10 @@ Rules:
         const score = typeof item.score === 'number'
           ? Math.max(-10, Math.min(10, Math.round(item.score)))
           : 0;
-        const reasoning = typeof item.reasoning === 'string'
-          ? item.reasoning.slice(0, 500)
-          : '';
+        const p1 = item.reasoning_p1 || '';
+        const p2 = item.reasoning_p2 || '';
+        const p3 = item.reasoning_p3 || '';
+        const reasoning = [p1, p2, p3].filter(Boolean).join('\n\n').slice(0, 500);
         let sentiment: 'positive' | 'negative' | 'neutral';
         if (score <= -1) sentiment = 'negative';
         else if (score >= 1) sentiment = 'positive';
@@ -785,7 +786,10 @@ MANDATORY:
     const arr = Array.isArray(items) ? items : [];
     for (const item of arr) {
       const score = typeof item.score === 'number' ? Math.max(-10, Math.min(10, Math.round(item.score))) : 0;
-      const reasoning = typeof item.reasoning === 'string' ? item.reasoning.slice(0, 500) : '';
+      const p1 = item.reasoning_p1 || '';
+      const p2 = item.reasoning_p2 || '';
+      const p3 = item.reasoning_p3 || '';
+      const reasoning = [p1, p2, p3].filter(Boolean).join('\n\n').slice(0, 500);
       const is_political = item.is_political === true;
       const article_type = item.article_type === 'macro' ? 'macro' as const : 'micro' as const;
       let sentiment: 'positive' | 'negative' | 'neutral';
