@@ -531,7 +531,7 @@ function parseSentimentResponse(content: string): { score: number; reasoning: st
 
 export interface TagImpact {
   tag: string;
-  impact: 'positive' | 'negative' | 'neutral';
+  score: number; // -10..+10: how the news affects this specific tag
   reasoning: string;
 }
 
@@ -543,7 +543,7 @@ interface TagImpactBatchItem {
 
 export async function analyzeTagImpactBatch(items: TagImpactBatchItem[]): Promise<TagImpact[][]> {
   if (!KIMI_API_KEY || items.length === 0) {
-    return items.map(it => it.tags.map(t => ({ tag: t, impact: 'neutral' as const, reasoning: '' })));
+    return items.map(it => it.tags.map(t => ({ tag: t, score: 0, reasoning: '' })));
   }
 
   const results: TagImpact[][] = [];
@@ -561,7 +561,7 @@ export async function analyzeTagImpactBatch(items: TagImpactBatchItem[]): Promis
       console.error(`[TagImpactBatch] Batch ${batchNum} failed: ${err.message?.slice(0, 100)}`);
       // Fallback: neutral for all tags in this batch
       for (const it of batch) {
-        results.push(it.tags.map(t => ({ tag: t, impact: 'neutral' as const, reasoning: '' })));
+        results.push(it.tags.map(t => ({ tag: t, score: 0, reasoning: '' })));
       }
     }
   }
@@ -576,14 +576,14 @@ async function analyzeTagImpactBatchChunk(batch: TagImpactBatchItem[]): Promise<
     articlesText += `\n[${i + 1}] Title: ${it.title.slice(0, 120)}\nSummary: ${it.summary.slice(0, 200)}\nTags: ${it.tags.join(', ')}\n`;
   });
 
-  const prompt = `Analyze how each financial news article affects its tags. Return impact (positive/negative/neutral) + brief reasoning for EACH tag.
+  const prompt = `Analyze how each financial news article affects its tags. Return score (-10..+10) + brief reasoning for EACH tag.
 
 ${articlesText}
 
 Return ONLY a JSON object with "results" key. Each element in results is an array of tag impacts for that article, in SAME order as articles above:
 {"results": [
-  [{"tag":"tesla","impact":"negative","reasoning":"Stock dropped"}, {"tag":"nvda","impact":"neutral","reasoning":"No direct effect"}],
-  [{"tag":"apple","impact":"positive","reasoning":"Strong earnings"}]
+  [{"tag":"tesla","score":-5,"reasoning":"Stock dropped"}, {"tag":"nvda","score":0,"reasoning":"No direct effect"}],
+  [{"tag":"apple","score":8,"reasoning":"Strong earnings"}]
 ]}
 
 Rules:
@@ -627,7 +627,7 @@ Rules:
             .filter((p: any) => p && typeof p.tag === 'string')
             .map((p: any) => ({
               tag: p.tag,
-              impact: ['positive', 'negative'].includes(p.impact) ? p.impact : 'neutral',
+              score: typeof p.score === 'number' ? p.score : 0,
               reasoning: typeof p.reasoning === 'string' ? p.reasoning.slice(0, 200) : '',
             }));
           results.push(impacts);
@@ -643,7 +643,7 @@ Rules:
   // Fill missing results
   while (results.length < batch.length) {
     const idx = results.length;
-    results.push(batch[idx].tags.map(t => ({ tag: t, impact: 'neutral' as const, reasoning: '' })));
+    results.push(batch[idx].tags.map(t => ({ tag: t, score: 0, reasoning: '' })));
   }
 
   return results.slice(0, batch.length);
@@ -691,7 +691,7 @@ export async function analyzeUnifiedBatch(items: UnifiedBatchItem[]): Promise<Un
     } catch (err: any) {
       console.error(`[UnifiedBatch] Batch failed: ${err.message?.slice(0, 100)}`);
       for (const it of batch) {
-        results.push({ sentiment: 'neutral', score: 0, reasoning: '', is_political: false, article_type: 'micro', tag_impacts: it.tags.map(t => ({ tag: t, impact: 'neutral' as const, reasoning: '' })) });
+        results.push({ sentiment: 'neutral', score: 0, reasoning: '', is_political: false, article_type: 'micro', tag_impacts: it.tags.map(t => ({ tag: t, score: 0, reasoning: '' })) });
       }
     }
   }
@@ -813,7 +813,7 @@ MANDATORY:
 
   while (results.length < batch.length) {
     const idx = results.length;
-    results.push({ sentiment: 'neutral', score: 0, reasoning: '', is_political: false, article_type: 'micro', tag_impacts: batch[idx].tags.map(t => ({ tag: t, impact: 'neutral' as const, reasoning: '' })) });
+    results.push({ sentiment: 'neutral', score: 0, reasoning: '', is_political: false, article_type: 'micro', tag_impacts: batch[idx].tags.map(t => ({ tag: t, score: 0, reasoning: '' })) });
   }
   return results.slice(0, batch.length);
 }

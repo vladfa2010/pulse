@@ -198,13 +198,13 @@ async function processArticlesLocked() {
       console.error(`[Cron] Unified batch failed: ${err.message?.slice(0, 100)}`);
       unifiedResults = articles.map((a, i) => ({
         sentiment: 'neutral' as const, score: 0, reasoning: '', is_political: false, article_type: 'micro' as const,
-        tag_impacts: matchedTagsList[i].map(t => ({ tag: t, impact: 'neutral' as const, reasoning: '' })),
+        tag_impacts: matchedTagsList[i].map(t => ({ tag: t, score: 0, reasoning: '' })),
       }));
     }
   } else {
     unifiedResults = articles.map((a, i) => ({
       sentiment: 'neutral' as const, score: 0, reasoning: '', is_political: false, article_type: 'micro' as const,
-      tag_impacts: matchedTagsList[i].map(t => ({ tag: t, impact: 'neutral' as const, reasoning: '' })),
+      tag_impacts: matchedTagsList[i].map(t => ({ tag: t, score: 0, reasoning: '' })),
     }));
   }
   console.log(`[Cron] Unified batch done: ${unifiedResults.length} results in ${Date.now() - unifiedStart}ms`);
