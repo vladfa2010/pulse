@@ -359,6 +359,38 @@ app.get('/debug-system', async (req, res) => {
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
+// GET /debug-news-recent — все новости за последние N минут (для диагностики)
+app.get('/debug-news-recent', async (req, res) => {
+  try {
+    const minutes = Math.min(parseInt(req.query.minutes as string) || 30, 120);
+    // ВСЕ новости за последние N минут
+    const allResult = await query(
+      `SELECT id, title_ru, source, published_at, fetched_at, matched_tags, array_length(matched_tags, 1) as tag_count
+       FROM news
+       WHERE published_at > NOW() - INTERVAL '${minutes} minutes'
+       ORDER BY published_at DESC
+       LIMIT 50`
+    );
+    const withTags = allResult.rows.filter(r => r.tag_count > 0);
+    const withoutTags = allResult.rows.filter(r => !r.tag_count);
+    res.json({
+      minutes,
+      total: allResult.rows.length,
+      with_tags: withTags.length,
+      without_tags: withoutTags.length,
+      articles: allResult.rows.map(r => ({
+        published_at: r.published_at,
+        title: r.title_ru?.slice(0, 60),
+        source: r.source,
+        tags: r.matched_tags || [],
+        tag_count: r.tag_count || 0,
+      })),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /debug-rss — detailed per-source RSS diagnostics
 app.get('/debug-rss', async (req, res) => {
   try {
