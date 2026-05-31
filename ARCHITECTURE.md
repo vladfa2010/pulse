@@ -1,81 +1,85 @@
 # PULSE — Backend Architecture
 
-> Техническая документация бэкенда. Логика, flow, принятие решений.
-> Последнее обновление: 2026-05-30 (v7.15 — batch processing + job lock)
+> Техническая документация backend'а. Логика, flow, принятие решений.
+> Последнее обновление: 2026-05-31 (v7.17.4 — unified batch + 5-min cron + RSS fixes)
 
 ---
 
 ## Содержание
 
-1. [News Pipeline](#news-pipeline)
-2. [Smart Tag Matching](#smart-tag-matching)
-3. [Duplicate Detection](#duplicate-detection)
-4. [Database Layer](#database-layer)
-5. [Translation](#translation)
-6. [Sentiment Analysis](#sentiment-analysis)
-7. [User-Defined Tags](#user-defined-tags)
-8. [API Design](#api-design)
-9. [Cron Jobs](#cron-jobs)
-10. [Services Map](#services-map)
+1. [News Pipeline](#1-news-pipeline)
+2. [RSS Fetcher](#2-rss-fetcher-rssfetcherts)
+3. [Smart Tag Matching](#3-smart-tag-matching)
+4. [Duplicate Detection](#4-duplicate-detection)
+5. [Database Layer](#5-database-layer)
+6. [Translation](#6-translation)
+7. [Unified LLM Batch](#7-unified-llm-batch-v717)
+8. [Sentiment Analysis](#8-sentiment-analysis)
+9. [User-Defined Tags](#9-user-defined-tags)
+10. [API Design](#10-api-design)
+11. [Cron Jobs](#11-cron-jobs)
+12. [Services Map](#12-services-map)
+13. [Batch Processing & Job Lock](#13-batch-processing--job-lock)
+14. [Performance](#14-performance)
 
 ---
 
-## News Pipeline
+## 1. News Pipeline
 
-### Полный flow обработки новости
+### Полный flow обработки новости (v7.17)
 
 ```
 ┌─────────────────┐
-│   RSS Fetcher   │  ← 20 источников, batch по 4
+│   RSS Fetcher   │  <-- 37 источников, batch x 4
 │   (rssFetcher)  │
 └────────┬────────┘
          │
          ▼
 ┌─────────────────┐
-│   XML Parser    │  ← Извлекаем <item>: title, link, pubDate, summary
+│   XML Parser    │  <-- RSS 2.0 + Atom, normalizePubDate (timezone-aware)
 │   (parseRSS)    │
 └────────┬────────┘
          │
          ▼
 ┌─────────────────┐
-│  URL Normalize  │  ← Удаляем UTM, приводим к canonical form
+│  URL Normalize  │  <-- Удаляем UTM, приводим к canonical form
 │  (normalizeUrl) │
 └────────┬────────┘
          │
          ▼
 ┌─────────────────┐
-│   Translation   │  ← EN → RU через Kimi API (api.moonshot.ai)
-│   (translate)   │  ← Cache: translation_cache table
+│   Translation   │  <-- EN -> RU через Kimi API (api.moonshot.ai)
+│   (translate)   │  <-- Cache: translation_cache table
 └────────┬────────┘
          │
          ▼
-┌─────────────────┐
-│    Sentiment    │  ← 3-level: keywords → LLM → tag impact
-│  (cron.ts /     │
-│   smartTagMatcher)│
-└────────┬────────┘
+┌──────────────────────────────┐
+│      Smart Match Tags        │  <-- 3-layer: keywords -> LLM -> related
+│     (smartTagMatcher)        │  <-- User-defined tags + standard tags
+└────────┬─────────────────────┘
+         │
+         ▼
+┌──────────────────────────────┐
+│      UNIFIED LLM BATCH       │  <-- 1 запрос на 10 статей
+│         (v7.17)              │     sentiment + reasoning + is_political + tag_impacts
+│  ┌─────────┐ ┌────────────┐ │
+│  │Sentiment│ │  Tag Impact│ │  <-- analyzeUnifiedBatch(10)
+│  │ -10..+10│ │  (per tag) │ │     returns: UnifiedResult[] x 10
+│  │Reasoning│ │            │ │
+│  │2 para.  │ │            │ │
+│  │is_polit.│ │            │ │
+│  └─────────┘ └────────────┘ │
+└────────┬─────────────────────┘
          │
          ▼
 ┌─────────────────┐
-│   Smart Match   │  ← 3-layer: keywords → LLM → related
-│ (smartTagMatcher)│  ← User-defined tags + standard tags
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│   Tag Impact    │  ← LLM-анализ влияния тегов (tag_impact JSONB)
-│ (smartTagMatcher)│
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│  Deduplicate    │  ← content_hash + ON CONFLICT DO UPDATE
+│  Deduplicate    │  <-- content_hash + ON CONFLICT DO UPDATE
 │   (cron.ts)     │
 └────────┬────────┘
          │
          ▼
 ┌─────────────────┐
-│   Save to DB    │  ← PostgreSQL, table: news
+│   Save to DB    │  <-- PostgreSQL, table: news
 │    (query)      │
 └─────────────────┘
 ```
@@ -84,16 +88,86 @@
 
 | Этап | Время |
 |------|-------|
-| RSS Fetch (20 источников) | ~15 сек |
-| Translation (EN→RU, LLM) | ~10-20 сек |
-| Sentiment Analysis | ~5 сек |
-| Smart Tag Matching | ~5 сек |
+| RSS Fetch (37 источников) | ~15-20 сек |
+| Translate (EN -> RU) | ~10-20 сек |
+| Smart Match Tags | ~5 сек |
+| Unified LLM Batch | ~10-20 сек |
 | Deduplicate + Save | ~3 сек |
-| **Итого** | **~38-48 сек** |
+| **Итого** | **~43-68 сек** |
 
 ---
 
-## Smart Tag Matching
+## 2. RSS Fetcher (rssFetcher.ts)
+
+### 37 источников
+
+| Категория | Источники | Кол-во |
+|-----------|-----------|--------|
+| **RU** | lenta, kommersant, rbc, vedomosti, tass, ria, interfax, rt, izvestia | 9 |
+| **Finam** | finam_companies, finam_news, finam_forecasts, finam_world, finam_analytics, finam_bonds_news, finam_bonds_comments | 7 |
+| **EN** | seekingalpha, reuters, bloomberg, techcrunch, cnbc, ft, wsj, economist, forbes, cnn, bbc, guardian, marketwatch | 13 |
+| **Tech** | verge, wired, arstechnica, hackernews | 4 |
+| **Crypto** | coindesk, cointelegraph | 2 |
+| **Energy** | oilprice, mining | 2 |
+| **Всего** | | **37** |
+
+### normalizePubDate — timezone-aware парсинг
+
+```
+ISO 8601 с Z:           "2026-05-31T07:35:31Z"           -> UTC
+ISO 8601 с offset:      "2026-05-31T07:35:31+03:00"      -> с учетом offset
+RSS format с timezone:  "Sat, 30 May 2026 20:06:39 +0300" -> с учетом offset
+RSS format без timezone:                        
+  + "+0300" для RU источников
+  + "+0000" для EN источников
+Fallback:               new Date(str) + проверка isNaN
+```
+
+### parseRSS — поддержка RSS 2.0 и Atom
+
+| Формат | Элемент | Поле |
+|--------|---------|------|
+| **RSS 2.0** | `<item>` | Статья |
+| RSS 2.0 | `<title>` | Заголовок |
+| RSS 2.0 | `<description>` | Сводка |
+| RSS 2.0 | `<link>` | URL |
+| RSS 2.0 | `<pubDate>` | Дата публикации |
+| **Atom** | `<entry>` | Статья |
+| Atom | `<title>` | Заголовок |
+| Atom | `<summary>` / `<content>` | Сводка |
+| Atom | `<id>` / `<link href>` | URL |
+| Atom | `<updated>` / `<published>` | Дата публикации |
+
+### extractTag — CDATA + namespace
+
+```
+<title>Foo</title>                    -> "Foo"
+<title><![CDATA[Foo]]></title>        -> "Foo"
+<dc:title>Foo</dc:title>              -> "Foo"
+```
+
+### fetchAllRSS — ключевые изменения
+
+```typescript
+// last_fetched_at = max(article.publishedAt)  (было: fetchTime)
+// Не обновляем last_fetched_at если 0 статей от источника
+// Stats: lastFetchStats — per-source diagnostics
+
+interface FetchStats {
+  source: string;
+  items: number;       // Всего items в RSS feed
+  filtered: number;    // Отфильтровано (до last_fetched_at)
+  kept: number;        // Сохранено для обработки
+  httpStatus: number;  // HTTP status code
+  error?: string;      // Ошибка если есть
+}
+
+// lastFetchStats: Map<string, FetchStats> — доступен через GET /debug-rss
+```
+
+---
+
+## 3. Smart Tag Matching
 
 ### Архитектура: 3 слоя
 
@@ -129,9 +203,9 @@ function matchTagsByKeywords(text: string): string[] {
 ```
 Если keyword matching вернул []:
   1. Проверяем кэш (smart_tag_cache, TTL 7 дней)
-  2. Если нет в кэше → вызываем Kimi API
+  2. Если нет в кэше -> вызываем Kimi API
   3. smartMatchTags(title, summary): Promise<string[]>
-  4. Парсим JSON-ответ → получаем теги
+  4. Парсим JSON-ответ -> получаем теги
   5. Сохраняем в кэш (TTL: 7 дней)
 ```
 
@@ -175,7 +249,7 @@ const TAG_KEYWORDS: Record<string, string[]> = {
 
 ---
 
-## Duplicate Detection
+## 4. Duplicate Detection
 
 ### Алгоритм
 
@@ -193,12 +267,12 @@ const TAG_KEYWORDS: Record<string, string[]> = {
    INSERT INTO news (..., content_hash, all_sources, source_count)
    VALUES (..., 'a1b2c3d4', ARRAY['РБК'], 1)
    ON CONFLICT (content_hash) DO UPDATE
-     SET all_sources = CASE 
-       WHEN news.all_sources @> ARRAY[EXCLUDED.source]::text[] 
+     SET all_sources = CASE
+       WHEN news.all_sources @> ARRAY[EXCLUDED.source]::text[]
        THEN news.all_sources
        ELSE array_append(news.all_sources, EXCLUDED.source)
      END,
-     source_count = CASE 
+     source_count = CASE
        WHEN news.all_sources @> ARRAY[EXCLUDED.source]::text[]
        THEN news.source_count
        ELSE news.source_count + 1
@@ -215,7 +289,7 @@ const TAG_KEYWORDS: Record<string, string[]> = {
 
 ---
 
-## Database Layer
+## 5. Database Layer
 
 ### Query Interface
 
@@ -263,7 +337,7 @@ ALTER TABLE user_news_reads ADD CONSTRAINT user_news_reads_unique UNIQUE (user_i
 
 ---
 
-## Translation
+## 6. Translation
 
 ### translate.ts
 
@@ -343,94 +417,139 @@ async function translateWithKimi(texts: string[]): Promise<string[]> {
 
 ---
 
-## Sentiment Analysis
+## 7. Unified LLM Batch (v7.17)
 
-Двухуровневая система:
+### Концепция
 
-### Level 1: Keyword-based (cron.ts)
+**Раньше (v7.15):** 3 отдельных LLM-запроса на статью:
+1. Sentiment analysis
+2. Tag impact analysis
+3. Political detection
 
-```typescript
-// Быстрый, не требует API ключа
-function analyzeSentimentKeywords(text: string): 'positive' | 'negative' | 'neutral' {
-  const lower = text.toLowerCase();
-  const positiveWords = ['рост', 'прибыль', 'bull', 'surge', 'gain', 'moon'];
-  const negativeWords = ['падение', 'убыток', 'bear', 'crash', 'loss', 'dump'];
-
-  let score = 0;
-  positiveWords.forEach(w => { if (lower.includes(w)) score++; });
-  negativeWords.forEach(w => { if (lower.includes(w)) score--; });
-
-  return score > 0 ? 'positive' : score < 0 ? 'negative' : 'neutral';
-}
-// sentiment_source = 'keyword'
-```
-
-### Level 2: LLM (Kimi API) — smartTagMatcher.ts
+**Сейчас (v7.17):** 1 LLM-запрос на 10 статей возвращает все 3 результата.
 
 ```typescript
-async function analyzeSentimentLLM(
-  title: string,
-  summary: string
-): Promise<'positive' | 'negative' | 'neutral'> {
-  const response = await callKimiAPI([
-    {
-      role: 'system',
-      content: 'Analyze sentiment of this financial news. ' +
-               'Return ONLY JSON: {"sentiment": "positive"|"negative"|"neutral"}'
-    },
-    {
-      role: 'user',
-      content: `Title: ${title}\nSummary: ${summary}`
-    }
-  ]);
-  // sentiment_source = 'llm'
-  return JSON.parse(response).sentiment;
+interface UnifiedResult {
+  sentiment: 'positive' | 'negative' | 'neutral';
+  score: number;        // -10..+10
+  reasoning: string;    // 2 paragraphs: "What happened.\n\nWhy it matters."
+  is_political: boolean;
+  tag_impacts: TagImpact[];
+}
+
+// === analyzeUnifiedBatch ===
+async function analyzeUnifiedBatch(
+  items: { title: string; summary: string; tags: string[] }[]
+): Promise<UnifiedResult[]> {
+  // 1. Разбиваем на чанки по 10 статей
+  const chunks = chunk(items, 10);
+  const results: UnifiedResult[] = [];
+
+  for (const chunk of chunks) {
+    const chunkResults = await analyzeUnifiedBatchChunk(chunk);
+    results.push(...chunkResults);
+  }
+
+  return results;
+}
+
+// === analyzeUnifiedBatchChunk ===
+async function analyzeUnifiedBatchChunk(
+  items: { title: string; summary: string; tags: string[] }[]
+): Promise<UnifiedResult[]> {
+  // 1 axios.post to Kimi API
+  // response_format: { type: 'json_object' }
+  // returns: [{ score, reasoning, is_political, tag_impacts }] x 10
 }
 ```
 
-### Level 3: Tag Impact — smartTagMatcher.ts
+### Prompt
+
+```
+Role: Анализ от инвестиционного аналитика.
+
+Для каждой статьи верни:
+- sentiment: "positive" | "negative" | "neutral"
+- score: -10..+10 (числовая оценка)
+- reasoning: 2 абзаца через "\n\n":
+  Параграф 1: "What happened" (факты)
+  Параграф 2: "Why it matters to investors" (значение)
+- is_political: true для политики/войны/выборов/санкций/геополитики
+- tag_impacts: массив [{ tag, impact, reasoning }] для каждого matched tag
+```
+
+### Retry Logic
 
 ```typescript
-interface TagImpact {
-  tag: string;
-  impact: 'positive' | 'negative' | 'neutral';
-  reasoning: string;
-}
+// 3 retries на 429/502/ECONNRESET/ETIMEDOUT
+// Backoff: 2s -> 4s -> 8s
 
-async function analyzeTagImpact(
-  title: string,
-  summary: string,
-  tags: string[]
-): Promise<TagImpact[]> {
-  const response = await callKimiAPI([
-    {
-      role: 'system',
-      content: 'Analyze impact of each tag on the financial news. ' +
-               'Return ONLY JSON array: [{"tag": "...", "impact": "...", "reasoning": "..."}]'
-    },
-    {
-      role: 'user',
-      content: `Title: ${title}\nSummary: ${summary}\nTags: ${tags.join(', ')}`
-    }
-  ]);
-
-  const impacts: TagImpact[] = JSON.parse(response);
-  // Сохраняем в news.tag_impact (JSONB column)
-  return impacts;
-}
+llmRequestWithRetry(fn, label):
+  for attempt 1..3:
+    try: return await fn()
+    catch err:
+      if status NOT IN [429, 502, ECONNRESET, ETIMEDOUT]: throw
+      delay = 2s * 2^(attempt-1)  // 2s, 4s, 8s
+      sleep(delay); retry
 ```
+
+---
+
+## 8. Sentiment Analysis
+
+### Score Scale
+
+| Score | Значение |
+|-------|----------|
+| -10 | Катастрофа (банкротство) |
+| -5 | Сильный негатив |
+| -1 | Слабый негатив |
+| 0 | Нейтрально |
+| +1 | Слабый позитив |
+| +5 | Сильный позитив |
+| +10 | Максимум (рекорд) |
+
+### Reasoning
+
+2 абзаца через `\n\n`:
+
+```
+Параграф 1: "What happened" (факты — что произошло)
+Параграф 2: "Why it matters to investors" (значение — почему это важно для инвесторов)
+```
+
+Пример:
+```
+Apple reported Q2 earnings of $2.18 EPS vs $2.10 expected, 
+with revenue up 5% YoY to $90.8B. Services revenue hit 
+an all-time high of $23.9B.
+
+The beat on both top and bottom lines signals resilient 
+consumer demand despite macro headwinds. Services growth 
+accelerates the shift to higher-margin recurring revenue, 
+which the market typically rewards with multiple expansion.
+```
+
+### is_political
+
+`is_political = true` для статей о:
+- Политике / выборах
+- Войне / военных действиях
+- Санкциях / геополитике
+- Международных отношениях
 
 ### Storage
 
 | Поле | Тип | Описание |
 |------|-----|----------|
 | `sentiment` | `TEXT` | `positive` \| `negative` \| `neutral` |
-| `sentiment_source` | `TEXT` | `keyword` \| `llm` — какой уровень определил |
+| `sentiment_source` | `TEXT` | `llm` (единственный источник в v7.17) |
 | `tag_impact` | `JSONB` | Массив `TagImpact[]` или `null` |
+| `is_political` | `BOOLEAN` | `true` — статья политическая |
 
 ---
 
-## User-Defined Tags
+## 9. User-Defined Tags
 
 ### tagManager.ts
 
@@ -479,7 +598,7 @@ function generateTagKeywords(tagName: string): string[] {
   keywords.add(translit.toLowerCase());
 
   // Склонения: суффиксные формы
-  // Например, для "лукойл" → ['лукойл', 'лукойлу', 'лукойла', 'лукойле']
+  // Например, для "лукойл" -> ['лукойл', 'лукойлу', 'лукойла', 'лукойле']
   const declensions = generateDeclensions(tagName);
   declensions.forEach(d => keywords.add(d.toLowerCase()));
 
@@ -519,36 +638,36 @@ async function scanAllNewsForTag(
 ### User-Defined Tags Flow
 
 ```
-Пользователь создаёт тег "лукойл"
-│
-├─→ generateTagKeywords("лукойл")
-│   └─→ ['лукойл', 'lukoil', 'лукойлу', 'лукойла', 'лукойле', 'lukoyl']
-│
-├─→ INSERT INTO user_defined_tags
-│   (tag_id='lukoil', tag_name='Лукойл', keywords=[...])
-│
-├─→ INSERT INTO portfolios
-│   (user_id, tag_id='lukoil', tag_name='Лукойл')
-│
-└─→ BACKFILL: scanAllNewsForTag('lukoil', keywords)
-    ├─→ SELECT * FROM news WHERE matched_tags IS NULL OR NOT ('lukoil' = ANY(matched_tags))
-    ├─→ Для каждой новости: matchTagsByKeywords(title + summary)
-    └─→ Если совпало → UPDATE matched_tags = array_append(matched_tags, 'lukoil')
-        └─→ Возвращает { scanned: 1523, matched: 47 }
+Пользователь создает тег "лукойл"
+|
+|---> generateTagKeywords("лукойл")
+|     |---> ['лукойл', 'lukoil', 'лукойлу', 'лукойла', 'лукойле', 'lukoyl']
+|
+|---> INSERT INTO user_defined_tags
+|     (tag_id='lukoil', tag_name='Лукойл', keywords=[...])
+|
+|---> INSERT INTO portfolios
+|     (user_id, tag_id='lukoil', tag_name='Лукойл')
+|
+|---> BACKFILL: scanAllNewsForTag('lukoil', keywords)
+|     |---> SELECT * FROM news WHERE matched_tags IS NULL OR NOT ('lukoil' = ANY(matched_tags))
+|     |---> Для каждой новости: matchTagsByKeywords(title + summary)
+|     |---> Если совпало -> UPDATE matched_tags = array_append(matched_tags, 'lukoil')
+|     |---> Возвращает { scanned: 1523, matched: 47 }
 ```
 
 ---
 
-## API Design
+## 10. API Design
 
 ### News Feed Logic
 
 ```
 GET /api/news
-├── Без параметров:   непрочитанные по тегам (default)
-├── ?history=true:    все по тегам (read + unread)
-├── ?global=true:     все новости (без фильтра тегов)
-└── ?limit=N:         пагинация (default: 50, max: 100)
+|---> Без параметров:   непрочитанные по тегам (default)
+|---> ?history=true:    все по тегам (read + unread)
+|---> ?global=true:     все новости (без фильтра тегов)
+|---> ?limit=N:         пагинация (default: 50, max: 100)
 ```
 
 ### SQL для каждого режима
@@ -590,34 +709,57 @@ Response: { "tag": { "tag_id": "lukoil", ... }, "backfill": { "scanned": 1523, "
 
 ```
 GET /debug-env
-└── Returns: { kimi_key_set: boolean, db_url_set: boolean, node_env: string }
+|---> Returns: { kimi_key_set: boolean, db_url_set: boolean, node_env: string }
 
 GET /debug-db
-└── Returns: { news_count: number, users_count: number, last_article: string }
+|---> Returns: { news_count: number, users_count: number, last_article: string }
+
+GET /debug-rss         <-- NEW v7.17
+|---> Returns: per-source RSS diagnostics
+|---> { sources: [{ name, last_fetched_at, article_count, last_fetch_stats }] }
+
+GET /debug-cron        <-- NEW v7.17
+|---> Returns: cron health (recent runs, 24h stats)
+|---> { recent_runs: [...], stats_24h: { total: N, successful: M, failed: F } }
+
+GET /debug-system      <-- NEW v7.17
+|---> Returns: DB health, cron locks, test insert
+|---> { db: "ok", locks: [...], test_insert: "ok" }
+
+GET /test-rss          <-- NEW v7.17
+|---> Fetch RSS without saving (diagnostic)
+|---> Returns: raw RSS items per source
+
+GET /test-process      <-- NEW v7.17
+|---> Full process synchronously with await
+|---> Returns: { fetched: N, translated: N, matched: N, saved: N, duration_ms: N }
 
 GET /tag-stats
-└── Returns: { total_tags: number, user_tags: number, news_with_tags: number }
+|---> Returns: { total_tags: number, user_tags: number, news_with_tags: number }
 ```
 
 ### Backfill Routes
 
 ```
 GET /backfill-translate?secret=pulse-dev-key
-└── Перевод существующих EN заголовков (batch через Kimi API)
+|---> Перевод существующих EN заголовков (batch через Kimi API)
 
 GET /backfill-tags?secret=pulse-dev-key
-└── Ретегирование статей без matched_tags (3-layer matching)
+|---> Ретегирование статей без matched_tags (3-layer matching)
 ```
 
 ---
 
-## Cron Jobs
+## 11. Cron Jobs
 
 ### RSS Aggregator
 
 ```typescript
-// Каждые 15 минут
-cron.schedule('*/15 * * * *', processArticles);
+// Каждые 5 минут (было 15)
+cron.schedule('*/5 * * * *', processArticles);
+
+// Job lock: PostgreSQL cron_locks table
+// TTL: 10 минут (было 15) — safety margin для 5-min schedule
 
 // Первый запуск через 2 минуты после старта
 setTimeout(processArticles, 2 * 60 * 1000);
@@ -642,62 +784,71 @@ GET /backfill-translate?secret=pulse-dev-key
 
 # Перетегирование статей без matched_tags
 GET /backfill-tags?secret=pulse-dev-key
+
+# Полная синхронная обработка (diagnostic)
+GET /test-process              # <-- NEW v7.17
 ```
 
 ---
 
-## Services Map
+## 12. Services Map
 
 ```
 src/
-├── services/
-│   ├── cron.ts              # RSS pipeline (fetch → translate → sentiment → tag → save)
-│   ├── smartTagMatcher.ts   # 3-layer tag matching + LLM sentiment + tag impact
-│   ├── rssFetcher.ts        # RSS fetch + XML parse
-│   ├── rssSources.ts        # 20 RSS sources config
-│   ├── translate.ts         # Kimi API translation + cache
-│   ├── tagManager.ts        # User-defined tags + keyword generation + backfill
-│   └── reports.ts           # Weekly email reports
-├── routes/
-│   ├── news.ts              # GET /api/news (3 modes)
-│   ├── auth.ts              # Login/register
-│   ├── user.ts              # Tags CRUD + user-defined tags
-│   ├── debug.ts             # Debug endpoints (/debug-env, /debug-db, /tag-stats)
-│   └── ...
-├── models/
-│   └── schema.sql           # PostgreSQL schema
-├── middleware/
-│   ├── auth.ts              # JWT verification
-│   └── rateLimit.ts         # Rate limiting
-└── index.ts                 # Entry point, routes, cron
+|---> services/
+|     |---> cron.ts              # RSS pipeline (fetch -> translate -> tags -> unified batch -> save)
+|     |---> smartTagMatcher.ts   # 3-layer tag matching
+|     |---> rssFetcher.ts        # RSS fetch + XML parse (37 sources, Atom+RSS2.0, timezone-aware)
+|     |---> rssSources.ts        # 37 RSS sources config
+|     |---> translate.ts         # Kimi API translation + cache
+|     |---> tagManager.ts        # User-defined tags + keyword generation + backfill
+|     |---> unifiedBatch.ts      # <-- NEW v7.17: unified LLM batch (sentiment + tag_impact + is_political)
+|     |---> reports.ts           # Weekly email reports
+|
+|---> routes/
+|     |---> news.ts              # GET /api/news (3 modes)
+|     |---> auth.ts              # Login/register
+|     |---> user.ts              # Tags CRUD + user-defined tags
+|     |---> debug.ts             # Debug endpoints (debug-env, debug-db, debug-rss, debug-cron, debug-system)
+|     |---> test.ts              # <-- NEW v7.17: test-rss, test-process
+|     |---> ...
+|
+|---> models/
+|     |---> schema.sql           # PostgreSQL schema
+|
+|---> middleware/
+|     |---> auth.ts              # JWT verification
+|     |---> rateLimit.ts         # Rate limiting
+|
+|---> index.ts                   # Entry point, routes, cron
 ```
 
 ---
 
-## 11. Batch Processing & Job Lock (v7.13-7.15)
+## 13. Batch Processing & Job Lock
 
-### Batch Sentiment (v7.13)
-
-```typescript
-// 10 статей за 1 LLM-запрос вместо 10 отдельных
-analyzeSentimentBatch(articles: {title, summary}[])
-  → analyzeSentimentBatchChunk(10 articles)
-    → 1 axios.post to Kimi API
-    → returns: [{sentiment, score, reasoning}] × 10
-```
-
-**Prompt:** `response_format: { type: "json_object" }` — гарантия валидного JSON.
-
-### Batch Tag Impact (v7.14)
+### Unified Batch (v7.17)
 
 ```typescript
-// 10 статей за 1 LLM-запрос вместо 10 отдельных
-analyzeTagImpactBatch(items: {title, summary, tags}[])
-  → analyzeTagImpactBatchChunk(10 articles)
-    → returns: [[{tag, impact, reasoning}]] × 10
+// 1 LLM-запрос на 10 статей:
+//   sentiment + score + reasoning + is_political + tag_impacts
+analyzeUnifiedBatch(items: {title, summary, tags}[]): Promise<UnifiedResult[]>
+  |---> analyzeUnifiedBatchChunk(10 articles)
+        |---> 1 axios.post to Kimi API (response_format: { type: 'json_object' })
+        |---> returns: [{ score, reasoning, is_political, tag_impacts }] x 10
 ```
 
-### Retry Logic (v7.14.1)
+### Legacy Batch (v7.13-7.15) — REPLACED
+
+```
+v7.13: analyzeSentimentBatch       (sentiment only)
+v7.14: analyzeTagImpactBatch       (tag_impact only)
+v7.15: 2 separate LLM calls per batch
+
+v7.17: analyzeUnifiedBatch         (everything in 1 call)  <-- REPLACES above
+```
+
+### Retry Logic
 
 ```typescript
 llmRequestWithRetry(fn, label):
@@ -705,11 +856,11 @@ llmRequestWithRetry(fn, label):
     try: return await fn()
     catch err:
       if status NOT IN [429, 502, ECONNRESET, ETIMEDOUT]: throw
-      delay = 2s × 2^(attempt-1)  // 2s, 4s, 8s
+      delay = 2s * 2^(attempt-1)  // 2s, 4s, 8s
       sleep(delay); retry
 ```
 
-### Distributed Job Lock (v7.15)
+### Distributed Job Lock
 
 ```sql
 CREATE TABLE cron_locks (
@@ -723,22 +874,55 @@ CREATE TABLE cron_locks (
 **Acquire:**
 ```sql
 INSERT INTO cron_locks (job_name, locked_at, locked_by, expires_at)
-VALUES ('rss-aggregator', NOW(), 'instance-id', NOW() + 15min)
+VALUES ('rss-aggregator', NOW(), 'instance-id', NOW() + 10min)
 ON CONFLICT (job_name) DO UPDATE
-  SET locked_at = NOW(), locked_by = 'instance-id', expires_at = NOW() + 15min
+  SET locked_at = NOW(), locked_by = 'instance-id', expires_at = NOW() + 10min
   WHERE cron_locks.expires_at < NOW()  -- only if expired
 RETURNING locked_by
 ```
 
 **Release:** `DELETE FROM cron_locks WHERE job_name = 'rss-aggregator' AND locked_by = 'instance-id'`
 
-**TTL:** 15 минут (cron runs ~2-3 min, 15 = safety margin for crash recovery).
+**TTL:** 10 минут (cron runs ~43-68 сек, 10 = safety margin для 5-min schedule + crash recovery).
 
 ### Performance Comparison
 
-| Метрика | v7.12 (sequential) | v7.14 (batch) | Ускорение |
-|---------|---------------------|---------------|-----------|
-| Sentiment (10 articles) | 10 × 500ms = 5s | 1 × 2000ms = 2s | **2.5×** |
-| Tag Impact (10 articles) | 10 × 500ms = 5s | 1 × 2000ms = 2s | **2.5×** |
-| **Total LLM time** | **~10s** | **~4s** | **2.5×** |
-| Cron interval | 5 min | 15 min | — |
+| Метрика | v7.15 (separate) | v7.17 (unified) | Ускорение |
+|---------|-------------------|-----------------|-----------|
+| LLM calls на 10 статей | 2 (sentiment + tag_impact) | 1 (unified) | **2x** |
+| Total LLM time (10 articles) | ~4 сек | ~2-3 сек | **1.5x** |
+| Cron interval | 15 мин | 5 мин | **3x чаще** |
+| Sources | 20 | 37 | **+85%** |
+| Lock TTL | 15 мин | 10 мин | — |
+
+---
+
+## 14. Performance
+
+### Полный pipeline (37 источников)
+
+| Этап | Время |
+|------|-------|
+| RSS Fetch (37 sources, batch x 4) | ~15-20 сек |
+| Translate (EN -> RU) | ~10-20 сек |
+| Smart Match Tags (Layer 1+2+3) | ~5 сек |
+| Unified LLM Batch (sentiment + tag_impact + is_political) | ~10-20 сек |
+| Deduplicate + Save | ~3 сек |
+| **Итого** | **~43-68 сек** |
+
+### Bottlenecks
+
+```
+1. LLM API latency        <-- unified batch сокращает на 40%
+2. Translation batch      <-- cache hit rate ~60%
+3. RSS fetch (37 sources) <-- parallel batches x 4
+```
+
+### Monitoring
+
+```
+GET /debug-cron    -> 24h stats: total runs, success rate, avg duration
+GET /debug-rss     -> per-source: items, filtered, kept, errors
+GET /debug-system  -> DB health, lock status, test insert
+GET /test-process  -> full sync process with timing breakdown
+```
