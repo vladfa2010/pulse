@@ -25,6 +25,14 @@ import { getAllUserDefinedTags, getAllTagNames } from './tagManager';
 const KIMI_API_KEY = process.env.KIMI_API_KEY;
 const KIMI_MODEL = process.env.KIMI_MODEL || 'moonshot-v1-32k';
 
+// Debug: store last LLM raw response for diagnostics
+let lastLlmRawContent = '';
+let lastLlmParseError = '';
+let lastLlmTimestamp = '';
+export function getLastLlmDebug() {
+  return { raw: lastLlmRawContent, error: lastLlmParseError, timestamp: lastLlmTimestamp };
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Layer 1: Keyword Matching (user-defined tags only)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -779,7 +787,9 @@ MANDATORY:
   );
 
   const content = response.data?.choices?.[0]?.message?.content || '';
-  console.log(`[UnifiedBatch] Raw: "${content.slice(0, 200)}..."`);
+  lastLlmRawContent = content;
+  lastLlmTimestamp = new Date().toISOString();
+  console.log(`[UnifiedBatch] Raw (${content.length} chars): "${content.slice(0, 300)}..."`);
 
   // Parse JSON: { results: [{score, reasoning, is_political, tag_impacts}] }
   const results: UnifiedResult[] = [];
@@ -789,6 +799,7 @@ MANDATORY:
     const parsed = JSON.parse(raw);
     const items = parsed.results || parsed;
     const arr = Array.isArray(items) ? items : [];
+    console.log(`[UnifiedBatch] Parsed ${arr.length} results`);
     for (const item of arr) {
       const score = typeof item.score === 'number' ? Math.max(-10, Math.min(10, Math.round(item.score))) : 0;
       // Support both formats: reasoning string (\n\n separated) and reasoning_p1/p2/p3 fields
@@ -819,7 +830,9 @@ MANDATORY:
       results.push({ sentiment, score, reasoning, is_political, article_type, tag_impacts });
     }
   } catch (e) {
-    console.error(`[UnifiedBatch] Parse error: ${(e as Error).message?.slice(0, 100)}`);
+    const errMsg = `[UnifiedBatch] Parse error: ${(e as Error).message?.slice(0, 200)} | raw_length=${content.length} | raw_preview="${content.slice(0, 300)}"`;
+    lastLlmParseError = errMsg;
+    console.error(errMsg);
   }
 
   while (results.length < batch.length) {

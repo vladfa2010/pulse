@@ -422,6 +422,17 @@ app.get('/debug-latest-reasoning', async (req, res) => {
   }
 });
 
+// GET /debug-llm-raw — last LLM raw response and parse error
+app.get('/debug-llm-raw', async (req, res) => {
+  try {
+    const { getLastLlmDebug } = await import('./services/smartTagMatcher');
+    const debug = getLastLlmDebug();
+    res.json(debug);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /debug-rss — detailed per-source RSS diagnostics
 app.get('/debug-rss', async (req, res) => {
   try {
