@@ -792,12 +792,16 @@ MANDATORY:
   console.log(`[UnifiedBatch] Raw (${content.length} chars): "${content.slice(0, 300)}..."`);
 
   // Parse JSON: { results: [{score, reasoning, is_political, tag_impacts}] }
-  // NOTE: Do NOT modify raw string before JSON.parse — LLM returns valid JSON
+  // LLM returns JSON with physical newlines inside strings — fix before parsing
   const results: UnifiedResult[] = [];
   let raw = content.trim();
   try {
     // Strip markdown code fences if present
     raw = raw.replace(/^```json\s*/, '').replace(/\s*```$/, '');
+    // Fix physical newlines inside JSON strings: protect \, replace \n, restore \
+    raw = raw.replace(/\\\\/g, '__ESC__');
+    raw = raw.replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
+    raw = raw.replace(/__ESC__/g, '\\\\');
     const parsed = JSON.parse(raw);
     const items = parsed.results || parsed;
     const arr = Array.isArray(items) ? items : [];
