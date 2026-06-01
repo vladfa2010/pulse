@@ -120,3 +120,4 @@ docker-compose up
 
 См. `src/models/schema.sql`
 # force redeploy Mon Jun  1 18:43:06 CST 2026
+# force redeploy 1780317442
