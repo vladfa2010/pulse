@@ -792,17 +792,19 @@ MANDATORY:
   console.log(`[UnifiedBatch] Raw (${content.length} chars): "${content.slice(0, 300)}..."`);
 
   // Parse JSON: { results: [{score, reasoning, is_political, tag_impacts}] }
+  // NOTE: Do NOT modify raw string before JSON.parse — LLM returns valid JSON
   const results: UnifiedResult[] = [];
+  let raw = content.trim();
   try {
-    let raw = content.trim().replace(/^```json\s*/, '').replace(/\s*```$/, '');
-    raw = raw.replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
+    // Strip markdown code fences if present
+    raw = raw.replace(/^```json\s*/, '').replace(/\s*```$/, '');
     const parsed = JSON.parse(raw);
     const items = parsed.results || parsed;
     const arr = Array.isArray(items) ? items : [];
     console.log(`[UnifiedBatch] Parsed ${arr.length} results`);
     for (const item of arr) {
       const score = typeof item.score === 'number' ? Math.max(-10, Math.min(10, Math.round(item.score))) : 0;
-      // Support both formats: reasoning string (\n\n separated) and reasoning_p1/p2/p3 fields
+      // Reasoning: plain string with \n\n as paragraph separator (no escaping needed)
       let reasoning: string;
       if (typeof item.reasoning === 'string' && item.reasoning.length > 0) {
         reasoning = item.reasoning.slice(0, 500);
