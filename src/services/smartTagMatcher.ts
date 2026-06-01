@@ -403,16 +403,15 @@ For each article, rate sentiment on scale -10 to +10:
 
 Return ONLY a JSON object with "results" key containing an array (one object per article, in same order):
 {"results": [
-  {"score": 5, "reasoning": "What happened.\\n\\nWhy it matters to investors."},
-  {"score": -3, "reasoning": "What happened.\\n\\nWhy it matters to investors."}
+  {"score": 5, "reasoning": "Apple reported record earnings of $120B, beating forecasts by 25% on strong iPhone demand in China.\\n\\nFor Apple investors this signals continued services growth and strong Chinese market penetration, likely driving the stock higher in near-term trading sessions."}
 ]}
 
 Rules:
 1. Return EXACTLY ${batch.length} objects — same order as articles above
-2. Each reasoning: 2 paragraphs separated by \\n\\n. P1 = facts. P2 = investment significance.
+2. Each reasoning: 2 paragraphs separated by \\n\\n. P1 = facts (what happened). P2 = investment significance (why it matters to investors).
 3. Consider ONLY investor perspective (layoff may be positive for investors = cost cutting)
 4. Lawsuits = always negative
-5. Return ONLY JSON array, no markdown, no extra text`;
+5. Return ONLY JSON, no markdown, no extra text`;
 
   const response = await llmRequestWithRetry(
     () => axios.post(
@@ -447,10 +446,16 @@ Rules:
         const score = typeof item.score === 'number'
           ? Math.max(-10, Math.min(10, Math.round(item.score)))
           : 0;
-        const p1 = item.reasoning_p1 || '';
-        const p2 = item.reasoning_p2 || '';
-        const p3 = item.reasoning_p3 || '';
-        const reasoning = [p1, p2, p3].filter(Boolean).join('\n\n').slice(0, 500);
+        // Support both formats: reasoning string (\n\n separated) and reasoning_p1/p2/p3 fields
+        let reasoning: string;
+        if (typeof item.reasoning === 'string' && item.reasoning.length > 0) {
+          reasoning = item.reasoning.slice(0, 500);
+        } else {
+          const p1 = item.reasoning_p1 || '';
+          const p2 = item.reasoning_p2 || '';
+          const p3 = item.reasoning_p3 || '';
+          reasoning = [p1, p2, p3].filter(Boolean).join('\n\n').slice(0, 500);
+        }
         let sentiment: 'positive' | 'negative' | 'neutral';
         if (score <= -1) sentiment = 'negative';
         else if (score >= 1) sentiment = 'positive';
