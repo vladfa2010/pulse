@@ -1019,15 +1019,28 @@ app.get('/cleanup-news', async (req, res) => {
   }
 });
 
-// GET /all-tags — ALL tags from user_defined_tags (not just those in news)
+// GET /all-tags — ALL tags from user portfolios + user_defined_tags
 app.get('/all-tags', async (req, res) => {
   try {
-    // Get all tags from user_defined_tags (global tag catalog)
-    const allTagsResult = await query(`
-      SELECT tag_name, tag_type, enriched_data, created_at
+    // Get all unique tag_names from portfolios (where users actually add tags)
+    const portfolioTagsResult = await query(`
+      SELECT DISTINCT tag_name, tag_id, tag_type
+      FROM portfolios
+      ORDER BY tag_name
+    `);
+
+    // Get all tags from user_defined_tags (global catalog)
+    const catalogTagsResult = await query(`
+      SELECT tag_name, tag_type, enriched_data
       FROM user_defined_tags
       ORDER BY tag_name
     `);
+
+    // Merge: portfolio tags + catalog tags
+    const allTagNames = new Set([
+      ...portfolioTagsResult.rows.map((r: any) => r.tag_name),
+      ...catalogTagsResult.rows.map((r: any) => r.tag_name),
+    ]);
 
     // Get tag counts from news (how many times each tag was matched)
     const newsCountsResult = await query(`
@@ -1046,17 +1059,27 @@ app.get('/all-tags', async (req, res) => {
     `);
     const portfolioCounts = new Map(portfolioCountsResult.rows.map((r: any) => [r.tag_name, parseInt(r.user_count)]));
 
-    const tags = allTagsResult.rows.map((r: any) => ({
-      tag_name: r.tag_name,
+    // Build catalog info map
+    const catalogInfo = new Map(catalogTagsResult.rows.map((r: any) => [r.tag_name, {
       tag_type: r.tag_type,
       has_enrichment: !!r.enriched_data,
-      created_at: r.created_at,
-      news_count: newsCounts.get(r.tag_name) || 0,
-      user_count: portfolioCounts.get(r.tag_name) || 0,
-    }));
+    }]));
+
+    const tags = Array.from(allTagNames).map(tagName => {
+      const catalog = catalogInfo.get(tagName);
+      return {
+        tag_name: tagName,
+        tag_type: catalog?.tag_type || null,
+        has_enrichment: catalog?.has_enrichment || false,
+        news_count: newsCounts.get(tagName) || 0,
+        user_count: portfolioCounts.get(tagName) || 0,
+      };
+    });
 
     res.json({
       total: tags.length,
+      from_portfolios: portfolioTagsResult.rows.length,
+      from_catalog: catalogTagsResult.rows.length,
       tags,
     });
   } catch (err: any) {
