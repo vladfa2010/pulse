@@ -1019,6 +1019,51 @@ app.get('/cleanup-news', async (req, res) => {
   }
 });
 
+// GET /all-tags — ALL tags from user_defined_tags (not just those in news)
+app.get('/all-tags', async (req, res) => {
+  try {
+    // Get all tags from user_defined_tags (global tag catalog)
+    const allTagsResult = await query(`
+      SELECT tag_name, tag_type, enriched_data, created_at
+      FROM user_defined_tags
+      ORDER BY tag_name
+    `);
+
+    // Get tag counts from news (how many times each tag was matched)
+    const newsCountsResult = await query(`
+      SELECT unnest(matched_tags) as tag_name, COUNT(*) as count
+      FROM news
+      WHERE matched_tags IS NOT NULL AND array_length(matched_tags, 1) > 0
+      GROUP BY tag_name
+    `);
+    const newsCounts = new Map(newsCountsResult.rows.map((r: any) => [r.tag_name, parseInt(r.count)]));
+
+    // Get user portfolio counts (how many users track each tag)
+    const portfolioCountsResult = await query(`
+      SELECT tag_name, COUNT(DISTINCT user_id) as user_count
+      FROM portfolios
+      GROUP BY tag_name
+    `);
+    const portfolioCounts = new Map(portfolioCountsResult.rows.map((r: any) => [r.tag_name, parseInt(r.user_count)]));
+
+    const tags = allTagsResult.rows.map((r: any) => ({
+      tag_name: r.tag_name,
+      tag_type: r.tag_type,
+      has_enrichment: !!r.enriched_data,
+      created_at: r.created_at,
+      news_count: newsCounts.get(r.tag_name) || 0,
+      user_count: portfolioCounts.get(r.tag_name) || 0,
+    }));
+
+    res.json({
+      total: tags.length,
+      tags,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // TEMP: Stats on matched_tags distribution
 app.get('/tag-stats', async (req, res) => {
   try {
