@@ -792,17 +792,23 @@ MANDATORY:
   console.log(`[UnifiedBatch] Raw (${content.length} chars): "${content.slice(0, 300)}..."`);
 
   // Parse JSON: { results: [{score, reasoning, is_political, tag_impacts}] }
-  // LLM returns JSON with physical newlines inside strings — fix before parsing
+  // LLM returns JSON with physical newlines inside strings — two-pass parsing
   const results: UnifiedResult[] = [];
   let raw = content.trim();
   try {
     // Strip markdown code fences if present
     raw = raw.replace(/^```json\s*/, '').replace(/\s*```$/, '');
-    // Fix physical newlines inside JSON strings: protect \, replace \n, restore \
-    raw = raw.replace(/\\\\/g, '__ESC__');
-    raw = raw.replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
-    raw = raw.replace(/__ESC__/g, '\\\\');
-    const parsed = JSON.parse(raw);
+    // Pass 1: try JSON.parse as-is (handles \n only between keys)
+    // Pass 2: if failed, fix physical newlines inside strings
+    let parsed: any;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (e1) {
+      let fixed = raw.replace(/\\\\/g, '__ESC__');
+      fixed = fixed.replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
+      fixed = fixed.replace(/__ESC__/g, '\\\\');
+      parsed = JSON.parse(fixed);
+    }
     const items = parsed.results || parsed;
     const arr = Array.isArray(items) ? items : [];
     console.log(`[UnifiedBatch] Parsed ${arr.length} results`);
