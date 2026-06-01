@@ -749,7 +749,7 @@ Articles:
 ${articlesText}
 
 Return ONLY JSON with "results" array:
-{"results": [{"score": 5, "article_type": "micro", "reasoning": "P1\\n\\nP2\\n\\nP3", "is_political": false, "tag_impacts": [{"tag": "apple", "impact": "positive", "reasoning": "Earnings beat 25%"}]}]}
+{"results": [{"score": 5, "article_type": "micro", "reasoning": "Apple reported record Q3 earnings of $2.18 per share, beating analyst estimates by 15%. Revenue grew 8% year-over-year to $94.9 billion, driven by strong iPhone 16 sales.\\n\\nFor Apple shareholders this is a strong positive signal. The earnings beat validates the premium pricing strategy and suggests continued demand despite economic headwinds. Dividend safety is confirmed.\\n\\nCompetitors like Samsung face increased pressure to match Apple's performance. Suppliers (TSMC, Foxconn) benefit from higher orders. The broader tech sector may see positive sentiment spillover.", "is_political": false, "tag_impacts": [{"tag": "apple", "score": 8, "reasoning": "Earnings beat 15% above consensus"}]}]}
 
 MANDATORY:
 - EXACTLY ${batch.length} objects
@@ -791,10 +791,16 @@ MANDATORY:
     const arr = Array.isArray(items) ? items : [];
     for (const item of arr) {
       const score = typeof item.score === 'number' ? Math.max(-10, Math.min(10, Math.round(item.score))) : 0;
-      const p1 = item.reasoning_p1 || '';
-      const p2 = item.reasoning_p2 || '';
-      const p3 = item.reasoning_p3 || '';
-      const reasoning = [p1, p2, p3].filter(Boolean).join('\n\n').slice(0, 500);
+      // Support both formats: reasoning string (\n\n separated) and reasoning_p1/p2/p3 fields
+      let reasoning: string;
+      if (typeof item.reasoning === 'string' && item.reasoning.length > 0) {
+        reasoning = item.reasoning.slice(0, 500);
+      } else {
+        const p1 = item.reasoning_p1 || '';
+        const p2 = item.reasoning_p2 || '';
+        const p3 = item.reasoning_p3 || '';
+        reasoning = [p1, p2, p3].filter(Boolean).join('\n\n').slice(0, 500);
+      }
       const is_political = item.is_political === true;
       const article_type = item.article_type === 'macro' ? 'macro' as const : 'micro' as const;
       let sentiment: 'positive' | 'negative' | 'neutral';
@@ -806,7 +812,7 @@ MANDATORY:
         .filter((p: any) => p && typeof p.tag === 'string')
         .map((p: any) => ({
           tag: p.tag,
-          impact: ['positive', 'negative'].includes(p.impact) ? p.impact : 'neutral',
+          score: typeof p.score === 'number' ? p.score : 0,
           reasoning: typeof p.reasoning === 'string' ? p.reasoning.slice(0, 200) : '',
         }));
 
