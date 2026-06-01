@@ -119,3 +119,4 @@ docker-compose up
 8 таблиц: `users`, `portfolios`, `payments`, `news`, `user_sessions`, `user_channels`, `notification_settings`, `translation_cache`
 
 См. `src/models/schema.sql`
+# force redeploy Mon Jun  1 18:43:06 CST 2026
