@@ -225,83 +225,89 @@ async function processArticlesLocked() {
     }
   }
   
-  const needLLM = articles.filter((_, i) => !skipLLM.has(i));
-  console.log(`[Cron] LLM optimization: ${articles.length} total, ${needLLM.length} need LLM, ${skipLLM.size} skipped (duplicates)`);
-  
-  let batchResults: UnifiedResult[] = [];
-  if (llmAvailable && needLLM.length > 0) {
-    const batchStartTime = Date.now(); // <-- FIX v3: определяем ДО вызова
-    let batchFailed = false;
-    try {
-      // Вызываем LLM только для статей которым нужно
-      batchResults = await analyzeUnifiedBatch(
-        needLLM.map((a, idx) => {
-          const originalIndex = articles.indexOf(a);
-          return {
-            title: a.title_ru || a.title,
-            summary: a.summary_ru || a.summary,
+  // Build list of articles that need LLM with their original indices
+  const needLLMWithIndex: { article: typeof articles[0]; originalIndex: number }[] = [];
+  for (let i = 0; i < articles.length; i++) {
+    if (!skipLLM.has(i)) {
+      needLLMWithIndex.push({ article: articles[i], originalIndex: i });
+    }
+  }
+  console.log(`[Cron] LLM optimization: ${articles.length} total, ${needLLMWithIndex.length} need LLM, ${skipLLM.size} skipped (duplicates)`);
+
+  if (llmAvailable && needLLMWithIndex.length > 0) {
+    const BATCH_SIZE = 10;
+    const totalBatches = Math.ceil(needLLMWithIndex.length / BATCH_SIZE);
+    for (let batchStart = 0; batchStart < needLLMWithIndex.length; batchStart += BATCH_SIZE) {
+      const chunk = needLLMWithIndex.slice(batchStart, batchStart + BATCH_SIZE);
+      const batchNum = Math.floor(batchStart / BATCH_SIZE) + 1;
+      const batchStartTime = Date.now();
+
+      try {
+        console.log(`[Cron] Batch ${batchNum}/${totalBatches}: ${chunk.length} articles`);
+        const results = await analyzeUnifiedBatch(
+          chunk.map(({ article, originalIndex }) => ({
+            title: article.title_ru || article.title,
+            summary: article.summary_ru || article.summary,
             tags: matchedTagsList[originalIndex],
-          };
-        })
-      );
-      // Распределяем результаты обратно по индексам
-      let batchIdx = 0;
-      for (let i = 0; i < articles.length; i++) {
-        if (!skipLLM.has(i)) {
-          unifiedResults[i] = batchResults[batchIdx++];
+          }))
+        );
+
+        // Distribute results back to unifiedResults by originalIndex
+        for (let j = 0; j < results.length && j < chunk.length; j++) {
+          unifiedResults[chunk[j].originalIndex] = results[j];
         }
-      }
-    } catch (err: any) {
-      batchFailed = true;
-      // Классифицируем ошибку для записи в БД
-      const errorType: string =
-        err.code === 'ETIMEDOUT' ? 'llm-timeout' :
-        err.code === 'ECONNRESET' ? 'llm-error' :
-        err.response?.status === 429 ? 'llm-rate-limit' :
-        err.response?.status === 502 ? 'llm-error' :
-        err.response?.status === 503 ? 'llm-error' :
-        'llm-error';
-      const errorMsg: string = err.message?.slice(0, 200) || 'Unknown LLM error';
-      console.error(`[Cron] Unified batch failed: ${errorType} — ${errorMsg}`);
 
-      // Записываем в llm_batches (only for actually processed articles)
-      await query(`
-        INSERT INTO llm_batches (started_at, articles_count, results_count, status, error_type, error_message, duration_ms)
-        VALUES (NOW(), $1, 0, 'error', $2, $3, $4)
-      `, [needLLM.length, errorType, errorMsg, Date.now() - batchStartTime]);
+        // Record successful batch
+        const successCount = results.filter((u: any) => u._llmSource !== 'llm-empty' && !u._llmErrorType).length;
+        const partialCount = results.filter((u: any) => u._llmSource === 'llm-partial').length;
+        const status = partialCount > 0 ? 'partial' : 'success';
+        await query(`
+          INSERT INTO llm_batches (started_at, articles_count, results_count, status, duration_ms)
+          VALUES (NOW(), $1, $2, $3, $4)
+        `, [chunk.length, successCount + partialCount, status, Date.now() - batchStartTime]).catch(() => {
+          // Silent fail — metrics are best-effort
+        });
 
-      // Fallback только для статей которые реально отправляли в LLM
-      for (let i = 0; i < articles.length; i++) {
-        if (!skipLLM.has(i)) {
-          unifiedResults[i] = {
+      } catch (err: any) {
+        const errorType: string =
+          err.code === 'ETIMEDOUT' ? 'llm-timeout' :
+          err.code === 'ECONNRESET' ? 'llm-error' :
+          err.response?.status === 429 ? 'llm-rate-limit' :
+          err.response?.status === 502 ? 'llm-error' :
+          err.response?.status === 503 ? 'llm-error' :
+          'llm-error';
+        const errorMsg: string = err.message?.slice(0, 200) || 'Unknown LLM error';
+        console.error(`[Cron] Batch ${batchNum}/${totalBatches} failed: ${errorType} — ${errorMsg}`);
+
+        // Record failed batch
+        await query(`
+          INSERT INTO llm_batches (started_at, articles_count, results_count, status, error_type, error_message, duration_ms)
+          VALUES (NOW(), $1, 0, 'error', $2, $3, $4)
+        `, [chunk.length, errorType, errorMsg, Date.now() - batchStartTime]).catch(() => {});
+
+        // Fallback only for articles in this chunk
+        for (const { originalIndex } of chunk) {
+          unifiedResults[originalIndex] = {
             sentiment: 'neutral' as const, score: 0, reasoning: '', is_political: false, article_type: 'micro' as const,
-            tag_impacts: matchedTagsList[i].map(t => ({ tag: t, score: 0, reasoning: '' })),
+            tag_impacts: matchedTagsList[originalIndex].map((t: string) => ({ tag: t, score: 0, reasoning: '' })),
             _llmErrorType: errorType,
             _llmErrorMsg: errorMsg,
-            _llmBatchSize: needLLM.length,
+            _llmBatchSize: chunk.length,
             _llmResultsCount: 0,
           } as UnifiedResult;
         }
       }
     }
-
-    // FIX: Record successful batch in llm_batches (only for actually processed articles)
-    if (!batchFailed && needLLM.length > 0) {
-      const successCount = batchResults.filter((u: any) => u._llmSource !== 'llm-empty' && !u._llmErrorType).length;
-      const partialCount = batchResults.filter((u: any) => u._llmSource === 'llm-partial').length;
-      const status = partialCount > 0 ? 'partial' : 'success';
-      await query(`
-        INSERT INTO llm_batches (started_at, articles_count, results_count, status, duration_ms)
-        VALUES (NOW(), $1, $2, $3, $4)
-      `, [needLLM.length, successCount + partialCount, status, Date.now() - batchStartTime]).catch(() => {
-        // Silent fail — metrics are best-effort
-      });
-    }
   } else {
-    unifiedResults = articles.map((a, i) => ({
-      sentiment: 'neutral' as const, score: 0, reasoning: '', is_political: false, article_type: 'micro' as const,
-      tag_impacts: matchedTagsList[i].map(t => ({ tag: t, score: 0, reasoning: '' })),
-    }));
+    // Fallback for all non-duplicate articles
+    for (let i = 0; i < articles.length; i++) {
+      if (!skipLLM.has(i)) {
+        unifiedResults[i] = {
+          sentiment: 'neutral' as const, score: 0, reasoning: '', is_political: false, article_type: 'micro' as const,
+          tag_impacts: matchedTagsList[i].map((t: string) => ({ tag: t, score: 0, reasoning: '' })),
+        };
+      }
+    }
   }
   console.log(`[Cron] Unified batch done: ${unifiedResults.length} results in ${Date.now() - unifiedStart}ms`);
 
