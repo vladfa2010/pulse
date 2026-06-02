@@ -1,30 +1,39 @@
-# PULSE Backend — План продолжения
+# План: Реализация ТЗ LLM Error Tracking v3
 
-## Статус: Базовая структура создана
-- [x] package.json, tsconfig.json, .env.example
-- [x] PostgreSQL schema (8 tables)
-- [x] Auth routes (register, login, me)
-- [x] News routes (GET /api/news, /api/news/tags/:tagId)
-- [x] Payment routes (create, confirm, history)
-- [x] RSS aggregator (32 sources, batch fetch, dedup)
-- [x] Translation service (cache → Kimi → Google)
-- [x] Cron job (15 min, tag matching, sentiment, cleanup)
-- [x] Auth middleware (JWT)
-- [x] DB init script
+## Этапы
 
-## Этап 1: Новые роуты (parallel)
-- [ ] `src/routes/user.ts` — profile, tags CRUD, notification settings
-- [ ] `src/routes/translate.ts` — POST /api/translate
-- [ ] `src/routes/webhook.ts` — YuKassa webhooks
-- [ ] `src/routes/admin.ts` — admin panel data
+### Stage 1: Миграция БД
+- ALTER TABLE news: 6 новых колонок
+- CREATE TABLE llm_batches
+- Индексы
+- Проверить применение
 
-## Этап 2: Сервисы уведомлений (parallel)
-- [ ] `src/services/telegram.ts` — Telegram bot
-- [ ] `src/services/email.ts` — SendGrid email
-- [ ] `src/services/reports.ts` — weekly report generation
+### Stage 2: smartTagMatcher.ts
+- Partial success detection (arr.length vs batch.length)
+- llm-empty handling
+- While-loop fallback с _llmSource='llm-partial'
+- _llmRaw preview
 
-## Этап 3: Интеграция
-- [ ] Update `src/index.ts` — mount all new routes
-- [ ] Dockerfile
-- [ ] docker-compose.yml (PostgreSQL + Redis + backend)
-- [ ] Git init + first commit
+### Stage 3: cron.ts
+- batchStartTime определение
+- Catch-блок: классификация ошибки + llm_batches INSERT
+- Merge-цикл: _llm* поля
+- INSERT: CASE WHEN в ON CONFLICT
+
+### Stage 4: Deferred Processor
+- processDeferredArticles() функция
+- Retry логика (max 3)
+- Cron job каждые 10 мин
+
+### Stage 5: Admin Endpoints
+- GET /admin/llm-errors
+- POST /admin/backfill
+- GET /admin/llm-dashboard
+
+### Stage 6: Telegram Alerting
+- Success rate check
+- Alert при < 90%
+
+### Stage 7: Build + Deploy
+- tsc --noEmit
+- git commit + push

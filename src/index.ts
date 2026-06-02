@@ -85,6 +85,83 @@ app.get('/health', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Migration endpoint — applies DB migrations for LLM error tracking (v3)
+// ═══════════════════════════════════════════════════════════════════════════
+app.post('/migrate-v3', async (req, res) => {
+  try {
+    const results: string[] = [];
+
+    // Check which columns already exist
+    const colCheck = await query(`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_name = 'news' AND column_name IN ('llm_error', 'llm_attempts', 'last_retry_at', 'llm_raw_preview', 'llm_batch_size', 'llm_results_count')
+    `);
+    const existingCols = new Set(colCheck.rows.map((r: any) => r.column_name));
+
+    // Add missing columns
+    const columnsToAdd = [
+      { name: 'llm_error', type: 'TEXT' },
+      { name: 'llm_attempts', type: 'INTEGER DEFAULT 0' },
+      { name: 'last_retry_at', type: 'TIMESTAMP' },
+      { name: 'llm_raw_preview', type: 'TEXT' },
+      { name: 'llm_batch_size', type: 'INTEGER' },
+      { name: 'llm_results_count', type: 'INTEGER' },
+    ];
+
+    for (const col of columnsToAdd) {
+      if (!existingCols.has(col.name)) {
+        await query(`ALTER TABLE news ADD COLUMN ${col.name} ${col.type}`);
+        results.push(`Added column: ${col.name}`);
+      } else {
+        results.push(`Already exists: ${col.name}`);
+      }
+    }
+
+    // Expand sentiment_source to VARCHAR(30)
+    await query(`ALTER TABLE news ALTER COLUMN sentiment_source TYPE VARCHAR(30)`);
+    results.push('Expanded sentiment_source to VARCHAR(30)');
+
+    // Create llm_batches table
+    await query(`
+      CREATE TABLE IF NOT EXISTS llm_batches (
+        id SERIAL PRIMARY KEY,
+        started_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        finished_at TIMESTAMP,
+        articles_count INTEGER NOT NULL,
+        results_count INTEGER,
+        tokens_used INTEGER,
+        cost_usd DECIMAL(6,4),
+        status VARCHAR(20) NOT NULL,
+        error_type VARCHAR(30),
+        error_message TEXT,
+        raw_response_preview TEXT,
+        duration_ms INTEGER,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+    results.push('Created table: llm_batches');
+
+    // Create indexes
+    await query(`CREATE INDEX IF NOT EXISTS idx_news_llm_error ON news(llm_error) WHERE llm_error IS NOT NULL`);
+    results.push('Created index: idx_news_llm_error');
+
+    await query(`CREATE INDEX IF NOT EXISTS idx_news_sentiment_source ON news(sentiment_source)`);
+    results.push('Created index: idx_news_sentiment_source');
+
+    await query(`CREATE INDEX IF NOT EXISTS idx_news_llm_attempts ON news(llm_attempts) WHERE llm_attempts > 0`);
+    results.push('Created index: idx_news_llm_attempts');
+
+    await query(`CREATE INDEX IF NOT EXISTS idx_llm_batches_status ON llm_batches(status)`);
+    results.push('Created index: idx_llm_batches_status');
+
+    res.json({ success: true, applied: results });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // SSE — Real-time news stream (Server-Sent Events)
 // ═══════════════════════════════════════════════════════════════════════════
 app.get('/api/news/stream', (req, res) => {
