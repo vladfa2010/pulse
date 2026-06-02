@@ -1214,22 +1214,24 @@ app.get('/admin/llm-errors', async (req, res) => {
       ORDER BY count DESC
     `);
 
-    // Recent failed articles
+    // Recent failed articles (with actual error tracking)
     const recent = await query(`
       SELECT id, title_ru, published_at, sentiment_source, llm_error, llm_attempts, llm_raw_preview, matched_tags
       FROM news
-      WHERE sentiment_source LIKE 'llm-%'
+      WHERE llm_error IS NOT NULL
+        AND llm_attempts IS NOT NULL
         AND created_at > NOW() - INTERVAL '${hours} hours'
       ORDER BY published_at DESC
       LIMIT $1
     `, [limit]);
 
-    // Manual queue (3+ attempts)
+    // Manual queue (3+ attempts with actual errors)
     const manualQueue = await query(`
       SELECT COUNT(*) as count
       FROM news
       WHERE llm_attempts >= 3
-        AND (sentiment_source LIKE 'llm-%' OR sentiment_reasoning IS NULL)
+        AND llm_attempts IS NOT NULL
+        AND llm_error IS NOT NULL
     `);
 
     res.json({

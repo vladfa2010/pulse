@@ -248,7 +248,7 @@ async function processArticlesLocked() {
       sentiment_reasoning: u.reasoning || null,
       sentiment_source: sentimentSource,
       llm_error: (u as any)._llmErrorMsg || null,
-      llm_attempts: (u as any)._llmErrorType ? 1 : 0,
+      llm_attempts: (u as any)._llmErrorType ? 1 : null,  // null при успехе — deferred не берёт
       llm_raw_preview: (u as any)._llmRaw || null,
       llm_batch_size: (u as any)._llmBatchSize || null,
       llm_results_count: (u as any)._llmResultsCount || null,
@@ -278,8 +278,15 @@ async function processArticlesLocked() {
           const sources: string[] = JSON.parse(existing.rows[0].all_sources || '[]');
           if (!sources.includes(a.source)) {
             sources.push(a.source);
-            await query('UPDATE news SET all_sources = ?, source_count = ? WHERE id = ?',
-              [JSON.stringify(sources), sources.length, existing.rows[0].id]);
+            await query(`UPDATE news SET all_sources = ?, source_count = ?,
+              sentiment = COALESCE(sentiment, ?),
+              sentiment_score = COALESCE(sentiment_score, ?),
+              sentiment_reasoning = COALESCE(sentiment_reasoning, ?),
+              sentiment_source = COALESCE(sentiment_source, ?)
+              WHERE id = ?`,
+              [JSON.stringify(sources), sources.length,
+               a.sentiment, a.sentiment_score, a.sentiment_reasoning, a.sentiment_source,
+               existing.rows[0].id]);
             merged++;
           }
         } else {
@@ -310,19 +317,19 @@ async function processArticlesLocked() {
                ELSE news.source_count + 1
              END,
              sentiment = CASE
-               WHEN news.sentiment_source LIKE 'llm-%' THEN EXCLUDED.sentiment
+               WHEN news.sentiment_source LIKE 'llm-%' AND news.sentiment_source != 'llm-partial' THEN EXCLUDED.sentiment
                ELSE news.sentiment
              END,
              sentiment_score = CASE
-               WHEN news.sentiment_source LIKE 'llm-%' THEN EXCLUDED.sentiment_score
+               WHEN news.sentiment_source LIKE 'llm-%' AND news.sentiment_source != 'llm-partial' THEN EXCLUDED.sentiment_score
                ELSE news.sentiment_score
              END,
              sentiment_reasoning = CASE
-               WHEN news.sentiment_source LIKE 'llm-%' THEN EXCLUDED.sentiment_reasoning
+               WHEN news.sentiment_source LIKE 'llm-%' AND news.sentiment_source != 'llm-partial' THEN EXCLUDED.sentiment_reasoning
                ELSE news.sentiment_reasoning
              END,
              sentiment_source = CASE
-               WHEN news.sentiment_source LIKE 'llm-%' THEN EXCLUDED.sentiment_source
+               WHEN news.sentiment_source LIKE 'llm-%' AND news.sentiment_source != 'llm-partial' THEN EXCLUDED.sentiment_source
                ELSE news.sentiment_source
              END,
              llm_error = EXCLUDED.llm_error,
@@ -431,6 +438,7 @@ export async function processDeferredArticles(): Promise<void> {
     SELECT id, title_ru, summary_ru, matched_tags
     FROM news
     WHERE llm_error IS NOT NULL
+      AND llm_attempts IS NOT NULL
       AND llm_attempts < 3
       AND (last_retry_at IS NULL OR last_retry_at < NOW() - INTERVAL '30 minutes')
     ORDER BY published_at DESC
@@ -466,7 +474,6 @@ export async function processDeferredArticles(): Promise<void> {
               sentiment_reasoning = $3,
               sentiment_source = $4,
               llm_error = NULL,
-              llm_attempts = COALESCE(llm_attempts, 0) + 1,
               last_retry_at = NOW(),
               tag_impact = $5,
               is_political = $6,
