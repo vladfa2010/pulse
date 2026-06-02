@@ -1190,6 +1190,236 @@ app.get('/tag-stats', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ADMIN: LLM Error Tracking Dashboard
+// ═══════════════════════════════════════════════════════════════════════════
+
+// GET /admin/llm-errors — список недавних ошибок LLM
+app.get('/admin/llm-errors', async (req, res) => {
+  const secret = req.headers['x-trigger-secret'] || req.query.secret;
+  if (secret !== (process.env.CRON_SECRET_KEY || 'pulse-dev-key')) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  try {
+    const limit = parseInt(req.query.limit as string) || 50;
+    const hours = parseInt(req.query.hours as string) || 24;
+
+    // Count by error type
+    const byType = await query(`
+      SELECT sentiment_source, COUNT(*) as count
+      FROM news
+      WHERE sentiment_source LIKE 'llm-%'
+        AND created_at > NOW() - INTERVAL '${hours} hours'
+      GROUP BY sentiment_source
+      ORDER BY count DESC
+    `);
+
+    // Recent failed articles
+    const recent = await query(`
+      SELECT id, title_ru, published_at, sentiment_source, llm_error, llm_attempts, llm_raw_preview, matched_tags
+      FROM news
+      WHERE sentiment_source LIKE 'llm-%'
+        AND created_at > NOW() - INTERVAL '${hours} hours'
+      ORDER BY published_at DESC
+      LIMIT $1
+    `, [limit]);
+
+    // Manual queue (3+ attempts)
+    const manualQueue = await query(`
+      SELECT COUNT(*) as count
+      FROM news
+      WHERE llm_attempts >= 3
+        AND (sentiment_source LIKE 'llm-%' OR sentiment_reasoning IS NULL)
+    `);
+
+    res.json({
+      total_failed: byType.rows.reduce((sum: number, r: any) => sum + parseInt(r.count), 0),
+      by_type: byType.rows,
+      manual_queue_count: parseInt(manualQueue.rows[0]?.count || '0'),
+      recent: recent.rows,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /admin/llm-dashboard — сводка по LLM метрикам
+app.get('/admin/llm-dashboard', async (req, res) => {
+  const secret = req.headers['x-trigger-secret'] || req.query.secret;
+  if (secret !== (process.env.CRON_SECRET_KEY || 'pulse-dev-key')) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  try {
+    // Today stats
+    const todayBatches = await query(`
+      SELECT
+        COUNT(*) as total,
+        COUNT(*) FILTER (WHERE status = 'success') as success,
+        COUNT(*) FILTER (WHERE status = 'partial') as partial,
+        COUNT(*) FILTER (WHERE status = 'error') as failed
+      FROM llm_batches
+      WHERE started_at > CURRENT_DATE
+    `);
+
+    const todayArticles = await query(`
+      SELECT
+        COUNT(*) FILTER (WHERE sentiment_source = 'llm' OR sentiment_source = 'llm-partial') as processed,
+        COUNT(*) FILTER (WHERE sentiment_source LIKE 'llm-%') as failed
+      FROM news
+      WHERE created_at > CURRENT_DATE
+    `);
+
+    const errorsByType = await query(`
+      SELECT sentiment_source, COUNT(*) as count
+      FROM news
+      WHERE sentiment_source LIKE 'llm-%'
+        AND created_at > CURRENT_DATE
+      GROUP BY sentiment_source
+      ORDER BY count DESC
+    `);
+
+    // Hourly trend (last 12 hours)
+    const hourly = await query(`
+      SELECT
+        date_trunc('hour', started_at) as hour,
+        COUNT(*) FILTER (WHERE status = 'success') as success,
+        COUNT(*) FILTER (WHERE status = 'error') as failed,
+        COUNT(*) FILTER (WHERE status = 'partial') as partial
+      FROM llm_batches
+      WHERE started_at > NOW() - INTERVAL '12 hours'
+      GROUP BY date_trunc('hour', started_at)
+      ORDER BY hour DESC
+      LIMIT 12
+    `);
+
+    // Per-tag stats
+    const perTag = await query(`
+      SELECT
+        unnest(matched_tags) as tag,
+        COUNT(*) as articles,
+        COUNT(*) FILTER (WHERE sentiment_source NOT LIKE 'llm-%') as success
+      FROM news
+      WHERE created_at > CURRENT_DATE
+        AND matched_tags IS NOT NULL
+      GROUP BY unnest(matched_tags)
+      ORDER BY articles DESC
+      LIMIT 20
+    `);
+
+    const t = todayBatches.rows[0];
+    const total = parseInt(t?.total || '0');
+    const success = parseInt(t?.success || '0');
+    const partial = parseInt(t?.partial || '0');
+    const failed = parseInt(t?.failed || '0');
+
+    res.json({
+      today: {
+        batches_total: total,
+        batches_success: success,
+        batches_partial: partial,
+        batches_failed: failed,
+        success_rate: total > 0 ? Math.round((success + partial) / total * 100 * 10) / 10 : 0,
+        articles_processed: parseInt(todayArticles.rows[0]?.processed || '0'),
+        articles_failed: parseInt(todayArticles.rows[0]?.failed || '0'),
+      },
+      errors_by_type: errorsByType.rows,
+      hourly_trend: hourly.rows,
+      per_tag: perTag.rows,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /admin/backfill — перепроцессирует указанные новости
+app.post('/admin/backfill', async (req, res) => {
+  const secret = req.headers['x-trigger-secret'] || req.query.secret;
+  if (secret !== (process.env.CRON_SECRET_KEY || 'pulse-dev-key')) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  try {
+    const { newsIds, tag, since } = req.body;
+    let articles: any[] = [];
+
+    if (newsIds && Array.isArray(newsIds) && newsIds.length > 0) {
+      // Backfill specific IDs
+      const result = await query(`
+        SELECT id, title_ru, summary_ru, matched_tags
+        FROM news
+        WHERE id = ANY($1::uuid[])
+      `, [newsIds]);
+      articles = result.rows;
+    } else if (tag) {
+      // Backfill by tag
+      const result = await query(`
+        SELECT id, title_ru, summary_ru, matched_tags
+        FROM news
+        WHERE $1 = ANY(matched_tags)
+          AND (sentiment_source LIKE 'llm-%' OR sentiment_reasoning IS NULL)
+        ORDER BY published_at DESC
+        LIMIT 100
+      `, [tag]);
+      articles = result.rows;
+    } else if (since) {
+      // Backfill by time range
+      const interval = since === '24h' ? '24 hours' : since === '7d' ? '7 days' : '24 hours';
+      const result = await query(`
+        SELECT id, title_ru, summary_ru, matched_tags
+        FROM news
+        WHERE (sentiment_source LIKE 'llm-%' OR sentiment_reasoning IS NULL)
+          AND published_at > NOW() - INTERVAL '${interval}'
+        ORDER BY published_at DESC
+        LIMIT 100
+      `);
+      articles = result.rows;
+    }
+
+    if (articles.length === 0) {
+      return res.json({ processed: 0, succeeded: 0, failed: 0, message: 'No articles to backfill' });
+    }
+
+    // Process in batches of 10
+    const llmAvailable = !!process.env.KIMI_API_KEY;
+    let succeeded = 0;
+    let failed = 0;
+
+    for (let i = 0; i < articles.length; i += 10) {
+      const batch = articles.slice(i, i + 10);
+      try {
+        const { analyzeUnifiedBatch } = await import('./services/smartTagMatcher');
+        const results = await analyzeUnifiedBatch(
+          batch.map((a: any) => ({
+            title: a.title_ru,
+            summary: a.summary_ru,
+            tags: a.matched_tags || [],
+          }))
+        );
+        for (let j = 0; j < batch.length; j++) {
+          const r = results[j];
+          await query(`
+            UPDATE news
+            SET sentiment = $1, sentiment_score = $2, sentiment_reasoning = $3,
+                sentiment_source = $4, llm_error = NULL, llm_attempts = COALESCE(llm_attempts, 0) + 1,
+                tag_impact = $5, is_political = $6, article_type = $7, last_retry_at = NOW()
+            WHERE id = $8
+          `, [r.sentiment, r.score, r.reasoning, (r as any)._llmSource || 'llm',
+              JSON.stringify(r.tag_impacts), r.is_political, r.article_type, batch[j].id]);
+          succeeded++;
+        }
+      } catch (err: any) {
+        failed += batch.length;
+      }
+    }
+
+    res.json({ processed: articles.length, succeeded, failed });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // HMAC helper for secure Telegram linking
 // ═══════════════════════════════════════════════════════════════════════════
 function verifyLinkToken(userId: string, token: string): boolean {

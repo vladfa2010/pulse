@@ -680,6 +680,13 @@ export interface UnifiedResult {
   is_political: boolean;
   article_type: 'micro' | 'macro';
   tag_impacts: TagImpact[];
+  // Internal fields for LLM tracking (not returned to frontend)
+  _llmSource?: string;        // 'llm' | 'llm-partial' | 'llm-empty'
+  _llmBatchSize?: number;     // total articles in batch
+  _llmResultsCount?: number;  // how many results LLM returned
+  _llmRaw?: string;           // preview of raw LLM response
+  _llmErrorType?: string;     // error classification for catch block
+  _llmErrorMsg?: string;      // error message for catch block
 }
 
 interface UnifiedBatchItem {
@@ -794,6 +801,8 @@ MANDATORY:
   // Parse JSON: { results: [{score, reasoning, is_political, tag_impacts}] }
   // LLM returns JSON with physical newlines inside strings — two-pass parsing
   const results: UnifiedResult[] = [];
+  const batchSize = batch.length;  // Available outside try for while-loop
+  let resultsCount = 0;            // Will be set after parsing
   let raw = content.trim();
   try {
     // Strip markdown code fences if present
@@ -811,7 +820,28 @@ MANDATORY:
     }
     const items = parsed.results || parsed;
     const arr = Array.isArray(items) ? items : [];
-    console.log(`[UnifiedBatch] Parsed ${arr.length} results`);
+    resultsCount = arr.length;
+    console.log(`[UnifiedBatch] Parsed ${resultsCount}/${batchSize} results`);
+
+    // Handle empty results
+    if (resultsCount === 0) {
+      console.error('[UnifiedBatch] LLM returned empty results array');
+      return batch.map(it => ({
+        sentiment: 'neutral' as const, score: 0, reasoning: '',
+        is_political: false, article_type: 'micro' as const,
+        tag_impacts: it.tags.map(t => ({ tag: t, score: 0, reasoning: '' })),
+        _llmSource: 'llm-empty',
+        _llmRaw: content.slice(0, 500),
+        _llmBatchSize: batchSize,
+        _llmResultsCount: 0,
+      }));
+    }
+
+    // Warn on partial results
+    if (resultsCount < batchSize) {
+      console.warn(`[UnifiedBatch] Partial: ${resultsCount}/${batchSize} results`);
+    }
+
     for (const item of arr) {
       const score = typeof item.score === 'number' ? Math.max(-10, Math.min(10, Math.round(item.score))) : 0;
       // Reasoning: plain string with \n\n as paragraph separator (no escaping needed)
@@ -839,7 +869,12 @@ MANDATORY:
           reasoning: typeof p.reasoning === 'string' ? p.reasoning.slice(0, 200) : '',
         }));
 
-      results.push({ sentiment, score, reasoning, is_political, article_type, tag_impacts });
+      results.push({
+        sentiment, score, reasoning, is_political, article_type, tag_impacts,
+        _llmBatchSize: batchSize,
+        _llmResultsCount: resultsCount,
+        _llmSource: resultsCount < batchSize ? 'llm-partial' : 'llm',
+      });
     }
   } catch (e) {
     const errMsg = `[UnifiedBatch] Parse error: ${(e as Error).message?.slice(0, 200)} | raw_length=${content.length} | raw_preview="${content.slice(0, 300)}"`;
@@ -847,9 +882,22 @@ MANDATORY:
     console.error(errMsg);
   }
 
+  // FIX v3: Mark fallback articles as partial when some results were returned
   while (results.length < batch.length) {
     const idx = results.length;
-    results.push({ sentiment: 'neutral', score: 0, reasoning: '', is_political: false, article_type: 'micro', tag_impacts: batch[idx].tags.map(t => ({ tag: t, score: 0, reasoning: '' })) });
+    const fallbackResult: any = {
+      sentiment: 'neutral', score: 0, reasoning: '',
+      is_political: false, article_type: 'micro',
+      tag_impacts: batch[idx].tags.map(t => ({ tag: t, score: 0, reasoning: '' })),
+    };
+    // If we got some results but not enough — mark as partial
+    if (results.length > 0) {
+      fallbackResult._llmSource = 'llm-partial';
+      fallbackResult._llmBatchSize = batchSize;
+      fallbackResult._llmResultsCount = results.length; // how many we actually got
+      fallbackResult._llmRaw = content.slice(0, 500);
+    }
+    results.push(fallbackResult);
   }
   return results.slice(0, batch.length);
 }

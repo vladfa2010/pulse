@@ -186,6 +186,7 @@ async function processArticlesLocked() {
   const unifiedStart = Date.now();
   let unifiedResults: UnifiedResult[] = [];
   if (llmAvailable) {
+    const batchStartTime = Date.now(); // <-- FIX v3: определяем ДО вызова
     try {
       unifiedResults = await analyzeUnifiedBatch(
         articles.map((a, i) => ({
@@ -195,10 +196,30 @@ async function processArticlesLocked() {
         }))
       );
     } catch (err: any) {
-      console.error(`[Cron] Unified batch failed: ${err.message?.slice(0, 100)}`);
+      // Классифицируем ошибку для записи в БД
+      const errorType: string =
+        err.code === 'ETIMEDOUT' ? 'llm-timeout' :
+        err.code === 'ECONNRESET' ? 'llm-error' :
+        err.response?.status === 429 ? 'llm-rate-limit' :
+        err.response?.status === 502 ? 'llm-error' :
+        err.response?.status === 503 ? 'llm-error' :
+        'llm-error';
+      const errorMsg: string = err.message?.slice(0, 200) || 'Unknown LLM error';
+      console.error(`[Cron] Unified batch failed: ${errorType} — ${errorMsg}`);
+
+      // Записываем в llm_batches
+      await query(`
+        INSERT INTO llm_batches (started_at, articles_count, results_count, status, error_type, error_message, duration_ms)
+        VALUES (NOW(), $1, 0, 'error', $2, $3, $4)
+      `, [articles.length, errorType, errorMsg, Date.now() - batchStartTime]);
+
       unifiedResults = articles.map((a, i) => ({
         sentiment: 'neutral' as const, score: 0, reasoning: '', is_political: false, article_type: 'micro' as const,
         tag_impacts: matchedTagsList[i].map(t => ({ tag: t, score: 0, reasoning: '' })),
+        _llmErrorType: errorType,
+        _llmErrorMsg: errorMsg,
+        _llmBatchSize: articles.length,
+        _llmResultsCount: 0,
       }));
     }
   } else {
@@ -215,6 +236,9 @@ async function processArticlesLocked() {
     const a = articles[i];
     const u = unifiedResults[i] || { sentiment: 'neutral' as const, score: 0, reasoning: '', is_political: false, tag_impacts: [] };
 
+    // Determine sentiment_source: _llmErrorType (from catch) > _llmSource (from partial/empty) > 'llm' (success) > 'keyword'
+    const sentimentSource = (u as any)._llmErrorType || (u as any)._llmSource || (llmAvailable ? 'llm' : 'keyword');
+
     processed.push({
       ...a,
       title_ru: a.title_ru || a.title,
@@ -222,7 +246,12 @@ async function processArticlesLocked() {
       sentiment: u.sentiment,
       sentiment_score: u.score,
       sentiment_reasoning: u.reasoning || null,
-      sentiment_source: llmAvailable ? 'llm' as const : 'keyword' as const,
+      sentiment_source: sentimentSource,
+      llm_error: (u as any)._llmErrorMsg || null,
+      llm_attempts: (u as any)._llmErrorType ? 1 : 0,
+      llm_raw_preview: (u as any)._llmRaw || null,
+      llm_batch_size: (u as any)._llmBatchSize || null,
+      llm_results_count: (u as any)._llmResultsCount || null,
       is_political: u.is_political,
       article_type: u.article_type || 'micro',
       matched_tags: matchedTagsList[i],
@@ -257,9 +286,9 @@ async function processArticlesLocked() {
           // Новая новость
           const newId = crypto.randomUUID();
           await query(
-            `INSERT OR IGNORE INTO news (id, title_original, title_ru, summary_ru, source, source_id, url, url_normalized, content_hash, all_sources, source_count, published_at, lang_original, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags, tag_impact)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [newId, a.title, title_ru, summary_ru, a.source, a.sourceId, a.url, urlNormalized, contentHash, JSON.stringify([a.source]), 1, a.publishedAt.toISOString(), a.lang, a.sentiment, a.sentiment_score, a.sentiment_reasoning, a.sentiment_source, a.is_political ? 1 : 0, a.article_type || 'micro', JSON.stringify(a.matched_tags || []), JSON.stringify(a.tag_impact || [])]
+            `INSERT OR IGNORE INTO news (id, title_original, title_ru, summary_ru, source, source_id, url, url_normalized, content_hash, all_sources, source_count, published_at, lang_original, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, llm_error, llm_attempts, llm_raw_preview, llm_batch_size, llm_results_count, is_political, article_type, matched_tags, tag_impact)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [newId, a.title, title_ru, summary_ru, a.source, a.sourceId, a.url, urlNormalized, contentHash, JSON.stringify([a.source]), 1, a.publishedAt.toISOString(), a.lang, a.sentiment, a.sentiment_score, a.sentiment_reasoning, a.sentiment_source, a.llm_error, a.llm_attempts, a.llm_raw_preview, a.llm_batch_size, a.llm_results_count, a.is_political ? 1 : 0, a.article_type || 'micro', JSON.stringify(a.matched_tags || []), JSON.stringify(a.tag_impact || [])]
           );
           saved++;
           // Broadcast to SSE subscribers
@@ -267,10 +296,10 @@ async function processArticlesLocked() {
         }
       } else {
         // PostgreSQL: INSERT с ON CONFLICT (content_hash) DO UPDATE
-        // Ключевой момент: дубликат по content_hash → добавляем источник, НЕ создаём новую запись
+        // FIX v3: CASE WHEN вместо COALESCE — обновляем sentiment-поля ТОЛЬКО если предыдущий результат был LLM-ошибкой
         const result = await query(
-          `INSERT INTO news (title_original, title_ru, summary_ru, source, source_id, url, url_normalized, content_hash, all_sources, source_count, published_at, lang_original, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags, tag_impact)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text[], $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+          `INSERT INTO news (title_original, title_ru, summary_ru, source, source_id, url, url_normalized, content_hash, all_sources, source_count, published_at, lang_original, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, llm_error, llm_attempts, llm_raw_preview, llm_batch_size, llm_results_count, is_political, article_type, matched_tags, tag_impact)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text[], $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
            ON CONFLICT (content_hash) DO UPDATE
              SET all_sources = CASE
                WHEN news.all_sources @> ARRAY[EXCLUDED.source]::text[] THEN news.all_sources
@@ -279,9 +308,31 @@ async function processArticlesLocked() {
              source_count = CASE
                WHEN news.all_sources @> ARRAY[EXCLUDED.source]::text[] THEN news.source_count
                ELSE news.source_count + 1
-             END
+             END,
+             sentiment = CASE
+               WHEN news.sentiment_source LIKE 'llm-%' THEN EXCLUDED.sentiment
+               ELSE news.sentiment
+             END,
+             sentiment_score = CASE
+               WHEN news.sentiment_source LIKE 'llm-%' THEN EXCLUDED.sentiment_score
+               ELSE news.sentiment_score
+             END,
+             sentiment_reasoning = CASE
+               WHEN news.sentiment_source LIKE 'llm-%' THEN EXCLUDED.sentiment_reasoning
+               ELSE news.sentiment_reasoning
+             END,
+             sentiment_source = CASE
+               WHEN news.sentiment_source LIKE 'llm-%' THEN EXCLUDED.sentiment_source
+               ELSE news.sentiment_source
+             END,
+             llm_error = EXCLUDED.llm_error,
+             llm_attempts = COALESCE(news.llm_attempts, 0) + 1,
+             last_retry_at = NOW(),
+             llm_raw_preview = EXCLUDED.llm_raw_preview,
+             llm_batch_size = EXCLUDED.llm_batch_size,
+             llm_results_count = EXCLUDED.llm_results_count
            RETURNING (xmax = 0) as is_insert`,
-          [a.title, title_ru, summary_ru, a.source, a.sourceId, a.url, urlNormalized, contentHash, [a.source], 1, a.publishedAt, a.lang, a.sentiment, a.sentiment_score, a.sentiment_reasoning, a.sentiment_source, a.is_political, a.article_type || 'micro', a.matched_tags || [], JSON.stringify(a.tag_impact || [])]
+          [a.title, title_ru, summary_ru, a.source, a.sourceId, a.url, urlNormalized, contentHash, [a.source], 1, a.publishedAt, a.lang, a.sentiment, a.sentiment_score, a.sentiment_reasoning, a.sentiment_source, a.llm_error, a.llm_attempts, a.llm_raw_preview, a.llm_batch_size, a.llm_results_count, a.is_political, a.article_type || 'micro', a.matched_tags || [], JSON.stringify(a.tag_impact || [])]
         );
 
         if (result.rows.length > 0 && result.rows[0].is_insert === true) {
@@ -364,6 +415,107 @@ async function releaseCronLock(jobName: string): Promise<void> {
 // ═══════════════════════════════════════════════════════════════════════════
 // Start cron: every 5 minutes (first run delayed by 2 min)
 // ═══════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
+// DEFERRED PROCESSOR — retry failed articles automatically (Stage 4)
+// ═══════════════════════════════════════════════════════════════════════════
+
+export async function processDeferredArticles(): Promise<void> {
+  // Проверяем есть ли ключ API
+  const llmAvailable = !!process.env.KIMI_API_KEY;
+  if (!llmAvailable) {
+    return; // LLM выключен — нечего retry'ить
+  }
+
+  // Берём статьи с ошибкой, которые давно не пробовали и < 3 attempts
+  const failed = await query(`
+    SELECT id, title_ru, summary_ru, matched_tags
+    FROM news
+    WHERE llm_error IS NOT NULL
+      AND llm_attempts < 3
+      AND (last_retry_at IS NULL OR last_retry_at < NOW() - INTERVAL '30 minutes')
+    ORDER BY published_at DESC
+    LIMIT 20
+  `);
+
+  if (failed.rows.length === 0) return;
+
+  console.log(`[Deferred] Processing ${failed.rows.length} failed articles (attempts < 3)`);
+  let succeeded = 0;
+  let failedAgain = 0;
+
+  // Обрабатываем батчами по 10 (как обычный unified batch)
+  for (let i = 0; i < failed.rows.length; i += 10) {
+    const batch = failed.rows.slice(i, i + 10);
+    try {
+      const results = await analyzeUnifiedBatch(
+        batch.map((a: any) => ({
+          title: a.title_ru,
+          summary: a.summary_ru,
+          tags: a.matched_tags || [],
+        }))
+      );
+
+      // UPDATE каждой статьи
+      for (let j = 0; j < batch.length; j++) {
+        const article = batch[j];
+        const r = results[j];
+        await query(`
+          UPDATE news
+          SET sentiment = $1,
+              sentiment_score = $2,
+              sentiment_reasoning = $3,
+              sentiment_source = $4,
+              llm_error = NULL,
+              llm_attempts = COALESCE(llm_attempts, 0) + 1,
+              last_retry_at = NOW(),
+              tag_impact = $5,
+              is_political = $6,
+              article_type = $7
+          WHERE id = $8
+        `, [r.sentiment, r.score, r.reasoning || null,
+            (r as any)._llmSource || 'llm',
+            JSON.stringify(r.tag_impacts || []),
+            r.is_political, r.article_type || 'micro', article.id]);
+        succeeded++;
+      }
+    } catch (err: any) {
+      // Просто increment attempts — повторим позже
+      for (const article of batch) {
+        await query(`
+          UPDATE news
+          SET llm_attempts = COALESCE(llm_attempts, 0) + 1,
+              last_retry_at = NOW(),
+              llm_error = COALESCE(llm_error, $1)
+          WHERE id = $2
+        `, [err.message?.slice(0, 200), article.id]);
+        failedAgain++;
+      }
+    }
+  }
+
+  console.log(`[Deferred] Done: ${succeeded} succeeded, ${failedAgain} failed again`);
+
+  // Alert if too many failures
+  if (failedAgain > succeeded && process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_ADMIN_CHAT_ID) {
+    try {
+      await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: process.env.TELEGRAM_ADMIN_CHAT_ID,
+          text: `⚠️ Deferred Processor Alert\nFailed: ${failedAgain}, Succeeded: ${succeeded}\nCheck: /admin/llm-dashboard`,
+        }),
+      });
+    } catch {
+      // Silently fail — alert is best-effort
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CRON SETUP
+// ═══════════════════════════════════════════════════════════════════════════
+
 export function startCron() {
   console.log('[Cron] RSS aggregator scheduled every 5 minutes');
 
@@ -381,4 +533,14 @@ export function startCron() {
       console.error('[Cron] Initial RSS fetch failed:', err.message);
     });
   }, 2 * 60 * 1000);
+
+  // DEFERRED PROCESSOR: retry failed articles every 10 minutes
+  console.log('[Cron] Deferred processor scheduled every 10 minutes');
+  cron.schedule('*/10 * * * *', async () => {
+    try {
+      await processDeferredArticles();
+    } catch (err: any) {
+      console.error('[Cron] Deferred processor failed:', err.message);
+    }
+  });
 }
