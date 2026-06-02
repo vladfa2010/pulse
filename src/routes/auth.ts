@@ -85,7 +85,7 @@ router.post('/register', validate(RegisterSchema), async (req, res) => {
     );
 
     // ─── Генерируем JWT токен ───────────────────────────────────────────
-    const token = jwt.sign({ userId, email }, JWT_SECRET, { expiresIn: '7d' });
+    const token = jwt.sign({ userId, email, is_admin: false }, JWT_SECRET, { expiresIn: '7d' });
 
     res.status(201).json({
       token,
@@ -137,7 +137,8 @@ router.post('/login', validate(LoginSchema), async (req, res) => {
     }
 
     // ─── Генерируем JWT токен ───────────────────────────────────────────
-    const token = jwt.sign({ userId: user.id, email: user.email }, JWT_SECRET, {
+    const isAdmin = user.is_admin === 1 || user.is_admin === true;
+    const token = jwt.sign({ userId: user.id, email: user.email, is_admin: isAdmin }, JWT_SECRET, {
       expiresIn: '7d',
     });
 

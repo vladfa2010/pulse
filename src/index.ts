@@ -85,6 +85,287 @@ app.get('/health', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Migration endpoint — applies DB migrations
+// ═══════════════════════════════════════════════════════════════════════════
+app.post('/migrate-v3', async (req, res) => {
+  try {
+    const results: string[] = [];
+    // ... existing migration code ...
+    res.json({ success: true, applied: results });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/migrate-admin', async (req, res) => {
+  try {
+    const results: string[] = [];
+
+    // Add is_admin column if not exists
+    const colCheck = await query(`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_name = 'users' AND column_name = 'is_admin'
+    `);
+    if (colCheck.rows.length === 0) {
+      await query(`ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0`);
+      results.push('Added is_admin column to users');
+    } else {
+      results.push('is_admin already exists');
+    }
+
+    // Make vladfa@ya.ru admin
+    const updateResult = await query(`
+      UPDATE users SET is_admin = 1 WHERE email = 'vladfa@ya.ru'
+    `);
+    results.push(`Made vladfa@ya.ru admin: ${updateResult.rows.length} rows updated`);
+
+    res.json({ success: true, applied: results });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ADMIN MIDDLEWARE & ENDPOINTS
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Middleware: verify admin from JWT
+async function requireAdmin(req: any, res: any, next: any) {
+  try {
+    const token = req.headers.authorization?.replace('Bearer ', '') || req.cookies?.token;
+    if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+    const jwt = require('jsonwebtoken');
+    const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
+    const decoded = jwt.verify(token, JWT_SECRET);
+
+    if (!decoded.is_admin) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+    req.user = decoded;
+    next();
+  } catch (err: any) {
+    res.status(401).json({ error: 'Invalid token' });
+  }
+}
+
+// GET /admin/llm-dashboard — сводка по LLM метрикам (admin only)
+app.get('/admin/llm-dashboard', requireAdmin, async (req, res) => {
+  try {
+    // Today stats
+    const todayBatches = await query(`
+      SELECT
+        COUNT(*) as total,
+        COUNT(*) FILTER (WHERE status = 'success') as success,
+        COUNT(*) FILTER (WHERE status = 'partial') as partial,
+        COUNT(*) FILTER (WHERE status = 'error') as failed
+      FROM llm_batches
+      WHERE started_at > CURRENT_DATE
+    `);
+
+    const todayArticles = await query(`
+      SELECT
+        COUNT(*) FILTER (WHERE sentiment_source = 'llm' OR sentiment_source = 'llm-partial') as processed,
+        COUNT(*) FILTER (WHERE sentiment_source LIKE 'llm-%' AND sentiment_source != 'llm-partial') as failed
+      FROM news
+      WHERE created_at > CURRENT_DATE
+    `);
+
+    const errorsByType = await query(`
+      SELECT sentiment_source, COUNT(*) as count
+      FROM news
+      WHERE sentiment_source LIKE 'llm-%' AND sentiment_source != 'llm-partial'
+        AND created_at > CURRENT_DATE
+      GROUP BY sentiment_source
+      ORDER BY count DESC
+    `);
+
+    // Hourly trend
+    const hourly = await query(`
+      SELECT
+        date_trunc('hour', started_at) as hour,
+        COUNT(*) FILTER (WHERE status = 'success') as success,
+        COUNT(*) FILTER (WHERE status = 'error') as failed,
+        COUNT(*) FILTER (WHERE status = 'partial') as partial
+      FROM llm_batches
+      WHERE started_at > NOW() - INTERVAL '12 hours'
+      GROUP BY date_trunc('hour', started_at)
+      ORDER BY hour DESC
+      LIMIT 12
+    `);
+
+    // Per-tag stats
+    const perTag = await query(`
+      SELECT
+        unnest(matched_tags) as tag,
+        COUNT(*) as articles,
+        COUNT(*) FILTER (WHERE sentiment_source NOT LIKE 'llm-%') as success
+      FROM news
+      WHERE created_at > CURRENT_DATE
+        AND matched_tags IS NOT NULL
+      GROUP BY unnest(matched_tags)
+      ORDER BY articles DESC
+      LIMIT 20
+    `);
+
+    // Manual queue (3+ attempts)
+    const manualQueue = await query(`
+      SELECT COUNT(*) as count
+      FROM news
+      WHERE llm_attempts >= 3
+        AND llm_attempts IS NOT NULL
+        AND llm_error IS NOT NULL
+    `);
+
+    const t = todayBatches.rows[0];
+    const total = parseInt(t?.total || '0');
+    const success = parseInt(t?.success || '0');
+    const partial = parseInt(t?.partial || '0');
+    const failed = parseInt(t?.failed || '0');
+
+    res.json({
+      today: {
+        batches_total: total,
+        batches_success: success,
+        batches_partial: partial,
+        batches_failed: failed,
+        success_rate: total > 0 ? Math.round((success + partial) / total * 100 * 10) / 10 : 0,
+        articles_processed: parseInt(todayArticles.rows[0]?.processed || '0'),
+        articles_failed: parseInt(todayArticles.rows[0]?.failed || '0'),
+        manual_queue: parseInt(manualQueue.rows[0]?.count || '0'),
+      },
+      errors_by_type: errorsByType.rows,
+      hourly_trend: hourly.rows,
+      per_tag: perTag.rows,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /admin/llm-errors — список ошибок
+app.get('/admin/llm-errors', requireAdmin, async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit as string) || 50;
+    const hours = parseInt(req.query.hours as string) || 24;
+
+    const byType = await query(`
+      SELECT sentiment_source, COUNT(*) as count
+      FROM news
+      WHERE sentiment_source LIKE 'llm-%' AND sentiment_source != 'llm-partial'
+        AND created_at > NOW() - INTERVAL '${hours} hours'
+      GROUP BY sentiment_source
+      ORDER BY count DESC
+    `);
+
+    const recent = await query(`
+      SELECT id, title_ru, published_at, sentiment_source, llm_error, llm_attempts, llm_raw_preview, matched_tags
+      FROM news
+      WHERE llm_error IS NOT NULL
+        AND llm_attempts IS NOT NULL
+        AND created_at > NOW() - INTERVAL '${hours} hours'
+      ORDER BY published_at DESC
+      LIMIT $1
+    `, [limit]);
+
+    const manualQueue = await query(`
+      SELECT COUNT(*) as count
+      FROM news
+      WHERE llm_attempts >= 3
+        AND llm_attempts IS NOT NULL
+        AND llm_error IS NOT NULL
+    `);
+
+    res.json({
+      total_failed: byType.rows.reduce((sum: number, r: any) => sum + parseInt(r.count), 0),
+      by_type: byType.rows,
+      manual_queue_count: parseInt(manualQueue.rows[0]?.count || '0'),
+      recent: recent.rows,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /admin/backfill
+app.post('/admin/backfill', requireAdmin, async (req, res) => {
+  try {
+    const { newsIds, tag, since } = req.body;
+    let articles: any[] = [];
+
+    if (newsIds && Array.isArray(newsIds) && newsIds.length > 0) {
+      const result = await query(`
+        SELECT id, title_ru, summary_ru, matched_tags
+        FROM news
+        WHERE id = ANY($1::uuid[])
+      `, [newsIds]);
+      articles = result.rows;
+    } else if (tag) {
+      const result = await query(`
+        SELECT id, title_ru, summary_ru, matched_tags
+        FROM news
+        WHERE $1 = ANY(matched_tags)
+          AND (sentiment_source LIKE 'llm-%' OR sentiment_reasoning IS NULL)
+        ORDER BY published_at DESC
+        LIMIT 100
+      `, [tag]);
+      articles = result.rows;
+    } else if (since) {
+      const interval = since === '24h' ? '24 hours' : since === '7d' ? '7 days' : '24 hours';
+      const result = await query(`
+        SELECT id, title_ru, summary_ru, matched_tags
+        FROM news
+        WHERE (sentiment_source LIKE 'llm-%' OR sentiment_reasoning IS NULL)
+          AND published_at > NOW() - INTERVAL '${interval}'
+        ORDER BY published_at DESC
+        LIMIT 100
+      `);
+      articles = result.rows;
+    }
+
+    if (articles.length === 0) {
+      return res.json({ processed: 0, succeeded: 0, failed: 0, message: 'No articles to backfill' });
+    }
+
+    const llmAvailable = !!process.env.KIMI_API_KEY;
+    let succeeded = 0;
+    let failed = 0;
+
+    for (let i = 0; i < articles.length; i += 10) {
+      const batch = articles.slice(i, i + 10);
+      try {
+        const { analyzeUnifiedBatch } = await import('./services/smartTagMatcher');
+        const results = await analyzeUnifiedBatch(
+          batch.map((a: any) => ({
+            title: a.title_ru,
+            summary: a.summary_ru,
+            tags: a.matched_tags || [],
+          }))
+        );
+        for (let j = 0; j < batch.length; j++) {
+          const r = results[j];
+          await query(`
+            UPDATE news
+            SET sentiment = $1, sentiment_score = $2, sentiment_reasoning = $3,
+                sentiment_source = $4, llm_error = NULL, llm_attempts = COALESCE(llm_attempts, 0) + 1,
+                tag_impact = $5, is_political = $6, article_type = $7, last_retry_at = NOW()
+            WHERE id = $8
+          `, [r.sentiment, r.score, r.reasoning, (r as any)._llmSource || 'llm',
+              JSON.stringify(r.tag_impacts), r.is_political, r.article_type, batch[j].id]);
+          succeeded++;
+        }
+      } catch (err: any) {
+        failed += batch.length;
+      }
+    }
+
+    res.json({ processed: articles.length, succeeded, failed });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Migration endpoint — applies DB migrations for LLM error tracking (v3)
 // ═══════════════════════════════════════════════════════════════════════════
 app.post('/migrate-v3', async (req, res) => {
