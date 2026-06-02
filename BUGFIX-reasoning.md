@@ -368,9 +368,12 @@ return results.slice(0, batch.length);
 | `1d03e6e` | `/debug-llm-raw` endpoint | Диагностика сырых LLM ответов |
 | `d73acc4` | Two-pass JSON parsing | **Ключевой фикс** — handle `\n` внутри строк |
 | `618655f` | English language for LLM | Русский сломал формат |
+| `e37ad48` | Chunk loop в основном cron | Был один вызов на 65 статей → timeout |
+| `4b14acf` | JWT_SECRET unified `'dev-secret'` | Admin endpoints возвращали 401 |
+| `ab75518` | BATCH_SIZE 10→5 | Timeout на 10 статьях за 30 сек |
 
 ---
 
 *Документ создан: 2026-06-01*
-*Последнее обновление: 2026-06-01 (подтверждение работы — reasoning в БД)*
+*Последнее обновление: 2026-06-02 (batch size 10→5, chunk loop, JWT_SECRET fix)*
 *Автор: AI Developer (3-day debug session)*

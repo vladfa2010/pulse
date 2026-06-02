@@ -1,8 +1,8 @@
 # PULSE — Полный пайплайн обработки новости
 
-> **Версия:** 8.1.0 (LLM Error Tracking v3 + Optimization)
+> **Версия:** 8.2.0 (Batch Size Reduction + Chunk Loop Fix)
 > **Дата:** 2026-06-02
-> **Файлы:** `cron.ts`, `smartTagMatcher.ts`, `index.ts`
+> **Файлы:** `cron.ts`, `smartTagMatcher.ts`, `index.ts`, `NewsCard.tsx`
 
 ---
 
@@ -149,6 +149,12 @@ Return ONLY JSON array: ['oil'] or []"
 
 ## 4. STAGE 3: LLM UNIFIED BATCH
 
+### Batch Size: 5 articles per call
+
+**2026-06-02: уменьшен с 10 → 5.** Причина: LLM (Kimi API) consistently timeout'ил на 10 статьях за 30 секунд. С 5 статьями — timeout почти не происходит.
+
+**Trade-off:** 2x больше API calls, но ~95% success rate вместо ~45%.
+
 ### Оптимизация: Skip дубликатов с reasoning
 
 ```typescript
@@ -179,11 +185,43 @@ for (let i = 0; i < articles.length; i++) {
 }
 
 // Вызываем LLM ТОЛЬКО для новых статей
-const needLLM = articles.filter((_, i) => !skipLLM.has(i));
-console.log(`LLM: ${articles.length} total, ${needLLM.length} need, ${skipLLM.size} skipped`);
+const needLLMWithIndex = [];
+for (let i = 0; i < articles.length; i++) {
+  if (!skipLLM.has(i)) needLLMWithIndex.push({ article: articles[i], originalIndex: i });
+}
+console.log(`LLM: ${articles.length} total, ${needLLMWithIndex.length} need, ${skipLLM.size} skipped`);
 ```
 
 **Экономия токенов:** Если из 10 статей 5 — дубликаты, вызываем LLM только для 5 новых.
+
+### Chunk Loop (критический фикс 2026-06-02)
+
+**Проблема:** Основной cron отправлял ВЕСЬ `needLLM` (до 65 статей!) в ОДИН `analyzeUnifiedBatch()` — без разбиения на chunk'и. 65 статей за 30 секунд → timeout → ВСЕ статьи fallback.
+
+**Фикс:** Loop по chunk'ам размером `BATCH_SIZE` (сейчас 5):
+
+```typescript
+const BATCH_SIZE = 5;  // 2026-06-02: уменьшен с 10 → 5
+
+for (let batchStart = 0; batchStart < needLLMWithIndex.length; batchStart += BATCH_SIZE) {
+  const chunk = needLLMWithIndex.slice(batchStart, batchStart + BATCH_SIZE);
+  
+  try {
+    const results = await analyzeUnifiedBatch(
+      chunk.map(({ article, originalIndex }) => ({
+        title: article.title_ru || article.title,
+        summary: article.summary_ru || article.summary,
+        tags: matchedTagsList[originalIndex],
+      }))
+    );
+    // results[j] → unifiedResults[chunk[j].originalIndex]
+  } catch (err) {
+    // fallback ТОЛЬКО для этого chunk — остальные unaffected
+  }
+}
+```
+
+Deferred processor уже имел chunk loop (`i += 10` → теперь `i += 5`). Основной cron — **не имел** до фикса.
 
 ### Two-Pass JSON Parsing
 
@@ -358,6 +396,16 @@ cron.schedule('*/10 * * * *', async () => {
 **Результат:** Успешные статьи не имели raw preview.
 **Фикс:** Добавлен `_llmRaw` во все `results.push`.
 
+### Баг 6: Основной cron без chunk loop — batch sizes до 65 статей
+**Причина:** `analyzeUnifiedBatch(needLLM)` — один вызов на ВСЕ статьи. Deferred processor имел `for (i += 10)`, основной cron — нет.
+**Результат:** 392 timeouts за 24ч, batch sizes 28/23/65/13, success rate 45%.
+**Фикс:** Chunk loop `for (batchStart += BATCH_SIZE)` в основном cron. `BATCH_SIZE` вынесен как константа.
+
+### Баг 7: JWT_SECRET mismatch — admin endpoints возвращали 401
+**Причина:** `auth.ts` использовал `process.env.JWT_SECRET || 'dev-secret'`, а `requireAdmin` в `index.ts` — `process.env.JWT_SECRET || 'your-secret-key'`. На Render `JWT_SECRET` env не установлен.
+**Результат:** Токен подписан `'dev-secret'`, проверяется `'your-secret-key'` → `Invalid token` → админ панель пустая.
+**Фикс:** Унифицирован дефолт `'dev-secret'` в обоих местах.
+
 ---
 
 ## 9. МЕТРИКИ КОНТРОЛЯ
@@ -382,13 +430,15 @@ curl https://pulse-api-bsov.onrender.com/debug-db \
 ```
 
 ### Нормальные показатели
-| Метрика | Хорошо | Плохо |
-|---------|--------|-------|
-| success_rate | > 95% | < 90% |
-| llm-empty | 0 | > 0 |
-| llm-parse | 0 | > 0 |
-| manual_queue | 0 | > 10 |
-| empty_with_tags / total | < 10% | > 20% |
+| Метрика | Хорошо | Плохо | Примечание |
+|---------|--------|-------|------------|
+| success_rate | > 95% | < 90% | При batch=5: ~95-98% |
+| llm-empty | 0 | > 0 | |
+| llm-parse | 0 | > 0 | |
+| llm-timeout | 0 | > 5 | Должен быть 0 при batch=5 |
+| manual_queue | 0 | > 10 | |
+| empty_with_tags / total | < 10% | > 20% | |
+| **batch_size** | **5** | **> 5** | **Должен быть ровно 5** |
 
 ---
 
@@ -404,4 +454,4 @@ curl https://pulse-api-bsov.onrender.com/debug-db \
 ---
 
 *Документ создан: 2026-06-02*
-*Последнее обновление: 2026-06-02 (оптимизация skip дубликатов)*
+*Последнее обновление: 2026-06-02 (batch size 10→5, chunk loop fix, JWT_SECRET unify)*
