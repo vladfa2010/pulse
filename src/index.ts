@@ -365,6 +365,82 @@ app.post('/admin/backfill', requireAdmin, async (req, res) => {
   }
 });
 
+// GET /admin/source-stats — статистика по RSS источникам (admin only)
+app.get('/admin/source-stats', requireAdmin, async (req, res) => {
+  try {
+    const hours = parseInt(req.query.hours as string) || 24;
+
+    // Статистика по источникам за N часов
+    const sourceStats = await query(`
+      SELECT
+        source,
+        COUNT(*) as total_articles,
+        COUNT(*) FILTER (WHERE matched_tags IS NOT NULL AND array_length(matched_tags, 1) > 0) as tagged_articles,
+        COUNT(*) FILTER (WHERE matched_tags IS NULL OR array_length(matched_tags, 1) = 0) as untagged_articles,
+        COUNT(*) FILTER (WHERE sentiment_source = 'llm' OR sentiment_source = 'llm-partial') as llm_success,
+        COUNT(*) FILTER (WHERE sentiment_source LIKE 'llm-%' AND sentiment_source != 'llm-partial') as llm_failed,
+        COUNT(*) FILTER (WHERE sentiment_source = 'llm-timeout') as llm_timeout,
+        ROUND(AVG(sentiment_score) FILTER (WHERE sentiment_score IS NOT NULL), 1) as avg_sentiment,
+        MAX(published_at) as last_article_at,
+        CASE
+          WHEN source LIKE '% bloomberg %' OR source LIKE '%reuters%' OR source LIKE '%wsj%'
+               OR source LIKE '%ft.com%' OR source LIKE '%cnbc%' OR source LIKE '%marketwatch%'
+               OR source LIKE '%seekingalpha%' OR source LIKE '%morningstar%'
+               OR source LIKE '%hackernews%' OR source LIKE '%techcrunch%'
+               OR source LIKE '%ars technica%' OR source LIKE '%wired%'
+               OR source LIKE '%apnews%' OR source LIKE '%washingtonpost%'
+          THEN 'en'
+          ELSE 'ru'
+        END as language
+      FROM news
+      WHERE published_at > NOW() - INTERVAL '${hours} hours'
+      GROUP BY source
+      ORDER BY total_articles DESC
+    `);
+
+    // Топ-5 тегов по каждому источнику
+    const sourceTags = await query(`
+      SELECT
+        source,
+        unnest(matched_tags) as tag,
+        COUNT(*) as tag_count
+      FROM news
+      WHERE published_at > NOW() - INTERVAL '${hours} hours'
+        AND matched_tags IS NOT NULL
+        AND array_length(matched_tags, 1) > 0
+      GROUP BY source, unnest(matched_tags)
+      ORDER BY source, tag_count DESC
+    `);
+
+    // Группируем теги по источнику
+    const tagsBySource: Record<string, { tag: string; count: number }[]> = {};
+    for (const row of sourceTags.rows) {
+      if (!tagsBySource[row.source]) tagsBySource[row.source] = [];
+      if (tagsBySource[row.source].length < 5) {
+        tagsBySource[row.source].push({ tag: row.tag, count: parseInt(row.tag_count) });
+      }
+    }
+
+    const sources = sourceStats.rows.map((row: any) => ({
+      source: row.source,
+      total_articles: parseInt(row.total_articles),
+      tagged_articles: parseInt(row.tagged_articles),
+      untagged_articles: parseInt(row.untagged_articles),
+      llm_success: parseInt(row.llm_success),
+      llm_failed: parseInt(row.llm_failed),
+      llm_timeout: parseInt(row.llm_timeout),
+      avg_sentiment: parseFloat(row.avg_sentiment) || 0,
+      last_article_at: row.last_article_at,
+      language: row.language,
+      top_tags: tagsBySource[row.source] || [],
+    }));
+
+    res.json({ hours, sources });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Migration endpoint — applies DB migrations for LLM error tracking (v3)
 // ═══════════════════════════════════════════════════════════════════════════
