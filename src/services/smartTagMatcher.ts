@@ -705,22 +705,10 @@ export async function analyzeUnifiedBatch(items: UnifiedBatchItem[]): Promise<Un
   const results: UnifiedResult[] = [];
   for (let i = 0; i < items.length; i += BATCH_SIZE) {
     const batch = items.slice(i, i + BATCH_SIZE);
-    try {
-      const batchResults = await analyzeUnifiedBatchChunk(batch);
-      results.push(...batchResults);
-    } catch (err: any) {
-      console.error(`[UnifiedBatch] Batch failed: ${err.message?.slice(0, 100)}`);
-      for (const it of batch) {
-        results.push({
-          sentiment: 'neutral', score: 0, reasoning: '', is_political: false, article_type: 'micro',
-          tag_impacts: it.tags.map(t => ({ tag: t, score: 0, reasoning: '' })),
-          _llmErrorType: 'llm-error',
-          _llmErrorMsg: err.message?.slice(0, 200) || 'Batch-level error',
-          _llmBatchSize: batch.length,
-          _llmResultsCount: 0,
-        });
-      }
-    }
+    // FIX: пробрасываем ошибку наверх — пусть catch в cron.ts обрабатывает
+    // и пишет в llm_batches. Не поглощаем ошибку здесь.
+    const batchResults = await analyzeUnifiedBatchChunk(batch);
+    results.push(...batchResults);
   }
   return results;
 }
