@@ -510,7 +510,7 @@ export async function processDeferredArticles(): Promise<void> {
           UPDATE news
           SET llm_attempts = COALESCE(llm_attempts, 0) + 1,
               last_retry_at = NOW(),
-              llm_error = COALESCE(llm_error, $1)
+              llm_error = $1
           WHERE id = $2
         `, [err.message?.slice(0, 200), article.id]);
         failedAgain++;

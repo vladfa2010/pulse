@@ -881,6 +881,7 @@ MANDATORY:
         _llmBatchSize: batchSize,
         _llmResultsCount: resultsCount,
         _llmSource: resultsCount < batchSize ? 'llm-partial' : 'llm',
+        _llmRaw: content.slice(0, 500),
       });
     }
   } catch (e) {
@@ -898,10 +899,10 @@ MANDATORY:
       tag_impacts: batch[idx].tags.map(t => ({ tag: t, score: 0, reasoning: '' })),
     };
     // If we got some results but not enough — mark as partial
-    if (results.length > 0) {
+    if (resultsCount > 0) {
       fallbackResult._llmSource = 'llm-partial';
       fallbackResult._llmBatchSize = batchSize;
-      fallbackResult._llmResultsCount = results.length; // how many we actually got
+      fallbackResult._llmResultsCount = resultsCount;
       fallbackResult._llmRaw = content.slice(0, 500);
     }
     results.push(fallbackResult);
