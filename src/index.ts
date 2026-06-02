@@ -1471,6 +1471,83 @@ app.get('/tag-stats', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// LLM ANALYTICS — Public endpoint for debugging
+// ═══════════════════════════════════════════════════════════════════════════
+
+app.get('/llm-analytics', async (req, res) => {
+  try {
+    const hours = parseInt(req.query.hours as string) || 24;
+
+    // 1. Articles with reasoning (their status)
+    const articles = await query(`
+      SELECT published_at, title_ru, sentiment_source, sentiment_score, sentiment_reasoning,
+             llm_error, llm_attempts, llm_batch_size, llm_results_count, matched_tags
+      FROM news
+      WHERE created_at > NOW() - INTERVAL '${hours} hours'
+        AND (sentiment_source LIKE 'llm%' OR sentiment_reasoning IS NOT NULL)
+      ORDER BY published_at DESC
+      LIMIT 100
+    `);
+
+    // 2. Statistics
+    const stats = await query(`
+      SELECT
+        COUNT(*) FILTER (WHERE sentiment_source = 'llm') as llm_success,
+        COUNT(*) FILTER (WHERE sentiment_source = 'llm-partial') as llm_partial,
+        COUNT(*) FILTER (WHERE sentiment_source LIKE 'llm-%' AND sentiment_source != 'llm-partial') as llm_error,
+        COUNT(*) FILTER (WHERE sentiment_reasoning IS NOT NULL AND sentiment_source NOT LIKE 'llm-%') as with_reasoning,
+        COUNT(*) FILTER (WHERE sentiment_reasoning IS NULL AND matched_tags IS NOT NULL AND array_length(matched_tags, 1) > 0) as empty_with_tags,
+        COUNT(*) as total
+      FROM news
+      WHERE created_at > NOW() - INTERVAL '${hours} hours'
+    `);
+
+    // 3. Error breakdown
+    const errors = await query(`
+      SELECT sentiment_source, COUNT(*) as count
+      FROM news
+      WHERE sentiment_source LIKE 'llm-%'
+        AND created_at > NOW() - INTERVAL '${hours} hours'
+      GROUP BY sentiment_source
+      ORDER BY count DESC
+    `);
+
+    // 4. Batch stats
+    const batches = await query(`
+      SELECT
+        COUNT(*) as total,
+        COUNT(*) FILTER (WHERE status = 'success') as success,
+        COUNT(*) FILTER (WHERE status = 'partial') as partial,
+        COUNT(*) FILTER (WHERE status = 'error') as failed
+      FROM llm_batches
+      WHERE started_at > NOW() - INTERVAL '${hours} hours'
+    `);
+
+    res.json({
+      period_hours: hours,
+      stats: stats.rows[0],
+      errors: errors.rows,
+      batches: batches.rows[0],
+      articles: articles.rows.map((r: any) => ({
+        time: r.published_at,
+        title: r.title_ru?.slice(0, 60),
+        source: r.sentiment_source,
+        score: r.sentiment_score,
+        has_reasoning: !!r.sentiment_reasoning,
+        reasoning_preview: r.sentiment_reasoning ? r.sentiment_reasoning.slice(0, 80) : null,
+        llm_error: r.llm_error,
+        attempts: r.llm_attempts,
+        batch_size: r.llm_batch_size,
+        results_count: r.llm_results_count,
+        tags: r.matched_tags,
+      })),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // ADMIN: LLM Error Tracking Dashboard
 // ═══════════════════════════════════════════════════════════════════════════
 
