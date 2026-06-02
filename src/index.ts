@@ -103,19 +103,19 @@ app.post('/migrate-admin', async (req, res) => {
 
     // Add is_admin column if not exists
     const colCheck = await query(`
-      SELECT column_name FROM information_schema.columns
+      SELECT column_name, data_type FROM information_schema.columns
       WHERE table_name = 'users' AND column_name = 'is_admin'
     `);
     if (colCheck.rows.length === 0) {
       await query(`ALTER TABLE users ADD COLUMN is_admin BOOLEAN DEFAULT FALSE`);
       results.push('Added is_admin column to users');
     } else {
-      results.push('is_admin already exists');
+      results.push(`is_admin already exists (type: ${colCheck.rows[0].data_type})`);
     }
 
-    // Make vladfa@ya.ru admin (BOOLEAN for PostgreSQL)
+    // Make vladfa@ya.ru admin
     const updateResult = await query(`
-      UPDATE users SET is_admin = TRUE WHERE email = 'vladfa@ya.ru'
+      UPDATE users SET is_admin = TRUE::BOOLEAN WHERE email = 'vladfa@ya.ru'
     `);
     results.push(`Made vladfa@ya.ru admin: ${updateResult.rows.length} rows updated`);
 
