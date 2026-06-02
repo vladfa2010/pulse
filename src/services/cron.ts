@@ -167,7 +167,7 @@ async function processArticlesLocked() {
 
   // 3. Check if LLM is available (check once, not per article)
   const llmAvailable = !!process.env.KIMI_API_KEY;
-  console.log(`[Cron] LLM sentiment: ${llmAvailable ? 'ENABLED (batch x10)' : 'DISABLED (keyword-based)'}`);
+  console.log(`[Cron] LLM sentiment: ${llmAvailable ? 'ENABLED (batch x5)' : 'DISABLED (keyword-based)'}`);
 
   // 3a-c. UNIFIED BATCH — 1 LLM request = sentiment + tag_impact + is_political (v7.16)
   console.log('[Cron] Starting smart tag matching...');
@@ -235,7 +235,7 @@ async function processArticlesLocked() {
   console.log(`[Cron] LLM optimization: ${articles.length} total, ${needLLMWithIndex.length} need LLM, ${skipLLM.size} skipped (duplicates)`);
 
   if (llmAvailable && needLLMWithIndex.length > 0) {
-    const BATCH_SIZE = 10;
+    const BATCH_SIZE = 5;
     const totalBatches = Math.ceil(needLLMWithIndex.length / BATCH_SIZE);
     for (let batchStart = 0; batchStart < needLLMWithIndex.length; batchStart += BATCH_SIZE) {
       const chunk = needLLMWithIndex.slice(batchStart, batchStart + BATCH_SIZE);
@@ -536,8 +536,8 @@ export async function processDeferredArticles(): Promise<void> {
   let failedAgain = 0;
 
   // Обрабатываем батчами по 10 (как обычный unified batch)
-  for (let i = 0; i < failed.rows.length; i += 10) {
-    const batch = failed.rows.slice(i, i + 10);
+  for (let i = 0; i < failed.rows.length; i += 5) {
+    const batch = failed.rows.slice(i, i + 5);
     try {
       const results = await analyzeUnifiedBatch(
         batch.map((a: any) => ({
@@ -635,3 +635,4 @@ export function startCron() {
     }
   });
 }
+

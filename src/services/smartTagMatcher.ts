@@ -305,7 +305,7 @@ export async function smartMatchTags(
 
 // ═══════════════════════════════════════════════════════════════════════════
 // LLM Sentiment Analysis — Investment Analyst Score (-10 to +10)
-// BATCH mode: 10 articles per request (10x speedup)
+// BATCH mode: 5 articles per request (5x speedup)
 // ═══════════════════════════════════════════════════════════════════════════
 
 export interface SentimentResult {
@@ -319,7 +319,7 @@ interface BatchArticle {
   summary: string;
 }
 
-const BATCH_SIZE = 10;
+const BATCH_SIZE = 5;
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 2000; // 2s base delay
 
@@ -539,7 +539,7 @@ function parseSentimentResponse(content: string): { score: number; reasoning: st
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Tag Impact Analysis — how does the news affect each tag?
-// BATCH mode: 10 articles per request (10x speedup)
+// BATCH mode: 5 articles per request (5x speedup)
 // ═══════════════════════════════════════════════════════════════════════════
 
 export interface TagImpact {
