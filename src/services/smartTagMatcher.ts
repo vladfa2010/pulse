@@ -711,7 +711,14 @@ export async function analyzeUnifiedBatch(items: UnifiedBatchItem[]): Promise<Un
     } catch (err: any) {
       console.error(`[UnifiedBatch] Batch failed: ${err.message?.slice(0, 100)}`);
       for (const it of batch) {
-        results.push({ sentiment: 'neutral', score: 0, reasoning: '', is_political: false, article_type: 'micro', tag_impacts: it.tags.map(t => ({ tag: t, score: 0, reasoning: '' })) });
+        results.push({
+          sentiment: 'neutral', score: 0, reasoning: '', is_political: false, article_type: 'micro',
+          tag_impacts: it.tags.map(t => ({ tag: t, score: 0, reasoning: '' })),
+          _llmErrorType: 'llm-error',
+          _llmErrorMsg: err.message?.slice(0, 200) || 'Batch-level error',
+          _llmBatchSize: batch.length,
+          _llmResultsCount: 0,
+        });
       }
     }
   }

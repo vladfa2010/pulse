@@ -187,6 +187,7 @@ async function processArticlesLocked() {
   let unifiedResults: UnifiedResult[] = [];
   if (llmAvailable) {
     const batchStartTime = Date.now(); // <-- FIX v3: определяем ДО вызова
+    let batchFailed = false;
     try {
       unifiedResults = await analyzeUnifiedBatch(
         articles.map((a, i) => ({
@@ -196,6 +197,7 @@ async function processArticlesLocked() {
         }))
       );
     } catch (err: any) {
+      batchFailed = true;
       // Классифицируем ошибку для записи в БД
       const errorType: string =
         err.code === 'ETIMEDOUT' ? 'llm-timeout' :
@@ -221,6 +223,19 @@ async function processArticlesLocked() {
         _llmBatchSize: articles.length,
         _llmResultsCount: 0,
       }));
+    }
+
+    // FIX: Record successful batch in llm_batches
+    if (!batchFailed && unifiedResults.length > 0) {
+      const successCount = unifiedResults.filter((u: any) => u._llmSource !== 'llm-empty' && !u._llmErrorType).length;
+      const partialCount = unifiedResults.filter((u: any) => u._llmSource === 'llm-partial').length;
+      const status = partialCount > 0 ? 'partial' : 'success';
+      await query(`
+        INSERT INTO llm_batches (started_at, articles_count, results_count, status, duration_ms)
+        VALUES (NOW(), $1, $2, $3, $4)
+      `, [articles.length, successCount + partialCount, status, Date.now() - batchStartTime]).catch(() => {
+        // Silent fail — metrics are best-effort
+      });
     }
   } else {
     unifiedResults = articles.map((a, i) => ({
@@ -333,7 +348,10 @@ async function processArticlesLocked() {
                ELSE news.sentiment_source
              END,
              llm_error = EXCLUDED.llm_error,
-             llm_attempts = COALESCE(news.llm_attempts, 0) + 1,
+             llm_attempts = CASE
+               WHEN news.sentiment_source LIKE 'llm-%' THEN COALESCE(news.llm_attempts, 0) + 1
+               ELSE COALESCE(news.llm_attempts, 0)
+             END,
              last_retry_at = NOW(),
              llm_raw_preview = EXCLUDED.llm_raw_preview,
              llm_batch_size = EXCLUDED.llm_batch_size,
