@@ -677,6 +677,148 @@ app.post('/admin/users/:id/toggle-block', requireAdmin, async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ADMIN: Tags Management
+// ═══════════════════════════════════════════════════════════════════════════
+
+// GET /admin/tags — все теги с агрегатами
+app.get('/admin/tags', requireAdmin, async (req, res) => {
+  try {
+    const hours = parseInt(req.query.hours as string) || 24;
+
+    const tagsResult = await query(`
+      SELECT
+        t.tag_id,
+        t.tag_name,
+        t.tag_type,
+        t.keywords,
+        t.created_at,
+        COUNT(DISTINCT p.user_id) as subscriber_count,
+        COUNT(DISTINCT n.id) FILTER (WHERE n.published_at > NOW() - INTERVAL '${hours} hours') as articles_24h,
+        COUNT(DISTINCT n.id) FILTER (WHERE n.published_at > NOW() - INTERVAL '7 days') as articles_7d,
+        COUNT(DISTINCT n.id) FILTER (WHERE n.published_at > NOW() - INTERVAL '30 days') as articles_30d,
+        ROUND(AVG(n.sentiment_score) FILTER (WHERE n.sentiment_score IS NOT NULL AND n.published_at > NOW() - INTERVAL '${hours} hours'), 1) as avg_sentiment,
+        COUNT(*) FILTER (WHERE n.sentiment_source = 'llm' OR n.sentiment_source = 'llm-partial') as llm_success,
+        COUNT(*) FILTER (WHERE n.sentiment_source LIKE 'llm-%' AND n.sentiment_source != 'llm-partial') as llm_failed,
+        MAX(n.published_at) as last_article_at
+      FROM user_defined_tags t
+      LEFT JOIN portfolios p ON p.tag_id = t.tag_id
+      LEFT JOIN news n ON n.matched_tags @> ARRAY[t.tag_id] AND n.published_at > NOW() - INTERVAL '30 days'
+      GROUP BY t.tag_id, t.tag_name, t.tag_type, t.keywords, t.created_at
+      ORDER BY articles_24h DESC, subscriber_count DESC
+    `);
+
+    res.json({
+      hours,
+      total: tagsResult.rows.length,
+      tags: tagsResult.rows.map((row: any) => ({
+        tag_id: row.tag_id,
+        tag_name: row.tag_name,
+        tag_type: row.tag_type,
+        keywords: row.keywords || [],
+        created_at: row.created_at,
+        subscriber_count: parseInt(row.subscriber_count) || 0,
+        articles_24h: parseInt(row.articles_24h) || 0,
+        articles_7d: parseInt(row.articles_7d) || 0,
+        articles_30d: parseInt(row.articles_30d) || 0,
+        avg_sentiment: parseFloat(row.avg_sentiment) || 0,
+        llm_success: parseInt(row.llm_success) || 0,
+        llm_failed: parseInt(row.llm_failed) || 0,
+        last_article_at: row.last_article_at,
+      })),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /admin/tags/:tagId — детали тега
+app.get('/admin/tags/:tagId', requireAdmin, async (req, res) => {
+  try {
+    const tagId = req.params.tagId;
+
+    // Tag info
+    const tagResult = await query(`
+      SELECT tag_id, tag_name, tag_type, keywords, enriched_data, created_at
+      FROM user_defined_tags
+      WHERE tag_id = $1
+    `, [tagId]);
+
+    if (tagResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Tag not found' });
+    }
+
+    const tag = tagResult.rows[0];
+    let relatedTags: string[] = [];
+    try {
+      if (tag.enriched_data?.related_tags) {
+        relatedTags = tag.enriched_data.related_tags;
+      } else if (tag.enriched_data?.related_entities) {
+        relatedTags = tag.enriched_data.related_entities;
+      }
+    } catch { /* ignore */ }
+
+    // Daily stats (30 days)
+    const dailyResult = await query(`
+      SELECT
+        date_trunc('day', published_at) as day,
+        COUNT(*) as count,
+        ROUND(AVG(sentiment_score) FILTER (WHERE sentiment_score IS NOT NULL), 1) as avg_sentiment
+      FROM news
+      WHERE matched_tags @> ARRAY[$1]
+        AND published_at > NOW() - INTERVAL '30 days'
+      GROUP BY date_trunc('day', published_at)
+      ORDER BY day ASC
+    `, [tagId]);
+
+    // Recent articles
+    const articlesResult = await query(`
+      SELECT id, title_ru, published_at, sentiment_score, sentiment_source, source
+      FROM news
+      WHERE matched_tags @> ARRAY[$1]
+      ORDER BY published_at DESC
+      LIMIT 20
+    `, [tagId]);
+
+    // Subscribers
+    const subscribersResult = await query(`
+      SELECT u.email, u.username, p.created_at
+      FROM portfolios p
+      JOIN users u ON u.id = p.user_id
+      WHERE p.tag_id = $1
+      ORDER BY p.created_at DESC
+    `, [tagId]);
+
+    res.json({
+      tag: {
+        tag_id: tag.tag_id,
+        tag_name: tag.tag_name,
+        tag_type: tag.tag_type,
+        keywords: tag.keywords || [],
+        created_at: tag.created_at,
+        related_tags: relatedTags,
+      },
+      daily_stats: dailyResult.rows.map((r: any) => ({
+        day: r.day,
+        count: parseInt(r.count),
+        avg_sentiment: parseFloat(r.avg_sentiment) || 0,
+      })),
+      recent_articles: articlesResult.rows.map((a: any) => ({
+        id: a.id,
+        title: a.title_ru,
+        published_at: a.published_at,
+        sentiment_score: a.sentiment_score,
+        sentiment_source: a.sentiment_source,
+        source: a.source,
+      })),
+      subscribers: subscribersResult.rows,
+      subscriber_count: subscribersResult.rows.length,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Migration endpoint — applies DB migrations for LLM error tracking (v3)
 // ═══════════════════════════════════════════════════════════════════════════
 app.post('/migrate-v3', async (req, res) => {
