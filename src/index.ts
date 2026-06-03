@@ -442,6 +442,241 @@ app.get('/admin/source-stats', requireAdmin, async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ADMIN: Users Management
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Ensure is_blocked column exists
+query(`SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'is_blocked' LIMIT 1`).then((check: any) => {
+  if (check.rows.length === 0) {
+    query(`ALTER TABLE users ADD COLUMN is_blocked BOOLEAN DEFAULT FALSE`).catch(() => {});
+  }
+}).catch(() => {});
+
+// GET /admin/users — список всех пользователей
+app.get('/admin/users', requireAdmin, async (req, res) => {
+  try {
+    const usersResult = await query(`
+      SELECT
+        u.id,
+        u.email,
+        u.username,
+        u.is_verified,
+        u.is_admin,
+        u.is_blocked,
+        u.subscription_active,
+        u.subscription_expires_at,
+        u.news_count,
+        u.created_at,
+        s.last_connected_at,
+        COALESCE(p.total_payments, 0) as total_payments,
+        COALESCE(p.total_amount, 0) as total_amount,
+        (SELECT COUNT(*) FROM portfolios WHERE user_id = u.id) as tag_count,
+        (SELECT COUNT(*) FROM user_channels WHERE user_id = u.id AND is_active = TRUE) as active_channels,
+        (SELECT COUNT(*) FROM user_news_reads WHERE user_id = u.id) as articles_read
+      FROM users u
+      LEFT JOIN user_sessions s ON s.user_id = u.id
+      LEFT JOIN (
+        SELECT user_id, COUNT(*) as total_payments, SUM(amount) as total_amount
+        FROM payments
+        WHERE status = 'succeeded'
+        GROUP BY user_id
+      ) p ON p.user_id = u.id
+      ORDER BY u.created_at DESC
+    `);
+
+    res.json({
+      total: usersResult.rows.length,
+      users: usersResult.rows.map((row: any) => ({
+        id: row.id,
+        email: row.email,
+        username: row.username,
+        is_verified: row.is_verified === true || row.is_verified === 1,
+        is_admin: row.is_admin === true || row.is_admin === 1,
+        is_blocked: row.is_blocked === true || row.is_blocked === 1,
+        subscription_active: row.subscription_active === true || row.subscription_active === 1,
+        subscription_expires_at: row.subscription_expires_at,
+        news_count: parseInt(row.news_count) || 0,
+        created_at: row.created_at,
+        last_login_at: row.last_connected_at,
+        total_payments: parseInt(row.total_payments) || 0,
+        total_amount: parseFloat(row.total_amount) || 0,
+        tag_count: parseInt(row.tag_count) || 0,
+        active_channels: parseInt(row.active_channels) || 0,
+        articles_read: parseInt(row.articles_read) || 0,
+      })),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /admin/users/:id — детали пользователя
+app.get('/admin/users/:id', requireAdmin, async (req, res) => {
+  try {
+    const userId = req.params.id;
+
+    // User data
+    const userResult = await query(`
+      SELECT id, email, username, is_verified, is_admin, is_blocked,
+             subscription_active, subscription_expires_at, subscription_auto_renew,
+             news_count, created_at
+      FROM users
+      WHERE id = $1
+    `, [userId]);
+
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const u = userResult.rows[0];
+
+    // Last login
+    const sessionResult = await query(`SELECT last_connected_at FROM user_sessions WHERE user_id = $1`, [userId]);
+
+    // Payments
+    const paymentsResult = await query(`
+      SELECT id, amount, status, method, paid_at, created_at
+      FROM payments
+      WHERE user_id = $1
+      ORDER BY created_at DESC
+    `, [userId]);
+
+    // Tags
+    const tagsResult = await query(`
+      SELECT tag_id, tag_name, tag_type, created_at
+      FROM portfolios
+      WHERE user_id = $1
+      ORDER BY created_at DESC
+    `, [userId]);
+
+    // Channels (TG, email)
+    const channelsResult = await query(`
+      SELECT channel, target, is_active, created_at
+      FROM user_channels
+      WHERE user_id = $1
+    `, [userId]);
+
+    // Login history (last 30 days)
+    const loginsResult = await query(`
+      SELECT date_trunc('day', read_at) as day, COUNT(*) as count
+      FROM user_news_reads
+      WHERE user_id = $1 AND read_at > NOW() - INTERVAL '30 days'
+      GROUP BY date_trunc('day', read_at)
+      ORDER BY day ASC
+    `, [userId]);
+
+    // Notification settings
+    const notifResult = await query(`SELECT * FROM notification_settings WHERE user_id = $1`, [userId]);
+
+    // Articles read count
+    const readsCount = await query(`SELECT COUNT(*) as count FROM user_news_reads WHERE user_id = $1`, [userId]);
+
+    res.json({
+      user: {
+        id: u.id,
+        email: u.email,
+        username: u.username,
+        is_verified: u.is_verified === true || u.is_verified === 1,
+        is_admin: u.is_admin === true || u.is_admin === 1,
+        is_blocked: u.is_blocked === true || u.is_blocked === 1,
+        subscription_active: u.subscription_active === true || u.subscription_active === 1,
+        subscription_expires_at: u.subscription_expires_at,
+        subscription_auto_renew: u.subscription_auto_renew === true || u.subscription_auto_renew === 1,
+        news_count: parseInt(u.news_count) || 0,
+        created_at: u.created_at,
+        last_login_at: sessionResult.rows[0]?.last_connected_at || null,
+        articles_read: parseInt(readsCount.rows[0]?.count) || 0,
+      },
+      payments: paymentsResult.rows.map((p: any) => ({
+        id: p.id,
+        amount: parseFloat(p.amount),
+        status: p.status,
+        method: p.method,
+        paid_at: p.paid_at,
+        created_at: p.created_at,
+      })),
+      total_amount: paymentsResult.rows
+        .filter((p: any) => p.status === 'succeeded')
+        .reduce((sum: number, p: any) => sum + parseFloat(p.amount), 0),
+      tags: tagsResult.rows,
+      channels: channelsResult.rows,
+      login_history: loginsResult.rows.map((r: any) => ({
+        day: r.day,
+        count: parseInt(r.count),
+      })),
+      notifications: notifResult.rows[0] || null,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /admin/users/:id/reset-password
+app.post('/admin/users/:id/reset-password', requireAdmin, async (req, res) => {
+  try {
+    const userId = req.params.id;
+    const { password } = req.body;
+
+    if (!password || password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+
+    const bcrypt = await import('bcryptjs');
+    const hash = await bcrypt.hash(password, 10);
+
+    await query(`UPDATE users SET password_hash = $1 WHERE id = $2`, [hash, userId]);
+
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /admin/users/:id/toggle-admin
+app.post('/admin/users/:id/toggle-admin', requireAdmin, async (req, res) => {
+  try {
+    const userId = req.params.id;
+
+    // Prevent self-demotion
+    const adminUser = (req as any).user;
+    if (adminUser.userId === userId) {
+      return res.status(400).json({ error: 'Cannot change your own admin status' });
+    }
+
+    const result = await query(`
+      UPDATE users SET is_admin = NOT is_admin WHERE id = $1
+      RETURNING is_admin
+    `, [userId]);
+
+    res.json({ is_admin: result.rows[0]?.is_admin === true || result.rows[0]?.is_admin === 1 });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /admin/users/:id/toggle-block
+app.post('/admin/users/:id/toggle-block', requireAdmin, async (req, res) => {
+  try {
+    const userId = req.params.id;
+
+    // Prevent self-block
+    const adminUser = (req as any).user;
+    if (adminUser.userId === userId) {
+      return res.status(400).json({ error: 'Cannot block yourself' });
+    }
+
+    const result = await query(`
+      UPDATE users SET is_blocked = NOT COALESCE(is_blocked, FALSE) WHERE id = $1
+      RETURNING is_blocked
+    `, [userId]);
+
+    res.json({ is_blocked: result.rows[0]?.is_blocked === true || result.rows[0]?.is_blocked === 1 });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Migration endpoint — applies DB migrations for LLM error tracking (v3)
 // ═══════════════════════════════════════════════════════════════════════════
 app.post('/migrate-v3', async (req, res) => {
