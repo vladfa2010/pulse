@@ -434,7 +434,9 @@ async function processArticlesLocked() {
           broadcastNews({ id: newsId || null, title_ru, summary_ru, source: a.source, published_at: a.publishedAt, sentiment: a.sentiment, matched_tags: a.matched_tags, url: a.url });
 
           // Populate news_tag_links для статей с реальным LLM-анализом
-          if (a.sentiment_source === 'llm' && a.tag_impact && a.tag_impact.length > 0) {
+          // llm-partial тоже имеет валидные tag_impacts (часть статей проанализирована)
+          if ((a.sentiment_source === 'llm' || a.sentiment_source === 'llm-partial') 
+              && a.tag_impact && a.tag_impact.length > 0) {
             try {
               await populateNewsTagLinks(
                 newsId,

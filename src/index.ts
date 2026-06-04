@@ -930,8 +930,14 @@ app.post('/migrate-v3-enrichment', async (req, res) => {
     await query(`CREATE INDEX IF NOT EXISTS idx_news_enrichment_version ON news(enrichment_version)`);
     results.push('Created index: idx_news_enrichment_version');
 
-    await query(`CREATE INDEX IF NOT EXISTS idx_news_tag_impact_gin ON news USING GIN (tag_impact jsonb_path_ops)`);
-    results.push('Created index: idx_news_tag_impact_gin');
+    // GIN index только для PostgreSQL (SQLite не поддерживает)
+    const USE_SQLITE = process.env.USE_SQLITE === 'true';
+    if (!USE_SQLITE) {
+      await query(`CREATE INDEX IF NOT EXISTS idx_news_tag_impact_gin ON news USING GIN (tag_impact jsonb_path_ops)`);
+      results.push('Created index: idx_news_tag_impact_gin (PostgreSQL only)');
+    } else {
+      results.push('Skipped GIN index (SQLite mode)');
+    }
 
     res.json({ success: true, applied: results });
   } catch (err: any) {
@@ -999,7 +1005,7 @@ app.get('/news/search', async (req, res) => {
           99 as source_priority
         FROM news n,
         LATERAL jsonb_array_elements(n.tag_impact) t
-        WHERE n.tag_impact @> '[{"tag": "' || $1 || '"}]'
+        WHERE n.tag_impact @> jsonb_build_array(jsonb_build_object('tag', $1))
           AND t->>'tag' = $1
           AND (n.enrichment_version IS NULL OR n.enrichment_version < 2)
           AND n.published_at > NOW() - INTERVAL '${days} days'
