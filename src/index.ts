@@ -1006,8 +1006,7 @@ app.get('/news/search', async (req, res) => {
       )
       SELECT DISTINCT ON (id) *
       FROM combined
-      ORDER BY id, source_priority
-      ORDER BY published_at DESC
+      ORDER BY id, source_priority, published_at DESC
       LIMIT $2
     `, [tag, limit]);
 
