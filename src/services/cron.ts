@@ -31,6 +31,7 @@ const USE_SQLITE = process.env.USE_SQLITE === 'true';
 // Smart Tag Matching (imported from smartTagMatcher)
 // ═══════════════════════════════════════════════════════════════════════════
 import { smartMatchTags, analyzeSentimentLLM, analyzeSentimentBatch, analyzeTagImpact, analyzeTagImpactBatch, analyzeUnifiedBatch, TagImpact, SentimentResult, UnifiedResult } from './smartTagMatcher';
+import { populateNewsTagLinks } from './enrichment';
 import { broadcastNews } from './sse';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -422,14 +423,29 @@ async function processArticlesLocked() {
              llm_raw_preview = EXCLUDED.llm_raw_preview,
              llm_batch_size = EXCLUDED.llm_batch_size,
              llm_results_count = EXCLUDED.llm_results_count
-           RETURNING (xmax = 0) as is_insert`,
+           RETURNING id, (xmax = 0) as is_insert`,
           [a.title, title_ru, summary_ru, a.source, a.sourceId, a.url, urlNormalized, contentHash, [a.source], 1, a.publishedAt, a.lang, a.sentiment, a.sentiment_score, a.sentiment_reasoning, a.sentiment_source, a.llm_error, a.llm_attempts, a.llm_raw_preview, a.llm_batch_size, a.llm_results_count, a.is_political, a.article_type || 'micro', a.matched_tags || [], JSON.stringify(a.tag_impact || [])]
         );
 
         if (result.rows.length > 0 && result.rows[0].is_insert === true) {
           saved++;      // Новая запись
+          const newsId = result.rows[0].id;
           // Broadcast to SSE subscribers
-          broadcastNews({ id: result.rows[0].id || null, title_ru, summary_ru, source: a.source, published_at: a.publishedAt, sentiment: a.sentiment, matched_tags: a.matched_tags, url: a.url });
+          broadcastNews({ id: newsId || null, title_ru, summary_ru, source: a.source, published_at: a.publishedAt, sentiment: a.sentiment, matched_tags: a.matched_tags, url: a.url });
+
+          // Populate news_tag_links для статей с реальным LLM-анализом
+          if (a.sentiment_source === 'llm' && a.tag_impact && a.tag_impact.length > 0) {
+            try {
+              await populateNewsTagLinks(
+                newsId,
+                a.matched_tags || [],
+                a.tag_impact
+              );
+            } catch (err: any) {
+              // Не падаем — статья сохранена, поиск найдёт через JSONB fallback
+              console.error(`[Cron] populateNewsTagLinks failed for ${newsId}: ${err.message?.slice(0, 100)}`);
+            }
+          }
         } else {
           merged++;     // Дубликат — обновили all_sources
         }

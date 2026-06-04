@@ -32,58 +32,63 @@ dotenv.config();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 const DATABASE_URL = process.env.DATABASE_URL || '';
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Поддержка транзакций через pool.connect()
+// pool нужен для BEGIN/COMMIT/ROLLBACK (одно соединение = одна транзакция)
+// query() использует pool.query() — разное соединение на каждый вызов
+// ═══════════════════════════════════════════════════════════════════════════
+let poolInstance: any = null;
+
 // Единая функция query — работает одинаково для SQLite и PostgreSQL
 let queryFn: (text: string, params?: any[]) => Promise<{ rows: any[] }>;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // РЕЖИМ 1: SQLite (локальная разработка)
 // ═══════════════════════════════════════════════════════════════════════════
-// Файл ./pulse.db создаётся автоматически в папке бэкенда.
-// Не требует отдельного сервера — всё в одном файле.
 if (USE_SQLITE) {
   const sqlite = require('./db-sqlite');
   queryFn = sqlite.query;
+  // SQLite не поддерживает pool — транзакции через sqlite3 напрямую
+  poolInstance = null;
   console.log('[DB] Using SQLite (file-based, zero-config)');
 
 // ═══════════════════════════════════════════════════════════════════════════
 // РЕЖИМ 2: PostgreSQL через DATABASE_URL (production на Render)
 // ═══════════════════════════════════════════════════════════════════════════
-// Render автоматически создаёт эту переменную при подключении PostgreSQL.
-// SSL обязателен — без него Render отклоняет подключение.
 } else if (DATABASE_URL) {
   const { Pool } = require('pg');
-  const pool = new Pool({
+  poolInstance = new Pool({
     connectionString: DATABASE_URL,
-    ssl: { rejectUnauthorized: false }, // Required for Render PostgreSQL
+    ssl: { rejectUnauthorized: false },
   });
-  // Обработка ошибок соединения (например, если PostgreSQL перезагружается)
-  pool.on('error', (err: any) => {
+  poolInstance.on('error', (err: any) => {
     console.error('PostgreSQL pool error:', err);
   });
-  // pool.query — стандартный метод pg, возвращает { rows: [...] }
-  queryFn = (text: string, params?: any[]) => pool.query(text, params);
+  queryFn = (text: string, params?: any[]) => poolInstance.query(text, params);
   console.log('[DB] Using PostgreSQL via DATABASE_URL');
 
 // ═══════════════════════════════════════════════════════════════════════════
 // РЕЖИМ 3: PostgreSQL через отдельные параметры (резервный вариант)
 // ═══════════════════════════════════════════════════════════════════════════
-// Используется если DATABASE_URL не задан, но заданы DB_HOST и т.д.
 } else {
   const { Pool } = require('pg');
-  const pool = new Pool({
+  poolInstance = new Pool({
     host: process.env.DB_HOST || 'localhost',
     port: parseInt(process.env.DB_PORT || '5432'),
     database: process.env.DB_NAME || 'pulse',
     user: process.env.DB_USER || 'pulse_user',
     password: process.env.DB_PASSWORD || '',
   });
-  pool.on('error', (err: any) => {
+  poolInstance.on('error', (err: any) => {
     console.error('PostgreSQL pool error:', err);
   });
-  queryFn = (text: string, params?: any[]) => pool.query(text, params);
+  queryFn = (text: string, params?: any[]) => poolInstance.query(text, params);
   console.log('[DB] Using PostgreSQL (individual config)');
 }
 
-// Экспортируем единую функцию query — все роутеры используют её
+// ═══════════════════════════════════════════════════════════════════════════
+// Экспорт
+// ═══════════════════════════════════════════════════════════════════════════
 export const query = queryFn;
+export const pool = poolInstance;  // ← для транзакций (null в SQLite)
 export default { query };

@@ -895,12 +895,132 @@ app.post('/migrate-v3', async (req, res) => {
   }
 });
 
+// Migration endpoint — Article Enrichment v3.0 schema
+app.post('/migrate-v3-enrichment', async (req, res) => {
+  const secret = req.headers['x-trigger-secret'] || req.query.secret;
+  if (secret !== (process.env.CRON_SECRET_KEY || 'pulse-dev-key')) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  try {
+    const results: string[] = [];
+
+    await query(`CREATE TABLE IF NOT EXISTS news_tag_links (
+      id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      news_id UUID NOT NULL REFERENCES news(id) ON DELETE CASCADE,
+      tag_id VARCHAR(50) NOT NULL,
+      impact_score INTEGER,
+      impact_reasoning TEXT,
+      link_source VARCHAR(20) NOT NULL DEFAULT 'keyword',
+      link_version INTEGER DEFAULT 1,
+      linked_at TIMESTAMP DEFAULT NOW(),
+      UNIQUE(news_id, tag_id, link_source)
+    )`);
+    results.push('Created table: news_tag_links');
+
+    await query(`CREATE INDEX IF NOT EXISTS idx_news_tag_links_news_id ON news_tag_links(news_id)`);
+    results.push('Created index: idx_news_tag_links_news_id');
+
+    await query(`CREATE INDEX IF NOT EXISTS idx_news_tag_links_tag_id ON news_tag_links(tag_id)`);
+    results.push('Created index: idx_news_tag_links_tag_id');
+
+    await query(`ALTER TABLE news ADD COLUMN IF NOT EXISTS enrichment_version INTEGER DEFAULT 1`);
+    results.push('Added column: news.enrichment_version');
+
+    await query(`CREATE INDEX IF NOT EXISTS idx_news_enrichment_version ON news(enrichment_version)`);
+    results.push('Created index: idx_news_enrichment_version');
+
+    await query(`CREATE INDEX IF NOT EXISTS idx_news_tag_impact_gin ON news USING GIN (tag_impact jsonb_path_ops)`);
+    results.push('Created index: idx_news_tag_impact_gin');
+
+    res.json({ success: true, applied: results });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // SSE — Real-time news stream (Server-Sent Events)
 // ═══════════════════════════════════════════════════════════════════════════
 app.get('/api/news/stream', (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*'); // CORS for EventSource
   addSubscriber(res);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// NEWS SEARCH — гибридный поиск по тегу (v2 news_tag_links + v1 tag_impact JSONB)
+// ═══════════════════════════════════════════════════════════════════════════
+app.get('/news/search', async (req, res) => {
+  try {
+    const tag = (req.query.tag as string)?.toLowerCase();
+    const days = Math.min(parseInt(req.query.days as string) || 7, 90);
+    const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
+
+    if (!tag) {
+      return res.status(400).json({ error: 'tag required' });
+    }
+
+    const articles = await query(`
+      WITH combined AS (
+        -- Новые статьи (v2, enrichment_version = 2) — из news_tag_links
+        SELECT 
+          n.id,
+          n.title_ru,
+          n.summary_ru,
+          n.source,
+          n.published_at,
+          n.sentiment,
+          n.sentiment_score,
+          l.impact_score,
+          l.impact_reasoning,
+          CASE l.link_source
+            WHEN 'llm_impact' THEN 0
+            WHEN 'keyword'    THEN 1
+            ELSE 2
+          END as source_priority
+        FROM news n
+        JOIN news_tag_links l ON l.news_id = n.id
+        WHERE l.tag_id = $1
+          AND n.published_at > NOW() - INTERVAL '${days} days'
+
+        UNION ALL
+
+        -- Старые статьи (v1) — из tag_impact JSONB через GIN index
+        SELECT 
+          n.id,
+          n.title_ru,
+          n.summary_ru,
+          n.source,
+          n.published_at,
+          n.sentiment,
+          n.sentiment_score,
+          (t->>'score')::int as impact_score,
+          t->>'reasoning' as impact_reasoning,
+          99 as source_priority
+        FROM news n,
+        LATERAL jsonb_array_elements(n.tag_impact) t
+        WHERE n.tag_impact @> '[{"tag": "' || $1 || '"}]'
+          AND t->>'tag' = $1
+          AND (n.enrichment_version IS NULL OR n.enrichment_version < 2)
+          AND n.published_at > NOW() - INTERVAL '${days} days'
+      )
+      SELECT DISTINCT ON (id) *
+      FROM combined
+      ORDER BY id, source_priority
+      ORDER BY published_at DESC
+      LIMIT $2
+    `, [tag, limit]);
+
+    res.json({ 
+      tag, 
+      days, 
+      count: articles.rows.length,
+      articles: articles.rows 
+    });
+  } catch (err: any) {
+    console.error('[NewsSearch] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // TEMP: Backfill: translate existing EN titles to RU via Kimi
