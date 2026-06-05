@@ -833,7 +833,7 @@ app.get('/admin/tags', requireAdmin, async (req, res) => {
         MAX(n.published_at) as last_article_at
       FROM user_defined_tags t
       LEFT JOIN portfolios p ON p.tag_id = t.tag_id
-      LEFT JOIN news n ON n.matched_tags @> ARRAY[t.tag_id] AND n.published_at > NOW() - INTERVAL '30 days'
+      LEFT JOIN news n ON t.tag_id = ANY(n.matched_tags) AND n.published_at > NOW() - INTERVAL '30 days'
       GROUP BY t.tag_id, t.tag_name, t.tag_type, t.keywords, t.created_at
       ORDER BY articles_24h DESC, subscriber_count DESC
     `);
