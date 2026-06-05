@@ -880,12 +880,20 @@ app.get('/admin/tags/:tagId', requireAdmin, async (req, res) => {
 
     const tag = tagResult.rows[0];
     let relatedTags: string[] = [];
+    let ticker = null;
+    let website = null;
+    let description = null;
+    let keyProducts: string[] = [];
     try {
       if (tag.enriched_data?.related_tags) {
         relatedTags = tag.enriched_data.related_tags;
       } else if (tag.enriched_data?.related_entities) {
         relatedTags = tag.enriched_data.related_entities;
       }
+      ticker = tag.enriched_data?.ticker || null;
+      website = tag.enriched_data?.website || null;
+      description = tag.enriched_data?.description_ru || null;
+      keyProducts = tag.enriched_data?.key_products || [];
     } catch { /* ignore */ }
 
     // Daily stats (30 days)
@@ -927,6 +935,10 @@ app.get('/admin/tags/:tagId', requireAdmin, async (req, res) => {
         keywords: tag.keywords || [],
         created_at: tag.created_at,
         related_tags: relatedTags,
+        ticker,
+        website,
+        description,
+        key_products: keyProducts,
       },
       daily_stats: dailyResult.rows.map((r: any) => ({
         day: r.day,
