@@ -33,7 +33,7 @@ async function llmRequestWithRetry<T>(fn: () => Promise<T>, label: string): Prom
 //   kimi-k2.5       — default, cheaper, better context (temp=1, 262K)
 //   moonshot-v1-32k — legacy fallback via env var
 //   moonshot-v1-8k  — legacy, older knowledge
-const KIMI_MODEL = process.env.KIMI_MODEL || 'kimi-k2.5';
+const KIMI_MODEL = process.env.KIMI_MODEL || 'moonshot-v1-32k';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Kimi Translation (primary)
