@@ -85,6 +85,31 @@ app.get('/health', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Debug admins — list users with is_admin = true
+// ═══════════════════════════════════════════════════════════════════════════
+app.get('/debug-admins', async (req, res) => {
+  const secret = req.headers['x-trigger-secret'];
+  if (secret !== process.env.CRON_SECRET_KEY) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  try {
+    const result = await query(
+      `SELECT id, email, name, is_admin, created_at 
+       FROM users 
+       WHERE is_admin = true 
+       ORDER BY created_at DESC`
+    );
+    res.json({
+      admin_count: result.rows.length,
+      admins: result.rows,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Test model availability — checks if a specific model is accessible
 // ═══════════════════════════════════════════════════════════════════════════
 app.get('/test-model', async (req, res) => {
