@@ -110,6 +110,38 @@ app.get('/debug-admins', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Debug tag search — find tag by name
+// ═══════════════════════════════════════════════════════════════════════════
+app.get('/debug-tag', async (req, res) => {
+  const secret = req.headers['x-trigger-secret'] || req.query.secret;
+  if (secret !== process.env.CRON_SECRET_KEY) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  const tagName = req.query.name as string;
+  if (!tagName) {
+    return res.status(400).json({ error: 'Missing ?name= parameter' });
+  }
+
+  try {
+    const result = await query(
+      `SELECT id, tag_id, name, keywords, synonyms_ru, is_user_defined, created_by, created_at
+       FROM tags
+       WHERE tag_id ILIKE $1 OR name ILIKE $1
+       LIMIT 10`,
+      [`%${tagName}%`]
+    );
+    res.json({
+      search: tagName,
+      found: result.rows.length,
+      tags: result.rows,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Test model availability — checks if a specific model is accessible
 // ═══════════════════════════════════════════════════════════════════════════
 app.get('/test-model', async (req, res) => {
