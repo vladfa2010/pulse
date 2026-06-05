@@ -89,7 +89,26 @@ curl https://pulse-api-bsov.onrender.com/health | jq .kimi_model
 
 ---
 
-### 0.5 Lesson: NEVER use thinking mode for API parsing
+### 0.6 FINAL CONFIG (2026-06-05)
+
+```
+smartTagMatcher.ts  →  moonshot-v1-32k  (cron speed)
+translate.ts        →  moonshot-v1-32k  (cron speed)
+tagManager.ts       →  moonshot-v1-32k  (cron speed)
+user.ts (summary)   →  kimi-k2.5        (cheaper, 10-min cache)
+index.ts (/health)  →  moonshot-v1-32k  (default display)
+```
+
+| Service | Model | Temperature | Thinking |
+|---------|-------|-------------|----------|
+| Cron (sentiment/tags/translate) | `moonshot-v1-32k` | 0.1 / 0.3 | n/a |
+| Summary | `kimi-k2.5` | 0.6 | `{ type: 'disabled' }` |
+
+**Why:** Cron speed is critical — 2-4 min cycles. Summary has 10-min cache — speed doesn't matter, cost does.
+
+---
+
+### 0.7 Lesson: NEVER use thinking mode for API parsing
 
 **What happened with summary:**
 - Enabled thinking mode (temperature 1.0, thinking default)
@@ -110,6 +129,7 @@ curl https://pulse-api-bsov.onrender.com/health | jq .kimi_model
 | 2026-06-05 | `kimi-k2.5` | 0.6 | With `thinking: { type: 'disabled' }` |
 | 2026-06-05 | `kimi-k2.5` | 1.0 | Summary thinking mode — **BROKEN** (reasoning_content vs content) |
 | 2026-06-05 | `kimi-k2.5` | 0.6 | Summary back to Instant mode — **FIXED** |
+| 2026-06-05 | **Hybrid** | see 0.6 | **FINAL: cron=moonshot, summary=kimi-k2.5** |
 
 ---
 
