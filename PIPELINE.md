@@ -7,28 +7,91 @@
 
 ---
 
-## 0. LLM MODEL CONFIGURATION (5 places)
+## 0. LLM MODEL CONFIGURATION
 
-### Where to change
+### 0.1 Where to change model (5 files)
 
-| # | File | Variable | Purpose | Temperature | Timeout | Batch |
-|---|------|----------|---------|-------------|---------|-------|
-| 1 | `smartTagMatcher.ts:26` | `KIMI_MODEL` | Sentiment + tag matching | `kimi-k ? 0.6 : 0.1` | `kimi-k ? 30s : 15s` | 5 |
-| 2 | `smartTagMatcher.ts:26` | `KIMI_MODEL` | Unified batch analysis | `kimi-k ? 0.6 : 0.1` | `kimi-k ? 30s : 15s` | 5 |
-| 3 | `translate.ts:36` | `KIMI_MODEL` | EN→RU translation | `kimi-k ? 0.6 : 0.3` | `kimi-k ? 60s : 30s` | `kimi-k ? 3 : 5` |
-| 4 | `tagManager.ts:16` | `KIMI_MODEL` | Tag enrichment | `kimi-k ? 0.6 : 0.1` | — | — |
-| 5 | `user.ts:670` | `KIMI_MODEL_SUMMARY` | Summary generation | `kimi-k ? 0.6 : 0.3` | — | — |
+| # | File | Line | Variable | Purpose |
+|---|------|------|----------|---------|
+| 1 | `smartTagMatcher.ts` | 26 | `KIMI_MODEL` | Sentiment analysis, tag matching, unified batch |
+| 2 | `translate.ts` | 36 | `KIMI_MODEL` | EN→RU translation |
+| 3 | `tagManager.ts` | 16 | `KIMI_MODEL` | Tag enrichment, keyword expansion |
+| 4 | `user.ts` | 670 | `KIMI_MODEL_SUMMARY` | Summary generation |
+| 5 | `index.ts` | 1275 | — | `/health` debug endpoint |
 
-**Rule:** Always use `KIMI_MODEL.startsWith('kimi-k')` for conditional params. Never hardcode.
+**Quick switch (no deploy):** Set env var `KIMI_MODEL=moonshot-v1-32k` on Render.
 
-### Available models
+---
 
-| Model | Temperature | Context | Input $/1M | Output $/1M | Speed |
-|-------|-------------|---------|------------|-------------|-------|
-| `moonshot-v1-32k` | 0.1 / 0.3 | 32K | $1.00 | $3.00 | Fast ✅ |
-| `kimi-k2.5` | **0.6** (required) | 262K | $0.60 | $2.50 | Slow ⚠️ |
+### 0.2 moonshot-v1-32k (default, fast)
 
-**Override:** Set env var `KIMI_MODEL=moonshot-v1-32k` on Render (no deploy needed).
+Use when: cron speed is critical, budget secondary.
+
+| Parameter | Value | Code |
+|-----------|-------|------|
+| **temperature** | 0.1 (sentiment/tag), 0.3 (translate/summary) | `0.1` / `0.3` |
+| **timeout API** | 15 sec (sentiment), 30 sec (translate) | `15000` / `30000` |
+| **batch size** (translate) | 5 | `5` |
+| **max_tokens** (translate) | 3000 | `3000` |
+| **retry delay** | 500 ms | `500` |
+| **thinking** | NOT needed (n/a for this model) | — |
+
+---
+
+### 0.3 kimi-k2.5 (cheaper, slower, 262K context)
+
+Use when: need large context window, ok with slower cron.
+
+**⚠️ CRITICAL:** `kimi-k2.5` runs in **Thinking mode** by default which requires `temperature: 1.0`. For any other temperature (e.g. 0.6), you MUST disable thinking:
+
+```typescript
+{
+  model: 'kimi-k2.5',
+  temperature: 0.6,                              // ≠ 1.0
+  thinking: { type: 'disabled' },                // ← REQUIRED!
+  response_format: { type: 'json_object' },
+}
+// Without thinking: disabled → HTTP 400 Bad Request
+```
+
+| Parameter | Value | Code |
+|-----------|-------|------|
+| **temperature** | 0.6 (all services) | `KIMI_MODEL.startsWith('kimi-k') ? 0.6 : ...` |
+| **thinking** | `{ type: 'disabled' }` | REQUIRED for temp ≠ 1.0 |
+| **timeout API** | 30 sec (sentiment), 60 sec (translate) | `30000` / `60000` |
+| **batch size** (translate) | 3 (smaller = faster) | `isK2 ? 3 : 5` |
+| **max_tokens** (translate) | 4000 | `isK2 ? 4000 : 3000` |
+| **retry delay** | 1000 ms | `1000` |
+
+---
+
+### 0.4 Switching between models
+
+#### Option A: Env var (no code change, no deploy)
+```bash
+# Render Dashboard → Environment → Add:
+KIMI_MODEL = moonshot-v1-32k   # or kimi-k2.5
+# Save → auto-redeploy in 30 sec
+```
+
+#### Option B: Code change (default fallback)
+Edit 5 files (see 0.1), change `|| 'kimi-k2.5'` to `|| 'moonshot-v1-32k'`.
+
+#### Check current model
+```bash
+curl https://pulse-api-bsov.onrender.com/health | jq .kimi_model
+```
+
+---
+
+### 0.5 History
+
+| Date | Model | Temperature | Notes |
+|------|-------|-------------|-------|
+| Before 2026-06-05 | `moonshot-v1-32k` | 0.1 / 0.3 | Baseline |
+| 2026-06-05 | `kimi-k2.5` | 1.0 | First attempt — too slow |
+| 2026-06-05 | `moonshot-v1-32k` | 0.1 / 0.3 | Reverted (INC-002) |
+| 2026-06-05 | `kimi-k2.5` | 0.6 | With `thinking: { type: 'disabled' }` |
 
 ---
 
