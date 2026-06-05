@@ -368,5 +368,41 @@ SELECT COUNT(*) FROM news WHERE llm_error IS NOT NULL;
 
 ---
 
+---
+
+## INC-003: SQL Type Mismatch — text[] @> character varying[]
+
+| Поле | Значение |
+|------|----------|
+| **ID** | INC-003 |
+| **Дата** | 2026-06-05 19:00 UTC |
+| **Статус** | ✅ RESOLVED |
+| **Серьёзность** | P2 — высокий (admin tags tab broken) |
+| **Коммит фикса** | `fba489c` |
+
+### Симптомы
+- Admin → вкладка "Теги" — пустая страница
+- Console: `500 ()`
+- Ошибка: `operator does not exist: text[] @> character varying[]`
+
+### Root Cause
+PostgreSQL не может сравнить `text[]` с `character varying[]` через `@>`:
+```sql
+n.matched_tags @> ARRAY[t.tag_id]  -- text[] @> character varying[] = ERROR
+```
+
+### Фикс
+```sql
+-- Было:
+LEFT JOIN news n ON n.matched_tags @> ARRAY[t.tag_id]
+
+-- Стало:
+LEFT JOIN news n ON t.tag_id = ANY(n.matched_tags)  -- ← работает с любыми типами
+```
+
+**Почему ANY лучше:** не требует кастинга, использует GIN индекс, читаемее.
+
+---
+
 *Документ создан: 2026-06-05*
 *Последнее обновление: 2026-06-05*
