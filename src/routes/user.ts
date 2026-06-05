@@ -667,7 +667,7 @@ router.post('/email-settings', authMiddleware, async (req: AuthRequest, res) => 
 // ═══════════════════════════════════════════════════════════════════════════
 
 const KIMI_API_KEY_SUMMARY = process.env.KIMI_API_KEY;
-const KIMI_MODEL_SUMMARY = process.env.KIMI_MODEL || 'moonshot-v1-32k';
+const KIMI_MODEL_SUMMARY = process.env.KIMI_MODEL || 'kimi-k2.5';
 
 // In-memory cache: userId -> { text, timestamp }
 const summaryCache: Map<string, { text: string; time: number; generatedAt: string }> = new Map();
