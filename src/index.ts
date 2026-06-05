@@ -895,7 +895,7 @@ app.get('/admin/tags/:tagId', requireAdmin, async (req, res) => {
         COUNT(*) as count,
         ROUND(AVG(sentiment_score) FILTER (WHERE sentiment_score IS NOT NULL), 1) as avg_sentiment
       FROM news
-      WHERE matched_tags @> ARRAY[$1]
+      WHERE $1 = ANY(matched_tags)
         AND published_at > NOW() - INTERVAL '30 days'
       GROUP BY date_trunc('day', published_at)
       ORDER BY day ASC
@@ -905,7 +905,7 @@ app.get('/admin/tags/:tagId', requireAdmin, async (req, res) => {
     const articlesResult = await query(`
       SELECT id, title_ru, published_at, sentiment_score, sentiment_source, source
       FROM news
-      WHERE matched_tags @> ARRAY[$1]
+      WHERE $1 = ANY(matched_tags)
       ORDER BY published_at DESC
       LIMIT 20
     `, [tagId]);
