@@ -221,5 +221,152 @@ curl https://pulse-api-bsov.onrender.com/health | jq
 
 ---
 
+---
+
+## INC-002: Deferred Processor Overload — Cascade Cron Freeze
+
+| Поле | Значение |
+|------|----------|
+| **ID** | INC-002 |
+| **Дата** | 2026-06-05 15:35 UTC |
+| **Статус** | ✅ RESOLVED |
+| **Серьёзность** | P1 — высокий (cron замедлился до 15+ мин, новые статьи задерживались) |
+| **Связан с** | INC-001 (pool exhaustion — первоначальная причина накопления) |
+| **Коммит фикса** | `d72aecf` (`/cleanup-failed-articles` endpoint) |
+
+---
+
+### Симптомы
+
+```bash
+# /debug-cron — циклы успешные, НО занимают 15-20 минут вместо нормальных 5-8
+{"started_at":"15:20","finished_at":"15:33","articles_saved":74,"status":"success"}  # 13 мин!
+{"started_at":"15:35","finished_at":null,"articles_saved":0,"status":"running"}         # завис
+{"started_at":"15:45","finished_at":null,"articles_saved":0,"status":"running"}         # завис
+
+# Новые статьи есть, но появляются с большой задержкой
+# Карусель показывает старые статьи вперёд свежих
+```
+
+- Cron циклы успешные, но длительность **×2-3 от нормы**
+- Периодические zombie-записи (циклы не успевают завершиться до следующего)
+- Новые статьи на сайте появляются с задержкой 10-15 минут
+- Deferred processor логи: `Processing 20 failed articles` каждые 10 минут
+
+---
+
+### Timeline
+
+| Время | Событие |
+|-------|---------|
+| 13:05 | ❌ INC-001 начался — cron freeze из-за pool exhaustion |
+| 13:05-15:20 | ❌ LLM не работает — статьи накапливают `llm_error` (timeout, rate-limit) |
+| 15:20 | ✅ Cron восстановился после hotfix INC-001 |
+| 15:30 | 🔍 Замечено: циклы занимают 13+ минут вместо 5-8 |
+| 15:35 | 🔍 Deferred processor: обработка 20 статей с ошибкой каждые 10 мин |
+| 15:40 | 🔍 Подсчёт: **9276 статей** с `llm_error` в базе |
+| 15:42 | 🔧 Cleanup endpoint задеплоен (`d72aecf`) |
+| 15:43 | 🔧 Вызов `/cleanup-failed-articles` — удалено 9276 статей |
+| 16:00 | ✅ Цикл: 94 fetched, 93 saved, finished за 8 минут ✅ (норма!) |
+| 16:25 | ✅ Цикл: 72 fetched, 56 saved, finished за 6 минут ✅ |
+
+---
+
+### Root Cause Analysis
+
+#### Цепочка разрушения (CASCADE)
+
+```
+INC-001: cron freeze 13:05-15:20 (2.5 часа)
+    ↓
+LLM не обрабатывает статьи → все получают llm_error='timeout'
+    ↓
+2.5 часа × 60 статей/15мин × 4 цикла = ~960 статей с ошибкой
+    ↓
++ накопленные ошибки за предыдущие дни = 9276 статей
+    ↓
+Deferred processor каждые 10 мин: берёт 20 статей, LLM retry
+    ↓
+20 статей × 1 LLM batch = +30-60 секунд к каждому cron циклу
+    ↓
+Цикл занимает 13-15 минут вместо 5-8
+    ↓
+Cron lock не успевает освободиться → zombie records
+    ↓
+Следующий цикл ждёт lock → каскадная задержка
+```
+
+#### Почему это не происходило раньше
+
+| Фактор | Раньше | В день инцидента |
+|--------|--------|------------------|
+| LLM uptime | 95%+ | **2.5 часа downtime** (INC-001) |
+| Статей с ошибкой | ~50-100 | **9276** (×100 накопление) |
+| Deferred load | 0-2 статьи/10мин | **20 статей/10мин** (максимум) |
+| Cron длительность | 5-8 мин | **13-15 мин** (×2-3) |
+
+---
+
+### Фикс
+
+#### Phase 1: Диагностика
+
+```sql
+-- Подсчёт статей с ошибкой
+SELECT COUNT(*) FROM news WHERE llm_error IS NOT NULL;
+-- Результат: 9276 (!!!)
+
+-- Проверка deferred queue
+SELECT llm_error, COUNT(*) 
+FROM news 
+WHERE llm_error IS NOT NULL AND llm_attempts < 3
+GROUP BY llm_error;
+-- Результат: 9276 × 'timeout', 'rate-limit', 'parse'
+```
+
+#### Phase 2: Cleanup
+
+```bash
+# Разовый вызов (auth: x-trigger-secret)
+curl -X POST https://pulse-api-bsov.onrender.com/cleanup-failed-articles \
+  -H "x-trigger-secret: pulse-dev-key"
+
+# Ответ:
+{"deleted": 9276, "message": "Removed 9276 articles with llm_error"}
+```
+
+**Важно:** Удалены только статьи с `llm_error`. Успешные статьи (`sentiment_source='llm'`) НЕ тронуты.
+
+#### Phase 3: Проверка
+
+```bash
+# Повторный подсчёт
+SELECT COUNT(*) FROM news WHERE llm_error IS NOT NULL;
+-- Результат: 0 ✅
+
+# Deferred processor: "Processing 0 failed articles" ✅
+```
+
+---
+
+### Уроки
+
+#### ❌ Неправильно | ✅ Правильно
+
+| ❌ Неправильно | ✅ Правильно |
+|---------------|-------------|
+| Нет лимита на размер deferred queue | Мониторинг `COUNT(*) WHERE llm_error` |
+| Нет авто-cleanup старых ошибок | Cleanup статей с `attempts >= 3` раз в сутки |
+| Нет алерта на рост queue | Алерт если `llm_error > 1000` за час |
+
+#### Профилактика
+
+1. **Мониторинг:** `SELECT COUNT(*) FROM news WHERE llm_error IS NOT NULL` — раз в час
+2. **Авто-cleanup:** `DELETE FROM news WHERE llm_error IS NOT NULL AND llm_attempts >= 3 AND last_retry_at < NOW() - INTERVAL '24 hours'`
+3. **Алерт:** Если `llm_error` растёт быстрее чем обрабатывается → Telegram alert
+4. **Деградация:** При LLM downtime > 30 мин — авто-отключение deferred processor
+
+---
+
 *Документ создан: 2026-06-05*
 *Последнее обновление: 2026-06-05*
