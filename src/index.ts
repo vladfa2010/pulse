@@ -95,7 +95,7 @@ app.get('/debug-admins', async (req, res) => {
 
   try {
     const result = await query(
-      `SELECT id, email, name, is_admin, created_at 
+      `SELECT id, email, username, is_admin, created_at 
        FROM users 
        WHERE is_admin = true 
        ORDER BY created_at DESC`
