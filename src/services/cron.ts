@@ -433,19 +433,18 @@ async function processArticlesLocked() {
           // Broadcast to SSE subscribers
           broadcastNews({ id: newsId || null, title_ru, summary_ru, source: a.source, published_at: a.publishedAt, sentiment: a.sentiment, matched_tags: a.matched_tags, url: a.url });
 
-          // Populate news_tag_links для статей с реальным LLM-анализом
-          // llm-partial тоже имеет валидные tag_impacts (часть статей проанализирована)
-          // Fire-and-forget: НЕ await, чтобы не блокировать цикл и не исчерпать pool
-          if ((a.sentiment_source === 'llm' || a.sentiment_source === 'llm-partial') 
-              && a.tag_impact && a.tag_impact.length > 0) {
-            populateNewsTagLinks(
-              newsId,
-              a.matched_tags || [],
-              a.tag_impact
-            ).catch(err => {
-              console.error(`[Cron] populateNewsTagLinks async failed for ${newsId}: ${err.message?.slice(0, 100)}`);
-            });
-          }
+          // TEMP DISABLED: populateNewsTagLinks вызывает pool exhaustion → cron freeze
+          // TODO: вернуть с batch-оптимизацией (TZ_CRON_FREEZE_FIX)
+          // if ((a.sentiment_source === 'llm' || a.sentiment_source === 'llm-partial')
+          //     && a.tag_impact && a.tag_impact.length > 0) {
+          //   populateNewsTagLinks(
+          //     newsId,
+          //     a.matched_tags || [],
+          //     a.tag_impact
+          //   ).catch(err => {
+          //     console.error(`[Cron] populateNewsTagLinks async failed: ${err.message?.slice(0, 100)}`);
+          //   });
+          // }
         } else {
           merged++;     // Дубликат — обновили all_sources
         }
