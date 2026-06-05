@@ -42,22 +42,27 @@ Use when: cron speed is critical, budget secondary.
 
 Use when: need large context window, ok with slower cron.
 
-**⚠️ CRITICAL:** `kimi-k2.5` runs in **Thinking mode** by default which requires `temperature: 1.0`. For any other temperature (e.g. 0.6), you MUST disable thinking:
+**⚠️ CRITICAL:** `kimi-k2.5` runs in **Thinking mode** by default. Thinking mode requires `temperature: 1.0` and returns output in `reasoning_content` field (NOT `content`). **For API calls with JSON/text parsing, ALWAYS disable thinking:**
 
 ```typescript
 {
   model: 'kimi-k2.5',
-  temperature: 0.6,                              // ≠ 1.0
-  thinking: { type: 'disabled' },                // ← REQUIRED!
+  temperature: 0.6,
+  thinking: { type: 'disabled' },                // ← ALWAYS for API parsing!
   response_format: { type: 'json_object' },
 }
-// Without thinking: disabled → HTTP 400 Bad Request
 ```
+
+| Case | temperature | thinking | Result |
+|------|-------------|----------|--------|
+| Instant mode (API parsing) | 0.6 | `{ type: 'disabled' }` | ✅ Works — output in `content` |
+| Thinking mode (chat UI) | 1.0 | omitted/default | ⚠️ Output in `reasoning_content`, `content` empty |
+| Broken | 0.6 | omitted/default | ❌ HTTP 400 |
 
 | Parameter | Value | Code |
 |-----------|-------|------|
 | **temperature** | 0.6 (all services) | `KIMI_MODEL.startsWith('kimi-k') ? 0.6 : ...` |
-| **thinking** | `{ type: 'disabled' }` | REQUIRED for temp ≠ 1.0 |
+| **thinking** | `{ type: 'disabled' }` | REQUIRED for all API calls |
 | **timeout API** | 30 sec (sentiment), 60 sec (translate) | `30000` / `60000` |
 | **batch size** (translate) | 3 (smaller = faster) | `isK2 ? 3 : 5` |
 | **max_tokens** (translate) | 4000 | `isK2 ? 4000 : 3000` |
@@ -84,6 +89,17 @@ curl https://pulse-api-bsov.onrender.com/health | jq .kimi_model
 
 ---
 
+### 0.5 Lesson: NEVER use thinking mode for API parsing
+
+**What happened with summary:**
+- Enabled thinking mode (temperature 1.0, thinking default)
+- API returned: `{ content: "", reasoning_content: "deep analysis..." }`
+- Code parsed: `content` → empty string → "Failed to generate summary"
+
+**Rule:** All PULSE API calls parse `content` field. Thinking mode puts output in `reasoning_content`. **Always use `{ type: 'disabled' }` for API calls.**
+
+---
+
 ### 0.5 History
 
 | Date | Model | Temperature | Notes |
@@ -92,6 +108,8 @@ curl https://pulse-api-bsov.onrender.com/health | jq .kimi_model
 | 2026-06-05 | `kimi-k2.5` | 1.0 | First attempt — too slow |
 | 2026-06-05 | `moonshot-v1-32k` | 0.1 / 0.3 | Reverted (INC-002) |
 | 2026-06-05 | `kimi-k2.5` | 0.6 | With `thinking: { type: 'disabled' }` |
+| 2026-06-05 | `kimi-k2.5` | 1.0 | Summary thinking mode — **BROKEN** (reasoning_content vs content) |
+| 2026-06-05 | `kimi-k2.5` | 0.6 | Summary back to Instant mode — **FIXED** |
 
 ---
 
@@ -540,9 +558,4 @@ FROM news;
 *Версия 9.0 — Article Enrichment v3.0 (news_tag_links, гибридное хранилище)*
 *Версия 9.1 — переключение на kimi-k2.5, добавлен runbook CRON FREEZE*
 
-> **⚠️ ВАЖНО: После деплоя кода ОБЯЗАТЕЛЬНО запустить миграцию:**
-> ```bash
-> curl -X POST https://pulse-api-bsov.onrender.com/migrate-v3-enrichment \
->   -H "x-trigger-secret: pulse-dev-key"
-> ```
-> Без этого таблица `news_tag_links` не создастся и enrichment v3.0 не будет раб
+> **⚠️ ВАЖНО: Пос
