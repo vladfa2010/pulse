@@ -1,8 +1,9 @@
 # PULSE — Полный пайплайн обработки новости (v9.0)
 
-> **Версия:** 9.0 (Article Enrichment + Гибридное хранилище)
-> **Дата:** 2026-06-04
+> **Версия:** 9.1 (kimi-k2.5 + Cron Freeze Runbook)
+> **Дата:** 2026-06-05
 > **Файлы:** `cron.ts`, `smartTagMatcher.ts`, `enrichment.ts`, `index.ts`
+> **LLM Model:** `kimi-k2.5` (default)
 
 ---
 
@@ -157,9 +158,21 @@ const matchedTags = mapHashtagsToTags(hashtags);  // ["сбер", "россия"
 
 ## 4. STAGE 3: LLM UNIFIED BATCH
 
+### LLM Model: `kimi-k2.5` (since 2026-06-05)
+
+| Параметр | `moonshot-v1-32k` (legacy) | `kimi-k2.5` (default) |
+|----------|---------------------------|----------------------|
+| Input цена | $1.00 / 1M tokens | **$0.60** (−40%) |
+| Output цена | $3.00 / 1M tokens | **$2.50** (−17%) |
+| Context window | 32K | **262K** (×8) |
+| Temperature | 0.1 | **1.0** (требование модели) |
+| Timeout | 15 сек | **30 сек** |
+
+Переключение: env var `KIMI_MODEL` или дефолт в коде (`smartTagMatcher.ts`, `translate.ts`, `tagManager.ts`, `user.ts`).
+
 ### Batch Size: 5 articles per call
 
-**2026-06-02: уменьшен с 10 → 5.** Kimi API timeout'ил на 10 статьях за 30 секунд. С 5 — ~95% success rate.
+**2026-06-02: уменьшен с 10 → 5.** API timeout'ил на 10 статьях за 30 секунд. С 5 — ~95% success rate.
 
 ### Chunk Loop
 ```typescript
@@ -405,6 +418,41 @@ cron.schedule('*/10 * * * *', async () => {
 **Причина:** `DISTINCT ON` перед `UNION ALL` — syntax error в PostgreSQL.
 **Фикс:** CTE + `DISTINCT ON` в финальном SELECT.
 
+### 🚨 Баг 10: CRON FREEZE — pool exhaustion (2026-06-05) [RUNBOOK]
+**Симптом:** `/debug-cron` показывает 5+ циклов с `finished_at: null`, `articles_saved: 0`. Новые статьи не появляются на сайте. Последний успешный цикл — час+ назад.
+
+**Корневая причина:** `await populateNewsTagLinks()` внутри `for (article of processed)` → каждая статья делает `pool.connect()`. При 60 статьях и pool=10 — **deadlock**. Все циклы застревают, статьи не сохраняются.
+
+**Цепочка:**
+```
+60 статей × pool.connect() = 60 concurrent connections
+PostgreSQL pool size = 10 connections
+→ Все 10 connections заняты, остальные 50 ждут в очереди
+→ Cron loop не освобождает соединения (await внутри цикла)
+→ Все последующие циклы тоже ждут → CASCADE FREEZE
+```
+
+**Фикс (hotfix):** Закомментировать вызов populate в цикле → cron работает, но enrichment отключён.
+
+**Фикс (правильный):** `populateNewsTagLinksBatch(tasks[])`:
+1. В цикле: `enrichmentTasks.push({newsId, matchedTags, tagImpacts})` — только сбор, нет await
+2. После цикла: `populateNewsTagLinksBatch(enrichmentTasks)` — один `pool.connect()` на весь batch
+3. Fire-and-forget (`.catch`) — не блокирует cron
+
+**Ключевые принципы:**
+| ❌ Неправильно | ✅ Правильно |
+|---------------|-------------|
+| `await pool.connect()` внутри цикла | `pool.connect()` один раз ПОСЛЕ цикла |
+| N соединений на N статей | 1 соединение на весь batch |
+| `await` блокирует cron | `.catch()` fire-and-forget |
+
+**Zombie cleanup:** После hard restart в `cron_log` остаются записи с `finished_at: null`. Добавлена очистка старше 15 минут при старте каждого цикла.
+
+**Профилактика:**
+- Никогда не вызывать `pool.connect()` внутри for-loop без лимита concurrency
+- Всегда использовать batch-операции с 1 транзакцией
+- Cron lock TTL = 10 мин (авто-очистка при зависании)
+
 ---
 
 ## 10. МЕТРИКИ КОНТРОЛЯ
@@ -429,11 +477,12 @@ FROM news;
 ---
 
 *Документ создан: 2026-06-02*
-*Версия 9.0 — добавлен Article Enrichment v3.0 (news_tag_links, гибридное хранилище)*
+*Версия 9.0 — Article Enrichment v3.0 (news_tag_links, гибридное хранилище)*
+*Версия 9.1 — переключение на kimi-k2.5, добавлен runbook CRON FREEZE*
 
 > **⚠️ ВАЖНО: После деплоя кода ОБЯЗАТЕЛЬНО запустить миграцию:**
 > ```bash
 > curl -X POST https://pulse-api-bsov.onrender.com/migrate-v3-enrichment \
 >   -H "x-trigger-secret: pulse-dev-key"
 > ```
-> Без этого таблица `news_tag_links` не создастся и enrichment v3.0 не будет работать!
+> Без этого таблица `news_tag_links` не создастся и enrichment v3.0 не будет раб
