@@ -85,6 +85,51 @@ app.get('/health', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Test model availability — checks if a specific model is accessible
+// ═══════════════════════════════════════════════════════════════════════════
+app.get('/test-model', async (req, res) => {
+  const testModel = (req.query.model as string) || 'kimi-k2.5';
+  const apiKey = process.env.KIMI_API_KEY;
+
+  if (!apiKey) {
+    return res.status(500).json({ available: false, error: 'KIMI_API_KEY not set' });
+  }
+
+  try {
+    const axios = (await import('axios')).default;
+    const response = await axios.post(
+      'https://api.moonshot.ai/v1/chat/completions',
+      {
+        model: testModel,
+        messages: [{ role: 'user', content: 'Say "OK"' }],
+        max_tokens: 10,
+      },
+      {
+        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        timeout: 10000,
+      }
+    );
+
+    res.json({
+      available: true,
+      model: testModel,
+      response: response.data.choices?.[0]?.message?.content || 'no content',
+      usage: response.data.usage,
+    });
+  } catch (err: any) {
+    res.json({
+      available: false,
+      model: testModel,
+      error: err.response?.status === 401 ? 'Unauthorized — model not available on current plan' :
+             err.response?.status === 404 ? 'Model not found' :
+             err.response?.status ? `HTTP ${err.response.status}: ${err.response.data?.error?.message || err.message}` :
+             err.message,
+      status_code: err.response?.status || null,
+    });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Migration endpoint — applies DB migrations
 // ═══════════════════════════════════════════════════════════════════════════
 app.post('/migrate-v3', async (req, res) => {
