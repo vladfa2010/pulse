@@ -418,40 +418,12 @@ cron.schedule('*/10 * * * *', async () => {
 **Причина:** `DISTINCT ON` перед `UNION ALL` — syntax error в PostgreSQL.
 **Фикс:** CTE + `DISTINCT ON` в финальном SELECT.
 
-### 🚨 Баг 10: CRON FREEZE — pool exhaustion (2026-06-05) [RUNBOOK]
-**Симптом:** `/debug-cron` показывает 5+ циклов с `finished_at: null`, `articles_saved: 0`. Новые статьи не появляются на сайте. Последний успешный цикл — час+ назад.
+### 🚨 Баг 10: CRON FREEZE — pool exhaustion (2026-06-05)
+**Полный runbook:** [INCIDENTS.md — INC-001](INCIDENTS.md#inc-001-cron-freeze--postgresql-pool-exhaustion)
 
-**Корневая причина:** `await populateNewsTagLinks()` внутри `for (article of processed)` → каждая статья делает `pool.connect()`. При 60 статьях и pool=10 — **deadlock**. Все циклы застревают, статьи не сохраняются.
+Кратко: `await pool.connect()` внутри for-loop 60 статей при pool=10 → deadlock → cascade freeze всех циклов.
 
-**Цепочка:**
-```
-60 статей × pool.connect() = 60 concurrent connections
-PostgreSQL pool size = 10 connections
-→ Все 10 connections заняты, остальные 50 ждут в очереди
-→ Cron loop не освобождает соединения (await внутри цикла)
-→ Все последующие циклы тоже ждут → CASCADE FREEZE
-```
-
-**Фикс (hotfix):** Закомментировать вызов populate в цикле → cron работает, но enrichment отключён.
-
-**Фикс (правильный):** `populateNewsTagLinksBatch(tasks[])`:
-1. В цикле: `enrichmentTasks.push({newsId, matchedTags, tagImpacts})` — только сбор, нет await
-2. После цикла: `populateNewsTagLinksBatch(enrichmentTasks)` — один `pool.connect()` на весь batch
-3. Fire-and-forget (`.catch`) — не блокирует cron
-
-**Ключевые принципы:**
-| ❌ Неправильно | ✅ Правильно |
-|---------------|-------------|
-| `await pool.connect()` внутри цикла | `pool.connect()` один раз ПОСЛЕ цикла |
-| N соединений на N статей | 1 соединение на весь batch |
-| `await` блокирует cron | `.catch()` fire-and-forget |
-
-**Zombie cleanup:** После hard restart в `cron_log` остаются записи с `finished_at: null`. Добавлена очистка старше 15 минут при старте каждого цикла.
-
-**Профилактика:**
-- Никогда не вызывать `pool.connect()` внутри for-loop без лимита concurrency
-- Всегда использовать batch-операции с 1 транзакцией
-- Cron lock TTL = 10 мин (авто-очистка при зависании)
+**Фикс:** `populateNewsTagLinksBatch()` — 1 connection на весь batch после цикла (fire-and-forget).
 
 ---
 
