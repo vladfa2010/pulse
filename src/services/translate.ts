@@ -225,4 +225,4 @@ export async function translateBatch(texts: string[]): Promise<string[]> {
 
   return results;
 }
-      
+
