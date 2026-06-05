@@ -435,18 +435,16 @@ async function processArticlesLocked() {
 
           // Populate news_tag_links для статей с реальным LLM-анализом
           // llm-partial тоже имеет валидные tag_impacts (часть статей проанализирована)
+          // Fire-and-forget: НЕ await, чтобы не блокировать цикл и не исчерпать pool
           if ((a.sentiment_source === 'llm' || a.sentiment_source === 'llm-partial') 
               && a.tag_impact && a.tag_impact.length > 0) {
-            try {
-              await populateNewsTagLinks(
-                newsId,
-                a.matched_tags || [],
-                a.tag_impact
-              );
-            } catch (err: any) {
-              // Не падаем — статья сохранена, поиск найдёт через JSONB fallback
-              console.error(`[Cron] populateNewsTagLinks failed for ${newsId}: ${err.message?.slice(0, 100)}`);
-            }
+            populateNewsTagLinks(
+              newsId,
+              a.matched_tags || [],
+              a.tag_impact
+            ).catch(err => {
+              console.error(`[Cron] populateNewsTagLinks async failed for ${newsId}: ${err.message?.slice(0, 100)}`);
+            });
           }
         } else {
           merged++;     // Дубликат — обновили all_sources
