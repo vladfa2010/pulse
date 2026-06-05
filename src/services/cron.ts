@@ -31,7 +31,7 @@ const USE_SQLITE = process.env.USE_SQLITE === 'true';
 // Smart Tag Matching (imported from smartTagMatcher)
 // ═══════════════════════════════════════════════════════════════════════════
 import { smartMatchTags, analyzeSentimentLLM, analyzeSentimentBatch, analyzeTagImpact, analyzeTagImpactBatch, analyzeUnifiedBatch, TagImpact, SentimentResult, UnifiedResult } from './smartTagMatcher';
-import { populateNewsTagLinks } from './enrichment';
+import { populateNewsTagLinksBatch, EnrichmentTask } from './enrichment';
 import { broadcastNews } from './sse';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -344,6 +344,7 @@ async function processArticlesLocked() {
   // 4. Save to DB (с защитой от дубликатов по content_hash)
   saved = 0;
   merged = 0;
+  const enrichmentTasks: EnrichmentTask[] = [];  // ← BATCH: собираем все задачи обогащения
 
   for (const a of processed) {
     try {
@@ -433,18 +434,13 @@ async function processArticlesLocked() {
           // Broadcast to SSE subscribers
           broadcastNews({ id: newsId || null, title_ru, summary_ru, source: a.source, published_at: a.publishedAt, sentiment: a.sentiment, matched_tags: a.matched_tags, url: a.url });
 
-          // TEMP DISABLED: populateNewsTagLinks вызывает pool exhaustion → cron freeze
-          // TODO: вернуть с batch-оптимизацией (TZ_CRON_FREEZE_FIX)
-          // if ((a.sentiment_source === 'llm' || a.sentiment_source === 'llm-partial')
-          //     && a.tag_impact && a.tag_impact.length > 0) {
-          //   populateNewsTagLinks(
-          //     newsId,
-          //     a.matched_tags || [],
-          //     a.tag_impact
-          //   ).catch(err => {
-          //     console.error(`[Cron] populateNewsTagLinks async failed: ${err.message?.slice(0, 100)}`);
-          //   });
-          // }
+          // BATCH ENRICHMENT v3: собираем задачу, выполняем ПОСЛЕ цикла
+          // Использует 1 pool connection на все статьи — нет deadlock
+          enrichmentTasks.push({
+            newsId,
+            matchedTags: a.matched_tags || [],
+            tagImpacts: a.tag_impact || [],
+          });
         } else {
           merged++;     // Дубликат — обновили all_sources
         }
@@ -453,6 +449,14 @@ async function processArticlesLocked() {
       console.error(`[Cron] Save error for article "${a.title?.slice(0, 40)}": ${e.message?.slice(0, 100)}`);
     }
   }
+
+    // Batch enrichment: ВСЕ статьи одним pool.connect()
+    // Fire-and-forget — не блокирует cron, ошибка не ломает сохранение
+    if (enrichmentTasks.length > 0) {
+      populateNewsTagLinksBatch(enrichmentTasks).catch(err => {
+        console.error(`[Cron] Batch enrichment failed: ${err.message?.slice(0, 100)}`);
+      });
+    }
 
     console.log(`[Cron] Saved ${saved} new, merged ${merged} duplicates (total ${processed.length})`);
   } catch (err: any) {
