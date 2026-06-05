@@ -430,3 +430,10 @@ FROM news;
 
 *Документ создан: 2026-06-02*
 *Версия 9.0 — добавлен Article Enrichment v3.0 (news_tag_links, гибридное хранилище)*
+
+> **⚠️ ВАЖНО: После деплоя кода ОБЯЗАТЕЛЬНО запустить миграцию:**
+> ```bash
+> curl -X POST https://pulse-api-bsov.onrender.com/migrate-v3-enrichment \
+>   -H "x-trigger-secret: pulse-dev-key"
+> ```
+> Без этого таблица `news_tag_links` не создастся и enrichment v3.0 не будет работать!

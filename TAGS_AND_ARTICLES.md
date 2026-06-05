@@ -740,9 +740,16 @@ GROUP BY link_source;
 - [ ] SQL injection fix (`jsonb_build_array`)
 - [ ] SQLite GIN skip
 
-### 12.2 Деплой
+### 12.2 Деплой (критический порядок)
 
-- [ ] Миграция запущена (`/migrate-v3-enrichment`)
+**⚠️ Шаг 0: Запустить миграцию (ОБЯЗАТЕЛЬНО после деплоя кода)**
+```bash
+curl -X POST https://pulse-api-bsov.onrender.com/migrate-v3-enrichment \
+  -H "x-trigger-secret: pulse-dev-key"
+```
+**Без этого таблица `news_tag_links` не создастся и enrichment v3.0 не будет работать!**
+
+- [ ] Миграция запущена (`/migrate-v3-enrichment`) — **ШАГ 0, КРИТИЧНО**
 - [ ] Таблица создана без ошибок
 - [ ] Индексы созданы
 - [ ] Cron не падает (логи 15 минут)
