@@ -7,6 +7,31 @@
 
 ---
 
+## 0. LLM MODEL CONFIGURATION (5 places)
+
+### Where to change
+
+| # | File | Variable | Purpose | Temperature | Timeout | Batch |
+|---|------|----------|---------|-------------|---------|-------|
+| 1 | `smartTagMatcher.ts:26` | `KIMI_MODEL` | Sentiment + tag matching | `kimi-k ? 0.6 : 0.1` | `kimi-k ? 30s : 15s` | 5 |
+| 2 | `smartTagMatcher.ts:26` | `KIMI_MODEL` | Unified batch analysis | `kimi-k ? 0.6 : 0.1` | `kimi-k ? 30s : 15s` | 5 |
+| 3 | `translate.ts:36` | `KIMI_MODEL` | EN→RU translation | `kimi-k ? 0.6 : 0.3` | `kimi-k ? 60s : 30s` | `kimi-k ? 3 : 5` |
+| 4 | `tagManager.ts:16` | `KIMI_MODEL` | Tag enrichment | `kimi-k ? 0.6 : 0.1` | — | — |
+| 5 | `user.ts:670` | `KIMI_MODEL_SUMMARY` | Summary generation | `kimi-k ? 0.6 : 0.3` | — | — |
+
+**Rule:** Always use `KIMI_MODEL.startsWith('kimi-k')` for conditional params. Never hardcode.
+
+### Available models
+
+| Model | Temperature | Context | Input $/1M | Output $/1M | Speed |
+|-------|-------------|---------|------------|-------------|-------|
+| `moonshot-v1-32k` | 0.1 / 0.3 | 32K | $1.00 | $3.00 | Fast ✅ |
+| `kimi-k2.5` | **0.6** (required) | 262K | $0.60 | $2.50 | Slow ⚠️ |
+
+**Override:** Set env var `KIMI_MODEL=moonshot-v1-32k` on Render (no deploy needed).
+
+---
+
 ## 1. ОБЗОР АРХИТЕКТУРЫ
 
 ```
