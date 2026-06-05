@@ -30,10 +30,10 @@ async function llmRequestWithRetry<T>(fn: () => Promise<T>, label: string): Prom
 }
 
 // Model selection via env var:
-//   moonshot-v1-32k — best available model, temperature 0.1 (default)
+//   kimi-k2.5       — default, cheaper, better context (temp=1, 262K)
+//   moonshot-v1-32k — legacy fallback via env var
 //   moonshot-v1-8k  — legacy, older knowledge
-//   kimi-k2.5       — available via env var KIMI_MODEL=kimi-k2.5
-const KIMI_MODEL = process.env.KIMI_MODEL || 'moonshot-v1-32k';
+const KIMI_MODEL = process.env.KIMI_MODEL || 'kimi-k2.5';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Kimi Translation (primary)
@@ -225,3 +225,4 @@ export async function translateBatch(texts: string[]): Promise<string[]> {
 
   return results;
 }
+      
