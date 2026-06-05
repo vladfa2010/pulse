@@ -782,7 +782,7 @@ router.get('/summary', authMiddleware, async (req: AuthRequest, res) => {
       {
         model: KIMI_MODEL_SUMMARY,
         messages: [{ role: 'user', content: prompt }],
-        temperature: KIMI_MODEL_SUMMARY.startsWith('kimi-k') ? 1 : 0.3,
+        temperature: KIMI_MODEL_SUMMARY.startsWith('kimi-k') ? 0.6 : 0.3,
         max_tokens: 500,
       },
       {

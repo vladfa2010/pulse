@@ -70,7 +70,7 @@ export async function translateWithKimi(texts: string[]): Promise<string[]> {
   // k2.5 needs temp=1 (not configurable) and uses more tokens — smaller batch
   const isK2 = KIMI_MODEL.startsWith('kimi-k');
   const BATCH = isK2 ? 3 : 5;
-  const TEMP = isK2 ? 1 : 0.3;
+  const TEMP = isK2 ? 0.6 : 0.3;
 
   for (let i = 0; i < texts.length; i += BATCH) {
     const batch = texts.slice(i, i + BATCH);
