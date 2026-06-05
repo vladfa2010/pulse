@@ -130,6 +130,35 @@ app.get('/test-model', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Cleanup failed articles — removes all articles with llm_error
+// Use when deferred processor queue is too large or after LLM downtime
+// ═══════════════════════════════════════════════════════════════════════════
+app.post('/cleanup-failed-articles', async (req, res) => {
+  const secret = req.headers['x-trigger-secret'];
+  if (secret !== process.env.CRON_SECRET_KEY) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  try {
+    const before = await query(`SELECT COUNT(*) as count FROM news WHERE llm_error IS NOT NULL`);
+    const count = parseInt(before.rows[0]?.count || '0');
+
+    if (count === 0) {
+      return res.json({ deleted: 0, message: 'No failed articles found' });
+    }
+
+    await query(`DELETE FROM news WHERE llm_error IS NOT NULL`);
+    res.json({
+      deleted: count,
+      message: `Removed ${count} articles with llm_error. Deferred processor queue cleared.`,
+    });
+    console.log(`[Cleanup] Removed ${count} failed articles`);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Migration endpoint — applies DB migrations
 // ═══════════════════════════════════════════════════════════════════════════
 app.post('/migrate-v3', async (req, res) => {
