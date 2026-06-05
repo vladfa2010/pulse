@@ -62,4 +62,5 @@ export const RSS_SOURCES: RssSource[] = [
   { id: 'marketwatch', name: 'MarketWatch', url: 'https://feeds.content.dowjones.io/public/rss/mw_topstories', lang: 'en', category: 'finance' },
 
   // Telegram Parser (custom RSS)
-  { id: 'tgparser', name: 'TG Parser News', url: 'https://tgparser-web.onr
+  { id: 'tgparser', name: 'TG Parser News', url: 'https://tgparser-web.onrender.com/rss', lang: 'ru', category: 'news' },
+];
