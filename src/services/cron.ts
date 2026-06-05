@@ -109,6 +109,24 @@ export async function processArticles() {
 }
 
 async function processArticlesLocked() {
+  // Cleanup zombie records: finished_at=null older than 15 min = dead processes
+  // These accumulate after hard restarts when old instance dies mid-run
+  if (!USE_SQLITE) {
+    try {
+      const cleanup = await query(
+        `DELETE FROM cron_log 
+         WHERE finished_at IS NULL 
+           AND started_at < NOW() - INTERVAL '15 minutes'
+         RETURNING id`
+      );
+      if (cleanup.rows.length > 0) {
+        console.log(`[Cron] Cleaned up ${cleanup.rows.length} zombie records`);
+      }
+    } catch {
+      // Silent fail — cleanup is best-effort
+    }
+  }
+
   const logId = await logCronStart('rss');
   const errors: string[] = [];
   let articles: any[] = [];
