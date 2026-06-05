@@ -1,5 +1,5 @@
 // ============================================================
-// RSS Sources — 36 total (17 RU + 19 EN)
+// RSS Sources — 37 total (18 RU + 19 EN)
 // Added: Finam RSS feeds (v7.8)
 // ============================================================
 
@@ -60,7 +60,6 @@ export const RSS_SOURCES: RssSource[] = [
   { id: 'oilprice', name: 'OilPrice.com', url: 'https://oilprice.com/rss.xml', lang: 'en', category: 'energy' },
   { id: 'mining', name: 'Mining.com', url: 'https://www.mining.com/feed/', lang: 'en', category: 'energy' },
   { id: 'marketwatch', name: 'MarketWatch', url: 'https://feeds.content.dowjones.io/public/rss/mw_topstories', lang: 'en', category: 'finance' },
-];
 
-export const EN_SOURCES = RSS_SOURCES.filter(s => s.lang === 'en');
-export const RU_SOURCES = RSS_SOURCES
+  // Telegram Parser (custom RSS)
+  { id: 'tgparser', name: 'TG Parser News', url: 'https://tgparser-web.onr
