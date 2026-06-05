@@ -104,7 +104,7 @@ Rules:
       {
         model: KIMI_MODEL,
         messages: [{ role: 'user', content: prompt }],
-        temperature: 0.1,
+        temperature: KIMI_MODEL.startsWith('kimi-k') ? 0.6 : 0.1,
         max_tokens: 1200,
       },
       {
@@ -280,7 +280,7 @@ Response format: company (or ticker, sector, trend, person, commodity, index, cu
       {
         model: KIMI_MODEL,
         messages: [{ role: 'user', content: prompt }],
-        temperature: 0.1,
+        temperature: KIMI_MODEL.startsWith('kimi-k') ? 0.6 : 0.1,
         max_tokens: 10,
       },
       {
