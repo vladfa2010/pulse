@@ -152,10 +152,14 @@ app.get('/debug-tag/:tagId', async (req, res) => {
     const ed = tag.enriched_data || {};
 
     // Get article counts
-    const linksResult = await query(
-      `SELECT COUNT(*) as count FROM news_tag_links WHERE tag_id = $1`,
-      [tagId]
-    );
+    let linksCount = 0;
+    try {
+      const linksResult = await query(
+        `SELECT COUNT(*) as count FROM news_tag_links WHERE tag_id = $1`,
+        [tagId]
+      );
+      linksCount = parseInt(linksResult.rows[0].count);
+    } catch { /* table may not exist */ }
 
     const matchedResult = await query(
       `SELECT COUNT(*) as count FROM news WHERE $1::text = ANY(matched_tags)`,
@@ -167,10 +171,14 @@ app.get('/debug-tag/:tagId', async (req, res) => {
       [tagId]
     );
 
-    const subscribersResult = await query(
-      `SELECT COUNT(*) as count FROM notification_settings WHERE tag_id = $1`,
-      [tagId]
-    );
+    let subsCount = 0;
+    try {
+      const subscribersResult = await query(
+        `SELECT COUNT(*) as count FROM notification_settings WHERE tag_id = $1`,
+        [tagId]
+      );
+      subsCount = parseInt(subscribersResult.rows[0].count);
+    } catch { /* table may not exist */ }
 
     res.json({
       tag_id: tag.tag_id,
@@ -188,10 +196,10 @@ app.get('/debug-tag/:tagId', async (req, res) => {
         synonyms_en: ed.synonyms_en || [],
       },
       stats: {
-        news_tag_links: parseInt(linksResult.rows[0].count),
+        news_tag_links: linksCount,
         matched_in_articles: parseInt(matchedResult.rows[0].count),
         llm_impact_articles: parseInt(llmResult.rows[0].count),
-        subscriber_count: parseInt(subscribersResult.rows[0].count),
+        subscriber_count: subsCount,
       },
     });
   } catch (err: any) {
@@ -2794,3 +2802,4 @@ start();// deploy-check: 1779921938
 // build: 1779986393
 // deploy check: 1779986817
 // build check 1779993464
+                                                         
