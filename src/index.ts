@@ -967,7 +967,7 @@ app.get('/admin/tags/:tagId', requireAdmin, async (req, res) => {
 
 // Validation rules
 const TAG_UPDATE_RULES: Record<string, any> = {
-  tag_type: { type: 'enum', values: ['company', 'sector', 'country', 'commodity', 'index'] },
+  tag_type: { type: 'enum', values: ['company', 'sector', 'country', 'commodity', 'index', 'person'] },
   ticker: { type: 'string', min: 1, max: 20, pattern: /^[A-Z0-9\.\-]+$/, optional: true },
   website: { type: 'url', max: 500, optional: true },
   description_ru: { type: 'string', max: 5000, optional: true },
