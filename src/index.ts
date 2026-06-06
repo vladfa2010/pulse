@@ -174,11 +174,11 @@ app.get('/debug-tag/:tagId', async (req, res) => {
     let subsCount = 0;
     try {
       const subscribersResult = await query(
-        `SELECT COUNT(*) as count FROM notification_settings WHERE tag_id = $1`,
+        `SELECT COUNT(DISTINCT user_id) as count FROM portfolios WHERE tag_id = $1`,
         [tagId]
       );
       subsCount = parseInt(subscribersResult.rows[0].count);
-    } catch { /* table may not exist */ }
+    } catch { /* ignore */ }
 
     res.json({
       tag_id: tag.tag_id,
@@ -1124,8 +1124,8 @@ async function checkCircularReference(tagId: string, relatedTags: string[]): Pro
   if (!relatedTags || relatedTags.length === 0) return true;
   const result = await query(
     `SELECT tag_id FROM user_defined_tags 
-     WHERE tag_id = ANY($1) 
-     AND $2 = ANY(COALESCE(related_tags, ARRAY[]::varchar[]))`,
+     WHERE tag_id = ANY($1::text[]) 
+       AND enriched_data->'related_tags' @> to_jsonb($2::text)`,
     [relatedTags, tagId]
   );
   return result.rows.length === 0;
@@ -1247,6 +1247,165 @@ app.put('/admin/tags/:tagId', requireAdmin, async (req, res) => {
       },
     });
   } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /admin/tags/:tagId — cascade delete tag and all references
+app.delete('/admin/tags/:tagId', requireAdmin, async (req, res) => {
+  try {
+    const tagId = req.params.tagId;
+
+    // Check tag exists first
+    const checkResult = await query(`SELECT tag_id, tag_name FROM user_defined_tags WHERE tag_id = $1`, [tagId]);
+    if (checkResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Tag not found' });
+    }
+    const tagName = checkResult.rows[0].tag_name;
+
+    // 1. Delete news_tag_links (optional table — may not exist in dev)
+    let deletedLinks = 0;
+    try {
+      const r = await query(`DELETE FROM news_tag_links WHERE tag_id = $1`, [tagId]);
+      deletedLinks = r.rowCount || 0;
+    } catch { /* table may not exist */ }
+
+    // 2. Delete from portfolios (subscriptions)
+    const portfoliosResult = await query(`DELETE FROM portfolios WHERE tag_id = $1`, [tagId]);
+    const deletedPortfolios = portfoliosResult.rowCount || 0;
+
+    // 3. Clean matched_tags (TEXT[])
+    const matchedResult = await query(
+      `UPDATE news SET matched_tags = array_remove(matched_tags, $1) WHERE $1 = ANY(matched_tags)`,
+      [tagId]
+    );
+    const cleanedMatched = matchedResult.rowCount || 0;
+
+    // 4. Clean tag_impact (JSONB)
+    const llmResult = await query(
+      `UPDATE news SET tag_impact = COALESCE(
+        (SELECT jsonb_agg(elem) FROM jsonb_array_elements(tag_impact) elem WHERE elem->>'tag' != $1),
+        '[]'::jsonb
+      ) WHERE tag_impact @> jsonb_build_array(jsonb_build_object('tag', $1::text))`,
+      [tagId]
+    );
+    const cleanedLlm = llmResult.rowCount || 0;
+
+    // 5. Clean smart_tag_cache (optional table)
+    let cleanedCache = 0;
+    try {
+      const r = await query(
+        `UPDATE smart_tag_cache SET tags = array_remove(tags, $1) WHERE $1 = ANY(tags)`,
+        [tagId]
+      );
+      cleanedCache = r.rowCount || 0;
+    } catch { /* table may not exist */ }
+
+    // 6. Clean related_tags in enriched_data of other tags
+    const relatedResult = await query(
+      `UPDATE user_defined_tags
+       SET enriched_data = CASE
+         WHEN enriched_data IS NULL THEN NULL
+         WHEN enriched_data = '{}'::jsonb THEN enriched_data
+         WHEN enriched_data->'related_tags' IS NULL THEN enriched_data
+         ELSE jsonb_set(
+           enriched_data,
+           '{related_tags}',
+           COALESCE(
+             (SELECT jsonb_agg(elem)
+              FROM jsonb_array_elements(enriched_data->'related_tags') elem
+              WHERE elem #>> '{}' != $1),
+             '[]'::jsonb
+           )
+         )
+       END
+       WHERE enriched_data ? 'related_tags'
+         AND enriched_data->'related_tags' @> to_jsonb($1::text)`,
+      [tagId]
+    );
+    const cleanedRelated = relatedResult.rowCount || 0;
+
+    // 7. Delete the tag itself (LAST!)
+    await query(`DELETE FROM user_defined_tags WHERE tag_id = $1`, [tagId]);
+
+    res.json({
+      success: true,
+      deleted_tag: tagId,
+      tag_name: tagName,
+      stats: {
+        deleted_news_links: deletedLinks,
+        deleted_portfolios: deletedPortfolios,
+        cleaned_articles_matched: cleanedMatched,
+        cleaned_articles_llm: cleanedLlm,
+        cleaned_smart_cache: cleanedCache,
+        cleaned_related_tags: cleanedRelated,
+      },
+    });
+  } catch (err: any) {
+    console.error(`[Admin] Delete tag error:`, err.message);
+    res.status(500).json({ error: 'Delete failed', message: err.message });
+  }
+});
+
+// GET /admin/tags/:tagId/delete-preview — statistics for delete confirmation modal
+app.get('/admin/tags/:tagId/delete-preview', requireAdmin, async (req, res) => {
+  try {
+    const tagId = req.params.tagId;
+
+    // Get tag info
+    const tagResult = await query(`SELECT tag_id, tag_name FROM user_defined_tags WHERE tag_id = $1`, [tagId]);
+    if (tagResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Tag not found' });
+    }
+    const tagName = tagResult.rows[0].tag_name;
+
+    // Count references
+    let linksCount = 0;
+    try {
+      const r = await query(`SELECT COUNT(*) as count FROM news_tag_links WHERE tag_id = $1`, [tagId]);
+      linksCount = parseInt(r.rows[0].count);
+    } catch { /* table may not exist */ }
+
+    const portfoliosResult = await query(
+      `SELECT COUNT(DISTINCT user_id) as count FROM portfolios WHERE tag_id = $1`, [tagId]
+    );
+    const portfoliosCount = parseInt(portfoliosResult.rows[0].count);
+
+    const matchedResult = await query(
+      `SELECT COUNT(*) as count FROM news WHERE $1::text = ANY(matched_tags)`, [tagId]
+    );
+    const matchedCount = parseInt(matchedResult.rows[0].count);
+
+    const llmResult = await query(
+      `SELECT COUNT(*) as count FROM news WHERE tag_impact @> jsonb_build_array(jsonb_build_object('tag', $1::text))`,
+      [tagId]
+    );
+    const llmCount = parseInt(llmResult.rows[0].count);
+
+    const relatedResult = await query(
+      `SELECT COUNT(*) as count FROM user_defined_tags WHERE enriched_data->'related_tags' @> to_jsonb($1::text)`,
+      [tagId]
+    );
+    const relatedCount = parseInt(relatedResult.rows[0].count);
+
+    let cacheCount = 0;
+    try {
+      const r = await query(`SELECT COUNT(*) as count FROM smart_tag_cache WHERE $1 = ANY(tags)`, [tagId]);
+      cacheCount = parseInt(r.rows[0].count);
+    } catch { /* table may not exist */ }
+
+    res.json({
+      tag_id: tagId,
+      tag_name: tagName,
+      links_count: linksCount,
+      portfolios_count: portfoliosCount,
+      matched_articles_count: matchedCount,
+      llm_articles_count: llmCount,
+      related_tags_count: relatedCount,
+      smart_cache_entries: cacheCount,
+    });
+  } catch (err: any) {
+    console.error(`[Admin] Delete preview error:`, err.message);
     res.status(500).json({ error: err.message });
   }
 });
