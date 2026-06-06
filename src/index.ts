@@ -110,6 +110,79 @@ app.get('/debug-admins', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Debug tag detail — show full tag data (admin only via secret)
+// ═══════════════════════════════════════════════════════════════════════════
+app.get('/debug-tag/:tagId', async (req, res) => {
+  const secret = req.headers['x-trigger-secret'] || req.query.secret;
+  if (secret !== process.env.CRON_SECRET_KEY) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  try {
+    const tagId = req.params.tagId;
+
+    // Get tag from user_defined_tags
+    const tagResult = await query(
+      `SELECT * FROM user_defined_tags WHERE tag_id = $1`,
+      [tagId]
+    );
+
+    if (tagResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Tag not found' });
+    }
+
+    const tag = tagResult.rows[0];
+    const ed = tag.enriched_data || {};
+
+    // Get article counts
+    const linksResult = await query(
+      `SELECT COUNT(*) as count FROM news_tag_links WHERE tag_id = $1`,
+      [tagId]
+    );
+
+    const matchedResult = await query(
+      `SELECT COUNT(*) as count FROM news WHERE $1 = ANY(matched_tags)`,
+      [tagId]
+    );
+
+    const llmResult = await query(
+      `SELECT COUNT(*) as count FROM news WHERE tag_impact @> '[{"tag": "' || $1 || '"}]'`,
+      [tagId]
+    );
+
+    const subscribersResult = await query(
+      `SELECT COUNT(*) as count FROM notification_settings WHERE tag_id = $1`,
+      [tagId]
+    );
+
+    res.json({
+      tag_id: tag.tag_id,
+      tag_name: tag.tag_name,
+      tag_type: tag.tag_type,
+      keywords: tag.keywords,
+      created_at: tag.created_at,
+      enriched_data: {
+        ticker: ed.ticker || null,
+        website: ed.website || null,
+        description_ru: ed.description_ru || null,
+        key_products: ed.key_products || [],
+        related_tags: ed.related_tags || ed.related_entities || [],
+        synonyms_ru: ed.synonyms_ru || [],
+        synonyms_en: ed.synonyms_en || [],
+      },
+      stats: {
+        news_tag_links: parseInt(linksResult.rows[0].count),
+        matched_in_articles: parseInt(matchedResult.rows[0].count),
+        llm_impact_articles: parseInt(llmResult.rows[0].count),
+        subscriber_count: parseInt(subscribersResult.rows[0].count),
+      },
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Debug tag search — find tag by name
 // ═══════════════════════════════════════════════════════════════════════════
 app.get('/debug-tag', async (req, res) => {
