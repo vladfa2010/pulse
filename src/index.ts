@@ -136,7 +136,6 @@ app.get('/debug-tag/:tagId', async (req, res) => {
   }
 
   try {
-  try {
     const tagId = req.params.tagId;
 
     // Get tag from user_defined_tags
