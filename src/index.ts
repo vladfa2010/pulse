@@ -1075,34 +1075,43 @@ app.put('/admin/tags/:tagId', requireAdmin, async (req, res) => {
       });
     }
 
-    // Execute update with CASE WHEN (INC-004: never COALESCE for partial update)
+    // Build SET clauses for flat columns AND enriched_data JSONB
+    const setClauses: string[] = [];
+    const params: any[] = [tagId];
+    let paramIdx = 2;
+
+    if (updates.tag_type !== undefined) {
+      setClauses.push(`tag_type = $${paramIdx++}`);
+      params.push(updates.tag_type);
+    }
+    if (updates.keywords !== undefined) {
+      setClauses.push(`keywords = $${paramIdx++}`);
+      params.push(updates.keywords);
+    }
+
+    // Build enriched_data JSONB patch
+    const jsonbFields = ['ticker', 'website', 'description_ru', 'key_products', 'related_tags', 'synonyms_ru', 'synonyms_en'];
+    const jsonbUpdates: string[] = [];
+    for (const f of jsonbFields) {
+      if (updates[f] !== undefined) {
+        jsonbUpdates.push(`'${f}', to_jsonb($${paramIdx++}::text${Array.isArray(updates[f]) ? '[]' : ''})`);
+        params.push(updates[f]);
+      }
+    }
+    if (jsonbUpdates.length > 0) {
+      setClauses.push(`enriched_data = COALESCE(enriched_data, '{}') || jsonb_build_object(${jsonbUpdates.join(', ')})`);
+    }
+
+    if (setClauses.length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+
     const result = await query(`
       UPDATE user_defined_tags
-      SET
-        tag_type = CASE WHEN $2 IS NOT NULL THEN $2 ELSE tag_type END,
-        ticker = CASE WHEN $3 IS NOT NULL THEN $3 ELSE ticker END,
-        website = CASE WHEN $4 IS NOT NULL THEN $4 ELSE website END,
-        description_ru = CASE WHEN $5 IS NOT NULL THEN $5 ELSE description_ru END,
-        keywords = CASE WHEN $6 IS NOT NULL THEN $6 ELSE keywords END,
-        key_products = CASE WHEN $7 IS NOT NULL THEN $7 ELSE key_products END,
-        related_tags = CASE WHEN $8 IS NOT NULL THEN $8 ELSE related_tags END,
-        synonyms_ru = CASE WHEN $9 IS NOT NULL THEN $9 ELSE synonyms_ru END,
-        synonyms_en = CASE WHEN $10 IS NOT NULL THEN $10 ELSE synonyms_en END,
-        updated_at = NOW()
+      SET ${setClauses.join(', ')}
       WHERE tag_id = $1
       RETURNING *
-    `, [
-      tagId,
-      updates.tag_type || null,
-      updates.ticker || null,
-      updates.website || null,
-      updates.description_ru || null,
-      updates.keywords || null,
-      updates.key_products || null,
-      updates.related_tags || null,
-      updates.synonyms_ru || null,
-      updates.synonyms_en || null,
-    ]);
+    `, params);
 
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Tag not found' });
@@ -1121,13 +1130,13 @@ app.put('/admin/tags/:tagId', requireAdmin, async (req, res) => {
         keywords: updated.keywords || [],
         created_at: updated.created_at,
         related_tags: ed.related_tags || ed.related_entities || [],
-        ticker: updated.ticker || ed.ticker || null,
-        website: updated.website || ed.website || null,
-        description: updated.description_ru || ed.description_ru || null,
-        description_ru: updated.description_ru || ed.description_ru || null,
-        key_products: updated.key_products || ed.key_products || [],
-        synonyms_ru: updated.synonyms_ru || ed.synonyms_ru || [],
-        synonyms_en: updated.synonyms_en || ed.synonyms_en || [],
+        ticker: ed.ticker || null,
+        website: ed.website || null,
+        description: ed.description_ru || null,
+        description_ru: ed.description_ru || null,
+        key_products: ed.key_products || [],
+        synonyms_ru: ed.synonyms_ru || [],
+        synonyms_en: ed.synonyms_en || [],
       },
     });
   } catch (err: any) {
