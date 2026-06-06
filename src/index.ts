@@ -1001,6 +1001,10 @@ function validateField(key: string, value: any): string | null {
   if (rule.type === 'url') {
     if (typeof value !== 'string') return `${key} must be a string`;
     if (value.length > (rule.max || 500)) return `${key} max ${rule.max} chars`;
+    // Auto-fix: add https:// if no protocol
+    if (value && !value.match(/^https?:\/\//)) {
+      value = 'https://' + value;
+    }
     try { new URL(value); } catch { return `${key} must be a valid URL`; }
   }
 
@@ -1065,6 +1069,11 @@ app.put('/admin/tags/:tagId', requireAdmin, async (req, res) => {
           field: 'related_tags',
         });
       }
+    }
+
+    // Auto-fix URL: add https:// if no protocol
+    if (updates.website && !updates.website.match(/^https?:\/\//)) {
+      updates.website = 'https://' + updates.website;
     }
 
     // keywords minItems check (defense in depth)
