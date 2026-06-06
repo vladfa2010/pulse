@@ -962,6 +962,163 @@ app.get('/admin/tags/:tagId', requireAdmin, async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// PUT /admin/tags/:tagId — inline editing (TZ_INLINE_TAG_EDIT_v2)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Validation rules
+const TAG_UPDATE_RULES: Record<string, any> = {
+  tag_type: { type: 'enum', values: ['company', 'sector', 'country', 'commodity', 'index'] },
+  ticker: { type: 'string', min: 1, max: 20, pattern: /^[A-Z0-9\.\-]+$/, optional: true },
+  website: { type: 'url', max: 500, optional: true },
+  description_ru: { type: 'string', max: 5000, optional: true },
+  keywords: { type: 'array', minItems: 1, maxItems: 50, items: { type: 'string', max: 100 } },
+  key_products: { type: 'array', maxItems: 20, items: { type: 'string', max: 100 }, optional: true },
+  related_tags: { type: 'array', maxItems: 20, items: { type: 'string' }, optional: true },
+  synonyms_ru: { type: 'array', maxItems: 20, items: { type: 'string', max: 100 }, optional: true },
+  synonyms_en: { type: 'array', maxItems: 20, items: { type: 'string', max: 100 }, optional: true },
+};
+
+function validateField(key: string, value: any): string | null {
+  const rule = TAG_UPDATE_RULES[key];
+  if (!rule) return null; // unknown field, skip
+
+  if (value === null || value === undefined) {
+    if (rule.optional) return null;
+    return `${key} is required`;
+  }
+
+  if (rule.type === 'enum') {
+    if (!rule.values.includes(value)) return `${key} must be one of: ${rule.values.join(', ')}`;
+  }
+
+  if (rule.type === 'string') {
+    if (typeof value !== 'string') return `${key} must be a string`;
+    if (rule.min && value.length < rule.min) return `${key} min ${rule.min} chars`;
+    if (rule.max && value.length > rule.max) return `${key} max ${rule.max} chars`;
+    if (rule.pattern && !rule.pattern.test(value)) return `${key} invalid format`;
+  }
+
+  if (rule.type === 'url') {
+    if (typeof value !== 'string') return `${key} must be a string`;
+    if (value.length > (rule.max || 500)) return `${key} max ${rule.max} chars`;
+    try { new URL(value); } catch { return `${key} must be a valid URL`; }
+  }
+
+  if (rule.type === 'array') {
+    if (!Array.isArray(value)) return `${key} must be an array`;
+    if (rule.minItems && value.length < rule.minItems) return `${key} min ${rule.minItems} items`;
+    if (rule.maxItems && value.length > rule.maxItems) return `${key} max ${rule.maxItems} items`;
+    for (const item of value) {
+      if (typeof item !== 'string') return `${key} items must be strings`;
+      if (rule.items?.max && item.length > rule.items.max) return `${key} item max ${rule.items.max} chars`;
+    }
+  }
+
+  return null;
+}
+
+// Check circular reference for related_tags
+async function checkCircularReference(tagId: string, relatedTags: string[]): Promise<boolean> {
+  if (!relatedTags || relatedTags.length === 0) return true;
+  const result = await query(
+    `SELECT tag_id FROM user_defined_tags 
+     WHERE tag_id = ANY($1) 
+     AND $2 = ANY(COALESCE(related_tags, ARRAY[]::varchar[]))`,
+    [relatedTags, tagId]
+  );
+  return result.rows.length === 0;
+}
+
+app.put('/admin/tags/:tagId', requireAdmin, async (req, res) => {
+  try {
+    const tagId = req.params.tagId;
+    const allowed = Object.keys(TAG_UPDATE_RULES);
+    const updates: Record<string, any> = {};
+    const errors: Record<string, string> = {};
+
+    // Collect and validate updates
+    for (const key of allowed) {
+      if (req.body[key] !== undefined) {
+        const error = validateField(key, req.body[key]);
+        if (error) {
+          errors[key] = error;
+        } else {
+          updates[key] = req.body[key];
+        }
+      }
+    }
+
+    if (Object.keys(errors).length > 0) {
+      return res.status(400).json({ error: 'Validation failed', errors });
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: 'No valid fields to update' });
+    }
+
+    // Circular reference check
+    if (updates.related_tags) {
+      const ok = await checkCircularReference(tagId, updates.related_tags);
+      if (!ok) {
+        return res.status(400).json({
+          error: 'Circular reference detected',
+          field: 'related_tags',
+        });
+      }
+    }
+
+    // keywords minItems check (defense in depth)
+    if (updates.keywords !== undefined && updates.keywords.length === 0) {
+      return res.status(400).json({
+        error: 'keywords cannot be empty (min 1 required)',
+        field: 'keywords',
+      });
+    }
+
+    // Execute update with CASE WHEN (INC-004: never COALESCE for partial update)
+    const result = await query(`
+      UPDATE user_defined_tags
+      SET
+        tag_type = CASE WHEN $2 IS NOT NULL THEN $2 ELSE tag_type END,
+        ticker = CASE WHEN $3 IS NOT NULL THEN $3 ELSE ticker END,
+        website = CASE WHEN $4 IS NOT NULL THEN $4 ELSE website END,
+        description_ru = CASE WHEN $5 IS NOT NULL THEN $5 ELSE description_ru END,
+        keywords = CASE WHEN $6 IS NOT NULL THEN $6 ELSE keywords END,
+        key_products = CASE WHEN $7 IS NOT NULL THEN $7 ELSE key_products END,
+        related_tags = CASE WHEN $8 IS NOT NULL THEN $8 ELSE related_tags END,
+        synonyms_ru = CASE WHEN $9 IS NOT NULL THEN $9 ELSE synonyms_ru END,
+        synonyms_en = CASE WHEN $10 IS NOT NULL THEN $10 ELSE synonyms_en END,
+        updated_at = NOW()
+      WHERE tag_id = $1
+      RETURNING *
+    `, [
+      tagId,
+      updates.tag_type || null,
+      updates.ticker || null,
+      updates.website || null,
+      updates.description_ru || null,
+      updates.keywords || null,
+      updates.key_products || null,
+      updates.related_tags || null,
+      updates.synonyms_ru || null,
+      updates.synonyms_en || null,
+    ]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Tag not found' });
+    }
+
+    res.json({
+      success: true,
+      updated_fields: Object.keys(updates),
+      tag: result.rows[0],
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Migration endpoint — applies DB migrations for LLM error tracking (v3)
 // ═══════════════════════════════════════════════════════════════════════════
 app.post('/migrate-v3', async (req, res) => {
