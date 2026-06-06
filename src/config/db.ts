@@ -40,7 +40,7 @@ const DATABASE_URL = process.env.DATABASE_URL || '';
 let poolInstance: any = null;
 
 // Единая функция query — работает одинаково для SQLite и PostgreSQL
-let queryFn: (text: string, params?: any[]) => Promise<{ rows: any[] }>;
+let queryFn: (text: string, params?: any[]) => Promise<{ rows: any[]; rowCount?: number }>;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // РЕЖИМ 1: SQLite (локальная разработка)

@@ -47,7 +47,7 @@ export function saveDb(): void {
 }
 
 // Query helper — compatible with pg interface
-export async function query(text: string, params?: any[]): Promise<{ rows: any[] }> {
+export async function query(text: string, params?: any[]): Promise<{ rows: any[]; rowCount?: number }> {
   if (!db) throw new Error('SQLite not initialized');
 
   // Convert PostgreSQL $1, $2 → SQLite ?
@@ -123,7 +123,7 @@ export async function query(text: string, params?: any[]): Promise<{ rows: any[]
       saveDb();
     }
 
-    return { rows: result };
+    return { rows: result, rowCount: isWrite ? db.getRowsModified() : 0 };
   } catch (err: any) {
     console.error('[SQLite] Query ERROR:', err.message);
     console.error('[SQLite] Failed SQL:', sql.trim().slice(0, 200));
