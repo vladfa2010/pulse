@@ -511,5 +511,180 @@ COALESCE($4, old_text)    // $4 = '' → перезапишет на '' (!)
 
 ---
 
+---
+
+## INC-005: Debug Endpoint Cascade — 5 Bugs in 1 Endpoint
+
+| Поле | Значение |
+|------|----------|
+| **ID** | INC-005 |
+| **Дата** | 2026-06-05 |
+| **Статус** | ✅ RESOLVED |
+| **Серьёзность** | P2 — высокий (5 итераций фиксов) |
+| **Коммит** | `0cea93d` (final fix) |
+
+### Симптомы
+
+При создании простого debug endpoint `/debug-tag/:tagId` получили каскад из 5 ошибок:
+
+```
+1. {"error":"Forbidden"}                          ← auth через secret, не JWT
+2. {"error":"Forbidden"}                          ← secret key нет fallback
+3. {"error":"invalid input syntax for type json"}  ← SQL string concat
+4. {"error":"could not determine data type of $1"} ← не хватает ::text cast
+5. {"error":"column tag_id does not exist"}        ← таблица не существует
+6. TS1127: Invalid character                       ← нет trailing newline
+```
+
+### Root Cause — Чеклист "Как НЕ делать debug endpoint"
+
+#### ❌ Баг 1: Auth через secret key вместо JWT
+```typescript
+// ❌ НЕПРАВИЛЬНО — secret key не работает для залогиненных админов:
+if (secret !== process.env.CRON_SECRET_KEY) { return 403; }
+
+// ✅ ПРАВИЛЬНО — использовать существующий requireAdmin middleware:
+app.get('/debug/...', requireAdmin, async (req, res) => { ... })
+// ИЛИ поддерживать ОБА способа (JWT header + secret query для браузера)
+```
+
+#### ❌ Баг 2: Нет fallback для secret key
+```typescript
+// ❌ НЕПРАВИЛЬНО — если CRON_SECRET_KEY не установлен:
+if (secret === process.env.CRON_SECRET_KEY)  // null === undefined = false
+
+// ✅ ПРАВИЛЬНО — fallback на дефолтное значение:
+if (secret === (process.env.CRON_SECRET_KEY || 'pulse-dev-key'))
+```
+
+#### ❌ Баг 3: SQL string concat с JSON
+```sql
+-- ❌ НЕПРАВИЛЬНО — SQL injection + invalid JSON:
+WHERE tag_impact @> '[{"tag": "' || $1 || '"}]'
+
+-- ✅ ПРАВИЛЬНО — jsonb_build_array (безопасно):
+WHERE tag_impact @> jsonb_build_array(jsonb_build_object('tag', $1::text))
+```
+
+#### ❌ Баг 4: Нет ::text cast для jsonb_build_object
+```sql
+-- ❌ НЕПРАВИЛЬНО — PostgreSQL не знает тип $1:
+jsonb_build_object('tag', $1)
+
+-- ✅ ПРАВИЛЬНО — явный cast:
+jsonb_build_object('tag', $1::text)
+```
+
+#### ❌ Баг 5: Нет проверки существования таблицы
+```typescript
+// ❌ НЕПРАВИЛЬНО — падаем если таблица не создана:
+const result = await query(`SELECT ... FROM news_tag_links`)
+
+// ✅ ПРАВИЛЬНО — try/catch или проверка существования:
+try {
+  const result = await query(`SELECT ... FROM news_tag_links`)
+} catch { count = 0 }
+```
+
+#### ❌ Баг 6: Нет trailing newline
+```
+// ❌ Файл заканчивается на последней строке без \n
+// build check 123456
+
+// ✅ Файл заканчивается пустой строкой
+// build check 123456
+<пустая строка>
+```
+
+### Правильный чеклист для debug endpoint
+
+```markdown
+## Чеклист: Создание debug endpoint
+
+- [ ] Auth: использовать requireAdmin (JWT) ИЛИ secret с fallback
+- [ ] SQL: jsonb_build_array/object вместо string concat
+- [ ] SQL: ::text cast для всех параметров в jsonb_build_object
+- [ ] SQL: try/catch для таблиц которые могут не существовать
+- [ ] Файл: проверить trailing newline (wc -l, cat -A)
+- [ ] Тест: вызвать endpoint перед коммитом (curl или браузер)
+```
+
+### Итоговый правильный код
+
+```typescript
+app.get('/debug-tag/:tagId', async (req, res) => {
+  // Auth: оба способа
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  const secret = req.query.secret as string;
+  let isAdmin = false;
+  
+  if (secret && secret === (process.env.CRON_SECRET_KEY || 'pulse-dev-key')) {
+    isAdmin = true;
+  } else if (token) {
+    try {
+      const jwt = await import('jsonwebtoken');
+      const decoded = jwt.default.verify(token, process.env.JWT_SECRET!) as any;
+      isAdmin = !!decoded.is_admin;
+    } catch { isAdmin = false; }
+  }
+  if (!isAdmin) return res.status(403).json({ error: 'Forbidden' });
+
+  try {
+    const tagId = req.params.tagId;
+    
+    const tagResult = await query(`SELECT * FROM user_defined_tags WHERE tag_id = $1`, [tagId]);
+    if (tagResult.rows.length === 0) return res.status(404).json({ error: 'Tag not found' });
+    
+    const tag = tagResult.rows[0];
+    const ed = tag.enriched_data || {};
+    
+    // Safe queries with try/catch for optional tables
+    let linksCount = 0;
+    try {
+      const r = await query(`SELECT COUNT(*) as count FROM news_tag_links WHERE tag_id = $1`, [tagId]);
+      linksCount = parseInt(r.rows[0].count);
+    } catch { /* table may not exist */ }
+    
+    const matchedResult = await query(
+      `SELECT COUNT(*) as count FROM news WHERE $1::text = ANY(matched_tags)`, [tagId]);
+    
+    const llmResult = await query(
+      `SELECT COUNT(*) as count FROM news WHERE tag_impact @> jsonb_build_array(jsonb_build_object('tag', $1::text))`, [tagId]);
+    
+    let subsCount = 0;
+    try {
+      const r = await query(`SELECT COUNT(*) as count FROM notification_settings WHERE tag_id = $1`, [tagId]);
+      subsCount = parseInt(r.rows[0].count);
+    } catch { /* table may not exist */ }
+    
+    res.json({
+      tag_id: tag.tag_id,
+      tag_name: tag.tag_name,
+      tag_type: tag.tag_type,
+      keywords: tag.keywords,
+      enriched_data: {
+        ticker: ed.ticker || null,
+        website: ed.website || null,
+        description_ru: ed.description_ru || null,
+        key_products: ed.key_products || [],
+        related_tags: ed.related_tags || [],
+        synonyms_ru: ed.synonyms_ru || [],
+        synonyms_en: ed.synonyms_en || [],
+      },
+      stats: {
+        news_tag_links: linksCount,
+        matched_in_articles: parseInt(matchedResult.rows[0].count),
+        llm_impact_articles: parseInt(llmResult.rows[0].count),
+        subscriber_count: subsCount,
+      },
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+```
+
+---
+
 *Документ создан: 2026-06-05*
-*Версия: 2.0 — добавлен INC-004 (COALESCE bug)*
+*Версия: 3.0 — добавлен INC-005 (debug endpoint cascade)*
