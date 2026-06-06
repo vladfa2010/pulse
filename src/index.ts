@@ -110,14 +110,9 @@ app.get('/debug-admins', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Debug tag detail — show full tag data (admin only via secret)
+// Debug tag detail — show full tag data (admin only)
 // ═══════════════════════════════════════════════════════════════════════════
-app.get('/debug-tag/:tagId', async (req, res) => {
-  const secret = req.headers['x-trigger-secret'] || req.query.secret;
-  if (secret !== process.env.CRON_SECRET_KEY) {
-    return res.status(403).json({ error: 'Forbidden' });
-  }
-
+app.get('/debug-tag/:tagId', requireAdmin, async (req, res) => {
   try {
     const tagId = req.params.tagId;
 
