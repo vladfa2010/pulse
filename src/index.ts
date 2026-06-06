@@ -110,9 +110,32 @@ app.get('/debug-admins', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Debug tag detail — show full tag data (admin only)
+// Debug tag detail — show full tag data (admin via JWT or secret via URL)
 // ═══════════════════════════════════════════════════════════════════════════
-app.get('/debug-tag/:tagId', requireAdmin, async (req, res) => {
+app.get('/debug-tag/:tagId', async (req, res) => {
+  // Auth: either admin JWT OR secret query param
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  const secret = req.query.secret as string;
+  
+  let isAdmin = false;
+  
+  if (secret && secret === process.env.CRON_SECRET_KEY) {
+    isAdmin = true;
+  } else if (token) {
+    try {
+      const jwt = await import('jsonwebtoken');
+      const decoded = jwt.default.verify(token, process.env.JWT_SECRET!) as any;
+      isAdmin = !!decoded.is_admin;
+    } catch {
+      isAdmin = false;
+    }
+  }
+  
+  if (!isAdmin) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  try {
   try {
     const tagId = req.params.tagId;
 
