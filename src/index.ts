@@ -158,7 +158,7 @@ app.get('/debug-tag/:tagId', async (req, res) => {
     );
 
     const matchedResult = await query(
-      `SELECT COUNT(*) as count FROM news WHERE $1 = ANY(matched_tags)`,
+      `SELECT COUNT(*) as count FROM news WHERE $1::text = ANY(matched_tags)`,
       [tagId]
     );
 
