@@ -579,3 +579,49 @@ FROM news;
 *Версия 9.1 — переключение на kimi-k2.5, добавлен runbook CRON FREEZE*
 
 > **⚠️ ВАЖНО: Пос
+---
+
+## 11. SQL BEST PRACTICES
+
+### 11.1 ❌ NEVER use COALESCE for partial UPDATE
+
+**Hard rule:** For partial updates, always use `CASE WHEN $N IS NOT NULL`, never `COALESCE($N, column)`.
+
+```sql
+-- ❌ WRONG — silently overwrites with [] / {} / '':
+UPDATE tags SET keywords = COALESCE($2, keywords) WHERE id = $1;
+-- $2 = [] → keywords becomes [] (data loss!)
+
+-- ✅ CORRECT — only updates when field is explicitly sent:
+UPDATE tags SET keywords = CASE WHEN $2 IS NOT NULL THEN $2 ELSE keywords END WHERE id = $1;
+-- $2 = null → keywords unchanged (partial update works)
+-- $2 = [] → keywords = [] (but caught by validation minItems)
+```
+
+**Why COALESCE fails:**
+
+| `$param` value | `COALESCE($param, old)` | `CASE WHEN $param IS NOT NULL...` |
+|---------------|------------------------|-----------------------------------|
+| `null` | `old` ✅ | `old` ✅ |
+| `['foo']` | `['foo']` ✅ | `['foo']` ✅ |
+| `[]` | `[]` ❌ **silent overwrite** | `[]` ✅ (validation catches it) |
+| `''` | `''` ❌ **silent overwrite** | `''` ✅ (validation catches it) |
+| `{}` | `{}` ❌ **silent overwrite** | `{}` ✅ (validation catches it) |
+
+**Applies to:** arrays (`text[]`, `varchar[]`), JSONB, and even `text` fields.
+
+**Full reference:** [INCIDENTS.md — INC-004](INCIDENTS.md#inc-004-coalesce-partial-update-bug)
+
+### 11.2 Code review checklist for UPDATE statements
+
+- [ ] Any `COALESCE($param, column)` in UPDATE? → RED FLAG
+- [ ] Arrays/JSONB/text fields use `CASE WHEN`?
+- [ ] Validation happens BEFORE SQL (not after)?
+- [ ] Test with `[]`, `{}`, `''` as input — does it preserve old value?
+
+---
+
+*Документ создан: 2026-06-02*
+*Версия 9.2 — добавлен SQL Best Practices (COALESCE rule)*
+*Версия 9.1 — переключение на kimi-k2.5, добавлен runbook CRON FREEZE*
+*Версия 9.0 — Article Enrichment v3.0 (news_tag_links, гибридное хранилище)*
