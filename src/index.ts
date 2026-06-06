@@ -1108,10 +1108,27 @@ app.put('/admin/tags/:tagId', requireAdmin, async (req, res) => {
       return res.status(404).json({ error: 'Tag not found' });
     }
 
+    // Unpack enriched_data to flat fields (matches GET /admin/tags/:tagId format)
+    const updated = result.rows[0];
+    const ed = updated.enriched_data || {};
     res.json({
       success: true,
       updated_fields: Object.keys(updates),
-      tag: result.rows[0],
+      tag: {
+        tag_id: updated.tag_id,
+        tag_name: updated.tag_name,
+        tag_type: updated.tag_type,
+        keywords: updated.keywords || [],
+        created_at: updated.created_at,
+        related_tags: ed.related_tags || ed.related_entities || [],
+        ticker: updated.ticker || ed.ticker || null,
+        website: updated.website || ed.website || null,
+        description: updated.description_ru || ed.description_ru || null,
+        description_ru: updated.description_ru || ed.description_ru || null,
+        key_products: updated.key_products || ed.key_products || [],
+        synonyms_ru: updated.synonyms_ru || ed.synonyms_ru || [],
+        synonyms_en: updated.synonyms_en || ed.synonyms_en || [],
+      },
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
