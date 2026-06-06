@@ -163,7 +163,7 @@ app.get('/debug-tag/:tagId', async (req, res) => {
     );
 
     const llmResult = await query(
-      `SELECT COUNT(*) as count FROM news WHERE tag_impact @> '[{"tag": "' || $1 || '"}]'`,
+      `SELECT COUNT(*) as count FROM news WHERE tag_impact @> jsonb_build_array(jsonb_build_object('tag', $1))`,
       [tagId]
     );
 
