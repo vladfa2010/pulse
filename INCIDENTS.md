@@ -687,4 +687,114 @@ app.get('/debug-tag/:tagId', async (req, res) => {
 ---
 
 *Документ создан: 2026-06-05*
-*Версия: 3.0 — добавлен INC-005 (debug endpoint cascade)*
+---
+
+## INC-006: Таблица Подписок — Название Обманчиво
+
+| Поле | Значение |
+|------|----------|
+| **ID** | INC-006 |
+| **Дата** | 2026-06-05 |
+| **Статус** | ✅ RESOLVED |
+| **Серьёзность** | P1 — критический (ТЗ v4 неверная таблица) |
+| **Источник** | Аудит TZ_TAG_DELETE_v4 → v5 |
+
+### Баг
+
+В ТЗ v4 указана таблица `notification_settings` для удаления подписок:
+```sql
+DELETE FROM notification_settings WHERE tag_id = $1;
+--         ^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^
+--         НЕПРАВИЛЬНАЯ таблица  НЕСУЩЕСТВУЮЩАЯ колонка
+```
+
+### Почему это ошибка
+
+| Таблица | Назначение | Есть `tag_id`? |
+|---------|-----------|----------------|
+| `notification_settings` | Глобальные настройки уведомлений (tg_enabled, email_enabled, report_frequency) | ❌ **НЕТ** |
+| **`portfolios`** | **Подписки пользователей на теги** (`user_id + tag_id`) | ✅ **ДА** |
+
+**notification_settings** хранит НАСТРОЙКИ:  
+`{ user_id: 1, tg_enabled: true, email_enabled: false, report_frequency: 'daily' }`
+
+**portfolios** хранит ПОДПИСКИ:  
+`{ user_id: 1, tag_id: 'сбербанк', tag_name: 'Сбербанк', tag_type: 'company' }`
+
+### Почему так произошло
+
+Название `portfolios` **неинтуитивно**. Логично было бы:
+- `user_tag_subscriptions` ← такого нет
+- `notification_settings` ← звучит правильно, но это НЕ подписки
+
+Разработчик предположил логичное название, не сверившись со схемой.
+
+### Исправление
+
+```sql
+-- Было (v4):
+DELETE FROM notification_settings WHERE tag_id = $1;
+
+-- Стало (v5):
+DELETE FROM portfolios WHERE tag_id = $1;
+```
+
+### Уроки
+
+#### ❌ Неправильно | ✅ Правильно
+
+| ❌ Неправильно | ✅ Правильно |
+|---------------|-------------|
+| Предполагать название таблицы по логике | Сверяться с `schema.sql` перед написанием SQL |
+| `SELECT * FROM notification_settings` | `\dt` + `\d table_name` в psql |
+| Доверять "очевидным" названиям | Проверять `information_schema.columns` |
+
+#### Чеклист перед написанием SQL
+
+```markdown
+## Перед любым SQL с новой таблицей:
+
+1. [ ] Открыть schema.sql — найти CREATE TABLE
+2. [ ] Проверить ВСЕ колонки — \d table_name
+3. [ ] Проверить типы данных — особенно JSONB/text[]
+4. [ ] Не доверять названиям — portfolios ≠ subscriptions
+5. [ ] Тестовый SELECT на реальной базе перед DELETE/UPDATE
+```
+
+#### Запрос для проверки любой таблицы
+
+```sql
+-- Быстрая проверка структуры таблицы:
+SELECT column_name, data_type, is_nullable
+FROM information_schema.columns
+WHERE table_name = 'portfolios'
+ORDER BY ordinal_position;
+
+-- Проверка что колонка существует:
+SELECT EXISTS (
+  SELECT 1 FROM information_schema.columns
+  WHERE table_name = 'notification_settings' AND column_name = 'tag_id'
+);
+-- Результат: false ← колонки нет, не используем
+```
+
+---
+
+---
+
+## 7. СВОДНАЯ ТАБЛИЦА ВСЕХ УРОКОВ
+
+| # | Урок | Источник | Раздел |
+|---|------|----------|--------|
+| 1 | Никогда `COALESCE($param, column)` для partial UPDATE | INC-004 | PIPELINE.md §11 |
+| 2 | Всегда `::text` в `jsonb_build_object('tag', $1::text)` | INC-005 | INC-005 |
+| 3 | `jsonb_array_elements('[]')` → 0 строк → `ARRAY()` → `NULL` | INC-005 | INC-005 баг #3 |
+| 4 | `try/catch` для таблиц которые могут не существовать | INC-005 | INC-005 баг #4 |
+| 5 | Не доверять названиям таблиц — сверяться с schema.sql | INC-006 | INC-006 |
+| 6 | Trailing newline `\n` в конце файла обязательна | INC-005 | INC-005 баг #6 |
+| 7 | `array_remove` а не `DELETE` для массивных полей | INC-005 | INC-005 баг #1 |
+
+---
+
+*Документ создан: 2026-06-05*  
+*Версия: 4.0 — добавлен INC-006 (таблица подписок)*
