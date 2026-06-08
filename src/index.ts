@@ -1274,7 +1274,6 @@ app.delete('/admin/tags/:tagId', requireAdmin, async (req, res) => {
       [tagId]
     );
     if (checkResult.rows.length === 0) {
-      client.release();
       return res.status(404).json({ error: 'Tag not found' });
     }
     const tagName = checkResult.rows[0].tag_name;
@@ -2995,4 +2994,5 @@ start();// deploy-check: 1779921938
 // build: 1779986393
 // deploy check: 1779986817
 // build check 1779993464
+
 
