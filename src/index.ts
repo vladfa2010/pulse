@@ -17,7 +17,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import crypto from 'crypto';
-import { query } from './config/db';          // ← Единая функция для SQL-запросов
+import { query, pool } from './config/db';  // ← query + pool (for transactions)
 import authRoutes from './routes/auth';
 import newsRoutes from './routes/news';
 import paymentRoutes from './routes/payment';
@@ -1251,38 +1251,60 @@ app.put('/admin/tags/:tagId', requireAdmin, async (req, res) => {
   }
 });
 
-// DELETE /admin/tags/:tagId — cascade delete tag and all references
+// DELETE /admin/tags/:tagId — atomic cascade delete (PostgreSQL ONLY)
 app.delete('/admin/tags/:tagId', requireAdmin, async (req, res) => {
+  // SQLite mode — transactions not supported via pool.connect()
+  if (!pool) {
+    return res.status(500).json({
+      error: 'SQLite mode not supported for admin tag deletion. Use PostgreSQL.',
+      code: 'SQLITE_UNSUPPORTED',
+    });
+  }
+
+  let client: any = null;
   try {
     const tagId = req.params.tagId;
 
+    // Acquire dedicated connection for the transaction
+    client = await pool.connect();
+
     // Check tag exists first
-    const checkResult = await query(`SELECT tag_id, tag_name FROM user_defined_tags WHERE tag_id = $1`, [tagId]);
+    const checkResult = await client.query(
+      `SELECT tag_id, tag_name FROM user_defined_tags WHERE tag_id = $1`,
+      [tagId]
+    );
     if (checkResult.rows.length === 0) {
+      client.release();
       return res.status(404).json({ error: 'Tag not found' });
     }
     const tagName = checkResult.rows[0].tag_name;
 
-    // 1. Delete news_tag_links (optional table — may not exist in dev)
+    // ════════════════ TRANSACTION START ════════════════
+    await client.query('BEGIN');
+
+    // 1. Delete news_tag_links (optional table)
     let deletedLinks = 0;
     try {
-      const r = await query(`DELETE FROM news_tag_links WHERE tag_id = $1`, [tagId]);
+      const r = await client.query(`DELETE FROM news_tag_links WHERE tag_id = $1`, [tagId]);
       deletedLinks = r.rowCount || 0;
-    } catch { /* table may not exist */ }
+    } catch (err: any) {
+      if (err.code === '42P01') { /* table does not exist, OK */ }
+      else throw err;
+    }
 
     // 2. Delete from portfolios (subscriptions)
-    const portfoliosResult = await query(`DELETE FROM portfolios WHERE tag_id = $1`, [tagId]);
+    const portfoliosResult = await client.query(`DELETE FROM portfolios WHERE tag_id = $1`, [tagId]);
     const deletedPortfolios = portfoliosResult.rowCount || 0;
 
     // 3. Clean matched_tags (TEXT[])
-    const matchedResult = await query(
+    const matchedResult = await client.query(
       `UPDATE news SET matched_tags = array_remove(matched_tags, $1) WHERE $1 = ANY(matched_tags)`,
       [tagId]
     );
     const cleanedMatched = matchedResult.rowCount || 0;
 
     // 4. Clean tag_impact (JSONB)
-    const llmResult = await query(
+    const llmResult = await client.query(
       `UPDATE news SET tag_impact = COALESCE(
         (SELECT jsonb_agg(elem) FROM jsonb_array_elements(tag_impact) elem WHERE elem->>'tag' != $1),
         '[]'::jsonb
@@ -1294,15 +1316,18 @@ app.delete('/admin/tags/:tagId', requireAdmin, async (req, res) => {
     // 5. Clean smart_tag_cache (optional table)
     let cleanedCache = 0;
     try {
-      const r = await query(
+      const r = await client.query(
         `UPDATE smart_tag_cache SET tags = array_remove(tags, $1) WHERE $1 = ANY(tags)`,
         [tagId]
       );
       cleanedCache = r.rowCount || 0;
-    } catch { /* table may not exist */ }
+    } catch (err: any) {
+      if (err.code === '42P01') { /* table does not exist, OK */ }
+      else throw err;
+    }
 
     // 6. Clean related_tags in enriched_data of other tags
-    const relatedResult = await query(
+    const relatedResult = await client.query(
       `UPDATE user_defined_tags
        SET enriched_data = CASE
          WHEN enriched_data IS NULL THEN NULL
@@ -1326,7 +1351,10 @@ app.delete('/admin/tags/:tagId', requireAdmin, async (req, res) => {
     const cleanedRelated = relatedResult.rowCount || 0;
 
     // 7. Delete the tag itself (LAST!)
-    await query(`DELETE FROM user_defined_tags WHERE tag_id = $1`, [tagId]);
+    await client.query(`DELETE FROM user_defined_tags WHERE tag_id = $1`, [tagId]);
+
+    // ════════════════ COMMIT ════════════════
+    await client.query('COMMIT');
 
     res.json({
       success: true,
@@ -1342,8 +1370,14 @@ app.delete('/admin/tags/:tagId', requireAdmin, async (req, res) => {
       },
     });
   } catch (err: any) {
+    // ════════════════ ROLLBACK ════════════════
+    if (client) {
+      try { await client.query('ROLLBACK'); } catch (rbErr) { /* ignore */ }
+    }
     console.error(`[Admin] Delete tag error:`, err.message);
-    res.status(500).json({ error: 'Delete failed', message: err.message });
+    res.status(500).json({ error: 'Delete failed', code: err.code, message: err.message });
+  } finally {
+    if (client) client.release();
   }
 });
 
