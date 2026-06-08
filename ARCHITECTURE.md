@@ -1,7 +1,7 @@
 # PULSE — Backend Architecture
 
 > Техническая документация backend'а. Логика, flow, принятие решений.
-> Последнее обновление: 2026-06-08 (v7.18.1 — tagId lowercase normalization + case sensitivity docs)
+> Последнее обновление: 2026-06-08 (v7.18.2 — SIMULATION_TAG_DELETE UX fixes + flow docs)
 
 ---
 
@@ -762,6 +762,51 @@ const handleDelete = async () => {
 
 Пользователь может ввести `"sber"`, `"SBER"` или `"Сбер"` — safety input пропустит любой регистр. Защита от mixed-case `tag_id` в БД.
 
+#### Удаление тега — полный UX flow (SIMULATION_TAG_DELETE)
+
+**Участники:** TagsTab → TagDetailModal → DeleteConfirmModal → Backend API
+
+**Flow:**
+```
+TagsTab (список)
+  → клик на тег → onSelectTag(tagId)
+    → TagDetailModal mount'ится → load() → GET /admin/tags/:tagId
+      → клик "Delete Tag" → setShowDeleteConfirm(true)
+        → DeleteConfirmModal mount'ится → GET /admin/tags/:tagId/delete-preview
+          → safety input → клик "Delete Forever"
+            → DELETE /admin/tags/:tagId → 200 OK
+              → onDeleted() → dispatchEvent('tag:deleted') → TagsTab filter
+```
+
+**Защитные механизмы:**
+
+| Механизм | Где | Как работает |
+|----------|-----|-------------|
+| Safety input | DeleteConfirmModal | Ввод exact tag_id для подтверждения удаления |
+| Case-insensitive | DeleteConfirmModal + Backend | `safetyInput.toLowerCase() === tagId.toLowerCase()` |
+| Кнопка disabled | DeleteConfirmModal | `disabled={!isSafetyMatch \|\| deleting}` — защита от двойного клика |
+| Транзакция | Backend | `BEGIN → 7 шагов → COMMIT/ROLLBACK` — атомарность |
+| Мгновенное обновление UI | TagsTab | `addEventListener('tag:deleted')` → `filter()` — без F5 |
+
+**Обработка ошибок:**
+
+| Сценарий | Backend | Frontend |
+|----------|---------|----------|
+| Тег не найден (404) | 404 → JSON `{error: 'Tag not found'}` | `setDeleteError('Tag not found')` — красный баннер |
+| Сеть упала | Нет ответа | `setLoadError('Failed to load tag')` — Retry/Close |
+| Сессия протухла (401) | 401 | `clearAuth()` → редирект на логин |
+| SQLite mode | 500 `{code: 'SQLITE_UNSUPPORTED'}` | `setDeleteError('SQLite mode not supported...')` |
+| Race condition (другой админ удалил) | 404 на DELETE | `setDeleteError('Tag not found')` |
+
+**Известные edge cases и фиксы:**
+
+| # | Проблема | Фикс | Коммит |
+|---|----------|------|--------|
+| 1 | Вечный спиннер при ошибке загрузки TagDetailModal | `loadError` state + UI Retry/Close | `fbe813a` |
+| 2 | `onClose` ДО `dispatchEvent` — потеря события | `dispatchEvent` первым в `handleDeleted` | `fbe813a` |
+| 3 | `setState` на unmounted DeleteConfirmModal | `mounted`-флаг в `useEffect` cleanup | `fbe813a` |
+| 4 | Double `client.release()` на 404 | Убран явный `release()`, `finally` покрывает | `ea9582d` |
+
 ---
 
 ## 10. API Design
@@ -1029,85 +1074,4 @@ cron.schedule('0 13 * * 0', generateReport);
 
 ```bash
 # RSS сбор
-POST /trigger-rss
-Header: x-trigger-secret: pulse-dev-key
-
-# Перевод существующих EN заголовков
-GET /backfill-translate?secret=pulse-dev-key
-
-# Перетегирование статей без matched_tags
-GET /backfill-tags?secret=pulse-dev-key
-
-# Полная синхронная обработка (diagnostic)
-GET /test-process              # <-- NEW v7.17
-```
-
----
-
-## 12. Services Map
-
-```
-src/
-|---> services/
-|     |---> cron.ts              # RSS pipeline (fetch -> translate -> tags -> unified batch -> save)
-|     |---> smartTagMatcher.ts   # 3-layer tag matching
-|     |---> rssFetcher.ts        # RSS fetch + XML parse (37 sources, Atom+RSS2.0, timezone-aware)
-|     |---> rssSources.ts        # 37 RSS sources config
-|     |---> translate.ts         # Kimi API translation + cache
-|     |---> tagManager.ts        # User-defined tags + keyword generation + backfill
-|     |---> unifiedBatch.ts      # <-- NEW v7.17: unified LLM batch (sentiment + tag_impact + is_political)
-|     |---> reports.ts           # Weekly email reports
-|
-|---> routes/
-|     |---> news.ts              # GET /api/news (3 modes)
-|     |---> auth.ts              # Login/register
-|     |---> user.ts              # Tags CRUD + user-defined tags
-|     |---> debug.ts             # Debug endpoints (debug-env, debug-db, debug-rss, debug-cron, debug-system)
-|     |---> test.ts              # <-- NEW v7.17: test-rss, test-process
-|     |---> ...
-|
-|---> models/
-|     |---> schema.sql           # PostgreSQL schema
-|
-|---> middleware/
-|     |---> auth.ts              # JWT verification
-|     |---> rateLimit.ts         # Rate limiting
-|
-|---> index.ts                   # Entry point, routes, cron
-```
-
----
-
-## 13. Batch Processing & Job Lock
-
-### Unified Batch (v7.17)
-
-```typescript
-// 1 LLM-запрос на 10 статей:
-//   sentiment + score + reasoning + is_political + tag_impacts
-analyzeUnifiedBatch(items: {title, summary, tags}[]): Promise<UnifiedResult[]>
-  |---> analyzeUnifiedBatchChunk(10 articles)
-        |---> 1 axios.post to Kimi API (response_format: { type: 'json_object' })
-        |---> returns: [{ score, reasoning, is_political, tag_impacts }] x 10
-```
-
-### Legacy Batch (v7.13-7.15) — REPLACED
-
-```
-v7.13: analyzeSentimentBatch       (sentiment only)
-v7.14: analyzeTagImpactBatch       (tag_impact only)
-v7.15: 2 separate LLM calls per batch
-
-v7.17: analyzeUnifiedBatch         (everything in 1 call)  <-- REPLACES above
-```
-
-### Retry Logic
-
-```typescript
-llmRequestWithRetry(fn, label):
-  for attempt 1..3:
-    try: return await fn()
-    catch err:
-      if status NOT IN [429, 502, ECONNRESET, ETIMEDOUT]: throw
-      delay = 2s * 2^(attempt-1)  // 2s, 4s, 8s
-      sleep(dela
+POST /trigge                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          
