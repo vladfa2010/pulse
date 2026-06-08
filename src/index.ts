@@ -2603,12 +2603,13 @@ app.get('/all-tags', async (req, res) => {
       ...catalogTagsResult.rows.map((r: any) => r.tag_name),
     ]);
 
-    // Get tag counts from news (how many times each tag was matched)
+    // Get tag counts from news (matched_tags stores tag_id, join with user_defined_tags for tag_name)
     const newsCountsResult = await query(`
-      SELECT unnest(matched_tags) as tag_name, COUNT(*) as count
-      FROM news
-      WHERE matched_tags IS NOT NULL AND array_length(matched_tags, 1) > 0
-      GROUP BY tag_name
+      SELECT t.tag_name, COUNT(*) as count
+      FROM news n
+      JOIN user_defined_tags t ON t.tag_id = ANY(n.matched_tags)
+      WHERE n.matched_tags IS NOT NULL AND array_length(n.matched_tags, 1) > 0
+      GROUP BY t.tag_name
     `);
     const newsCounts = new Map(newsCountsResult.rows.map((r: any) => [r.tag_name, parseInt(r.count)]));
 
