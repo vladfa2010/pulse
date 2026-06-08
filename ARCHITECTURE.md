@@ -1,7 +1,7 @@
 # PULSE — Backend Architecture
 
 > Техническая документация backend'а. Логика, flow, принятие решений.
-> Последнее обновление: 2026-06-08 (v7.18.0 — TZ_TAG_DELETE + RSS source toggle)
+> Последнее обновление: 2026-06-08 (v7.18.1 — tagId lowercase normalization + case sensitivity docs)
 
 ---
 
@@ -704,6 +704,49 @@ async function scanAllNewsForTag(
 |     |---> Возвращает { scanned: 1523, matched: 47 }
 ```
 
+### Регистр тегов (Case Sensitivity)
+
+**Все tag_id в системе — lowercase.** Регистр не влияет на матчинг, подписки, фильтрацию.
+
+#### Почему регистро-независимость работает
+
+| Компонент | Где lowercase | Пример |
+|-----------|--------------|--------|
+| **Создание tag_id** | `tagName.toLowerCase()` | `"СБЕР"` → `"сбер"` |
+| **Keyword matching** | `text.toLowerCase()` + `kw.toLowerCase()` | `"Сбер"` в тексте матчит `"сбер"` |
+| **Keywords в БД** | `.toLowerCase()` при генерации | `["сбер", "sber", ...]` |
+| **API endpoints** | `req.params.tagId.toLowerCase()` | `"СБЕР"` → `"сбер"` |
+| **matched_tags[]** | lowercase tag_id | `["сбер", "apple"]` |
+| **portfolios.tag_id** | lowercase tag_id | `"сбер"` |
+
+#### Что ОТЛИЧАЕТСЯ — только `tag_name`
+
+| Поле | Регистр | Пример |
+|------|---------|--------|
+| `tag_id` (PK) | **lowercase** | `"сбер"` |
+| `tag_name` (display) | **как ввели** | `"Сбер"` или `"СБЕР"` |
+
+`tag_name` — только для отображения в UI. Вся логика работает через `tag_id`.
+
+#### API endpoints — нормализация tagId
+
+Все endpoint'ы с `:tagId` параметром применяют `.toLowerCase()`:
+
+```typescript
+// src/index.ts — все 5 endpoint'ов
+const tagId = req.params.tagId.toLowerCase();
+```
+
+| Endpoint | Назначение |
+|----------|-----------|
+| `GET /admin/tags/:tagId` | Детали тега |
+| `PUT /admin/tags/:tagId` | Редактирование тега |
+| `DELETE /admin/tags/:tagId` | Удаление тега |
+| `GET /admin/tags/:tagId/delete-preview` | Preview удаления |
+| `GET /api/tags/:tagId/articles` | Статьи по тегу |
+
+> **Защита от API-вызовов:** если кто-то вызовет `GET /admin/tags/СБЕР` — отработает корректно (→ `"сбер"`).
+
 ---
 
 ## 10. API Design
@@ -1052,70 +1095,4 @@ llmRequestWithRetry(fn, label):
     catch err:
       if status NOT IN [429, 502, ECONNRESET, ETIMEDOUT]: throw
       delay = 2s * 2^(attempt-1)  // 2s, 4s, 8s
-      sleep(delay); retry
-```
-
-### Distributed Job Lock
-
-```sql
-CREATE TABLE cron_locks (
-  job_name VARCHAR(50) PRIMARY KEY,
-  locked_at TIMESTAMP,
-  locked_by VARCHAR(100),
-  expires_at TIMESTAMP
-);
-```
-
-**Acquire:**
-```sql
-INSERT INTO cron_locks (job_name, locked_at, locked_by, expires_at)
-VALUES ('rss-aggregator', NOW(), 'instance-id', NOW() + 10min)
-ON CONFLICT (job_name) DO UPDATE
-  SET locked_at = NOW(), locked_by = 'instance-id', expires_at = NOW() + 10min
-  WHERE cron_locks.expires_at < NOW()  -- only if expired
-RETURNING locked_by
-```
-
-**Release:** `DELETE FROM cron_locks WHERE job_name = 'rss-aggregator' AND locked_by = 'instance-id'`
-
-**TTL:** 10 минут (cron runs ~43-68 сек, 10 = safety margin для 5-min schedule + crash recovery).
-
-### Performance Comparison
-
-| Метрика | v7.15 (separate) | v7.17 (unified) | Ускорение |
-|---------|-------------------|-----------------|-----------|
-| LLM calls на 10 статей | 2 (sentiment + tag_impact) | 1 (unified) | **2x** |
-| Total LLM time (10 articles) | ~4 сек | ~2-3 сек | **1.5x** |
-| Cron interval | 15 мин | 5 мин | **3x чаще** |
-| Sources | 20 | 37 | **+85%** |
-| Lock TTL | 15 мин | 10 мин | — |
-
----
-
-## 14. Performance
-
-### Полный pipeline (37 источников)
-
-| Этап | Время |
-|------|-------|
-| RSS Fetch (37 sources, batch x 4) | ~15-20 сек |
-| Translate (EN -> RU) | ~10-20 сек |
-| Smart Match Tags (Layer 1+2+3) | ~5 сек |
-| Unified LLM Batch (sentiment + tag_impact + is_political) | ~10-20 сек |
-| Deduplicate + Save | ~3 сек |
-| **Итого** | **~43-68 сек** |
-
-### Bottlenecks
-
-```
-1. LLM API latency        <-- unified batch сокращает на 40%
-2. Translation batch      <-- cache hit rate ~60%
-3. RSS fetch (37 sources) <-- parallel batches x 4
-```
-
-### Monitoring
-
-```
-GET /debug-cron    -> 24h stats: total runs, success rate, avg duration
-GET /debug-rss     -> per-source: items, filtered, kept, errors
-GET /debug-system  -> DB health, lock status, test inse
+      sleep(dela

@@ -136,7 +136,7 @@ app.get('/debug-tag/:tagId', async (req, res) => {
   }
 
   try {
-    const tagId = req.params.tagId;
+    const tagId = req.params.tagId.toLowerCase();
 
     // Get tag from user_defined_tags
     const tagResult = await query(
@@ -963,7 +963,7 @@ app.get('/admin/tags', requireAdmin, async (req, res) => {
 // GET /admin/tags/:tagId — детали тега
 app.get('/admin/tags/:tagId', requireAdmin, async (req, res) => {
   try {
-    const tagId = req.params.tagId;
+    const tagId = req.params.tagId.toLowerCase();
 
     // Tag info
     const tagResult = await query(`
@@ -1133,7 +1133,7 @@ async function checkCircularReference(tagId: string, relatedTags: string[]): Pro
 
 app.put('/admin/tags/:tagId', requireAdmin, async (req, res) => {
   try {
-    const tagId = req.params.tagId;
+    const tagId = req.params.tagId.toLowerCase();
     const allowed = Object.keys(TAG_UPDATE_RULES);
     const updates: Record<string, any> = {};
     const errors: Record<string, string> = {};
@@ -1263,7 +1263,7 @@ app.delete('/admin/tags/:tagId', requireAdmin, async (req, res) => {
 
   let client: any = null;
   try {
-    const tagId = req.params.tagId;
+    const tagId = req.params.tagId.toLowerCase();
 
     // Acquire dedicated connection for the transaction
     client = await pool.connect();
@@ -1383,7 +1383,7 @@ app.delete('/admin/tags/:tagId', requireAdmin, async (req, res) => {
 // GET /admin/tags/:tagId/delete-preview — statistics for delete confirmation modal
 app.get('/admin/tags/:tagId/delete-preview', requireAdmin, async (req, res) => {
   try {
-    const tagId = req.params.tagId;
+    const tagId = req.params.tagId.toLowerCase();
 
     // Get tag info
     const tagResult = await query(`SELECT tag_id, tag_name FROM user_defined_tags WHERE tag_id = $1`, [tagId]);
