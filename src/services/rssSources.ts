@@ -1,5 +1,5 @@
 // ============================================================
-// RSS Sources — 37 total (18 RU + 19 EN)
+// RSS Sources — 35 total (16 RU + 19 EN) — 2 RU отключено (tass, ria)
 // Added: Finam RSS feeds (v7.8)
 // ============================================================
 
@@ -12,13 +12,14 @@ export interface RssSource {
 }
 
 export const RSS_SOURCES: RssSource[] = [
-  // Russian (13)
+  // Russian (11) — 2 отключено (tass, ria)
   { id: 'lenta', name: 'Лента.ru', url: 'https://lenta.ru/rss/news', lang: 'ru', category: 'news' },
   { id: 'kommersant', name: 'Коммерсант', url: 'https://www.kommersant.ru/RSS/news.xml', lang: 'ru', category: 'business' },
   { id: 'rbc', name: 'РБК', url: 'https://rssexport.rbc.ru/rbcnews/news/30/default.rss', lang: 'ru', category: 'business' },
   { id: 'vedomosti', name: 'Ведомости', url: 'https://www.vedomosti.ru/rss/news', lang: 'ru', category: 'business' },
-  { id: 'tass', name: 'ТАСС', url: 'https://tass.ru/rss/v2.xml', lang: 'ru', category: 'news' },
-  { id: 'ria', name: 'РИА Новости', url: 'https://ria.ru/export/rss2/archive/index.xml', lang: 'ru', category: 'news' },
+  // TODO: временно отключено — раскомментировать при необходимости
+  // { id: 'tass', name: 'ТАСС', url: 'https://tass.ru/rss/v2.xml', lang: 'ru', category: 'news' },
+  // { id: 'ria', name: 'РИА Новости', url: 'https://ria.ru/export/rss2/archive/index.xml', lang: 'ru', category: 'news' },
   { id: 'interfax', name: 'Интерфакс', url: 'https://www.interfax.ru/rss.asp', lang: 'ru', category: 'news' },
   { id: 'seekingalpha', name: 'Seeking Alpha', url: 'https://seekingalpha.com/feed.xml', lang: 'en', category: 'finance' },
   { id: 'rt', name: 'RT', url: 'https://russian.rt.com/rss', lang: 'ru', category: 'news' },
