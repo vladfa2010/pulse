@@ -135,7 +135,7 @@ router.post('/tags', authMiddleware, validate(AddTagSchema), async (req: AuthReq
       return res.status(400).json({ error: 'tagId and tagName required' });
     }
 
-    // Check tag limit (10 for premium, 1 for free)
+    // Check tag limit (10 for premium, 3 for free)
     const countResult = await query(
       'SELECT COUNT(*) as count FROM portfolios WHERE user_id = $1',
       [userId]
@@ -147,7 +147,7 @@ router.post('/tags', authMiddleware, validate(AddTagSchema), async (req: AuthReq
       [userId]
     );
     const isPremium = userResult.rows[0]?.subscription_active || false;
-    const maxTags = isPremium ? 10 : 1;
+    const maxTags = isPremium ? 10 : 3;  // 3 tags for free users (sync with frontend)
 
     if (tagCount >= maxTags) {
       return res.status(403).json({
