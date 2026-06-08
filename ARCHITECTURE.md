@@ -747,6 +747,21 @@ const tagId = req.params.tagId.toLowerCase();
 
 > **Защита от API-вызовов:** если кто-то вызовет `GET /admin/tags/СБЕР` — отработает корректно (→ `"сбер"`).
 
+#### Frontend — case-insensitive safety input
+
+`DeleteConfirmModal.tsx` — safety input для удаления тега тоже case-insensitive:
+
+```typescript
+// src/components/admin/DeleteConfirmModal.tsx
+const isSafetyMatch = safetyInput.toLowerCase() === tagId.toLowerCase()
+const handleDelete = async () => {
+  if (safetyInput.toLowerCase() !== tagId.toLowerCase()) return
+  // ...
+}
+```
+
+Пользователь может ввести `"sber"`, `"SBER"` или `"Сбер"` — safety input пропустит любой регистр. Защита от mixed-case `tag_id` в БД.
+
 ---
 
 ## 10. API Design
