@@ -1,14 +1,14 @@
 # PULSE — Backend Architecture
 
 > Техническая документация backend'а. Логика, flow, принятие решений.
-> Последнее обновление: 2026-05-31 (v7.17.4 — unified batch + 5-min cron + RSS fixes)
+> Последнее обновление: 2026-06-08 (v7.18.0 — TZ_TAG_DELETE + RSS source toggle)
 
 ---
 
 ## Содержание
 
 1. [News Pipeline](#1-news-pipeline)
-2. [RSS Fetcher](#2-rss-fetcher-rssfetcherts)
+2. [RSS Fetcher](#2-rss-fetcher-rssfetcherts) — 35 источников, управление (вкл/выкл)
 3. [Smart Tag Matching](#3-smart-tag-matching)
 4. [Duplicate Detection](#4-duplicate-detection)
 5. [Database Layer](#5-database-layer)
@@ -31,7 +31,7 @@
 
 ```
 ┌─────────────────┐
-│   RSS Fetcher   │  <-- 37 источников, batch x 4
+│   RSS Fetcher   │  <-- 35 источников (16 RU + 19 EN), batch x 4
 │   (rssFetcher)  │
 └────────┬────────┘
          │
@@ -100,17 +100,64 @@
 
 ## 2. RSS Fetcher (rssFetcher.ts)
 
-### 37 источников
+### 35 источников (16 RU + 19 EN)
 
 | Категория | Источники | Кол-во |
 |-----------|-----------|--------|
-| **RU** | lenta, kommersant, rbc, vedomosti, tass, ria, interfax, rt, izvestia | 9 |
+| **RU** | lenta, kommersant, rbc, vedomosti, interfax, rt, izvestia | 7 |
+| **RU (отключены)** | ~~tass~~, ~~ria~~ | — |
 | **Finam** | finam_companies, finam_news, finam_forecasts, finam_world, finam_analytics, finam_bonds_news, finam_bonds_comments | 7 |
 | **EN** | seekingalpha, reuters, bloomberg, techcrunch, cnbc, ft, wsj, economist, forbes, cnn, bbc, guardian, marketwatch | 13 |
 | **Tech** | verge, wired, arstechnica, hackernews | 4 |
 | **Crypto** | coindesk, cointelegraph | 2 |
 | **Energy** | oilprice, mining | 2 |
-| **Всего** | | **37** |
+| **Всего** | | **35** |
+
+### Управление источниками (вкл / выкл)
+
+Источники хранятся в **коде** (`src/services/rssSources.ts`), не в БД.
+
+#### Как отключить источник (закомментировать)
+
+```typescript
+// src/services/rssSources.ts
+export const RSS_SOURCES: RssSource[] = [
+  // ...
+  // TODO: временно отключено — раскомментировать при необходимости
+  // { id: 'tass', name: 'ТАСС', url: 'https://tass.ru/rss/v2.xml', lang: 'ru', category: 'news' },
+  // { id: 'ria', name: 'РИА Новости', url: 'https://ria.ru/export/rss2/archive/index.xml', lang: 'ru', category: 'news' },
+  // ...
+];
+```
+
+1. Найти источник в массиве `RSS_SOURCES`
+2. Закомментировать строку `//`
+3. Добавить `TODO` с причиной
+4. Обновить комментарий `// RSS Sources — X total` в шапке
+5. **Git commit + push** → Render пересоберёт автоматически
+
+#### Как включить источник обратно (раскомментировать)
+
+1. Убрать `//` перед `{ id: ... }`
+2. Убрать `TODO` если больше не актуален
+3. Обновить комментарий `// RSS Sources — X total` в шапке
+4. **Git commit + push**
+
+#### Что происходит при отключении
+
+| Что | Результат |
+|-----|-----------|
+| Новости из источника | Перестают фетчиться |
+| Старые новости в БД | **Остаются**, не удаляются |
+| `rss_source_meta.last_fetched_at` | Остаётся в БД, не мешает |
+| Пользователи | Видят меньше новостей |
+
+#### Почему не через БД / админку
+
+- Простота: не нужен UI, endpoint'ы, миграции
+- Безопасность: случайное удаление невозможно (только git)
+- Прозрачность: история изменений в git log
+- Trade-off: требует деплоя для каждого изменения
 
 ### normalizePubDate — timezone-aware парсинг
 
@@ -1071,6 +1118,4 @@ RETURNING locked_by
 ```
 GET /debug-cron    -> 24h stats: total runs, success rate, avg duration
 GET /debug-rss     -> per-source: items, filtered, kept, errors
-GET /debug-system  -> DB health, lock status, test insert
-GET /test-process  -> full sync process with timing breakdown
-```
+GET /debug-system  -> DB health, lock status, test inse
