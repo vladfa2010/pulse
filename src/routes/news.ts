@@ -294,43 +294,10 @@ router.get('/tags/:tagId', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// GET /api/news/:id — детальная карточка новости
-// ═══════════════════════════════════════════════════════════════════════════
-router.get('/:id', async (req: AuthRequest, res) => {
-  try {
-    const newsId = req.params.id;
-
-    // Валидация UUID
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    if (!uuidRegex.test(newsId)) {
-      return res.status(400).json({ error: 'Invalid news ID format' });
-    }
-
-    const result = await query(
-      `SELECT 
-        id, title_ru, summary_ru, title_original, lang_original,
-        source, source_id, url, published_at, fetched_at,
-        sentiment, sentiment_score, sentiment_reasoning, sentiment_source,
-        matched_tags, tag_impact, is_political, article_type,
-        source_count, all_sources
-      FROM news
-      WHERE id = $1`,
-      [newsId]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'News not found' });
-    }
-
-    res.json(result.rows[0]);
-  } catch (err: any) {
-    console.error('[News] Get by ID error:', err.message);
-    res.status(500).json({ error: 'Failed to fetch news' });
-  }
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
 // GET /api/news/:id/tag-enrichments — enriched data для всех тегов новости
+// ═══════════════════════════════════════════════════════════════════════════
+// ⚠️ ДОЛЖЕН идти ДО /:id — иначе Express сопоставит "123/tag-enrichments"
+//    с /:id (id = "123/tag-enrichments") → 400 Invalid UUID
 // ═══════════════════════════════════════════════════════════════════════════
 router.get('/:id/tag-enrichments', async (req: AuthRequest, res) => {
   try {
@@ -390,6 +357,42 @@ router.get('/:id/tag-enrichments', async (req: AuthRequest, res) => {
   } catch (err: any) {
     console.error('[TagEnrichments] Error:', err.message);
     res.status(500).json({ error: 'Failed to fetch tag enrichments' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GET /api/news/:id — детальная карточка новости
+// ═══════════════════════════════════════════════════════════════════════════
+router.get('/:id', async (req: AuthRequest, res) => {
+  try {
+    const newsId = req.params.id;
+
+    // Валидация UUID
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(newsId)) {
+      return res.status(400).json({ error: 'Invalid news ID format' });
+    }
+
+    const result = await query(
+      `SELECT 
+        id, title_ru, summary_ru, title_original, lang_original,
+        source, source_id, url, published_at, fetched_at,
+        sentiment, sentiment_score, sentiment_reasoning, sentiment_source,
+        matched_tags, tag_impact, is_political, article_type,
+        source_count, all_sources
+      FROM news
+      WHERE id = $1`,
+      [newsId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'News not found' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err: any) {
+    console.error('[News] Get by ID error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch news' });
   }
 });
 
