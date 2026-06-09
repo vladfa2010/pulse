@@ -733,6 +733,10 @@ addTag({ tagId, tagName, tagType: 'company' })  // ← 'company' ≠ 'auto'!
 addTag({ tagId, tagName, tagType: 'auto' })  // ← LLM вызовется
 ```
 
+**Баг `3c9b596` (2026-06-09):** GET `/admin/tags/:tagId` не возвращал `synonyms_ru`/`synonyms_en`. PUT сохранял в `enriched_data`, но GET не извлекал — админ видел пустые поля после сейва.
+
+**Фикс:** добавлены `synonymsRu`/`synonymsEn` в извлечение из `enriched_data` и в JSON ответ GET endpoint.
+
 **Правило:** Frontend всегда шлёт `'auto'` — backend сам решает тип через LLM.
 Админка может передать конкретный тип, но не при создании пользователем.
 
@@ -1344,6 +1348,40 @@ router.get('/:id', handler)                   // ← ловит "123/tag-enrichm
 router.get('/:id/tag-enrichments', handler)   // ← никогда не сработает
 ```
 
+### Auth Endpoints
+
+```
+POST /api/auth/register
+|---> Регистрация нового пользователя
+|---> Body: { username, email, password }
+|--→ Ответ: { token, user: { id, username, email, is_admin } }
+
+POST /api/auth/login
+|---> Вход по email + password
+|---> Body: { email, password }
+|--→ Ответ: { token, user: { id, username, email, is_admin } }
+```
+
+**Case-insensitive email (фикс 90b67f4):**
+
+| Было | Стало |
+|------|-------|
+| `WHERE email = $1` | `WHERE LOWER(email) = LOWER($1)` |
+
+```sql
+-- Регистрация: проверка дубликата (case-insensitive)
+SELECT id FROM users WHERE LOWER(email) = LOWER($1)
+
+-- Логин: поиск пользователя (case-insensitive)
+SELECT ... FROM users WHERE LOWER(email) = LOWER($1)
+```
+
+**Баг (2026-06-09):** PostgreSQL `=` для VARCHAR case-sensitive.
+- Регистрация `Vladfa@ya.ru` → логин `vladfa@ya.ru` → "Invalid credentials"
+- Можно создать два аккаунта: `vladfa@ya.ru` + `Vladfa@ya.ru`
+
+**Фикс:** оба SQL-запроса используют `LOWER()` — регистр неважен.
+
 ---
 
 ## 10a. Daily Summary — AI-саммари для пользователя
@@ -1482,41 +1520,4 @@ const summaryCache = new Map<string, { text: string; time: number; generatedAt: 
 ### Отличие от Telegram Digest
 
 | Аспект | Daily Summary (Web) | Telegram Digest |
-|--------|---------------------|-----------------|
-| **Канал** | Frontend (DailySummary.tsx) | Telegram Bot |
-| **Endpoint** | `GET /api/user/summary` | `POST /webhook/telegram` |
-| **Формат** | Текст на странице | Сообщение в TG |
-| **Период** | 12 часов (фиксировано) | 3/6/12/24 часа (настраивается) |
-| **Кэш** | 5 минут | Нет |
-| **Автоматика** | Только по запросу (refresh) | Cron по расписанию |
-| **Пользователь** | Только авторизованный | Подключённый TG |
-
----
-
-## 11. Cron Jobs
-
-### RSS Aggregator
-
-```typescript
-// Каждые 5 минут (было 15)
-cron.schedule('*/5 * * * *', processArticles);
-
-// Job lock: PostgreSQL cron_locks table
-// TTL: 10 минут (было 15) — safety margin для 5-min schedule
-
-// Первый запуск через 2 минуты после старта
-setTimeout(processArticles, 2 * 60 * 1000);
-```
-
-### Weekly Reports
-
-```typescript
-// Каждое воскресенье в 13:00
-cron.schedule('0 13 * * 0', generateReport);
-```
-
-### Manual Triggers
-
-```bash
-# RSS сбор
-POST /trigge
+|--------|---------------------|-----------
