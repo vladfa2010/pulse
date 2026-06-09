@@ -1148,7 +1148,7 @@ function validateField(key: string, value: any): string | null {
   const rule = TAG_UPDATE_RULES[key];
   if (!rule) return null; // unknown field, skip
 
-  if (value === null || value === undefined) {
+  if (value === null || value === undefined || value === '') {
     if (rule.optional) return null;
     return `${key} is required`;
   }
@@ -1159,16 +1159,17 @@ function validateField(key: string, value: any): string | null {
 
   if (rule.type === 'string') {
     if (typeof value !== 'string') return `${key} must be a string`;
-    if (rule.min && value.length < rule.min) return `${key} min ${rule.min} chars`;
+    if (rule.min && value.length > 0 && value.length < rule.min) return `${key} min ${rule.min} chars`;
     if (rule.max && value.length > rule.max) return `${key} max ${rule.max} chars`;
-    if (rule.pattern && !rule.pattern.test(value)) return `${key} invalid format`;
+    if (rule.pattern && value.length > 0 && !rule.pattern.test(value)) return `${key} invalid format`;
   }
 
   if (rule.type === 'url') {
     if (typeof value !== 'string') return `${key} must be a string`;
     if (value.length > (rule.max || 500)) return `${key} max ${rule.max} chars`;
+    if (!value) return null; // пустая строка — OK для optional
     // Auto-fix: add https:// if no protocol
-    if (value && !value.match(/^https?:\/\//)) {
+    if (!value.match(/^https?:\/\//)) {
       value = 'https://' + value;
     }
     try { new URL(value); } catch { return `${key} must be a valid URL`; }
