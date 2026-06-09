@@ -1,7 +1,7 @@
 # PULSE — Backend Architecture
 
 > Техническая документация backend'а. Логика, flow, принятие решений.
-> Последнее обновление: 2026-06-10 (v7.23.0 — TZ_FEED_FILTER_FIX)
+> Последнее обновление: 2026-06-10 (v7.24.0 — TZ_FEED_FILTER_FIX баг portfolio.id vs tag_id)
 
 ---
 
@@ -1388,6 +1388,37 @@ onClick={() => {
 | Клик «Все» | `loadArticles(null)` → все новости |
 | Клик «Сбербанк» | `loadArticles('sberbank')` → новости по тегу |
 | `?tag=Сбербанк` в URL | Маппинг tag_name → tag_id → корректный фильтр |
+
+### Баг: portfolio.id вместо tag_id
+
+**Дата:** 2026-06-10  
+**Коммит:** `8544e6b`
+
+**Проблема:** GET `/user/tags` возвращает:
+```json
+{
+  "id": "c0a97f7b-...",        // ← UUID portfolios (было использовано)
+  "tag_id": "spacex",           // ← строковый ID тега (нужно)
+  "tag_name": "SpaceX"
+}
+```
+
+Код использовал `tag.id` (UUID) вместо `tag.tag_id` (`spacex`):
+```typescript
+// БЫЛО — UUID → backend не находит в matched_tags
+loadArticles(tag.id)  // → /news/tags/c0a97f7b-... → 0 articles
+
+// СТАЛО — строковый tag_id
+loadArticles(tag.tag_id)  // → /news/tags/spacex → N articles
+```
+
+**Почему:** `matched_tags` в БД хранит строковые `tag_id` (`spacex`), не UUID портфеля.
+
+**Фикс:** везде `tag.id` → `tag.tag_id`:
+- `loadArticles(tag.tag_id)`
+- `activeTagId = tag.tag_id`
+- `tagsMap` ключ = `tag.tag_id`
+- `key={tag.tag_id}`
 
 ---
 
