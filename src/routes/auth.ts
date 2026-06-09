@@ -58,8 +58,8 @@ router.post('/register', validate(RegisterSchema), async (req, res) => {
       return res.status(400).json({ error: 'Password must be at least 8 characters' });
     }
 
-    // ─── Проверяем, не занят ли email ───────────────────────────────────
-    const existing = await query('SELECT id FROM users WHERE email = $1', [email]);
+    // ─── Проверяем, не занят ли email (case-insensitive) ────────────────
+    const existing = await query('SELECT id FROM users WHERE LOWER(email) = LOWER($1)', [email]);
     if (existing.rows.length > 0) {
       return res.status(409).json({
         error: 'На эту почту уже зарегистрирован аккаунт',
@@ -112,9 +112,9 @@ router.post('/login', validate(LoginSchema), async (req, res) => {
       return res.status(400).json({ error: 'Email and password required' });
     }
 
-    // ─── Ищем пользователя по email ─────────────────────────────────────
+    // ─── Ищем пользователя по email (case-insensitive) ──────────────────
     const result = await query(
-      'SELECT id, email, username, password_hash, is_admin, subscription_active, subscription_expires_at FROM users WHERE email = $1',
+      'SELECT id, email, username, password_hash, is_admin, subscription_active, subscription_expires_at FROM users WHERE LOWER(email) = LOWER($1)',
       [email]
     );
     if (result.rows.length === 0) {
