@@ -1,7 +1,7 @@
 # PULSE — Backend Architecture
 
 > Техническая документация backend'а. Логика, flow, принятие решений.
-> Последнее обновление: 2026-06-09 (v7.20.0 — TZ_TAG_SEARCH_v2 + NewsDetailModal enriched data + GIN TODO)
+> Последнее обновление: 2026-06-10 (v7.21.0 — TZ_TAG_ADD_ERROR_FEEDBACK_v2)
 
 ---
 
@@ -20,6 +20,7 @@
 9b. [NewsDetailModal — enriched data](#9b-newsdetailmodal--enriched-data-блок)
 9c. [Добавление тега — LLM flow](#9c-добавление-тега--llm-enrichment-flow)
 9d. [TODO: GIN индекс](#9d-todo-gin-индекс-для-performance)
+9e. [Обратная связь при ошибке](#9e-обратная-связь-при-ошибке-добавления-тега)
 10. [API Design](#10-api-design)
 10a. [Daily Summary](#10a-daily-summary--ai-саммари-для-пользователя)
 11. [Cron Jobs](#11-cron-jobs)
@@ -1183,6 +1184,80 @@ LIMIT 10;
 ```
 
 **Результат:** 10-50ms вместо 100-500ms на 1000+ тегах.
+
+---
+
+## 9e. Обратная связь при ошибке добавления тега
+
+> **TZ:** TZ_TAG_ADD_ERROR_FEEDBACK_v2  
+> **Дата:** 2026-06-10  
+> **Файлы:** `frontend/src/hooks/useAuth.tsx`, `frontend/src/pages/Home.tsx`
+
+### Проблема
+
+`addTag()` в `useAuth.tsx` глотал все ошибки:
+
+```typescript
+// БЫЛО — ошибка терялась
+catch {
+  return false  // пользователь не узнавал почему
+}
+```
+
+Пользователь кликал «+», видел спиннер — и тишину. Причина неясна: лимит? дубль? баг?
+
+### Решение
+
+`addTag()` теперь возвращает объект с ошибкой:
+
+```typescript
+// СТАЛО — ошибка передаётся в UI
+} catch (err: any) {
+  return {
+    success: false,
+    error: err.message || 'Failed to add tag',
+  }
+}
+```
+
+**Тип:** `Promise<{ success: boolean; error?: string }>`
+
+### HTTP-коды от backend
+
+| Код | Когда | Что видит пользователь |
+|-----|-------|----------------------|
+| 403 | Лимит тегов (3 free / 10 premium) | «Tag limit reached (max 3). Upgrade to Premium for more.» |
+| 409 | Дубль tag_id в портфеле | «Tag already in portfolio» |
+| 404 | Тег не найден | «Tag not found» |
+| 500 | Внутренняя ошибка | «Failed to add tag» (fallback) |
+
+### UI: inline-ошибка
+
+Вместо toast (библиотеки нет в проекте) — красный баннер под поисковым input:
+
+```tsx
+{addTagError && (
+  <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs"
+       style={{ backgroundColor: '#EF444415', border: '1px solid #EF444430', color: '#EF4444' }}>
+    <AlertCircle size={14} />
+    <span>{addTagError}</span>
+    <button onClick={() => setAddTagError(null)} style={{ color: '#EF444480' }}>✕</button>
+  </div>
+)}
+```
+
+**Поведение:**
+- Ошибка сбрасывается при повторном клике «+» (`setAddTagError(null)` перед запросом)
+- Ошибка сбрасывается при успешном добавлении
+- Закрывается вручную кнопкой ✕
+
+### Edge cases
+
+| Сценарий | Обработка |
+|----------|-----------|
+| Две ошибки подряд | Вторая заменяет первую |
+| Успех после ошибки | Ошибка исчезает |
+| Сеть упала | Fallback: «Failed to add tag» |
 
 ---
 
