@@ -1044,6 +1044,8 @@ app.get('/admin/tags/:tagId', requireAdmin, async (req, res) => {
     let website = null;
     let description = null;
     let keyProducts: string[] = [];
+    let synonymsRu: string[] = [];
+    let synonymsEn: string[] = [];
     try {
       if (tag.enriched_data?.related_tags) {
         relatedTags = tag.enriched_data.related_tags;
@@ -1054,6 +1056,8 @@ app.get('/admin/tags/:tagId', requireAdmin, async (req, res) => {
       website = tag.enriched_data?.website || null;
       description = tag.enriched_data?.description_ru || null;
       keyProducts = tag.enriched_data?.key_products || [];
+      synonymsRu = tag.enriched_data?.synonyms_ru || [];
+      synonymsEn = tag.enriched_data?.synonyms_en || [];
     } catch { /* ignore */ }
 
     // Daily stats (30 days)
@@ -1099,6 +1103,8 @@ app.get('/admin/tags/:tagId', requireAdmin, async (req, res) => {
         website,
         description,
         key_products: keyProducts,
+        synonyms_ru: synonymsRu,
+        synonyms_en: synonymsEn,
       },
       daily_stats: dailyResult.rows.map((r: any) => ({
         day: r.day,
@@ -3047,15 +3053,8 @@ async function start() {
       }
     }, 8000);
 
-    startDigestCron(); // ← TG дайджест (каждые 3 часа)
+    startDigestCron(); // TG digest cron (every 3 hours)
   });
 }
 
-start();// deploy-check: 1779921938
-// force rebuild v5 1779922827
-// deploy trigger 1779970311
-// build: 1779986393
-// deploy check: 1779986817
-// build check 1779993464
-
-
+start();
