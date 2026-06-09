@@ -1,7 +1,7 @@
 # PULSE — Backend Architecture
 
 > Техническая документация backend'а. Логика, flow, принятие решений.
-> Последнее обновление: 2026-06-08 (v7.18.2 — SIMULATION_TAG_DELETE UX fixes + flow docs)
+> Последнее обновление: 2026-06-08 (v7.19.0 — NewsDetailModal + Tag Enrichments)
 
 ---
 
@@ -820,6 +820,51 @@ GET /api/news
 |---> ?global=true:     все новости (без фильтра тегов)
 |---> ?limit=N:         пагинация (default: 50, max: 100)
 ```
+
+### News Detail Modal
+
+Модальное окно при клике на карточку новости. Заменяет `window.open(url)`.
+
+**Endpoint'ы:**
+```
+GET /api/news/:id              — детали статьи (title, summary, sentiment, tag_impact...)
+GET /api/news/:id/tag-enrichments  — enriched_data для всех тегов статьи
+```
+
+> ⚠️ **Порядок маршрутов критичен**: `/:id/tag-enrichments` ДОЛЖЕН идти ДО `/:id`
+> в Express router. Иначе `/news/123/tag-enrichments` попадает в `/:id` как
+> `id = "123/tag-enrichments"` → UUID валидация падает → 400.
+
+**UI блоки (NewsDetailModal.tsx):**
+
+| Блок | Данные |
+|------|--------|
+| **Header** | Micro/Macro бейдж, Political Shield, Copy link, Telegram share, Close |
+| **Sentiment Gauge** | SVG полукруглая дуга `-10..+10`, анимация стрелки |
+| **Title + RU/EN toggle** | `title_ru` / `title_original` с переключателем |
+| **Summary** | `summary_ru` |
+| **Reasoning Card** | `sentiment_reasoning` → 3 параграфа (Что/Почему/Каскад) |
+| **Keyword Tags (Layer 1)** | `matched_tags[]` — серые пилюли с `Key` иконкой |
+| **LLM Tags (Layer 2)** | `tag_impact[]` — цветные пилюли (`score` + hover tooltip) |
+| **Tag Enrichments** | `GET /news/:id/tag-enrichments` — карточки тегов из БД |
+| **Source Chain** | `all_sources.join(' → ')` если `source_count > 1` |
+| **Original Link** | Кнопка "Открыть оригинал" → `article.url` |
+
+**Tag Enrichment Card (на тег):**
+
+| Поле | Источник | Стиль |
+|------|----------|-------|
+| Название тега | `tag_name` | Белый заголовок |
+| Тикер | `ticker` | Зелёный `$TICK` бейдж |
+| Сайт | `website` | Синяя ссылка |
+| Описание | `description_ru` | Серый текст |
+| Связанные компании | `related_entities[]` | Синие пилюли |
+| Продукты | `key_products[]` | Серые пилюли |
+| Синонимы EN/RU | `synonyms_en/ru[]` | Фиолетовые мини-бейджи |
+
+**Keyboard:** ESC = закрыть, стрелки = навигация (future).  
+**Animation:** Framer Motion (scale + fade, 0.25s).  
+**Scroll lock:** `document.body.style.overflow = 'hidden'`.
 
 ### SQL для каждого режима
 
