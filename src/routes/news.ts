@@ -329,4 +329,68 @@ router.get('/:id', async (req: AuthRequest, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// GET /api/news/:id/tag-enrichments — enriched data для всех тегов новости
+// ═══════════════════════════════════════════════════════════════════════════
+router.get('/:id/tag-enrichments', async (req: AuthRequest, res) => {
+  try {
+    const newsId = req.params.id;
+
+    // Валидация UUID
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(newsId)) {
+      return res.status(400).json({ error: 'Invalid news ID format' });
+    }
+
+    // Получаем matched_tags новости
+    const newsResult = await query(
+      `SELECT matched_tags, tag_impact FROM news WHERE id = $1`,
+      [newsId]
+    );
+
+    if (newsResult.rows.length === 0) {
+      return res.status(404).json({ error: 'News not found' });
+    }
+
+    const matchedTags = newsResult.rows[0].matched_tags || [];
+    const tagImpact = newsResult.rows[0].tag_impact || [];
+
+    // Собираем ВСЕ tag_id: из matched_tags + из tag_impact
+    const allTagIds = new Set<string>(matchedTags);
+    tagImpact.forEach((ti: any) => { if (ti.tag) allTagIds.add(ti.tag); });
+
+    if (allTagIds.size === 0) {
+      return res.json({ tags: [] });
+    }
+
+    // Получаем enriched_data для каждого тега
+    const enrichResult = await query(
+      `SELECT tag_id, tag_name, enriched_data
+       FROM user_defined_tags
+       WHERE tag_id = ANY($1::text[])`,
+      [Array.from(allTagIds)]
+    );
+
+    const result = enrichResult.rows.map((row: any) => {
+      const ed = row.enriched_data || {};
+      return {
+        tag_id: row.tag_id,
+        tag_name: row.tag_name,
+        ticker: ed.ticker || null,
+        website: ed.website || null,
+        description_ru: ed.description_ru || ed.description || null,
+        key_products: ed.key_products || [],
+        synonyms_en: ed.synonyms_en || [],
+        synonyms_ru: ed.synonyms_ru || [],
+        related_entities: ed.related_entities || [],
+      };
+    });
+
+    res.json({ tags: result });
+  } catch (err: any) {
+    console.error('[TagEnrichments] Error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch tag enrichments' });
+  }
+});
+
 export default router;
