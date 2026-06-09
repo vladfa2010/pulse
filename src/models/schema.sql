@@ -91,13 +91,36 @@ CREATE TABLE IF NOT EXISTS user_sessions (
 -- 5c. user_defined_tags (пользовательские теги)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS user_defined_tags (
-  tag_id      VARCHAR(50) PRIMARY KEY,
-  tag_name    VARCHAR(100) NOT NULL,
-  tag_type    VARCHAR(20) DEFAULT 'company',
-  keywords    TEXT[] DEFAULT '{}',
-  created_by  UUID REFERENCES users(id),
-  created_at  TIMESTAMP DEFAULT NOW()
+  tag_id        VARCHAR(50) PRIMARY KEY,
+  tag_name      VARCHAR(100) NOT NULL,
+  tag_type      VARCHAR(20) DEFAULT 'company',
+  keywords      TEXT[] DEFAULT '{}',
+  enriched_data JSONB,                        -- LLM enrichment: ticker, description, synonyms, etc.
+  created_by    UUID REFERENCES users(id),
+  created_at    TIMESTAMP DEFAULT NOW()
 );
+
+-- Fallback: если таблица создана без enriched_data (существующие БД)
+ALTER TABLE user_defined_tags
+  ADD COLUMN IF NOT EXISTS enriched_data JSONB;
+
+-- ============================================================
+-- 5d. news_tag_links (tag ↔ news связи)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS news_tag_links (
+  id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  news_id       UUID NOT NULL REFERENCES news(id) ON DELETE CASCADE,
+  tag_id        VARCHAR(50) NOT NULL,
+  impact_score  INTEGER,
+  impact_reasoning TEXT,
+  link_source   VARCHAR(20) NOT NULL DEFAULT 'keyword',
+  link_version  INTEGER DEFAULT 1,
+  linked_at     TIMESTAMP DEFAULT NOW(),
+  UNIQUE(news_id, tag_id, link_source)
+);
+
+CREATE INDEX IF NOT EXISTS idx_news_tag_links_news_id ON news_tag_links(news_id);
+CREATE INDEX IF NOT EXISTS idx_news_tag_links_tag_id ON news_tag_links(tag_id);
 
 -- ============================================================
 -- 5b. smart_tag_cache (LLM matching results)

@@ -1599,25 +1599,8 @@ app.post('/migrate-v3-enrichment', async (req, res) => {
   try {
     const results: string[] = [];
 
-    await query(`CREATE TABLE IF NOT EXISTS news_tag_links (
-      id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-      news_id UUID NOT NULL REFERENCES news(id) ON DELETE CASCADE,
-      tag_id VARCHAR(50) NOT NULL,
-      impact_score INTEGER,
-      impact_reasoning TEXT,
-      link_source VARCHAR(20) NOT NULL DEFAULT 'keyword',
-      link_version INTEGER DEFAULT 1,
-      linked_at TIMESTAMP DEFAULT NOW(),
-      UNIQUE(news_id, tag_id, link_source)
-    )`);
-    results.push('Created table: news_tag_links');
-
-    await query(`CREATE INDEX IF NOT EXISTS idx_news_tag_links_news_id ON news_tag_links(news_id)`);
-    results.push('Created index: idx_news_tag_links_news_id');
-
-    await query(`CREATE INDEX IF NOT EXISTS idx_news_tag_links_tag_id ON news_tag_links(tag_id)`);
-    results.push('Created index: idx_news_tag_links_tag_id');
-
+    // news_tag_links: таблица + индексы теперь в schema.sql (§5d)
+    // Оставляем только enrichment_version — это отдельная миграция
     await query(`ALTER TABLE news ADD COLUMN IF NOT EXISTS enrichment_version INTEGER DEFAULT 1`);
     results.push('Added column: news.enrichment_version');
 
