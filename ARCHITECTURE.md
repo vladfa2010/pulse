@@ -1,7 +1,7 @@
 # PULSE — Backend Architecture
 
 > Техническая документация backend'а. Логика, flow, принятие решений.
-> Последнее обновление: 2026-06-10 (v7.22.0 — TZ_SCHEMA_ENRICHED_DATA_FIX)
+> Последнее обновление: 2026-06-10 (v7.23.0 — TZ_FEED_FILTER_FIX)
 
 ---
 
@@ -22,6 +22,7 @@
 9d. [TODO: GIN индекс](#9d-todo-gin-индекс-для-performance)
 9e. [Обратная связь при ошибке](#9e-обратная-связь-при-ошибке-добавления-тега)
 9f. [Schema fix — enriched_data в schema.sql](#9f-schema-fix--enriched_data-в-schemasql)
+9g. [NewsFeed — фильтр по тегу](#9g-newsfeed--фильтр-по-тегу)
 10. [API Design](#10-api-design)
 10a. [Daily Summary](#10a-daily-summary--ai-саммари-для-пользователя)
 11. [Cron Jobs](#11-cron-jobs)
@@ -1327,6 +1328,66 @@ CREATE TABLE IF NOT EXISTS news_tag_links (
 ### Уже потерянные данные
 
 **Не восстановить.** Этот фикс предотвращает потери в будущем. Для восстановления — ручное редактирование тегов в админке.
+
+---
+
+## 9g. NewsFeed — фильтр по тегу
+
+> **TZ:** TZ_FEED_FILTER_FIX  
+> **Дата:** 2026-06-10  
+> **Коммит:** `e81875d`  
+> **Файл:** `frontend/src/pages/NewsFeed.tsx`
+
+### Проблема: фильтр на фронте сравнивал разные поля
+
+```typescript
+// NewsFeed.tsx (до фикса)
+const matchTag = !activeTag || a.tag === activeTag
+// activeTag = "Сбербанк"  (tag_name — имя)
+// a.tag     = "sberbank"  (matched_tags[0] — ID)
+// "sberbank" === "Сбербанк" → false → пустой результат
+```
+
+При клике на тег в Home → `/feed?tag=Сбербанк` → лента была пустой.
+
+### Решение: backend-фильтр по tag_id
+
+| Режим | Endpoint |
+|-------|----------|
+| Все новости | `GET /news?all=true` |
+| По тегу | `GET /api/news/tags/{tagId}` (backend фильтр по `matched_tags`) |
+
+**NewsFeed.tsx (после фикса):**
+
+```typescript
+// Разделение: tag_id для API, tag_name для UI
+const [activeTagId, setActiveTagId] = useState<string | null>(null)
+const [activeTagName, setActiveTagName] = useState<string | null>(urlTag)
+
+const loadArticles = (tagId: string | null) => {
+  const endpoint = tagId
+    ? `/news/tags/${encodeURIComponent(tagId)}`   // ← backend фильтр
+    : '/news?all=true'                            // ← все
+  api.get(endpoint).then(data => setArticles(data.articles || []))
+}
+```
+
+**Клик на тег:**
+```typescript
+onClick={() => {
+  setActiveTagId(tag.id)          // sberbank — для API
+  setActiveTagName(tag.tag_name)   // Сбербанк — для UI
+  loadArticles(tag.id)
+}}
+```
+
+### Поведение
+
+| Действие | Результат |
+|----------|-----------|
+| Клик «Все» | `loadArticles(null)` → все новости |
+| Клик «Сбербанк» | `loadArticles('sberbank')` → новости по тегу |
+| `?tag=Сбербанк` в URL | Маппинг tag_name → tag_id → корректный фильтр |
 
 ---
 
