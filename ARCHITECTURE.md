@@ -1520,4 +1520,43 @@ const summaryCache = new Map<string, { text: string; time: number; generatedAt: 
 ### Отличие от Telegram Digest
 
 | Аспект | Daily Summary (Web) | Telegram Digest |
-|--------|---------------------|-----------
+|--------|---------------------|-----------------|
+| **Канал** | Frontend (DailySummary.tsx) | Telegram Bot |
+| **Endpoint** | `GET /api/user/summary` | `POST /webhook/telegram` |
+| **Формат** | Текст на странице | Сообщение в TG |
+| **Период** | 12 часов (фиксировано) | 3/6/12/24 часа (настраивается) |
+| **Кэш** | 5 минут | Нет |
+| **Автоматика** | Только по запросу (refresh) | Cron по расписанию |
+| **Пользователь** | Только авторизованный | Подключённый TG |
+
+---
+
+## 11. Cron Jobs
+
+### RSS Aggregator
+
+```typescript
+// Каждые 5 минут (было 15)
+cron.schedule('*/5 * * * *', processArticles);
+
+// Job lock: PostgreSQL cron_locks table
+// TTL: 10 минут (было 15) — safety margin для 5-min schedule
+
+// Первый запуск через 2 минуты после старта
+setTimeout(processArticles, 2 * 60 * 1000);
+```
+
+### Weekly Reports
+
+```typescript
+// Каждое воскресенье в 13:00
+cron.schedule('0 13 * * 0', generateReport);
+```
+
+### Manual Triggers
+
+```bash
+# RSS сбор
+POST /trigger/rss
+POST /trigger/weekly
+```
