@@ -1,7 +1,7 @@
 # PULSE — Backend Architecture
 
 > Техническая документация backend'а. Логика, flow, принятие решений.
-> Последнее обновление: 2026-06-08 (v7.19.0 — NewsDetailModal + Tag Enrichments)
+> Последнее обновление: 2026-06-09 (v7.19.1 — tagType 'company' → 'auto' fix + LLM enrichment docs)
 
 ---
 
@@ -703,6 +703,34 @@ async function scanAllNewsForTag(
 |     |---> Если совпало -> UPDATE matched_tags = array_append(matched_tags, 'lukoil')
 |     |---> Возвращает { scanned: 1523, matched: 47 }
 ```
+
+### LLM Enrichment — когда вызывается
+
+**Критично:** LLM enrichment (описание, related_entities, key_products) вызывается
+**только** при `tagType = 'auto'` или пустом `tagType`.
+
+```typescript
+// backend/src/services/tagManager.ts:createUserTag()
+if (!tagType || tagType === 'auto') {
+  enrichment = await enrichTagViaLLM(tagName);  // ← вызываем LLM
+}
+```
+
+**Баг (2026-06-08):** Frontend передавал `tagType: 'company'` при ручном вводе:
+```typescript
+// frontend/src/pages/Home.tsx — ДО фикса
+addTag({ tagId, tagName, tagType: 'company' })  // ← 'company' ≠ 'auto'!
+```
+Результат: тег создавался без `enriched_data` — пустышка (только имя).
+
+**Фикс:** `tagType: 'company'` → `'auto'` (commit `0164be4`):
+```typescript
+// frontend/src/pages/Home.tsx — ПОСЛЕ фикса
+addTag({ tagId, tagName, tagType: 'auto' })  // ← LLM вызовется
+```
+
+**Правило:** Frontend всегда шлёт `'auto'` — backend сам решает тип через LLM.
+Админка может передать конкретный тип, но не при создании пользователем.
 
 ### Регистр тегов (Case Sensitivity)
 
