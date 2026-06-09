@@ -1,7 +1,7 @@
 # PULSE — Backend Architecture
 
 > Техническая документация backend'а. Логика, flow, принятие решений.
-> Последнее обновление: 2026-06-10 (v7.21.0 — TZ_TAG_ADD_ERROR_FEEDBACK_v2)
+> Последнее обновление: 2026-06-10 (v7.22.0 — TZ_SCHEMA_ENRICHED_DATA_FIX)
 
 ---
 
@@ -21,6 +21,7 @@
 9c. [Добавление тега — LLM flow](#9c-добавление-тега--llm-enrichment-flow)
 9d. [TODO: GIN индекс](#9d-todo-gin-индекс-для-performance)
 9e. [Обратная связь при ошибке](#9e-обратная-связь-при-ошибке-добавления-тега)
+9f. [Schema fix — enriched_data в schema.sql](#9f-schema-fix--enriched_data-в-schemasql)
 10. [API Design](#10-api-design)
 10a. [Daily Summary](#10a-daily-summary--ai-саммари-для-пользователя)
 11. [Cron Jobs](#11-cron-jobs)
@@ -1261,6 +1262,74 @@ catch {
 
 ---
 
+## 9f. Schema fix — enriched_data в schema.sql
+
+> **TZ:** TZ_SCHEMA_ENRICHED_DATA_FIX  
+> **Дата:** 2026-06-10  
+> **Коммит:** `5a1366a`  
+> **Файлы:** `src/models/schema.sql`, `src/index.ts`
+
+### Проблема: рассинхронизация schema.sql и runtime
+
+`enriched_data` добавлялось только через рантайм-миграцию (`index.ts:2953`), но **отсутствовало в `schema.sql`**. При редеплое Render:
+
+1. `schema.sql` создавал `user_defined_tags` **без** `enriched_data`
+2. `index.ts` делал `ALTER TABLE ADD COLUMN IF NOT EXISTS` — колонка создавалась **пустой**
+3. `tag_name`, `tag_type` оставались на месте
+4. `ticker`, `description`, `synonyms`, `key_products` — **пропадали** (хранились в пустом JSONB)
+
+То же самое с `news_tag_links` — таблица создавалась через миграцию в `index.ts:1602`, но не в `schema.sql`.
+
+### Решение
+
+**`schema.sql` — primary source of truth:**
+
+```sql
+CREATE TABLE IF NOT EXISTS user_defined_tags (
+  tag_id        VARCHAR(50) PRIMARY KEY,
+  tag_name      VARCHAR(100) NOT NULL,
+  tag_type      VARCHAR(20) DEFAULT 'company',
+  keywords      TEXT[] DEFAULT '{}',
+  enriched_data JSONB,        -- ← добавлено
+  created_by    UUID REFERENCES users(id),
+  created_at    TIMESTAMP DEFAULT NOW()
+);
+
+-- Fallback для существующих БД
+ALTER TABLE user_defined_tags
+  ADD COLUMN IF NOT EXISTS enriched_data JSONB;
+
+-- news_tag_links теперь тоже здесь
+CREATE TABLE IF NOT EXISTS news_tag_links (
+  id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  news_id       UUID NOT NULL REFERENCES news(id) ON DELETE CASCADE,
+  tag_id        VARCHAR(50) NOT NULL,
+  impact_score  INTEGER,
+  impact_reasoning TEXT,
+  link_source   VARCHAR(20) NOT NULL DEFAULT 'keyword',
+  link_version  INTEGER DEFAULT 1,
+  linked_at     TIMESTAMP DEFAULT NOW(),
+  UNIQUE(news_id, tag_id, link_source)
+);
+```
+
+**`index.ts` — дублирование убрано:**
+- Удалён `CREATE TABLE news_tag_links` + индексы из `/migrate-v3-enrichment`
+- Оставлен `ALTER TABLE news ADD COLUMN IF NOT EXISTS enrichment_version` (это другая миграция)
+
+### Правило
+
+| Источник | Назначение |
+|----------|-----------|
+| `schema.sql` | Структура таблиц и колонок — **единая правда** |
+| `index.ts` | Только runtime-логика; миграции — для обратной совместимости (не для новых таблиц) |
+
+### Уже потерянные данные
+
+**Не восстановить.** Этот фикс предотвращает потери в будущем. Для восстановления — ручное редактирование тегов в админке.
+
+---
+
 ## 10. API Design
 
 ### News Feed Logic
@@ -1635,3 +1704,4 @@ cron.schedule('0 13 * * 0', generateReport);
 POST /trigger/rss
 POST /trigger/weekly
 ```
+ 
