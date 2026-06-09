@@ -960,6 +960,68 @@ app.get('/admin/tags', requireAdmin, async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// GET /api/tags/search — поиск тегов по enriched-полям (substring, ILIKE)
+// ═══════════════════════════════════════════════════════════════════════════
+app.get('/api/tags/search', async (req, res) => {
+  try {
+    const q = (req.query.q as string)?.trim();
+
+    if (!q || q.length < 3) {
+      return res.status(400).json({ error: 'Search query must be at least 3 characters' });
+    }
+    if (q.length > 50) {
+      return res.status(400).json({ error: 'Search query must not exceed 50 characters' });
+    }
+
+    const result = await query(
+      `SELECT
+        tag_id,
+        tag_name,
+        tag_type,
+        enriched_data->>'ticker' as ticker
+      FROM user_defined_tags
+      WHERE
+        tag_name ILIKE '%' || $1 || '%'
+        OR enriched_data->>'ticker' ILIKE '%' || $1 || '%'
+        OR EXISTS (
+          SELECT 1 FROM unnest(keywords) k
+          WHERE k ILIKE '%' || $1 || '%'
+        )
+        OR EXISTS (
+          SELECT 1 FROM jsonb_array_elements_text(
+            COALESCE(enriched_data->'synonyms_en', '[]'::jsonb)
+          ) s WHERE s ILIKE '%' || $1 || '%'
+        )
+        OR EXISTS (
+          SELECT 1 FROM jsonb_array_elements_text(
+            COALESCE(enriched_data->'synonyms_ru', '[]'::jsonb)
+          ) s WHERE s ILIKE '%' || $1 || '%'
+        )
+        OR EXISTS (
+          SELECT 1 FROM jsonb_array_elements_text(
+            COALESCE(enriched_data->'key_products', '[]'::jsonb)
+          ) s WHERE s ILIKE '%' || $1 || '%'
+        )
+        OR EXISTS (
+          SELECT 1 FROM jsonb_array_elements_text(
+            COALESCE(enriched_data->'related_entities', '[]'::jsonb)
+          ) s WHERE s ILIKE '%' || $1 || '%'
+        )
+      LIMIT 10`,
+      [q]
+    );
+
+    res.json({
+      tags: result.rows,
+      total: result.rows.length,
+    });
+  } catch (err: any) {
+    console.error('[Tags] Search error:', err.message);
+    res.status(500).json({ error: 'Search failed' });
+  }
+});
+
 // GET /admin/tags/:tagId — детали тега
 app.get('/admin/tags/:tagId', requireAdmin, async (req, res) => {
   try {
