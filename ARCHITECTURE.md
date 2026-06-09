@@ -1,7 +1,7 @@
 # PULSE — Backend Architecture
 
 > Техническая документация backend'а. Логика, flow, принятие решений.
-> Последнее обновление: 2026-06-09 (v7.19.1 — tagType 'company' → 'auto' fix + LLM enrichment docs)
+> Последнее обновление: 2026-06-09 (v7.20.0 — TZ_TAG_SEARCH_v2 + NewsDetailModal enriched data + GIN TODO)
 
 ---
 
@@ -16,6 +16,10 @@
 7. [Unified LLM Batch](#7-unified-llm-batch-v717)
 8. [Sentiment Analysis](#8-sentiment-analysis)
 9. [User-Defined Tags](#9-user-defined-tags)
+9a. [Tag Search](#9a-tag-search--поиск-тегов-по-enriched-полям)
+9b. [NewsDetailModal — enriched data](#9b-newsdetailmodal--enriched-data-блок)
+9c. [Добавление тега — LLM flow](#9c-добавление-тега--llm-enrichment-flow)
+9d. [TODO: GIN индекс](#9d-todo-gin-индекс-для-performance)
 10. [API Design](#10-api-design)
 10a. [Daily Summary](#10a-daily-summary--ai-саммари-для-пользователя)
 11. [Cron Jobs](#11-cron-jobs)
@@ -837,6 +841,347 @@ TagsTab (список)
 
 ---
 
+## 9a. Tag Search — поиск тегов по enriched-полям
+
+> **Реализовано:** 2026-06-09 (v7.20.0 — TZ_TAG_SEARCH_v2)  
+> **Заменяет:** хардкод `allSuggestions` (12 тегов) в Home.tsx
+
+### Endpoint
+
+```
+GET /api/tags/search?q={query}
+```
+
+| Параметр | Тип | Описание |
+|----------|-----|----------|
+| `q` | string | Строка поиска, 3-50 символов |
+
+**Валидация:** `< 3` → 400, `> 50` → 400
+
+### SQL — substring по 7 полям
+
+```sql
+SELECT
+  tag_id,
+  tag_name,
+  tag_type,
+  enriched_data->>'ticker' as ticker
+FROM user_defined_tags
+WHERE
+  tag_name              ILIKE '%' || $1 || '%'   -- "Яндекс", "Apple"
+  OR enriched_data->>'ticker'        ILIKE '%' || $1 || '%'   -- "AAPL"
+  OR EXISTS (
+    SELECT 1 FROM unnest(keywords) k
+    WHERE k ILIKE '%' || $1 || '%'                -- "сбер", "sber"
+  )
+  OR EXISTS (
+    SELECT 1 FROM jsonb_array_elements_text(
+      COALESCE(enriched_data->'synonyms_en', '[]'::jsonb)
+    ) s WHERE s ILIKE '%' || $1 || '%'            -- "Yandex"
+  )
+  OR EXISTS (
+    SELECT 1 FROM jsonb_array_elements_text(
+      COALESCE(enriched_data->'synonyms_ru', '[]'::jsonb)
+    ) s WHERE s ILIKE '%' || $1 || '%'            -- "яндкс"
+  )
+  OR EXISTS (
+    SELECT 1 FROM jsonb_array_elements_text(
+      COALESCE(enriched_data->'key_products', '[]'::jsonb)
+    ) s WHERE s ILIKE '%' || $1 || '%'            -- "iPhone", "Falcon 9"
+  )
+  OR EXISTS (
+    SELECT 1 FROM jsonb_array_elements_text(
+      COALESCE(enriched_data->'related_entities', '[]'::jsonb)
+    ) s WHERE s ILIKE '%' || $1 || '%'            -- "Tesla", "NASA"
+  )
+LIMIT 10
+```
+
+**Ключевые особенности:**
+- **Substring:** `ILIKE '%iph%'` находит `"iPhone"` (не exact)
+- **Регистр неважен:** `ILIKE` (не `LIKE`)
+- **Защита от NULL:** `COALESCE(..., '[]'::jsonb)` — пустой JSONB массив вместо NULL
+- **Разные типы массивов:** `keywords` = `TEXT[]` (`unnest`), остальные = `JSONB` (`jsonb_array_elements_text`)
+- **LIMIT 10** — не перегружаем dropdown
+
+### Поля поиска (7 штук)
+
+| # | Поле | Тип в БД | Пример | Как разворачиваем |
+|---|------|----------|--------|-------------------|
+| 1 | `tag_name` | `VARCHAR` | `"Яндекс"` | Прямое сравнение |
+| 2 | `ticker` | `JSONB→text` | `"AAPL"` | `enriched_data->>'ticker'` |
+| 3 | `keywords[]` | `TEXT[]` | `["сбер", "sber"]` | `unnest(keywords)` |
+| 4 | `synonyms_en[]` | `JSONB→text[]` | `["Yandex"]` | `jsonb_array_elements_text(...)` |
+| 5 | `synonyms_ru[]` | `JSONB→text[]` | `["яндкс"]` | `jsonb_array_elements_text(...)` |
+| 6 | `key_products[]` | `JSONB→text[]` | `["iPhone"]` | `jsonb_array_elements_text(...)` |
+| 7 | `related_entities[]` | `JSONB→text[]` | `["Tesla"]` | `jsonb_array_elements_text(...)` |
+
+### Ответ
+
+```json
+{
+  "tags": [
+    {
+      "tag_id": "apple",
+      "tag_name": "Apple",
+      "tag_type": "company",
+      "ticker": "AAPL"
+    }
+  ],
+  "total": 1
+}
+```
+
+### Frontend: Home.tsx
+
+#### State
+```typescript
+const [searchResults, setSearchResults] = useState<Suggestion[]>([])
+const [searching, setSearching] = useState(false)
+```
+
+#### Debounce (200ms)
+```typescript
+useEffect(() => {
+  if (searchValue.trim().length < 3) {
+    setSearchResults([])
+    setSearching(false)
+    return
+  }
+  setSearching(true)
+  const timer = setTimeout(async () => {
+    const data = await api.get(`/tags/search?q=${encodeURIComponent(searchValue.trim())}`)
+    setSearchResults(data.tags.map(t => ({
+      id: t.tag_id, label: t.tag_name, type: t.tag_type
+    })))
+  }, 200)
+  return () => clearTimeout(timer)  // отмена при новом вводе
+}, [searchValue])
+```
+
+#### Формирование suggestions
+```typescript
+const filteredSuggestions = searchValue.trim().length < 3
+  ? popularTags.filter(s => !selectedTags.some(t => t.id === s.id))
+  : searchResults.filter(s => !selectedTags.some(t => t.id === s.id))
+```
+
+| Условие | Что показывается |
+|---------|-----------------|
+| Клик на input (пустой) | `popularTags` — 5 популярных тегов |
+| Ввод `< 3 символов` | `popularTags` — fallback |
+| Ввод `≥ 3 символов` | `Loader2` спиннер → потом результаты API |
+
+#### Dropdown UI
+```tsx
+<motion.div className="absolute top-full left-0 right-0 mt-2 rounded-2xl ...">
+  {searching && <Loader2 className="animate-spin" />}
+  {filteredSuggestions.map((s, i) => (
+    <button onMouseDown={() => handleSelectSuggestion(s)}>
+      <span style={{backgroundColor: typeColors[s.type]}} /> {s.label}
+    </button>
+  ))}
+</motion.div>
+```
+
+### Сценарии поиска
+
+| Что вводит | Находит | По полю |
+|-----------|---------|---------|
+| `"Яндекс"` | Яндекс | `tag_name` |
+| `"yandex"` | Яндекс | `synonyms_en` |
+| `"AAPL"` | Apple | `ticker` |
+| `"aapl"` | Apple | `ticker` (ILIKE) |
+| `"iph"` | Apple | `key_products` → `"iPhone"` |
+| `"сбер"` | Сбербанк | `keywords` |
+| `"Tesla"` | SpaceX | `related_entities` |
+
+### Категории тегов (tag_type)
+
+| Категория | Пример | Цвет в UI |
+|-----------|--------|-----------|
+| `company` | Apple, Сбербанк, Bitcoin | `#00D4FF` |
+| `sector` | Технологии, ФРС США | `#A78BFA` |
+| `person` | Греф, Маск | `#FBBF24` |
+| `trend` | ИИ, Криптовалюты | `#34D399` |
+
+> **Нет категории `crypto` как отдельного типа тега.** Bitcoin создаётся с `tag_type: 'company'` или `'trend'`. RSS-источники `coindesk`/`cointelegraph` имеют `category: 'crypto'`, но это категория фида, не тип тега.
+
+---
+
+## 9b. NewsDetailModal — enriched data блок
+
+> **Реализовано:** 2026-06-09 (v7.19.0)
+
+### Endpoint для enriched data тегов новости
+
+```
+GET /api/news/:id/tag-enrichments
+```
+
+Возвращает `enriched_data` для **всех** тегов новости (matched_tags + tag_impact).
+
+**⚠️ Порядок маршрутов критичен:** `/:id/tag-enrichments` ДОЛЖЕН идти ДО `/:id` в Express router. Иначе `"123/tag-enrichments"` попадает в `/:id` как `id = "123/tag-enrichments"` → 400.
+
+### SQL
+```sql
+SELECT tag_id, tag_name, enriched_data
+FROM user_defined_tags
+WHERE tag_id = ANY($1::text[])  -- массив tag_id из matched_tags + tag_impact
+```
+
+### Отображение в NewsDetailModal
+
+Для каждого тега — отдельная карточка:
+
+| Поле | Стиль |
+|------|-------|
+| **tag_name** | Белый заголовок |
+| **ticker** | Зелёный `$TICKER` бейдж |
+| **website** | Синяя ссылка |
+| **description_ru** | Серый текст |
+| **related_entities[]** | Синие пилюли |
+| **key_products[]** | Серые пилюли |
+| **synonyms_en/ru[]** | Фиолетовые мини-бейджи |
+
+### Загрузка (Promise.all)
+```typescript
+const [articleData, enrichData] = await Promise.all([
+  api.get(`/news/${newsId}`),                    // детали статьи
+  api.get(`/news/${newsId}/tag-enrichments`),     // enriched data тегов
+])
+```
+
+---
+
+## 9c. Добавление тега — LLM enrichment flow
+
+> **Баг 0164be4 (2026-06-09):** Frontend передавал `tagType: 'company'` → LLM НЕ вызывался.
+
+### Когда вызывается LLM
+
+```typescript
+// tagManager.ts:createUserTag()
+if (!tagType || tagType === 'auto') {
+  enrichment = await enrichTagViaLLM(tagName);   // ← ВЫЗЫВАЕТСЯ
+}
+```
+
+**Только** при `tagType = 'auto'` или пустом. При конкретном типе (`'company'`, `'sector'`) — LLM **не** вызывается.
+
+### Frontend всегда шлёт `'auto'`
+
+```typescript
+// Home.tsx — ручной ввод + Enter
+addTag({ tagId, tagName, tagType: 'auto' })  // ← LLM вызовется
+
+// handleSelectSuggestion (клик на suggestion)
+addTag({ tagId: s.id, tagName: s.label, tagType: s.type })  // ← из suggestion (может быть 'auto')
+```
+
+### Flow создания тега
+
+```
+Пользователь вводит "SpaceX" → Enter
+  ↓
+Frontend: addTag({ tagId: "spacex", tagName: "SpaceX", tagType: "auto" })
+  ↓
+Backend: POST /user/tags → createUserTag()
+  ↓
+  if (tagType === 'auto') → enrichTagViaLLM("SpaceX")
+    ├──→ tag_type: "company"
+    ├──→ ticker: null
+    ├──→ website: "https://www.spacex.com"
+    ├──→ related_entities: ["Tesla", "NASA", "Blue Origin"]
+    ├──→ synonyms_en: ["Space Exploration Technologies"]
+    ├──→ synonyms_ru: ["СпейсИкс"]
+    ├──→ key_products: ["Falcon 9", "Starship", "Dragon", "Starlink"]
+    └──→ description_ru: "2 параграфа на русском"
+  ↓
+  INSERT INTO user_defined_tags (tag_id, tag_name, ..., enriched_data)
+  INSERT INTO portfolios (user_id, tag_id)  -- подписка пользователя
+  ↓
+Frontend: setLastAddedTagId("spacex") → зелёная подсветка (1500ms)
+```
+
+### Loading state (f7f4be8)
+
+| Состояние | Input | Иконка |
+|-----------|-------|--------|
+| `isAddingTag = false` | Активный | X (очистить) |
+| `isAddingTag = true` | Disabled, placeholder "Создаём тег..." | Loader2 (spin) |
+
+```typescript
+setIsAddingTag(true)
+try {
+  const success = await addTag({...})
+} finally {
+  setIsAddingTag(false)  // гарантия сброса
+}
+```
+
+---
+
+## 9d. TODO: GIN индекс для performance
+
+> **Приоритет:** P2 (не критично на текущем масштабе)  
+> **Когда:** когда тегов станет 1000+ и поиск замедлится
+
+### Проблема
+
+Текущий SQL использует `ILIKE '%query%'` + `jsonb_array_elements_text()` — **не использует индекс**. На 1000+ тегов запрос будет медленным (100-500ms).
+
+### Решение: PostgreSQL GIN index
+
+```sql
+-- Создать computed колонку для поиска (tsvector)
+ALTER TABLE user_defined_tags ADD COLUMN search_vector tsvector;
+
+-- Обновить существующие записи
+UPDATE user_defined_tags SET search_vector = (
+  setweight(to_tsvector('simple', coalesce(tag_name, '')), 'A') ||
+  setweight(to_tsvector('simple', coalesce(enriched_data->>'ticker', '')), 'B') ||
+  setweight(to_tsvector('simple', coalesce(array_to_string(keywords, ' '), '')), 'B') ||
+  setweight(to_tsvector('simple', coalesce(array_to_string(
+    (select array_agg(elem::text) from jsonb_array_elements_text(enriched_data->'synonyms_en') elem), ' '),'')), 'C') ||
+  setweight(to_tsvector('simple', coalesce(array_to_string(
+    (select array_agg(elem::text) from jsonb_array_elements_text(enriched_data->'synonyms_ru') elem), ' '),'')), 'C') ||
+  setweight(to_tsvector('simple', coalesce(array_to_string(
+    (select array_agg(elem::text) from jsonb_array_elements_text(enriched_data->'key_products') elem), ' '),'')), 'C') ||
+  setweight(to_tsvector('simple', coalesce(array_to_string(
+    (select array_agg(elem::text) from jsonb_array_elements_text(enriched_data->'related_entities') elem), ' '),'')), 'C')
+);
+
+-- Создать GIN индекс
+CREATE INDEX idx_user_defined_tags_search ON user_defined_tags USING GIN(search_vector);
+
+-- Триггер для автообновления
+CREATE OR REPLACE FUNCTION update_search_vector()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.search_vector := (...);  -- та же логика
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trigger_update_search_vector
+  BEFORE INSERT OR UPDATE ON user_defined_tags
+  FOR EACH ROW EXECUTE FUNCTION update_search_vector();
+```
+
+### SQL запрос с GIN
+
+```sql
+SELECT tag_id, tag_name, tag_type, enriched_data->>'ticker' as ticker
+FROM user_defined_tags
+WHERE search_vector @@ plainto_tsquery('simple', 'iph')
+LIMIT 10;
+```
+
+**Результат:** 10-50ms вместо 100-500ms на 1000+ тегах.
+
+---
+
 ## 10. API Design
 
 ### News Feed Logic
@@ -970,6 +1315,33 @@ GET /backfill-translate?secret=pulse-dev-key
 
 GET /backfill-tags?secret=pulse-dev-key
 |---> Ретегирование статей без matched_tags (3-layer matching)
+```
+
+### Tag Search Endpoints
+
+```
+GET /api/tags/search?q={query}
+|---> Поиск тегов по enriched-полям (substring, ILIKE)
+|---> q: 3-50 символов
+|---> Ищет по: tag_name, ticker, keywords[], synonyms_en/ru[], key_products[], related_entities[]
+|---> LIMIT 10
+|---> Ответ: { tags: [{tag_id, tag_name, tag_type, ticker}], total: N }
+
+GET /api/news/:id/tag-enrichments
+|---> enriched_data для всех тегов новости (matched_tags + tag_impact)
+|---> ⚠️ Порядок: ДОЛЖЕН идти ДО /:id в Express router
+|---> Ответ: { tags: [{tag_id, tag_name, ticker, website, description_ru, key_products, synonyms_en, synonyms_ru, related_entities}] }
+```
+
+**Маршрутизация Express (критично):**
+```typescript
+// ПРАВИЛЬНО:
+router.get('/:id/tag-enrichments', handler)  // ← СНАЧАЛА
+router.get('/:id', handler)                   // ← ПОТОМ
+
+// НЕПРАВИЛЬНО:
+router.get('/:id', handler)                   // ← ловит "123/tag-enrichments"
+router.get('/:id/tag-enrichments', handler)   // ← никогда не сработает
 ```
 
 ---
