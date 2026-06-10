@@ -270,17 +270,18 @@ async function fetchSource(source: RssSource): Promise<ParsedArticle[]> {
   }
 }
 
-export async function fetchAllRSS(): Promise<ParsedArticle[]> {
+export async function fetchAllRSS(customSources?: RssSource[]): Promise<ParsedArticle[]> {
   // Load source metadata cache before fetching
   await loadSourceMetaCache();
 
   // Reset stats for this fetch cycle
   lastFetchStats = [];
 
+  const sources = customSources || RSS_SOURCES;
   const allArticles: ParsedArticle[] = [];
 
-  for (let i = 0; i < RSS_SOURCES.length; i += BATCH_SIZE) {
-    const batch = RSS_SOURCES.slice(i, i + BATCH_SIZE);
+  for (let i = 0; i < sources.length; i += BATCH_SIZE) {
+    const batch = sources.slice(i, i + BATCH_SIZE);
     const results = await Promise.allSettled(batch.map(s => fetchSource(s)));
 
     for (let j = 0; j < results.length; j++) {

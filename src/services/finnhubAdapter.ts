@@ -6,6 +6,7 @@
 
 import { query } from '../config/db';
 import crypto from 'crypto';
+import { translateBatch } from './translate';
 
 interface FinnhubArticle {
   datetime: number;
@@ -13,8 +14,6 @@ interface FinnhubArticle {
   summary: string;
   source: string;
   url: string;
-  image?: string;
-  category?: string;
 }
 
 interface FetchedArticle {
@@ -35,9 +34,8 @@ interface FetchedArticle {
 export async function fetchFinnhubNews(config: any): Promise<FetchedArticle[]> {
   const apiKey = config.api_key;
   const baseUrl = config.base_url || 'https://finnhub.io/api/v1';
-  const endpoint = config.endpoint || '/company-news';
   const rpm = config.rate_limit_rpm || 60;
-  const delayMs = Math.ceil(60000 / rpm); // ms между запросами
+  const delayMs = Math.ceil(60000 / rpm);
 
   if (!apiKey) {
     console.error('[Finnhub] No API key');
@@ -61,11 +59,8 @@ export async function fetchFinnhubNews(config: any): Promise<FetchedArticle[]> {
 
   console.log(`[Finnhub] Fetching news for ${tags.length} tickers`);
 
-  // 2. Дата — сегодня (или пятница если выходной)
+  // 2. Дата — сегодня
   const today = new Date();
-  const dayOfWeek = today.getDay();
-  if (dayOfWeek === 0) today.setDate(today.getDate() - 2); // Вс → Пт
-  if (dayOfWeek === 6) today.setDate(today.getDate() - 1); // Сб → Пт
   const dateStr = today.toISOString().split('T')[0];
 
   const articles: FetchedArticle[] = [];
@@ -73,7 +68,7 @@ export async function fetchFinnhubNews(config: any): Promise<FetchedArticle[]> {
   // 3. Запрос по каждому тикеру
   for (const tag of tags) {
     const ticker = tag.ticker.toUpperCase();
-    const url = `${baseUrl}${endpoint}?symbol=${ticker}&from=${dateStr}&to=${dateStr}&token=${apiKey}`;
+    const url = `${baseUrl}/company-news?symbol=${ticker}&from=${dateStr}&to=${dateStr}&token=${apiKey}`;
 
     try {
       const response = await fetch(url);
@@ -106,7 +101,7 @@ export async function fetchFinnhubNews(config: any): Promise<FetchedArticle[]> {
           source_id: 'finnhub',
           source_type: 'api_search',
           lang_original: 'en',
-          matched_tags: [tag.tag_id], // 100% match
+          matched_tags: [tag.tag_id],
           content_hash: contentHash,
         });
       }
@@ -114,21 +109,30 @@ export async function fetchFinnhubNews(config: any): Promise<FetchedArticle[]> {
       console.error(`[Finnhub] Error fetching ${ticker}:`, err.message);
     }
 
-    // Rate limit: sleep между запросами
     await sleep(delayMs);
+  }
+
+  // Перевод EN → RU
+  if (articles.length > 0) {
+    try {
+      const titles = articles.map(a => a.title_original);
+      const summaries = articles.map(a => a.summary_original);
+      const translatedTitles = await translateBatch(titles);
+      const translatedSummaries = await translateBatch(summaries);
+      for (let i = 0; i < articles.length; i++) {
+        articles[i].title_ru = translatedTitles[i] || articles[i].title_original;
+        articles[i].summary_ru = translatedSummaries[i] || articles[i].summary_original;
+      }
+      console.log(`[Finnhub] Translated ${articles.length} articles`);
+    } catch (err: any) {
+      console.error('[Finnhub] Translation error:', err.message);
+    }
   }
 
   console.log(`[Finnhub] Total articles: ${articles.length}`);
   return articles;
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-/**
- * Сохранить статьи в БД
- */
 export async function saveArticles(articles: FetchedArticle[]): Promise<void> {
   let saved = 0;
   let skipped = 0;
@@ -158,4 +162,8 @@ export async function saveArticles(articles: FetchedArticle[]): Promise<void> {
   }
 
   console.log(`[Finnhub] Saved: ${saved}, Skipped: ${skipped}`);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
