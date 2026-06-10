@@ -32,32 +32,50 @@ interface FetchedArticle {
 }
 
 export async function fetchFinnhubNews(config: any): Promise<FetchedArticle[]> {
-  const apiKey = config.api_key;
+  const apiKey = process.env.FINNHUB_API_KEY || config.api_key;
   const baseUrl = config.base_url || 'https://finnhub.io/api/v1';
   const rpm = config.rate_limit_rpm || 60;
   const delayMs = Math.ceil(60000 / rpm);
 
   if (!apiKey) {
-    console.error('[Finnhub] No API key');
+    console.error('[Finnhub] No API key. Set FINNHUB_API_KEY env var.');
     return [];
   }
 
-  // 1. Собрать теги с тикерами
+  // 1. Собрать теги с тикерами, отсортированные по подписчикам
   const tagResult = await query(`
-    SELECT DISTINCT t.tag_id, t.tag_name, t.enriched_data->>'ticker' as ticker
+    SELECT DISTINCT
+      t.tag_id,
+      t.tag_name,
+      t.enriched_data->>'ticker' as ticker,
+      COUNT(p.user_id) as subscriber_count
     FROM user_defined_tags t
     JOIN portfolios p ON p.tag_id = t.tag_id
     WHERE t.enriched_data->>'ticker' IS NOT NULL
       AND LENGTH(t.enriched_data->>'ticker') > 0
+    GROUP BY t.tag_id, t.tag_name, t.enriched_data->>'ticker'
+    ORDER BY subscriber_count DESC
   `);
-  const tags = tagResult.rows;
+  const allTags = tagResult.rows;
 
-  if (tags.length === 0) {
+  if (allTags.length === 0) {
     console.log('[Finnhub] No tags with tickers found');
     return [];
   }
 
-  console.log(`[Finnhub] Fetching news for ${tags.length} tickers`);
+  // Tiered fetching: топ-12 каждый час, остальные только в полночь
+  const now = new Date();
+  const isMidnight = now.getHours() === 0;
+  const topTags = allTags.slice(0, 12);
+  const rareTags = allTags.slice(12);
+
+  let tags = [...topTags];
+  if (isMidnight && rareTags.length > 0) {
+    tags.push(...rareTags);
+  }
+
+  console.log(`[Finnhub] Total: ${allTags.length}, Top: ${topTags.length}, Rare: ${isMidnight ? rareTags.length : 0} (midnight=${isMidnight})`);
+  console.log(`[Finnhub] Fetching ${tags.length} tickers this cycle`);
 
   // 2. Дата — сегодня
   const today = new Date();
@@ -136,8 +154,16 @@ export async function fetchFinnhubNews(config: any): Promise<FetchedArticle[]> {
 export async function saveArticles(articles: FetchedArticle[]): Promise<void> {
   let saved = 0;
   let skipped = 0;
+  let urlDup = 0;
 
   for (const a of articles) {
+    // 1. Проверка по URL — primary dedup
+    const existingByUrl = await query(`SELECT id FROM news WHERE url = $1`, [a.url]);
+    if (existingByUrl.rows.length > 0) {
+      urlDup++;
+      continue; // Skip — уже есть от RSS или другого API
+    }
+
     try {
       await query(`
         INSERT INTO news (
@@ -161,7 +187,7 @@ export async function saveArticles(articles: FetchedArticle[]): Promise<void> {
     }
   }
 
-  console.log(`[Finnhub] Saved: ${saved}, Skipped: ${skipped}`);
+  console.log(`[Finnhub] Saved: ${saved}, URL dup: ${urlDup}, Error skip: ${skipped}`);
 }
 
 function sleep(ms: number): Promise<void> {

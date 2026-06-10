@@ -1732,15 +1732,13 @@ app.post('/migrate-v3-enrichment', async (req, res) => {
     }
     results.push(`Migrated ${RSS_SOURCES.length} RSS sources`);
 
-    // Add Finnhub API source
-    const finnhubKey = process.env.FINNHUB_API_KEY || 'd8jc4r9r01qh6g3pfkn0';
+    // Add Finnhub API source (API key через env FINNHUB_API_KEY)
     await query(`INSERT INTO news_sources (name, display_name, type, config, enabled)
       VALUES ('finnhub', 'Finnhub News', 'api_search', $1, true)
       ON CONFLICT (name) DO UPDATE SET config = $1`,
       [JSON.stringify({
         base_url: 'https://finnhub.io/api/v1',
         endpoint: '/company-news',
-        api_key: finnhubKey,
         rate_limit_rpm: 60,
         rate_limit_rpd: 300,
         schedule_minutes: 60
@@ -3182,10 +3180,34 @@ async function start() {
 
     startDigestCron(); // TG digest cron (every 3 hours)
 
-    // NewsSourceManager — каждый час (Finnhub + RSS)
+    // NewsSourceManager — запуск через /trigger/nsm (cron-job.org) или setInterval
     const nsm = getNewsSourceManager();
-    setInterval(() => { nsm.run().catch((e: any) => console.error('[NSM] cron error:', e.message)); }, 60 * 60 * 1000);
-    nsm.run().catch((e: any) => console.error('[NSM] first run error:', e.message));
+
+    // External cron trigger (для Render free tier)
+    app.get('/trigger/nsm', async (req, res) => {
+      const secret = req.headers['x-trigger-secret'] || req.query.secret;
+      if (secret !== (process.env.CRON_SECRET_KEY || 'pulse-dev-key')) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+      nsm.run().catch((e: any) => console.error('[NSM] trigger error:', e.message));
+      res.json({ started: true });
+    });
+
+    // Fallback: setInterval если нет внешнего cron
+    if (!process.env.CRON_SECRET_KEY) {
+      setInterval(() => { nsm.run().catch((e: any) => console.error('[NSM] interval error:', e.message)); }, 60 * 60 * 1000);
+    }
+
+    // Catch-up: если давно не запускали — запустить
+    query(`SELECT MAX(last_fetch_at) as max FROM news_sources WHERE type = 'api_search'`).then(lastFetch => {
+      const hoursSince = lastFetch.rows[0]?.max
+        ? (Date.now() - new Date(lastFetch.rows[0].max).getTime()) / 3600000
+        : 999;
+      if (hoursSince > 2) {
+        console.log(`[NSM] Last fetch ${hoursSince.toFixed(1)}h ago, running catch-up`);
+        nsm.run().catch((e: any) => console.error('[NSM] catch-up error:', e.message));
+      }
+    });
   });
 }
 
