@@ -1,8 +1,6 @@
 /**
  * NewsSourceManager — Единый пул источников новостей (RSS + API)
- *
  * TZ: TZ_NEWS_SOURCE_MANAGER + TZ_FINNHUB_ADAPTER
- * Статус: В разработке
  */
 
 import { query } from '../config/db';
@@ -34,6 +32,34 @@ export class NewsSourceManager {
     try {
       console.log('[NewsSourceManager] Starting cycle...');
 
+      // 0. Backfill: обновить matched_tags для существующих статей по тикерам
+      try {
+        const backfillResult = await query(`
+          UPDATE news n
+          SET matched_tags = (
+            SELECT array_agg(DISTINCT x)
+            FROM unnest(array_cat(COALESCE(n.matched_tags, '{}'::text[]), ARRAY[t.tag_id])) AS t(x)
+          )
+          FROM (
+            SELECT DISTINCT t.tag_id, UPPER(t.enriched_data->>'ticker') as ticker
+            FROM user_defined_tags t
+            WHERE t.enriched_data->>'exchange' = 'USA'
+              AND t.enriched_data->>'ticker' IS NOT NULL
+          ) t
+          WHERE (
+            n.title_original ILIKE '%' || t.ticker || '%'
+            OR n.summary_original ILIKE '%' || t.ticker || '%'
+          )
+          AND (n.matched_tags IS NULL OR NOT (t.tag_id = ANY(n.matched_tags)))
+        `);
+        const rowCount = backfillResult.rowCount || 0;
+        if (rowCount > 0) {
+          console.log(`[NSM] Backfill: updated ${rowCount} articles with matched_tags`);
+        }
+      } catch (e: any) {
+        console.error('[NSM] Backfill error:', e.message);
+      }
+
       // 1. Загрузить enabled источники
       const result = await query(`
         SELECT id, name, display_name, type, config, enabled, last_fetch_at
@@ -58,7 +84,6 @@ export class NewsSourceManager {
               category: source.config.category || 'news'
             };
             const articles = await fetchAllRSS([rssSource]);
-            // Сохранить через API saver (унифицированный формат)
             const unified = articles.map(a => ({
               title_original: a.title,
               title_ru: a.title_ru || null,
@@ -70,13 +95,9 @@ export class NewsSourceManager {
               source_id: a.sourceId,
               source_type: 'rss' as const,
               lang_original: a.lang,
-              matched_tags: [] as string[], // RSS — матчинг позже
-              content_hash: '' // будет вычислен в saveAPIArticles
+              matched_tags: [] as string[],
+              content_hash: crypto.createHash('sha256').update(a.title + '\n' + a.summary).digest('hex')
             }));
-            // Вычислить content_hash для каждой
-            for (const u of unified) {
-              u.content_hash = crypto.createHash('sha256').update(u.title_original + '\n' + u.summary_original).digest('hex');
-            }
             await saveAPIArticles(unified);
             console.log(`[NewsSourceManager] RSS: ${source.name} — ${articles.length} articles`);
           } else if (source.type === 'api_search') {
@@ -100,7 +121,6 @@ export class NewsSourceManager {
   }
 }
 
-// Singleton
 let manager: NewsSourceManager | null = null;
 
 export function getNewsSourceManager(): NewsSourceManager {
