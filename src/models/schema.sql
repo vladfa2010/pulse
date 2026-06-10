@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS news (
   title_ru        TEXT NOT NULL,
   summary_ru      TEXT,
   title_original  TEXT,
+  summary_original TEXT,
   lang_original   VARCHAR(2),
   source          VARCHAR(100),
   source_id       VARCHAR(50),

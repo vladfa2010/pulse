@@ -3132,6 +3132,14 @@ async function start() {
     console.log('[DB] Migration: news.content_hash unique constraint added');
   } catch { /* ignore */ }
   // UNIQUE constraint на user_sessions.user_id
+  // summary_original — для bilingual статей (EN → RU)
+  try {
+    await query(`ALTER TABLE news ADD COLUMN IF NOT EXISTS summary_original TEXT`);
+    console.log('[DB] Migration: summary_original column added');
+  } catch (e: any) {
+    console.log('[DB] Migration warning for summary_original:', e.message);
+  }
+
   try {
     await query(`ALTER TABLE user_sessions ADD CONSTRAINT user_sessions_user_id_unique UNIQUE (user_id)`);
     console.log('[DB] Migration: user_sessions.user_id unique constraint added');
