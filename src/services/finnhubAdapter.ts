@@ -42,18 +42,22 @@ export async function fetchFinnhubNews(config: any): Promise<FetchedArticle[]> {
     return [];
   }
 
-  // 1. Собрать теги с тикерами, отсортированные по подписчикам
+  // 1. Собрать теги с тикерами (только нерусские биржи: NASDAQ, NYSE, LSE и т.д.)
   const tagResult = await query(`
     SELECT DISTINCT
       t.tag_id,
       t.tag_name,
       t.enriched_data->>'ticker' as ticker,
+      t.enriched_data->>'exchange' as exchange,
       COUNT(p.user_id) as subscriber_count
     FROM user_defined_tags t
     JOIN portfolios p ON p.tag_id = t.tag_id
     WHERE t.enriched_data->>'ticker' IS NOT NULL
       AND LENGTH(t.enriched_data->>'ticker') > 0
-    GROUP BY t.tag_id, t.tag_name, t.enriched_data->>'ticker'
+      AND t.enriched_data->>'exchange' IS NOT NULL
+      AND LENGTH(t.enriched_data->>'exchange') > 0
+      AND t.enriched_data->>'exchange' NOT IN ('MOEX', 'MICEX', 'RTS', 'SPB', 'TQBR')
+    GROUP BY t.tag_id, t.tag_name, t.enriched_data->>'ticker', t.enriched_data->>'exchange'
     ORDER BY subscriber_count DESC
   `);
   const allTags = tagResult.rows;
