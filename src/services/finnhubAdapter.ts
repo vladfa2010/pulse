@@ -61,7 +61,13 @@ export async function fetchFinnhubNews(config: any): Promise<FetchedArticle[]> {
   const allTags = tagResult.rows;
 
   if (allTags.length === 0) {
-    console.log('[Finnhub] No tags with tickers found');
+    const debugResult = await query(`
+      SELECT t.tag_id, t.tag_name, t.enriched_data->>'ticker' as t, t.enriched_data->>'exchange' as e
+      FROM user_defined_tags t
+      JOIN portfolios p ON p.tag_id = t.tag_id
+    `);
+    console.log(`[Finnhub] DEBUG All portfolio tags:`, JSON.stringify(debugResult.rows));
+    console.log('[Finnhub] No tags with exchange=USA found');
     return [];
   }
 
