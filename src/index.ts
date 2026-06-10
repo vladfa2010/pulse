@@ -150,7 +150,6 @@ app.get('/debug-tag/:tagId', async (req, res) => {
 
     const tag = tagResult.rows[0];
     const ed = tag.enriched_data || {};
-    console.log(`[GET /admin/tags/${tagId}] enriched_data keys:`, Object.keys(ed));
 
     // Enriched fields
     const exchange = ed.exchange || null;
@@ -186,24 +185,30 @@ app.get('/debug-tag/:tagId', async (req, res) => {
       subsCount = parseInt(subscribersResult.rows[0].count);
     } catch { /* ignore */ }
 
+    // Return same flat format as PUT /admin/tags/:tagId (tag: { ... })
     res.json({
-      tag_id: tag.tag_id,
-      tag_name: tag.tag_name,
-      tag_type: tag.tag_type,
-      keywords: tag.keywords,
-      created_at: tag.created_at,
-      enriched_data: {
+      tag: {
+        tag_id: tag.tag_id,
+        tag_name: tag.tag_name,
+        tag_type: tag.tag_type,
+        keywords: tag.keywords || [],
+        created_at: tag.created_at,
+        related_tags: ed.related_tags || ed.related_entities || [],
         ticker: ed.ticker || null,
         website: ed.website || null,
+        description: ed.description_ru || null,
         description_ru: ed.description_ru || null,
         key_products: ed.key_products || [],
-        related_tags: ed.related_tags || ed.related_entities || [],
         synonyms_ru: ed.synonyms_ru || [],
         synonyms_en: ed.synonyms_en || [],
         exchange,
         trend,
         sector,
       },
+      daily_stats: [],
+      recent_articles: [],
+      subscribers: [],
+      subscriber_count: subsCount,
       stats: {
         news_tag_links: linksCount,
         matched_in_articles: parseInt(matchedResult.rows[0].count),
