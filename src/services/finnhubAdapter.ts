@@ -54,9 +54,7 @@ export async function fetchFinnhubNews(config: any): Promise<FetchedArticle[]> {
     JOIN portfolios p ON p.tag_id = t.tag_id
     WHERE t.enriched_data->>'ticker' IS NOT NULL
       AND LENGTH(t.enriched_data->>'ticker') > 0
-      AND t.enriched_data->>'exchange' IS NOT NULL
-      AND LENGTH(t.enriched_data->>'exchange') > 0
-      AND t.enriched_data->>'exchange' NOT IN ('MOEX', 'MICEX', 'RTS', 'SPB', 'TQBR')
+      AND t.enriched_data->>'exchange' = 'USA'
     GROUP BY t.tag_id, t.tag_name, t.enriched_data->>'ticker', t.enriched_data->>'exchange'
     ORDER BY subscriber_count DESC
   `);
