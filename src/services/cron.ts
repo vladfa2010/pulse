@@ -94,6 +94,20 @@ async function logCronFinish(logId: number, fetched: number, saved: number, merg
 }
 
 export async function processArticles() {
+  // 0. Check if any RSS sources are enabled — before acquiring lock
+  try {
+    const { query } = await import('../config/db');
+    const enabledResult = await query(`
+      SELECT COUNT(*) as count FROM news_sources WHERE type = 'rss' AND enabled = true
+    `);
+    if (parseInt(enabledResult.rows[0].count) === 0) {
+      console.log('[Cron] No RSS sources enabled, skipping (no lock needed)');
+      return;
+    }
+  } catch {
+    // If query fails, continue to lock attempt
+  }
+
   // Job lock: prevents parallel execution across instances
   const acquired = await acquireCronLock('rss-aggregator');
   if (!acquired) {
