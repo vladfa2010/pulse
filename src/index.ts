@@ -150,6 +150,7 @@ app.get('/debug-tag/:tagId', async (req, res) => {
 
     const tag = tagResult.rows[0];
     const ed = tag.enriched_data || {};
+    console.log(`[GET /admin/tags/${tagId}] enriched_data keys:`, Object.keys(ed));
 
     // Enriched fields
     const exchange = ed.exchange || null;
