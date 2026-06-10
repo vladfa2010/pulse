@@ -182,7 +182,8 @@ export async function saveArticles(articles: FetchedArticle[]): Promise<void> {
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, ARRAY[$5], 1, $10, $11, $12)
         ON CONFLICT (content_hash) DO UPDATE SET
           all_sources = array_append_unique(news.all_sources, EXCLUDED.source),
-          source_count = array_length(array_append_unique(news.all_sources, EXCLUDED.source), 1)
+          source_count = array_length(array_append_unique(news.all_sources, EXCLUDED.source), 1),
+          matched_tags = array_cat(COALESCE(news.matched_tags, '{}'::text[]), EXCLUDED.matched_tags)
       `, [
         a.title_original, a.title_ru, a.summary_original, a.summary_ru,
         a.source, a.source_id, a.source_type, a.url, a.content_hash,
