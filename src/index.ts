@@ -1239,16 +1239,20 @@ app.put('/admin/tags/:tagId', requireAdmin, async (req, res) => {
     const errors: Record<string, string> = {};
 
     // Collect and validate updates
+    console.log(`[PUT /admin/tags/${tagId}] body keys:`, Object.keys(req.body));
     for (const key of allowed) {
       if (req.body[key] !== undefined) {
         const error = validateField(key, req.body[key]);
         if (error) {
           errors[key] = error;
+          console.log(`[PUT] validation error ${key}:`, error);
         } else {
           updates[key] = req.body[key];
+          console.log(`[PUT] update ${key}:`, req.body[key]);
         }
       }
     }
+    console.log(`[PUT] final updates keys:`, Object.keys(updates));
 
     if (Object.keys(errors).length > 0) {
       return res.status(400).json({ error: 'Validation failed', errors });
