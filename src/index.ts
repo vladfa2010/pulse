@@ -149,7 +149,15 @@ app.get('/debug-tag/:tagId', async (req, res) => {
     }
 
     const tag = tagResult.rows[0];
-    const ed = tag.enriched_data || {};
+    // enriched_data may be string from pg driver — parse to object
+    let enrichedData = tag.enriched_data;
+    if (typeof enrichedData === 'string') {
+      try { enrichedData = JSON.parse(enrichedData); } catch { enrichedData = {}; }
+    }
+    if (!enrichedData || typeof enrichedData !== 'object') {
+      enrichedData = {};
+    }
+    const ed = enrichedData;
 
     // Enriched fields
     const exchange = ed.exchange || null;
@@ -1056,7 +1064,15 @@ app.get('/admin/tags/:tagId', requireAdmin, async (req, res) => {
     }
 
     const tag = tagResult.rows[0];
-    const ed = tag.enriched_data || {};
+    // enriched_data may be string from pg driver — parse to object
+    let enrichedData = tag.enriched_data;
+    if (typeof enrichedData === 'string') {
+      try { enrichedData = JSON.parse(enrichedData); } catch { enrichedData = {}; }
+    }
+    if (!enrichedData || typeof enrichedData !== 'object') {
+      enrichedData = {};
+    }
+    const ed = enrichedData;
     let relatedTags: string[] = [];
     let ticker = null;
     let website = null;
@@ -1239,20 +1255,16 @@ app.put('/admin/tags/:tagId', requireAdmin, async (req, res) => {
     const errors: Record<string, string> = {};
 
     // Collect and validate updates
-    console.log(`[PUT /admin/tags/${tagId}] body keys:`, Object.keys(req.body));
     for (const key of allowed) {
       if (req.body[key] !== undefined) {
         const error = validateField(key, req.body[key]);
         if (error) {
           errors[key] = error;
-          console.log(`[PUT] validation error ${key}:`, error);
         } else {
           updates[key] = req.body[key];
-          console.log(`[PUT] update ${key}:`, req.body[key]);
         }
       }
     }
-    console.log(`[PUT] final updates keys:`, Object.keys(updates));
 
     if (Object.keys(errors).length > 0) {
       return res.status(400).json({ error: 'Validation failed', errors });
@@ -1317,8 +1329,6 @@ app.put('/admin/tags/:tagId', requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'No fields to update' });
     }
 
-    console.log(`[PUT SQL] setClauses:`, setClauses.join(', '));
-    console.log(`[PUT SQL] params:`, params);
     const result = await query(`
       UPDATE user_defined_tags
       SET ${setClauses.join(', ')}
@@ -1329,32 +1339,48 @@ app.put('/admin/tags/:tagId', requireAdmin, async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Tag not found' });
     }
-    console.log(`[PUT SQL] enriched_data after UPDATE:`, JSON.stringify(result.rows[0].enriched_data));
-
     // Unpack enriched_data to flat fields (matches GET /admin/tags/:tagId format)
     const updated = result.rows[0];
-    const ed = updated.enriched_data || {};
+    // enriched_data may be string from pg driver — parse to object
+    let enrichedDataPut = updated.enriched_data;
+    if (typeof enrichedDataPut === 'string') {
+      try { enrichedDataPut = JSON.parse(enrichedDataPut); } catch { enrichedDataPut = {}; }
+    }
+    if (!enrichedDataPut || typeof enrichedDataPut !== 'object') {
+      enrichedDataPut = {};
+    }
+    const ed = enrichedDataPut;
+
+    // Build tag response — only include fields that exist in enriched_data
+    const tagResponse: any = {
+      tag_id: updated.tag_id,
+      tag_name: updated.tag_name,
+      tag_type: updated.tag_type,
+      keywords: updated.keywords || [],
+      created_at: updated.created_at,
+    };
+
+    if (ed.ticker) tagResponse.ticker = ed.ticker;
+    if (ed.website) tagResponse.website = ed.website;
+    if (ed.description_ru) {
+      tagResponse.description = ed.description_ru;
+      tagResponse.description_ru = ed.description_ru;
+    }
+    if (ed.key_products?.length > 0) tagResponse.key_products = ed.key_products;
+    if (ed.synonyms_ru?.length > 0) tagResponse.synonyms_ru = ed.synonyms_ru;
+    if (ed.synonyms_en?.length > 0) tagResponse.synonyms_en = ed.synonyms_en;
+    if (ed.related_tags?.length > 0) tagResponse.related_tags = ed.related_tags;
+    if (ed.related_entities?.length > 0 && !ed.related_tags?.length) {
+      tagResponse.related_tags = ed.related_entities;
+    }
+    if (ed.exchange) tagResponse.exchange = ed.exchange;
+    if (ed.trend) tagResponse.trend = ed.trend;
+    if (ed.sector) tagResponse.sector = ed.sector;
+
     res.json({
       success: true,
       updated_fields: Object.keys(updates),
-      tag: {
-        tag_id: updated.tag_id,
-        tag_name: updated.tag_name,
-        tag_type: updated.tag_type,
-        keywords: updated.keywords || [],
-        created_at: updated.created_at,
-        related_tags: ed.related_tags || ed.related_entities || [],
-        ticker: ed.ticker || null,
-        website: ed.website || null,
-        description: ed.description_ru || null,
-        description_ru: ed.description_ru || null,
-        key_products: ed.key_products || [],
-        synonyms_ru: ed.synonyms_ru || [],
-        synonyms_en: ed.synonyms_en || [],
-        exchange: ed.exchange || null,
-        trend: ed.trend || null,
-        sector: ed.sector || null,
-      },
+      tag: tagResponse,
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
