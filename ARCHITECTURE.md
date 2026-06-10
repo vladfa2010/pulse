@@ -1,7 +1,7 @@
 # PULSE — Backend Architecture
 
 > Техническая документация backend'а. Логика, flow, принятие решений.
-> Последнее обновление: 2026-06-10 (v7.25.0 — TZ_TAG_DATA_LOADING_FIX: дублирующий GET endpoint)
+> Последнее обновление: 2026-06-10 (v7.26.0 — TZ_TAG_EDIT_v3: фиксы редактирования тега)
 
 ---
 
@@ -23,6 +23,8 @@
 9e. [Обратная связь при ошибке](#9e-обратная-связь-при-ошибке-добавления-тега)
 9f. [Schema fix — enriched_data в schema.sql](#9f-schema-fix--enriched_data-в-schemasql)
 9g. [NewsFeed — фильтр по тегу](#9g-newsfeed--фильтр-по-тегу)
+9h. [Дублирующий GET endpoint](#9h-дублирующий-get-endpoint--данные-не-подтягивались)
+9i. [Tag Detail Modal — фиксы редактирования](#9i-tag-detail-modal--фиксы-редактирования-тега)
 10. [API Design](#10-api-design)
 10a. [Daily Summary](#10a-daily-summary--ai-саммари-для-пользователя)
 11. [Cron Jobs](#11-cron-jobs)
@@ -1453,6 +1455,143 @@ Frontend вызывал `/admin/tags/:tagId` (строка 1043) — 12 поле
 Добавлено извлечение `exchange`, `trend`, `sector` из `ed` в основной GET endpoint (строка 1043) + включено в response.
 
 **Response keys:** 12 → **16 полей** (`+ exchange`, `+ trend`, `+ sector`, `+ description_ru`)
+
+---
+
+## 9i. Tag Detail Modal — фиксы редактирования тега
+
+> **TZ:** TZ_TAG_EDIT_v3 + TZ_TAG_FIELD_NAME_FIX  
+> **Дата:** 2026-06-10  
+> **Коммиты:** `5f01c3c` (backend), `95badc0`, `083d138` (frontend)
+
+### Цепочка багов
+
+Три взаимосвязанные проблемы при редактировании тега в админке:
+
+| # | Баг | Проявление |
+|---|-----|-----------|
+| 1 | **JSONB string parsing** | `pg` driver возвращает `enriched_data` как строку, не объект. `ed.exchange` → `undefined` → "Not set" |
+| 2 | **PUT response затирает поля** | PUT отвечает `{ ticker: "SBER", trend: null }` — `trend: null` перезаписывает предыдущее значение |
+| 3 | **Frontend selective merge пропускает пустые** | Очистка поля → backend не включает в response → frontend не обновляет → старое значение торчит |
+
+### Баг 1: JSONB string parsing
+
+**PostgreSQL `pg` driver** для JSONB возвращает **строку** вместо объекта:
+
+```typescript
+// enriched_data = '{"ticker": "SBER"}' (string!)
+const ed = tag.enriched_data || {};  // ed = "{\"ticker..." — строка
+ed.ticker  // undefined ❌
+```
+
+**Фикс GET + PUT:** defensive JSON parse:
+```typescript
+let enrichedData = tag.enriched_data;
+if (typeof enrichedData === 'string') {
+  try { enrichedData = JSON.parse(enrichedData); } catch { enrichedData = {}; }
+}
+if (!enrichedData || typeof enrichedData !== 'object') enrichedData = {};
+const ed = enrichedData;
+```
+
+### Баг 2: PUT response затирает неизменённые поля
+
+**Было:** PUT возвращал ВСЕ поля с `|| null`:
+```typescript
+res.json({
+  tag: {
+    ticker: ed.ticker || null,      // ← null если пусто
+    trend: ed.trend || null,        // ← ЗАТИРАЕТ предыдущее!
+    sector: ed.sector || null,      // ← ЗАТИРАЕТ предыдущее!
+  }
+})
+```
+
+Frontend: `setData({ ...prev.tag, ...res.tag })` — `res.tag.trend = null` стирало данные.
+
+**Стало:** selective response — только поля что реально есть в `enriched_data`:
+```typescript
+if (ed.ticker) tagResponse.ticker = ed.ticker;
+if (ed.trend) tagResponse.trend = ed.trend;
+// null не возвращается → frontend не перезаписывает
+```
+
+### Баг 3: Очистка поля — не показывает "Not set"
+
+**Сценарий:**
+1. Ticker = "SBER" → Save → ✅ "SBER"
+2. Редактировать → стереть → Save → ❌ всё ещё "SBER"
+
+**Причина:** selective merge пропускал `undefined`:
+```typescript
+if (value !== undefined && value !== null) {
+  tagUpdates[field] = value
+}
+// value = undefined (пустая строка = falsy) → не попадает в merge
+```
+
+**Фикс:** явный `null` при очистке:
+```typescript
+if (value !== undefined && value !== null) {
+  tagUpdates[field] = value
+} else {
+  tagUpdates[field] = null  // ← UI видит null → рисует "Not set"
+}
+```
+
+### Архитектура после фиксов
+
+```
+Админка → Edit "SBER" → Save
+  Frontend: handleSave() → FIELD_MAP[description] = "description_ru"
+    → PUT /admin/tags/sber { ticker: "SBER" }
+  Backend: validate → SQL UPDATE enriched_data JSONB merge
+    → PUT response: { tag: { ticker: "SBER" } } (только ticker!)
+  Frontend: selective merge — tagUpdates = { ticker: "SBER" }
+    → setData({ ...prev.tag, ...tagUpdates })
+    → Остальные поля не тронуты ✅
+
+Админка → Очистить Ticker → Save
+  Frontend: PUT { ticker: "" }
+  Backend: "" записывается в JSONB (falsy, не попадает в response)
+    → PUT response: { tag: {} } (ticker нет)
+  Frontend: selective merge — updated_fields содержит "ticker"
+    → value = undefined → else ветка: tagUpdates.ticker = null
+    → UI: null → "Not set" ✅
+```
+
+### Поля exchange, trend, sector
+
+> TZ: TZ_TAG_ENRICHED_FIELDS_v4 (коммиты `5700602`, `45442c4`)
+
+Добавлены 3 поля в `enriched_data` JSONB:
+
+| Поле | Назначение | Валидация |
+|------|-----------|-----------|
+| `exchange` | Биржа | `MOEX`, `NASDAQ`, `LSE` — `[A-Z][A-Za-z\.\-]*` |
+| `trend` | Тренд | `AI`, `Green Energy`, `EV` — произвольная строка |
+| `sector` | Сектор | `Technology`, `Finance`, `Energy` — произвольная строка |
+
+- Все `optional: true` — можно оставить пустым
+- Участвуют в `tags/search` (ILIKE)
+- Отображаются в TagEnrichment цветными плашками
+- Редактируются в админке inline
+
+### API Endpoints
+
+| Endpoint | Что делает | Защита |
+|----------|-----------|--------|
+| `GET /admin/tags/:tagId` | Детали тега | `requireAdmin` |
+| `PUT /admin/tags/:tagId` | Редактирование | `TAG_UPDATE_RULES` валидация + `jsonbFields` whitelist |
+| `DELETE /admin/tags/:tagId` | Cascade удаление | Транзакция PostgreSQL |
+
+### Критерии проверки
+
+- [ ] Edit Ticker → "SBER" → Save → "SBER" видно
+- [ ] Edit Trend → "bullish" → Save → Ticker = "SBER", Trend = "bullish" (оба на месте)
+- [ ] Close → Reopen → все значения сохранены
+- [ ] Очистить Ticker → Save → "Not set"
+- [ ] Переоткрыть → "Not set" ✅
 
 ---
 
