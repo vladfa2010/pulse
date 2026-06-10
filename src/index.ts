@@ -2326,6 +2326,20 @@ app.post('/trigger-rss', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// TRIGGER: NewsSourceManager (RSS + API adapters)
+// ═══════════════════════════════════════════════════════════════════════════
+// МОЖНО вызывать сразу — NSM lazy singleton, run() — async
+const nsm = getNewsSourceManager();
+app.get('/trigger/nsm', async (req, res) => {
+  const secret = req.headers['x-trigger-secret'] || req.query.secret;
+  if (secret !== (process.env.CRON_SECRET_KEY || 'pulse-dev-key')) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  nsm.run().catch((e: any) => console.error('[NSM] trigger error:', e.message));
+  res.json({ started: true });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 
 // TEMP: Test RSS fetch (no save, just fetch + count)
 app.get('/test-rss', async (req, res) => {
@@ -3180,20 +3194,8 @@ async function start() {
 
     startDigestCron(); // TG digest cron (every 3 hours)
 
-    // NewsSourceManager — запуск через /trigger/nsm (cron-job.org) или setInterval
-    const nsm = getNewsSourceManager();
-
-    // External cron trigger (для Render free tier)
-    app.get('/trigger/nsm', async (req, res) => {
-      const secret = req.headers['x-trigger-secret'] || req.query.secret;
-      if (secret !== (process.env.CRON_SECRET_KEY || 'pulse-dev-key')) {
-        return res.status(401).json({ error: 'Unauthorized' });
-      }
-      nsm.run().catch((e: any) => console.error('[NSM] trigger error:', e.message));
-      res.json({ started: true });
-    });
-
-    // Fallback: setInterval если нет внешнего cron (DEBUG: 5 мин для тестирования)
+    // NewsSourceManager — фоновый запуск (setInterval / catch-up)
+    // NOTE: /trigger/nsm endpoint зарегистрирован в основном потоке выше
     if (!process.env.CRON_SECRET_KEY) {
       setInterval(() => { nsm.run().catch((e: any) => console.error('[NSM] interval error:', e.message)); }, 5 * 60 * 1000);
     }
