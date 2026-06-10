@@ -1317,6 +1317,8 @@ app.put('/admin/tags/:tagId', requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'No fields to update' });
     }
 
+    console.log(`[PUT SQL] setClauses:`, setClauses.join(', '));
+    console.log(`[PUT SQL] params:`, params);
     const result = await query(`
       UPDATE user_defined_tags
       SET ${setClauses.join(', ')}
@@ -1327,6 +1329,7 @@ app.put('/admin/tags/:tagId', requireAdmin, async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Tag not found' });
     }
+    console.log(`[PUT SQL] enriched_data after UPDATE:`, JSON.stringify(result.rows[0].enriched_data));
 
     // Unpack enriched_data to flat fields (matches GET /admin/tags/:tagId format)
     const updated = result.rows[0];
