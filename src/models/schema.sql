@@ -123,6 +123,20 @@ CREATE INDEX IF NOT EXISTS idx_news_tag_links_news_id ON news_tag_links(news_id)
 CREATE INDEX IF NOT EXISTS idx_news_tag_links_tag_id ON news_tag_links(tag_id);
 
 -- ============================================================
+-- 5x. news_sources (RSS + API sources)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS news_sources (
+  id            SERIAL PRIMARY KEY,
+  name          VARCHAR(50) NOT NULL UNIQUE,
+  display_name  VARCHAR(100) NOT NULL,
+  type          VARCHAR(20) NOT NULL,      -- 'rss' | 'api_search' | 'api_feed'
+  config        JSONB DEFAULT '{}',
+  enabled       BOOLEAN DEFAULT true,
+  last_fetch_at TIMESTAMP,
+  created_at    TIMESTAMP DEFAULT NOW()
+);
+
+-- ============================================================
 -- 5b. smart_tag_cache (LLM matching results)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS smart_tag_cache (

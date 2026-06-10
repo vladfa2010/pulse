@@ -1580,6 +1580,40 @@ app.get('/admin/tags/:tagId/delete-preview', requireAdmin, async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ADMIN — News Sources (вкл/выкл RSS и API адаптеров)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// GET /admin/news-sources — список всех источников
+app.get('/admin/news-sources', requireAdmin, async (req, res) => {
+  try {
+    const result = await query(`
+      SELECT id, name, display_name, type, enabled, last_fetch_at, created_at
+      FROM news_sources
+      ORDER BY type, name
+    `);
+    res.json({ sources: result.rows });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /admin/news-sources/:id/toggle — вкл/выкл
+app.put('/admin/news-sources/:id/toggle', requireAdmin, async (req, res) => {
+  try {
+    const result = await query(`
+      UPDATE news_sources SET enabled = NOT enabled WHERE id = $1
+      RETURNING id, name, display_name, type, enabled
+    `, [req.params.id]);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Source not found' });
+    }
+    res.json({ source: result.rows[0] });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Migration endpoint — applies DB migrations for LLM error tracking (v3)
 // ═══════════════════════════════════════════════════════════════════════════
 app.post('/migrate-v3', async (req, res) => {
@@ -1674,6 +1708,46 @@ app.post('/migrate-v3-enrichment', async (req, res) => {
     await query(`CREATE INDEX IF NOT EXISTS idx_news_enrichment_version ON news(enrichment_version)`);
     results.push('Created index: idx_news_enrichment_version');
 
+    // news_sources: таблица + источники
+    await query(`CREATE TABLE IF NOT EXISTS news_sources (
+      id SERIAL PRIMARY KEY,
+      name VARCHAR(50) NOT NULL UNIQUE,
+      display_name VARCHAR(100) NOT NULL,
+      type VARCHAR(20) NOT NULL,
+      config JSONB DEFAULT '{}',
+      enabled BOOLEAN DEFAULT true,
+      last_fetch_at TIMESTAMP,
+      created_at TIMESTAMP DEFAULT NOW()
+    )`);
+    results.push('Created table: news_sources');
+
+    // Migrate RSS sources
+    const { RSS_SOURCES } = await import('./services/rssSources');
+    for (const s of RSS_SOURCES) {
+      await query(`INSERT INTO news_sources (name, display_name, type, config, enabled)
+        VALUES ($1, $2, 'rss', $3, true)
+        ON CONFLICT (name) DO NOTHING`,
+        [s.id, s.name, JSON.stringify({ url: s.url, lang: s.lang, category: s.category })]
+      );
+    }
+    results.push(`Migrated ${RSS_SOURCES.length} RSS sources`);
+
+    // Add Finnhub API source
+    const finnhubKey = process.env.FINNHUB_API_KEY || 'd8jc4r9r01qh6g3pfkn0';
+    await query(`INSERT INTO news_sources (name, display_name, type, config, enabled)
+      VALUES ('finnhub', 'Finnhub News', 'api_search', $1, true)
+      ON CONFLICT (name) DO UPDATE SET config = $1`,
+      [JSON.stringify({
+        base_url: 'https://finnhub.io/api/v1',
+        endpoint: '/company-news',
+        api_key: finnhubKey,
+        rate_limit_rpm: 60,
+        rate_limit_rpd: 300,
+        schedule_minutes: 60
+      })]
+    );
+    results.push('Added source: finnhub');
+
     // GIN index только для PostgreSQL (SQLite не поддерживает)
     const USE_SQLITE = process.env.USE_SQLITE === 'true';
     if (!USE_SQLITE) {
@@ -1688,6 +1762,8 @@ app.post('/migrate-v3-enrichment', async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+import { getNewsSourceManager } from './services/newsSourceManager';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SSE — Real-time news stream (Server-Sent Events)
@@ -3105,6 +3181,11 @@ async function start() {
     }, 8000);
 
     startDigestCron(); // TG digest cron (every 3 hours)
+
+    // NewsSourceManager — каждый час (Finnhub + RSS)
+    const nsm = getNewsSourceManager();
+    setInterval(() => { nsm.run().catch((e: any) => console.error('[NSM] cron error:', e.message)); }, 60 * 60 * 1000);
+    nsm.run().catch((e: any) => console.error('[NSM] first run error:', e.message));
   });
 }
 
