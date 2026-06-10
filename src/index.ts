@@ -1056,6 +1056,7 @@ app.get('/admin/tags/:tagId', requireAdmin, async (req, res) => {
     }
 
     const tag = tagResult.rows[0];
+    const ed = tag.enriched_data || {};
     let relatedTags: string[] = [];
     let ticker = null;
     let website = null;
@@ -1063,18 +1064,24 @@ app.get('/admin/tags/:tagId', requireAdmin, async (req, res) => {
     let keyProducts: string[] = [];
     let synonymsRu: string[] = [];
     let synonymsEn: string[] = [];
+    let exchange = null;
+    let trend = null;
+    let sector = null;
     try {
-      if (tag.enriched_data?.related_tags) {
-        relatedTags = tag.enriched_data.related_tags;
-      } else if (tag.enriched_data?.related_entities) {
-        relatedTags = tag.enriched_data.related_entities;
+      if (ed.related_tags) {
+        relatedTags = ed.related_tags;
+      } else if (ed.related_entities) {
+        relatedTags = ed.related_entities;
       }
-      ticker = tag.enriched_data?.ticker || null;
-      website = tag.enriched_data?.website || null;
-      description = tag.enriched_data?.description_ru || null;
-      keyProducts = tag.enriched_data?.key_products || [];
-      synonymsRu = tag.enriched_data?.synonyms_ru || [];
-      synonymsEn = tag.enriched_data?.synonyms_en || [];
+      ticker    = ed.ticker       || null;
+      website   = ed.website      || null;
+      description = ed.description_ru || null;
+      keyProducts = ed.key_products || [];
+      synonymsRu  = ed.synonyms_ru  || [];
+      synonymsEn  = ed.synonyms_en  || [];
+      exchange    = ed.exchange     || null;
+      trend       = ed.trend        || null;
+      sector      = ed.sector       || null;
     } catch { /* ignore */ }
 
     // Daily stats (30 days)
@@ -1119,9 +1126,13 @@ app.get('/admin/tags/:tagId', requireAdmin, async (req, res) => {
         ticker,
         website,
         description,
+        description_ru: description,
         key_products: keyProducts,
         synonyms_ru: synonymsRu,
         synonyms_en: synonymsEn,
+        exchange,
+        trend,
+        sector,
       },
       daily_stats: dailyResult.rows.map((r: any) => ({
         day: r.day,
