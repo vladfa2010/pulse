@@ -1327,6 +1327,9 @@ app.put('/admin/tags/:tagId', requireAdmin, async (req, res) => {
         key_products: ed.key_products || [],
         synonyms_ru: ed.synonyms_ru || [],
         synonyms_en: ed.synonyms_en || [],
+        exchange: ed.exchange || null,
+        trend: ed.trend || null,
+        sector: ed.sector || null,
       },
     });
   } catch (err: any) {
