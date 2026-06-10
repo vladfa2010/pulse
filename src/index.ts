@@ -3193,9 +3193,9 @@ async function start() {
       res.json({ started: true });
     });
 
-    // Fallback: setInterval если нет внешнего cron
+    // Fallback: setInterval если нет внешнего cron (DEBUG: 5 мин для тестирования)
     if (!process.env.CRON_SECRET_KEY) {
-      setInterval(() => { nsm.run().catch((e: any) => console.error('[NSM] interval error:', e.message)); }, 60 * 60 * 1000);
+      setInterval(() => { nsm.run().catch((e: any) => console.error('[NSM] interval error:', e.message)); }, 5 * 60 * 1000);
     }
 
     // Catch-up: если давно не запускали — запустить
