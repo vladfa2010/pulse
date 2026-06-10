@@ -47,7 +47,7 @@ export class NewsSourceManager {
               AND t.enriched_data->>'ticker' IS NOT NULL
           ) t
           WHERE (
-            n.title_original ILIKE '%' || t.ticker || '%'
+            COALESCE(n.title_original, n.title_ru, '') ILIKE '%' || t.ticker || '%'
             OR COALESCE(n.summary_original, n.summary_ru, '') ILIKE '%' || t.ticker || '%'
           )
           AND (n.matched_tags IS NULL OR NOT (t.tag_id = ANY(n.matched_tags)))
