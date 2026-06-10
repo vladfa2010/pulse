@@ -1,7 +1,7 @@
 # PULSE — Backend Architecture
 
 > Техническая документация backend'а. Логика, flow, принятие решений.
-> Последнее обновление: 2026-06-10 (v7.24.0 — TZ_FEED_FILTER_FIX баг portfolio.id vs tag_id)
+> Последнее обновление: 2026-06-10 (v7.25.0 — TZ_TAG_DATA_LOADING_FIX: дублирующий GET endpoint)
 
 ---
 
@@ -1422,6 +1422,40 @@ loadArticles(tag.tag_id)  // → /news/tags/spacex → N articles
 
 ---
 
+## 9h. Дублирующий GET endpoint — данные не подтягивались
+
+> **TZ:** TZ_TAG_DATA_LOADING_FIX  
+> **Дата:** 2026-06-10  
+> **Коммит:** `224e0f0`  
+> **Файл:** `backend/src/index.ts`
+
+### Проблема: два GET /admin/tags/:tagId endpoint'а
+
+В файле `index.ts` оказалось **два endpoint'а** на один route:
+
+| Строка | Route | Что возвращал |
+|--------|-------|---------------|
+| ~189 | `/debug-tag/:tagId` | Плоский объект с `enriched_data: {exchange}` |
+| **1043** | **`/admin/tags/:tagId`** | **`{ tag: {...} }` без `exchange/trend/sector`** |
+
+Frontend вызывал `/admin/tags/:tagId` (строка 1043) — 12 полей, без новых.
+
+### Почему "иногда показывало, иногда нет"
+
+| Действие | Что происходило | Результат |
+|----------|----------------|-----------|
+| Save | PUT пишет в `enriched_data` JSONB | 200 OK ✅ |
+| После Save | PUT response возвращает `tag.exchange` | Показывает значение ✅ |
+| Refresh | GET `/admin/tags/:tagId` → не извлекал exchange из JSONB | "Not set" ❌ |
+
+### Фикс
+
+Добавлено извлечение `exchange`, `trend`, `sector` из `ed` в основной GET endpoint (строка 1043) + включено в response.
+
+**Response keys:** 12 → **16 полей** (`+ exchange`, `+ trend`, `+ sector`, `+ description_ru`)
+
+---
+
 ## 10. API Design
 
 ### News Feed Logic
@@ -1796,4 +1830,3 @@ cron.schedule('0 13 * * 0', generateReport);
 POST /trigger/rss
 POST /trigger/weekly
 ```
- 
