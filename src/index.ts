@@ -151,6 +151,11 @@ app.get('/debug-tag/:tagId', async (req, res) => {
     const tag = tagResult.rows[0];
     const ed = tag.enriched_data || {};
 
+    // Enriched fields
+    const exchange = ed.exchange || null;
+    const trend    = ed.trend    || null;
+    const sector   = ed.sector   || null;
+
     // Get article counts
     let linksCount = 0;
     try {
@@ -194,6 +199,9 @@ app.get('/debug-tag/:tagId', async (req, res) => {
         related_tags: ed.related_tags || ed.related_entities || [],
         synonyms_ru: ed.synonyms_ru || [],
         synonyms_en: ed.synonyms_en || [],
+        exchange,
+        trend,
+        sector,
       },
       stats: {
         news_tag_links: linksCount,
@@ -984,6 +992,9 @@ app.get('/api/tags/search', async (req, res) => {
       WHERE
         tag_name ILIKE '%' || $1 || '%'
         OR enriched_data->>'ticker' ILIKE '%' || $1 || '%'
+        OR enriched_data->>'exchange' ILIKE '%' || $1 || '%'
+        OR enriched_data->>'trend' ILIKE '%' || $1 || '%'
+        OR enriched_data->>'sector' ILIKE '%' || $1 || '%'
         OR EXISTS (
           SELECT 1 FROM unnest(keywords) k
           WHERE k ILIKE '%' || $1 || '%'
@@ -1142,6 +1153,9 @@ const TAG_UPDATE_RULES: Record<string, any> = {
   related_tags: { type: 'array', maxItems: 20, items: { type: 'string' }, optional: true },
   synonyms_ru: { type: 'array', maxItems: 20, items: { type: 'string', max: 100 }, optional: true },
   synonyms_en: { type: 'array', maxItems: 20, items: { type: 'string', max: 100 }, optional: true },
+  exchange: { type: 'string', max: 50, pattern: /^[A-Z][A-Za-z\.\-]*$/, optional: true },
+  trend:    { type: 'string', max: 100, optional: true },
+  sector:   { type: 'string', max: 100, optional: true },
 };
 
 function validateField(key: string, value: any): string | null {
@@ -1266,7 +1280,7 @@ app.put('/admin/tags/:tagId', requireAdmin, async (req, res) => {
     }
 
     // Build enriched_data JSONB patch
-    const jsonbFields = ['ticker', 'website', 'description_ru', 'key_products', 'related_tags', 'synonyms_ru', 'synonyms_en'];
+    const jsonbFields = ['ticker', 'website', 'description_ru', 'key_products', 'related_tags', 'synonyms_ru', 'synonyms_en', 'exchange', 'trend', 'sector'];
     const jsonbUpdates: string[] = [];
     for (const f of jsonbFields) {
       if (updates[f] !== undefined) {
@@ -3041,4 +3055,4 @@ async function start() {
   });
 }
 
-start();
+start(); 
