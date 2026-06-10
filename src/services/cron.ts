@@ -137,9 +137,24 @@ async function processArticlesLocked() {
   try {
     console.log('[Cron] Starting RSS fetch at', new Date().toISOString());
 
-    // 1. Fetch RSS (с защитой от ошибок)
+    // 1. Fetch RSS — только enabled источники из news_sources
     try {
-      articles = await fetchAllRSS();
+      const { query } = await import('../config/db');
+      const enabledResult = await query(`
+        SELECT name, config->>'url' as url, config->>'lang' as lang, config->>'category' as category
+        FROM news_sources
+        WHERE type = 'rss' AND enabled = true
+      `);
+      if (enabledResult.rows.length === 0) {
+        console.log('[Cron] No RSS sources enabled, skipping');
+        return;
+      }
+      const { RSS_SOURCES } = await import('./rssSources');
+      const enabledNames = new Set(enabledResult.rows.map((r: any) => r.name));
+      const enabledSources = RSS_SOURCES.filter(s => enabledNames.has(s.id));
+      console.log(`[Cron] ${enabledSources.length}/${RSS_SOURCES.length} RSS sources enabled`);
+      
+      articles = await fetchAllRSS(enabledSources);
     } catch (err: any) {
       console.error('[Cron] RSS fetch failed:', err.message);
       errors.push(`fetch: ${err.message}`);
