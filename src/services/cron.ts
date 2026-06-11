@@ -423,8 +423,8 @@ async function processArticlesLocked() {
           // Новая новость
           const newId = crypto.randomUUID();
           await query(
-            `INSERT OR IGNORE INTO news (id, title_original, title_ru, summary_ru, source, source_id, url, url_normalized, content_hash, all_sources, source_count, published_at, lang_original, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, llm_error, llm_attempts, llm_raw_preview, llm_batch_size, llm_results_count, is_political, article_type, matched_tags, tag_impact)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT OR IGNORE INTO news (id, title_original, title_ru, summary_ru, source, source_id, url, url_normalized, content_hash, all_sources, source_count, published_at, lang_original, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, llm_error, llm_attempts, llm_raw_preview, llm_batch_size, llm_results_count, is_political, article_type, matched_tags, tag_impact, needs_translation)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
             [newId, a.title, title_ru, summary_ru, a.source, a.sourceId, a.url, urlNormalized, contentHash, JSON.stringify([a.source]), 1, a.publishedAt.toISOString(), a.lang, a.sentiment, a.sentiment_score, a.sentiment_reasoning, a.sentiment_source, a.llm_error, a.llm_attempts, a.llm_raw_preview, a.llm_batch_size, a.llm_results_count, a.is_political ? 1 : 0, a.article_type || 'micro', JSON.stringify(a.matched_tags || []), JSON.stringify(a.tag_impact || [])]
           );
           saved++;
@@ -435,8 +435,8 @@ async function processArticlesLocked() {
         // PostgreSQL: INSERT с ON CONFLICT (content_hash) DO UPDATE
         // FIX v3: CASE WHEN вместо COALESCE — обновляем sentiment-поля ТОЛЬКО если предыдущий результат был LLM-ошибкой
         const result = await query(
-          `INSERT INTO news (title_original, title_ru, summary_ru, source, source_id, url, url_normalized, content_hash, all_sources, source_count, published_at, lang_original, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, llm_error, llm_attempts, llm_raw_preview, llm_batch_size, llm_results_count, is_political, article_type, matched_tags, tag_impact)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text[], $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
+          `INSERT INTO news (title_original, title_ru, summary_ru, source, source_id, url, url_normalized, content_hash, all_sources, source_count, published_at, lang_original, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, llm_error, llm_attempts, llm_raw_preview, llm_batch_size, llm_results_count, is_political, article_type, matched_tags, tag_impact, needs_translation)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text[], $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, FALSE)
            ON CONFLICT (content_hash) DO UPDATE
              SET all_sources = CASE
                WHEN news.all_sources @> ARRAY[EXCLUDED.source]::text[] THEN news.all_sources
@@ -470,7 +470,8 @@ async function processArticlesLocked() {
              last_retry_at = NOW(),
              llm_raw_preview = EXCLUDED.llm_raw_preview,
              llm_batch_size = EXCLUDED.llm_batch_size,
-             llm_results_count = EXCLUDED.llm_results_count
+             llm_results_count = EXCLUDED.llm_results_count,
+             needs_translation = FALSE
            RETURNING id, (xmax = 0) as is_insert`,
           [a.title, title_ru, summary_ru, a.source, a.sourceId, a.url, urlNormalized, contentHash, [a.source], 1, a.publishedAt, a.lang, a.sentiment, a.sentiment_score, a.sentiment_reasoning, a.sentiment_source, a.llm_error, a.llm_attempts, a.llm_raw_preview, a.llm_batch_size, a.llm_results_count, a.is_political, a.article_type || 'micro', a.matched_tags || [], JSON.stringify(a.tag_impact || [])]
         );
@@ -700,5 +701,3 @@ export function startCron() {
       console.error('[Cron] Deferred processor failed:', err.message);
     }
   });
-}
-
