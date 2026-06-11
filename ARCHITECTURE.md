@@ -1,15 +1,15 @@
 # PULSE — Backend Architecture
 
 > Техническая документация backend'а. Логика, flow, принятие решений.
-> Последнее обновление: 2026-06-11 (v8.0.0 — NewsSourceManager + Finnhub Adapter)
+> Последнее обновление: 2026-06-11 (v9.0.0 — News Processor: единое окно обработки)
 
 ---
 
 ## Содержание
 
-1. [News Pipeline](#1-news-pipeline)
-2. [RSS Fetcher](#2-rss-fetcher-rssfetcherts) — 35 источников, управление (вкл/выкл)
-2a. [NewsSourceManager](#2a-newssourcemanager-newssourcemanagerts--v80) — единый пул RSS + API
+1. [News Pipeline](#1-news-pipeline) — v9.0 flow с News Processor
+2. [RSS Fetcher](#2-rss-fetcher-rssfetcherts--v90) — **только fetch + raw INSERT**
+2a. [NewsSourceManager](#2a-newssourcemanager-newssourcemanagerts--v90) — единый пул + **News Processor**
 2b. [News Feed Filtering](#2b-news-feed-filtering-get-apinewstagstagid) — matched_tags, поиск по тегу
 3. [Smart Tag Matching](#3-smart-tag-matching)
 4. [Duplicate Detection](#4-duplicate-detection)
@@ -38,62 +38,46 @@
 
 ## 1. News Pipeline
 
-### Полный flow обработки новости (v7.17)
+### Полный flow обработки новости (v9.0 — News Processor)
+
+**Принцип:** Fetch и Process — раздельные слои. News Processor = единое окно.
 
 ```
-┌─────────────────┐
-│   RSS Fetcher   │  <-- 35 источников (16 RU + 19 EN), batch x 4
-│   (rssFetcher)  │
-└────────┬────────┘
+LAYER 0 — FETCH (только сохраняет, не обрабатывает)
+
+┌─────────────────┐     ┌─────────────────┐
+│   RSS Fetcher   │     │  Finnhub Fetch  │     (любой новый adapter)
+│   (cron.ts)     │     │  (finnhubAdapter)│     → INSERT сырое
+│   каждые 5 мин  │     │   каждый час    │
+└────────┬────────┘     └────────┬────────┘
+         │                        │
+         ▼                        ▼
+┌──────────────────────────────────────────────┐
+│         PostgreSQL: news                     │
+│  title_ru = NULL        sentiment = NULL     │
+│  summary_ru = NULL      sentiment_source = NULL
+│  needs_translation = TRUE  ← маркер "сырой" │
+└──────────────────────────────────────────────┘
          │
          ▼
-┌─────────────────┐
-│   XML Parser    │  <-- RSS 2.0 + Atom, normalizePubDate (timezone-aware)
-│   (parseRSS)    │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│  URL Normalize  │  <-- Удаляем UTM, приводим к canonical form
-│  (normalizeUrl) │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│   Translation   │  <-- EN -> RU через Kimi API (api.moonshot.ai)
-│   (translate)   │  <-- Cache: translation_cache table
-└────────┬────────┘
-         │
-         ▼
-┌──────────────────────────────┐
-│      Smart Match Tags        │  <-- 3-layer: keywords -> LLM -> related
-│     (smartTagMatcher)        │  <-- User-defined tags + standard tags
-└────────┬─────────────────────┘
-         │
-         ▼
-┌──────────────────────────────┐
-│      UNIFIED LLM BATCH       │  <-- 1 запрос на 10 статей
-│         (v7.17)              │     sentiment + reasoning + is_political + tag_impacts
-│  ┌─────────┐ ┌────────────┐ │
-│  │Sentiment│ │  Tag Impact│ │  <-- analyzeUnifiedBatch(10)
-│  │ -10..+10│ │  (per tag) │ │     returns: UnifiedResult[] x 10
-│  │Reasoning│ │            │ │
-│  │2 para.  │ │            │ │
-│  │is_polit.│ │            │ │
-│  └─────────┘ └────────────┘ │
-└────────┬─────────────────────┘
-         │
-         ▼
-┌─────────────────┐
-│  Deduplicate    │  <-- content_hash + ON CONFLICT DO UPDATE
-│   (cron.ts)     │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│   Save to DB    │  <-- PostgreSQL, table: news
-│    (query)      │
-└─────────────────┘
+LAYER 1+2 — PROCESS (единое окно)
+
+┌──────────────────────────────────────────────────┐
+│         News Processor (newsProcessor.ts)        │
+│              каждые 10 мин                        │
+│  SELECT WHERE needs_translation = TRUE (LIMIT 50) │
+│         │                                        │
+│         ▼                                        │
+│  ┌──────────────┐  ┌──────────────────────┐     │
+│  │ Translate    │  │ Sentiment Analysis   │     │
+│  │ EN → RU      │  │ + tag_impact         │     │
+│  │ (best effort)│  │ + is_political       │     │
+│  └──────────────┘  └──────────────────────┘     │
+│         │                                        │
+│         ▼                                        │
+│  UPDATE: title_ru=$1, sentiment=$2,            │
+│          needs_translation = FALSE               │
+└──────────────────────────────────────────────────┘
 ```
 
 ### Время обработки
@@ -109,7 +93,9 @@
 
 ---
 
-## 2. RSS Fetcher (rssFetcher.ts)
+## 2. RSS Fetcher (rssFetcher.ts) — v9.0
+
+> **Только Layer 0 (fetch).** Вся обработка перенесена в News Processor.
 
 ### 35 источников (16 RU + 19 EN)
 
@@ -123,6 +109,26 @@
 | **Crypto** | coindesk, cointelegraph | 2 |
 | **Energy** | oilprice, mining | 2 |
 | **Всего** | | **35** |
+
+### Что делает RSS cron (cron.ts)
+
+| Этап | ДО (v7) | ПОСЛЕ (v9) |
+|------|---------|------------|
+| Fetch RSS | ✅ | ✅ |
+| Translate EN→RU | ✅ | ❌ **News Processor** |
+| Smart Match Tags | ✅ | ❌ **News Processor** |
+| Sentiment analysis | ✅ | ❌ **News Processor** |
+| INSERT в БД | ✅ title_ru=перевод | ✅ **title_ru=NULL** |
+| needs_translation | FALSE | **TRUE** |
+
+### INSERT (raw — сырые данные)
+
+```sql
+INSERT INTO news (title_original, title_ru, summary_ru, sentiment, sentiment_score, ... matched_tags, tag_impact, needs_translation)
+VALUES ($1, NULL, NULL, NULL, NULL, ... '{}'::text[], '[]'::jsonb, TRUE)
+```
+
+**Все NULL-поля** заполняются News Processor при обработке.
 
 ### Управление источниками (вкл / выкл)
 
@@ -170,7 +176,7 @@ export const RSS_SOURCES: RssSource[] = [
 
 ---
 
-## 2a. NewsSourceManager (newsSourceManager.ts) — v8.0
+## 2a. NewsSourceManager (newsSourceManager.ts) — v9.0
 
 > Единый пул источников (RSS + API). Заменяет разрозненные cron-задачи.
 > Дата: 2026-06-11 | Статус: В продакшене
@@ -216,10 +222,24 @@ NewsSourceManager.run()
 3. Запрос `/company-news?symbol=TICKER&from=DATE&to=DATE`
 4. URL dedup → content_hash dedup → INSERT `ON CONFLICT DO UPDATE`
 
+**Flow:**
+1. Собрать теги с `exchange='USA'` + `ticker IS NOT NULL` из `user_defined_tags` + `portfolios`
+2. Tiered fetching: топ-12 каждый цикл, остальные в полночь
+3. Запрос `/company-news?symbol=TICKER&from=DATE&to=DATE`
+4. URL dedup → content_hash dedup → INSERT `ON CONFLICT DO UPDATE`
+
+**INSERT (raw — сырые данные):**
+```sql
+INSERT INTO news (title_original, title_ru, summary_ru, ... needs_translation)
+VALUES ($1, NULL, NULL, ... TRUE)
+-- title_ru = NULL → News Processor переведёт
+-- matched_tags = ['nvidia'] → News Processor дополнит через smartMatchTags
+```
+
 **Текущие ограничения:**
-- Перевод EN→RU **отключен** (баланс API Кими пустой) — EN текст сохраняется как RU
-- Интервал фетча: **5 часов** (rate limit + translate 429)
-- `$13::text[]` — отдельный параметр для `all_sources`, избегаем `$5` reuse в pg
+- Перевод EN→RU **в News Processor** (не в адаптере)
+- Интервал фетча: **1 час** (rate limit)
+- `$13::text[]` — отдельный параметр для `all_sources`
 
 ### Колонки news для bilingual
 
@@ -232,14 +252,74 @@ NewsSourceManager.run()
 | `source_type` | `rss` \| `api_search` — для фильтрации |
 | `lang_original` | `en` \| `ru` |
 | `matched_tags` | TEXT[] — tag_id из Finnhub или backfill |
+| `needs_translation` | BOOLEAN — маркер "сырой" статьи (TRUE = ждёт News Processor) |
 
-### Trigger endpoint
-
-```bash
-curl "https://pulse-api-bsov.onrender.com/trigger/nsm?secret=pulse-dev-key"
+**title_ru — nullable (v9.0 critical fix):**
+```sql
+ALTER TABLE news ALTER COLUMN title_ru DROP NOT NULL;
+-- Причина: Finnhub вставляет title_ru = NULL, News Processor заполняет позже
 ```
 
-Fallback: `setInterval(5 мин)` если нет `CRON_SECRET_KEY`.
+### News Processor (newsProcessor.ts) — v9.0
+
+> Единое окно обработки (Layer 1 + Layer 2). Обрабатывает ВСЕ сырые статьи — RSS, Finnhub, будущие API.
+
+#### Архитектура
+
+```
+processRawArticles()
+│
+│  0. acquireCronLock('news-processor') — не конфликтует с RSS
+│  1. SELECT * FROM news WHERE needs_translation = TRUE LIMIT 50
+│  2. translateArticles() — EN→RU (best effort, не блокирует sentiment)
+│  3. matchTags() — smartMatchTags для каждой статьи
+│  4. analyzeSentiment() — unified batch (sentiment + tag_impact + is_political)
+│  5. UPDATE: needs_translation = FALSE, title_ru=$1, sentiment=$2...
+```
+
+#### needs_translation маркер
+
+| Значение | Что означает | Кто ставит |
+|----------|-------------|------------|
+| `TRUE` | Статья сырая — нужна обработка | RSS cron (INSERT), Finnhub (INSERT), Default |
+| `FALSE` | Статья обработана — готова | News Processor (UPDATE) |
+
+#### При duplicate (RSS + Finnhub одна новость)
+
+```
+Finnhub: INSERT needs_translation = TRUE, matched_tags = ['nvidia']
+RSS:    ON CONFLICT UPDATE — matched_tags merge, needs_translation не меняет
+Result: needs_translation = TRUE, matched_tags = ['nvidia', ...]
+        → News Processor обработает с полным набором тегов
+```
+
+#### Cron schedule
+
+| Процесс | Интервал | Lock |
+|---------|----------|------|
+| RSS Fetch | 5 мин | `rss-aggregator` |
+| NSM (Finnhub + API) | 5 мин | `nsm` |
+| **News Processor** | **10 мин** | **`news-processor`** |
+
+#### Trigger endpoint
+
+```bash
+# NewsSourceManager (Fetch)
+curl "https://pulse-api-bsov.onrender.com/trigger/nsm?secret=pulse-dev-key"
+
+# News Processor (Process)
+curl "https://pulse-api-bsov.onrender.com/trigger/process?secret=pulse-dev-key"
+```
+
+Fallback: `setInterval(10 мин)` если нет `CRON_SECRET_KEY`.
+
+#### Fallback при пустом балансе Кими
+
+| Этап | При 429 | Результат |
+|------|---------|-----------|
+| Translate | `catch → return` | title_ru = NULL → `COALESCE(title_ru, title_original)` покажет EN |
+| Sentiment | Keyword-based | `sentiment = 'neutral'`, `sentiment_source = 'keyword'` |
+| Tag matching | Всегда работает | `matched_tags` через keyword dictionary |
 
 ---
 
