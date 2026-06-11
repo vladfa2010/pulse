@@ -3153,6 +3153,8 @@ async function start() {
     { sql: `CREATE TABLE IF NOT EXISTS cron_log (id ${USE_SQLITE ? 'INTEGER PRIMARY KEY AUTOINCREMENT' : 'SERIAL PRIMARY KEY'}, task_name VARCHAR(50) NOT NULL, started_at TIMESTAMP NOT NULL DEFAULT ${_SQL_NOW}, finished_at TIMESTAMP, articles_fetched INTEGER DEFAULT 0, articles_saved INTEGER DEFAULT 0, articles_merged INTEGER DEFAULT 0, errors TEXT, status VARCHAR(20) DEFAULT 'running')`, name: 'cron_log' },
     { sql: `CREATE INDEX IF NOT EXISTS idx_cron_log_started_at ON cron_log(started_at DESC)`, name: 'idx_cron_log_started_at' },
     { sql: `CREATE TABLE IF NOT EXISTS rss_source_meta (source_id VARCHAR(50) PRIMARY KEY, last_fetched_at TIMESTAMP NOT NULL DEFAULT ${USE_SQLITE ? "datetime('now', '-24 hours')" : "NOW() - INTERVAL '24 hours'"}, updated_at TIMESTAMP DEFAULT ${_SQL_NOW})`, name: 'rss_source_meta' },
+    // TGparser — RSS source (exists in rssSources.ts but missing in news_sources table)
+    { sql: `INSERT INTO news_sources (name, display_name, type, config, enabled) VALUES ('tgparser', 'TG Parser News', 'rss', '{"url": "https://tgparser-web.onrender.com/rss", "lang": "ru", "category": "news"}', true) ON CONFLICT (name) DO NOTHING`, name: 'news_source_tgparser' },
   ];
   for (const m of migrations) {
     try {
