@@ -125,8 +125,13 @@ async function translateArticles(articles: RawArticle[]): Promise<void> {
     }
   } catch (err: any) {
     console.error('[NewsProcessor] Translate error:', err.message);
+    // Записываем ошибку LLM для всех статей батча
+    const errorMsg = err.message?.slice(0, 500) || 'Translate API error';
+    for (const a of toTranslate) {
+      (a as any)._llmError = errorMsg;
+      (a as any)._llmAttempts = ((a as any)._llmAttempts || 0) + 1;
+    }
     // НЕ throw — sentiment продолжает работать
-    return;
   }
 }
 
@@ -247,6 +252,29 @@ async function saveProcessedArticles(
     const a = articles[i];
     const s = sentimentResults[i];
 
+    // Определяем источник sentiment и LLM ошибки
+    const translateError = (a as any)._llmError || null;
+    const translateAttempts = (a as any)._llmAttempts || 0;
+    const sentimentError = (s as any)._llmErrorMsg || null;
+    const sentimentErrorType = (s as any)._llmErrorType || null;
+    
+    // sentiment_source: llm при успехе, keyword при fallback/ошибке
+    let sentimentSource: string;
+    if (translateError && !sentimentError) {
+      // Translate упал, sentiment keyword-based
+      sentimentSource = 'keyword';
+    } else if (sentimentErrorType) {
+      // Sentiment тоже упал
+      sentimentSource = sentimentErrorType; // 'llm-error' etc
+    } else {
+      // Успех
+      sentimentSource = (s as any)._llmSource || 'llm';
+    }
+    
+    // LLM ошибка: translate или sentiment
+    const llmError = translateError || sentimentError || null;
+    const llmAttempts = translateAttempts + (sentimentErrorType ? 1 : 0);
+    
     try {
       await query(`
         UPDATE news
@@ -262,21 +290,27 @@ async function saveProcessedArticles(
             matched_tags = $9,
             tag_impact = $10,
             llm_error = $11,
-            llm_attempts = $12
-        WHERE id = $13
+            llm_attempts = $12,
+            llm_raw_preview = $13,
+            llm_batch_size = $14,
+            llm_results_count = $15
+        WHERE id = $16
       `, [
         (a as any).title_ru,
         (a as any).summary_ru,
         s.sentiment,
         s.score,
         s.reasoning || null,
-        (s as any)._llmErrorType || (s as any)._llmSource || 'llm',
+        sentimentSource,
         s.is_political,
         s.article_type || 'micro',
         matchedTagsList[i],
         JSON.stringify(s.tag_impacts || []),
-        (s as any)._llmErrorMsg || null,
-        (s as any)._llmErrorType ? 1 : null,
+        llmError,
+        llmAttempts || null,
+        (s as any)._llmRaw || null,
+        (s as any)._llmBatchSize || null,
+        (s as any)._llmResultsCount || null,
         a.id,
       ]);
       updated++;
