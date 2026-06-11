@@ -137,17 +137,9 @@ export async function fetchFinnhubNews(config: any): Promise<FetchedArticle[]> {
     await sleep(delayMs);
   }
 
-  // Перевод отключен — баланс API Кими пустой
-  // Сохраняем EN текст в RU поля, перевод будет позже
-  if (articles.length > 0) {
-    for (const a of articles) {
-      a.title_ru = a.title_original;
-      a.summary_ru = a.summary_original;
-    }
-    console.log(`[Finnhub] Translation SKIPPED (API balance empty), saved EN as RU`);
-  }
-
-  console.log(`[Finnhub] Total articles: ${articles.length}`);
+  // title_ru и summary_ru остаются null — признак "сырой" статьи
+  // News Processor найдёт их через WHERE title_ru IS NULL и сделает перевод
+  console.log(`[Finnhub] Total articles: ${articles.length} (raw: title_ru=null, summary_ru=null)`);
   return articles;
 }
 
