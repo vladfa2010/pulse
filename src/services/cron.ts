@@ -28,6 +28,7 @@ const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
 import { populateNewsTagLinksBatch, EnrichmentTask } from './enrichment';
 import { broadcastNews } from './sse';
+import { analyzeUnifiedBatch, UnifiedResult } from './smartTagMatcher';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // analyzeSentiment — простой анализ на основе ключевых слов
@@ -267,6 +268,15 @@ async function processArticlesLocked() {
     console.log(`[Cron] Finished. Logged: ${articles.length} fetched, ${saved} saved, ${merged} merged, ${errors.length} errors`);
   }
 }
+
+const LOCK_TTL_MINUTES = 10;
+const INSTANCE_ID = `${process.env.RENDER_INSTANCE_ID || 'local'}-${process.pid}-${Date.now()}`;
+
+const IS_SQLITE = process.env.USE_SQLITE === 'true';
+const SQL_NOW = IS_SQLITE ? "datetime('now')" : 'NOW()';
+const SQL_INTERVAL_10MIN = IS_SQLITE
+  ? "datetime('now', '+10 minutes')"
+  : "NOW() + INTERVAL '10 minutes'";
 
 async function acquireCronLock(jobName: string): Promise<boolean> {
   try {
