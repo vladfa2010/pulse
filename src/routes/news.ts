@@ -375,7 +375,7 @@ router.get('/:id', async (req: AuthRequest, res) => {
 
     const result = await query(
       `SELECT 
-        id, title_ru, summary_ru, title_original, lang_original,
+        id, title_ru, summary_ru, title_original, summary_original, lang_original,
         source, source_id, url, published_at, fetched_at,
         sentiment, sentiment_score, sentiment_reasoning, sentiment_source,
         matched_tags, tag_impact, is_political, article_type,
