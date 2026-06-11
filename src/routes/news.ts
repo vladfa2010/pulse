@@ -74,7 +74,7 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
     // Показываем ВСЕ новости за 90 дней, без фильтра по тегам
     if (global) {
       const result = await query(
-        `SELECT id, title_ru, summary_ru, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags,
+        `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags,
                 tag_impact, source_count, all_sources
          FROM news
          WHERE ${timeFilter}
@@ -135,7 +135,7 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
       // Get (with source_count and all_sources)
       const orderDir = 'DESC'; // всегда новые сверху
       const result = await query(
-        `SELECT id, title_ru, summary_ru, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags,
+        `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags,
                 tag_impact, source_count, all_sources
          FROM news
          WHERE (${conditions})${readFilter}
