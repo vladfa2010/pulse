@@ -263,6 +263,7 @@ async function processArticlesLocked() {
 
   } catch (err: any) {
     console.error(`[Cron] Fatal error in processArticlesLocked: ${err.message}`);
+    if (err.stack) console.error('[Cron] Stack:', err.stack);
     errors.push(`fatal: ${err.message}`);
   } finally {
     await logCronFinish(logId, articles.length, saved, merged, errors);
