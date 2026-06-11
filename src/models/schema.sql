@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS news (
   summary_ru      TEXT,
   title_original  TEXT,
   summary_original TEXT,
+  source_type     VARCHAR(20) DEFAULT 'rss',
   lang_original   VARCHAR(2),
   source          VARCHAR(100),
   source_id       VARCHAR(50),

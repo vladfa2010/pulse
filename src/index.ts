@@ -3132,12 +3132,19 @@ async function start() {
     console.log('[DB] Migration: news.content_hash unique constraint added');
   } catch { /* ignore */ }
   // UNIQUE constraint на user_sessions.user_id
-  // summary_original — для bilingual статей (EN → RU)
-  try {
-    await query(`ALTER TABLE news ADD COLUMN IF NOT EXISTS summary_original TEXT`);
-    console.log('[DB] Migration: summary_original column added');
-  } catch (e: any) {
-    console.log('[DB] Migration warning for summary_original:', e.message);
+  // bilingual / source tracking columns
+  const newsCols = [
+    { name: 'summary_original', type: 'TEXT' },
+    { name: 'source_type', type: "VARCHAR(20) DEFAULT 'rss'" },
+    { name: 'lang_original', type: "VARCHAR(2)" },
+  ];
+  for (const col of newsCols) {
+    try {
+      await query(`ALTER TABLE news ADD COLUMN IF NOT EXISTS ${col.name} ${col.type}`);
+      console.log(`[DB] Migration: ${col.name} column added`);
+    } catch (e: any) {
+      console.log(`[DB] Migration warning for ${col.name}:`, e.message);
+    }
   }
 
   try {
