@@ -171,7 +171,7 @@ export async function saveArticles(articles: FetchedArticle[]): Promise<void> {
           source, source_id, source_type, url, content_hash,
           all_sources, source_count, published_at, lang_original,
           matched_tags
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, ARRAY[$5::text], 1, $10, $11, $12)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $13::text[], 1, $10, $11, $12)
         ON CONFLICT (content_hash) DO UPDATE SET
           all_sources = array_append_unique(news.all_sources, EXCLUDED.source),
           source_count = array_length(array_append_unique(news.all_sources, EXCLUDED.source), 1),
@@ -182,7 +182,8 @@ export async function saveArticles(articles: FetchedArticle[]): Promise<void> {
       `, [
         a.title_original, a.title_ru, a.summary_original, a.summary_ru,
         a.source, a.source_id, a.source_type, a.url, a.content_hash,
-        a.published_at, a.lang_original, a.matched_tags
+        a.published_at, a.lang_original, a.matched_tags,
+        [a.source]  // $13: all_sources as text[]
       ]);
       saved++;
     } catch (err: any) {
