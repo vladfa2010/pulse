@@ -2127,6 +2127,33 @@ app.get('/debug-system', async (req, res) => {
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
+// GET /debug/finnhub-tickers — сколько тикеров в портфелях (USA)
+app.get('/debug/finnhub-tickers', async (req, res) => {
+  try {
+    const tagResult = await query(`
+      SELECT DISTINCT
+        t.tag_id,
+        t.tag_name,
+        t.enriched_data->>'ticker' as ticker,
+        COUNT(p.user_id) as subscriber_count
+      FROM user_defined_tags t
+      JOIN portfolios p ON p.tag_id = t.tag_id
+      WHERE t.enriched_data->>'ticker' IS NOT NULL
+        AND LENGTH(t.enriched_data->>'ticker') > 0
+        AND t.enriched_data->>'exchange' = 'USA'
+      GROUP BY t.tag_id, t.tag_name, t.enriched_data->>'ticker'
+      ORDER BY subscriber_count DESC
+    `);
+    res.json({
+      total: tagResult.rows.length,
+      top_12: tagResult.rows.slice(0, 12).map((r: any) => ({ tag_id: r.tag_id, tag_name: r.tag_name, ticker: r.ticker, subscribers: parseInt(r.subscriber_count) })),
+      rare: tagResult.rows.slice(12).map((r: any) => ({ tag_id: r.tag_id, tag_name: r.tag_name, ticker: r.ticker, subscribers: parseInt(r.subscriber_count) })),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /debug-news-recent — все новости за последние N минут (для диагностики)
 app.get('/debug-news-recent', async (req, res) => {
   try {
