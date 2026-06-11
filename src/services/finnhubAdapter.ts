@@ -172,7 +172,34 @@ export async function saveArticles(articles: FetchedArticle[]): Promise<void> {
           all_sources, source_count, published_at, lang_original,
           matched_tags
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::text[], 1, $11, $12, $13)
-        ON CONFLICT (content_hash) DO NOTHING
+        ON CONFLICT (content_hash) DO UPDATE SET
+          matched_tags = (
+            SELECT array_agg(DISTINCT x)
+            FROM unnest(
+              array_cat(
+                COALESCE(news.matched_tags, '{}'::text[]),
+                EXCLUDED.matched_tags
+              )
+            ) AS t(x)
+          ),
+          all_sources = (
+            SELECT array_agg(DISTINCT x)
+            FROM unnest(
+              array_cat(
+                COALESCE(news.all_sources, '{}'::text[]),
+                ARRAY[EXCLUDED.source]
+              )
+            ) AS t(x)
+          ),
+          source_count = (
+            SELECT COUNT(DISTINCT x)
+            FROM unnest(
+              array_cat(
+                COALESCE(news.all_sources, '{}'::text[]),
+                ARRAY[EXCLUDED.source]
+              )
+            ) AS t(x)
+          )
       `, [
         a.title_original, a.title_ru, a.summary_original, a.summary_ru,
         a.source, a.source_id, a.source_type, a.url, a.content_hash,
