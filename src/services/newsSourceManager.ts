@@ -102,8 +102,16 @@ export class NewsSourceManager {
             console.log(`[NewsSourceManager] RSS: ${source.name} — ${articles.length} articles`);
           } else if (source.type === 'api_search') {
             if (source.name === 'finnhub') {
-              const articles = await fetchFinnhubNews(source.config);
-              await saveAPIArticles(articles);
+              // Finnhub: не чаще чем раз в час
+              const hoursSinceLastFetch = source.last_fetch_at
+                ? (Date.now() - new Date(source.last_fetch_at).getTime()) / 3600000
+                : 999;
+              if (hoursSinceLastFetch < 1) {
+                console.log(`[NewsSourceManager] Finnhub: skip (last fetch ${hoursSinceLastFetch.toFixed(1)}h ago, interval=1h)`);
+              } else {
+                const articles = await fetchFinnhubNews(source.config);
+                await saveAPIArticles(articles);
+              }
             }
           }
 
