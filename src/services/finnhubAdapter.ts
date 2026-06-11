@@ -6,7 +6,6 @@
 
 import { query } from '../config/db';
 import crypto from 'crypto';
-import { translateBatch } from './translate';
 
 interface FinnhubArticle {
   datetime: number;
@@ -138,26 +137,14 @@ export async function fetchFinnhubNews(config: any): Promise<FetchedArticle[]> {
     await sleep(delayMs);
   }
 
-  // Перевод EN → RU (best effort — если 429, сохраним EN как RU)
+  // Перевод отключен — баланс API Кими пустой
+  // Сохраняем EN текст в RU поля, перевод будет позже
   if (articles.length > 0) {
-    try {
-      const titles = articles.map(a => a.title_original);
-      const summaries = articles.map(a => a.summary_original);
-      const translatedTitles = await translateBatch(titles);
-      const translatedSummaries = await translateBatch(summaries);
-      for (let i = 0; i < articles.length; i++) {
-        articles[i].title_ru = translatedTitles[i] || articles[i].title_original;
-        articles[i].summary_ru = translatedSummaries[i] || articles[i].summary_original;
-      }
-      console.log(`[Finnhub] Translated ${articles.length} articles`);
-    } catch (err: any) {
-      // Rate limit (429) — сохраняем EN текст в RU поля, переводим позже
-      console.log(`[Finnhub] Translation unavailable (${err.message}), saving EN text`);
-      for (const a of articles) {
-        a.title_ru = a.title_original;
-        a.summary_ru = a.summary_original;
-      }
+    for (const a of articles) {
+      a.title_ru = a.title_original;
+      a.summary_ru = a.summary_original;
     }
+    console.log(`[Finnhub] Translation SKIPPED (API balance empty), saved EN as RU`);
   }
 
   console.log(`[Finnhub] Total articles: ${articles.length}`);
