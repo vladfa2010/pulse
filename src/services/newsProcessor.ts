@@ -200,16 +200,18 @@ async function analyzeSentiment(
     const BATCH_SIZE = 5;
     for (let batchStart = 0; batchStart < needLLMWithIndex.length; batchStart += BATCH_SIZE) {
       const chunk = needLLMWithIndex.slice(batchStart, batchStart + BATCH_SIZE);
+      const batchStartTime = new Date().toISOString();
+      let batchResults: UnifiedResult[] = [];
       try {
-        const results = await analyzeUnifiedBatch(
+        batchResults = await analyzeUnifiedBatch(
           chunk.map(({ article, originalIndex }) => ({
             title: (article as any).title_ru || article.title_original,
             summary: (article as any).summary_ru || article.summary_original,
             tags: matchedTagsList[originalIndex],
           }))
         );
-        for (let j = 0; j < results.length && j < chunk.length; j++) {
-          unifiedResults[chunk[j].originalIndex] = results[j];
+        for (let j = 0; j < batchResults.length && j < chunk.length; j++) {
+          unifiedResults[chunk[j].originalIndex] = batchResults[j];
         }
       } catch (err: any) {
         console.error('[NewsProcessor] Sentiment batch error:', err.message);
@@ -218,8 +220,41 @@ async function analyzeSentiment(
             sentiment: 'neutral', score: 0, reasoning: '',
             is_political: false, article_type: 'micro',
             tag_impacts: matchedTagsList[originalIndex].map(t => ({ tag: t, score: 0, reasoning: '' })),
+            _llmErrorType: 'llm-error',
+            _llmErrorMsg: err.message?.slice(0, 500),
           } as UnifiedResult;
         }
+        batchResults = chunk.map(({ originalIndex }) => unifiedResults[originalIndex]);
+      }
+
+      // Log batch to llm_batches for metrics dashboard
+      try {
+        const llmSuccess = batchResults.filter(r => r.sentiment && !(r as any)._llmErrorType).length;
+        const llmFailed = batchResults.filter(r => (r as any)._llmErrorType).length;
+        const llmPartial = batchResults.filter(r => r.sentiment && (r as any)._llmErrorType).length;
+        const errorTypes = batchResults
+          .filter(r => (r as any)._llmErrorType)
+          .reduce((acc: Record<string, number>, r) => {
+            const type = (r as any)._llmErrorType || 'unknown';
+            acc[type] = (acc[type] || 0) + 1;
+            return acc;
+          }, {});
+
+        await query(`
+          INSERT INTO llm_batches (status, started_at, finished_at, articles_count, success_count, failed_count, partial_count, error_types)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `, [
+          llmFailed > 0 ? (llmSuccess > 0 ? 'partial' : 'error') : 'success',
+          batchStartTime,
+          new Date().toISOString(),
+          batchResults.length,
+          llmSuccess,
+          llmFailed,
+          llmPartial,
+          JSON.stringify(errorTypes),
+        ]);
+      } catch (logErr: any) {
+        console.error('[NewsProcessor] llm_batches log error:', logErr.message);
       }
     }
   } else {
