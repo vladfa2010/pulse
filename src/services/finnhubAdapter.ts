@@ -138,7 +138,7 @@ export async function fetchFinnhubNews(config: any): Promise<FetchedArticle[]> {
     await sleep(delayMs);
   }
 
-  // Перевод EN → RU
+  // Перевод EN → RU (best effort — если 429, сохраним EN как RU)
   if (articles.length > 0) {
     try {
       const titles = articles.map(a => a.title_original);
@@ -151,7 +151,12 @@ export async function fetchFinnhubNews(config: any): Promise<FetchedArticle[]> {
       }
       console.log(`[Finnhub] Translated ${articles.length} articles`);
     } catch (err: any) {
-      console.error('[Finnhub] Translation error:', err.message);
+      // Rate limit (429) — сохраняем EN текст в RU поля, переводим позже
+      console.log(`[Finnhub] Translation unavailable (${err.message}), saving EN text`);
+      for (const a of articles) {
+        a.title_ru = a.title_original;
+        a.summary_ru = a.summary_original;
+      }
     }
   }
 
