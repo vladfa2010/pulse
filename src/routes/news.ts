@@ -176,7 +176,7 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
       // Get (with source_count and all_sources)
       const pgOrder = 'DESC'; // всегда новые сверху
       const result = await query(
-        `SELECT id, title_ru, summary_ru, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags,
+        `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags,
                 tag_impact, source_count, all_sources
          FROM news
          WHERE matched_tags && $1::text[]${pgReadFilter}
@@ -266,7 +266,7 @@ router.get('/tags/:tagId', async (req, res) => {
     let result;
     if (USE_SQLITE) {
       result = await query(
-        `SELECT id, title_ru, summary_ru, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags,
+        `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags,
                 tag_impact, source_count, all_sources
          FROM news
          WHERE matched_tags LIKE $1 AND ${timeFilter}
@@ -276,7 +276,7 @@ router.get('/tags/:tagId', async (req, res) => {
       );
     } else {
       result = await query(
-        `SELECT id, title_ru, summary_ru, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags,
+        `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags,
                 tag_impact, source_count, all_sources
          FROM news
          WHERE $1 = ANY(matched_tags)
