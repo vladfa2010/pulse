@@ -59,6 +59,22 @@ app.get('/', (req, res) => {
   res.send(`<!DOCTYPE html>...PULSE API status page...</html>`);
 });
 
+// Debug version — точный git commit hash на сервере
+app.get('/debug/version', async (req, res) => {
+  try {
+    const fs = await import('fs');
+    const path = await import('path');
+    const gitPath = path.join(__dirname, '..', '.git', 'refs', 'heads', 'main');
+    let commit = 'unknown';
+    if (fs.existsSync(gitPath)) {
+      commit = fs.readFileSync(gitPath, 'utf-8').trim().substring(0, 7);
+    }
+    res.json({ commit, full: commit === 'unknown' ? null : fs.readFileSync(gitPath, 'utf-8').trim() });
+  } catch {
+    res.json({ commit: 'unknown', full: null });
+  }
+});
+
 // Health check — Render использует это для мониторинга
 app.get('/health', async (req, res) => {
   // Check cron health
@@ -1351,31 +1367,25 @@ app.put('/admin/tags/:tagId', requireAdmin, async (req, res) => {
     }
     const ed = enrichedDataPut;
 
-    // Build tag response — only include fields that exist in enriched_data
+    // Build tag response — always include ticker/exchange/trend/sector (frontend expects them)
     const tagResponse: any = {
       tag_id: updated.tag_id,
       tag_name: updated.tag_name,
       tag_type: updated.tag_type,
       keywords: updated.keywords || [],
       created_at: updated.created_at,
+      ticker: ed.ticker || null,
+      website: ed.website || null,
+      description: ed.description_ru || null,
+      description_ru: ed.description_ru || null,
+      key_products: ed.key_products || [],
+      synonyms_ru: ed.synonyms_ru || [],
+      synonyms_en: ed.synonyms_en || [],
+      related_tags: ed.related_tags || ed.related_entities || [],
+      exchange: ed.exchange || null,
+      trend: ed.trend || null,
+      sector: ed.sector || null,
     };
-
-    if (ed.ticker) tagResponse.ticker = ed.ticker;
-    if (ed.website) tagResponse.website = ed.website;
-    if (ed.description_ru) {
-      tagResponse.description = ed.description_ru;
-      tagResponse.description_ru = ed.description_ru;
-    }
-    if (ed.key_products?.length > 0) tagResponse.key_products = ed.key_products;
-    if (ed.synonyms_ru?.length > 0) tagResponse.synonyms_ru = ed.synonyms_ru;
-    if (ed.synonyms_en?.length > 0) tagResponse.synonyms_en = ed.synonyms_en;
-    if (ed.related_tags?.length > 0) tagResponse.related_tags = ed.related_tags;
-    if (ed.related_entities?.length > 0 && !ed.related_tags?.length) {
-      tagResponse.related_tags = ed.related_entities;
-    }
-    if (ed.exchange) tagResponse.exchange = ed.exchange;
-    if (ed.trend) tagResponse.trend = ed.trend;
-    if (ed.sector) tagResponse.sector = ed.sector;
 
     res.json({
       success: true,
