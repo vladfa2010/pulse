@@ -70,19 +70,9 @@ export async function fetchFinnhubNews(config: any): Promise<FetchedArticle[]> {
     return [];
   }
 
-  // Tiered fetching: топ-12 каждый час, остальные только в полночь
-  const now = new Date();
-  const isMidnight = now.getHours() === 0;
-  const topTags = allTags.slice(0, 12);
-  const rareTags = allTags.slice(12);
-
-  let tags = [...topTags];
-  if (isMidnight && rareTags.length > 0) {
-    tags.push(...rareTags);
-  }
-
-  console.log(`[Finnhub] Total: ${allTags.length}, Top: ${topTags.length}, Rare: ${isMidnight ? rareTags.length : 0} (midnight=${isMidnight})`);
-  console.log(`[Finnhub] Fetching ${tags.length} tickers this cycle`);
+  // Все тикеры каждый цикл (пока их мало — tiered не нужен)
+  const tags = [...allTags];
+  console.log(`[Finnhub] Total: ${allTags.length} tickers, fetching ALL this cycle`);
 
   // 2. Дата — сегодня
   const today = new Date();
