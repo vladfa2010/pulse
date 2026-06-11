@@ -20,17 +20,12 @@
 
 import cron from 'node-cron';
 import { fetchAllRSS } from './rssFetcher';
-import { translateBatch } from './translate';
 import { query } from '../config/db';
 import { normalizeUrl } from '../utils/normalizeUrl';
 import crypto from 'crypto';
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Smart Tag Matching (imported from smartTagMatcher)
-// ═══════════════════════════════════════════════════════════════════════════
-import { smartMatchTags, analyzeSentimentLLM, analyzeSentimentBatch, analyzeTagImpact, analyzeTagImpactBatch, analyzeUnifiedBatch, TagImpact, SentimentResult, UnifiedResult } from './smartTagMatcher';
 import { populateNewsTagLinksBatch, EnrichmentTask } from './enrichment';
 import { broadcastNews } from './sse';
 
@@ -124,7 +119,6 @@ export async function processArticles() {
 
 async function processArticlesLocked() {
   // Cleanup zombie records: finished_at=null older than 15 min = dead processes
-  // These accumulate after hard restarts when old instance dies mid-run
   if (!USE_SQLITE) {
     try {
       const cleanup = await query(
@@ -144,7 +138,6 @@ async function processArticlesLocked() {
   const logId = await logCronStart('rss');
   const errors: string[] = [];
   let articles: any[] = [];
-  let processed: any[] = [];
   let saved = 0;
   let merged = 0;
 
@@ -153,7 +146,6 @@ async function processArticlesLocked() {
 
     // 1. Fetch RSS — только enabled источники из news_sources
     try {
-      const { query } = await import('../config/db');
       const enabledResult = await query(`
         SELECT name, config->>'url' as url, config->>'lang' as lang, config->>'category' as category
         FROM news_sources
@@ -167,369 +159,114 @@ async function processArticlesLocked() {
       const enabledNames = new Set(enabledResult.rows.map((r: any) => r.name));
       const enabledSources = RSS_SOURCES.filter(s => enabledNames.has(s.id));
       console.log(`[Cron] ${enabledSources.length}/${RSS_SOURCES.length} RSS sources enabled`);
-      
+
       articles = await fetchAllRSS(enabledSources);
     } catch (err: any) {
       console.error('[Cron] RSS fetch failed:', err.message);
       errors.push(`fetch: ${err.message}`);
-      return; // Exit early — finally still runs
+      return;
     }
 
-  // Limit to 100 freshest articles per run (prevent LLM timeout overload)
-  articles = articles
-    .sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime())
-    .slice(0, 100);
-  
-  console.log(`[Cron] Fetched ${articles.length} articles (limited to 100 freshest)`);
+    // Limit to 100 freshest articles per run
+    articles = articles
+      .sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime())
+      .slice(0, 100);
 
-  if (articles.length === 0) {
-    console.warn('[Cron] ⚠️ ZERO articles fetched from ALL sources. Check /debug-rss for per-source diagnostics');
-    errors.push('zero_articles: No articles fetched from any source');
-    return; // Early exit — finally still runs
-  }
+    console.log(`[Cron] Fetched ${articles.length} articles (limited to 100 freshest)`);
 
-  // Update fetched count immediately
-  await query(`UPDATE cron_log SET articles_fetched = $1 WHERE id = $2`, [articles.length, logId]);
-
-  // 2. Translate EN → RU
-  const toTranslate = articles.filter(a => a.lang === 'en');
-  if (toTranslate.length > 0) {
-    const titles = toTranslate.map(a => a.title);
-    const summaries = toTranslate.map(a => a.summary);
-
-    try {
-      const translatedTitles = await translateBatch(titles);
-      const translatedSummaries = await translateBatch(summaries);
-
-      toTranslate.forEach((a, i) => {
-        a.title_ru = translatedTitles[i] || a.title;
-        a.summary_ru = translatedSummaries[i] || a.summary;
-      });
-    } catch {
-      toTranslate.forEach(a => {
-        a.title_ru = a.title;
-        a.summary_ru = a.summary;
-      });
+    if (articles.length === 0) {
+      console.warn('[Cron] ⚠️ ZERO articles fetched from ALL sources');
+      errors.push('zero_articles: No articles fetched from any source');
+      return;
     }
-  }
 
-  // 3. Check if LLM is available (check once, not per article)
-  const llmAvailable = !!process.env.KIMI_API_KEY;
-  console.log(`[Cron] LLM sentiment: ${llmAvailable ? 'ENABLED (batch x5)' : 'DISABLED (keyword-based)'}`);
+    // Update fetched count immediately
+    await query(`UPDATE cron_log SET articles_fetched = $1 WHERE id = $2`, [articles.length, logId]);
 
-  // 3a-c. UNIFIED BATCH — 1 LLM request = sentiment + tag_impact + is_political (v7.16)
-  console.log('[Cron] Starting smart tag matching...');
-  const matchStart = Date.now();
-  const matchedTagsList: string[][] = [];
-  for (const a of articles) {
-    const title_ru = a.title_ru || a.title;
-    const summary_ru = a.summary_ru || a.summary;
-    const tags = await smartMatchTags(title_ru, summary_ru);
-    matchedTagsList.push(tags);
-  }
-  console.log(`[Cron] Tag matching done: ${matchedTagsList.filter(t => t.length > 0).length}/${articles.length} with tags in ${Date.now() - matchStart}ms`);
+    // 2. Save to DB — СЫРЫЕ (title_ru=null, sentiment=null, needs_translation=TRUE)
+    // News Processor (Layer 1+2) обработает позже: translate → sentiment → tags
+    saved = 0;
+    merged = 0;
+    const enrichmentTasks: EnrichmentTask[] = [];
 
-  // Unified LLM batch — sentiment + tag_impact + is_political in ONE request
-  console.log('[Cron] Starting UNIFIED batch (sentiment + tag_impact + is_political)...');
-  const unifiedStart = Date.now();
-  let unifiedResults: UnifiedResult[] = [];
-  
-  // Оптимизация: исключаем дубликаты у которых уже есть reasoning
-  // Проверяем content_hash в БД — если есть reasoning, не вызываем LLM
-  const skipLLM = new Set<number>(); // индексы статей которые пропускаем
-  if (llmAvailable) {
-    for (let i = 0; i < articles.length; i++) {
-      const a = articles[i];
-      const contentHash = crypto.createHash('sha256').update(a.title + '\n' + (a.summary || '')).digest('hex');
-      const existingCheck = await query(
-        `SELECT sentiment_reasoning, sentiment_source 
-         FROM news 
-         WHERE content_hash = $1 
-         LIMIT 1`,
-        [contentHash]
-      );
-      const existing = existingCheck.rows[0];
-      if (existing && existing.sentiment_reasoning && 
-          (existing.sentiment_source === 'llm' || existing.sentiment_source === 'llm-partial')) {
-        console.log(`[Cron] LLM skip: duplicate with reasoning — ${a.title_ru?.slice(0, 50)}...`);
-        skipLLM.add(i);
-        // Загружаем реальные данные из БД для дубликата
-        const dupData = await query(
-          `SELECT sentiment, sentiment_score, sentiment_reasoning, is_political, article_type, tag_impact
-           FROM news WHERE content_hash = $1 LIMIT 1`,
-          [contentHash]
-        );
-        const dup = dupData.rows[0];
-        unifiedResults[i] = {
-          sentiment: dup?.sentiment || 'neutral',
-          score: dup?.sentiment_score || 0,
-          reasoning: dup?.sentiment_reasoning || '',
-          is_political: dup?.is_political || false,
-          article_type: dup?.article_type || 'micro',
-          tag_impacts: dup?.tag_impact || matchedTagsList[i].map(t => ({ tag: t, score: 0, reasoning: '' })),
-          _llmSource: 'llm',
-        } as UnifiedResult;
-      }
-    }
-  }
-  
-  // Build list of articles that need LLM with their original indices
-  const needLLMWithIndex: { article: typeof articles[0]; originalIndex: number }[] = [];
-  for (let i = 0; i < articles.length; i++) {
-    if (!skipLLM.has(i)) {
-      needLLMWithIndex.push({ article: articles[i], originalIndex: i });
-    }
-  }
-  console.log(`[Cron] LLM optimization: ${articles.length} total, ${needLLMWithIndex.length} need LLM, ${skipLLM.size} skipped (duplicates)`);
-
-  if (llmAvailable && needLLMWithIndex.length > 0) {
-    const BATCH_SIZE = 5;
-    const totalBatches = Math.ceil(needLLMWithIndex.length / BATCH_SIZE);
-    for (let batchStart = 0; batchStart < needLLMWithIndex.length; batchStart += BATCH_SIZE) {
-      const chunk = needLLMWithIndex.slice(batchStart, batchStart + BATCH_SIZE);
-      const batchNum = Math.floor(batchStart / BATCH_SIZE) + 1;
-      const batchStartTime = Date.now();
-
+    for (const a of articles) {
       try {
-        console.log(`[Cron] Batch ${batchNum}/${totalBatches}: ${chunk.length} articles`);
-        const results = await analyzeUnifiedBatch(
-          chunk.map(({ article, originalIndex }) => ({
-            title: article.title_ru || article.title,
-            summary: article.summary_ru || article.summary,
-            tags: matchedTagsList[originalIndex],
-          }))
-        );
+        const urlNormalized = normalizeUrl(a.url || '');
+        const contentHash = crypto.createHash('md5').update(`${a.title}_${a.summary || ''}`.slice(0, 500)).digest('hex');
 
-        // Distribute results back to unifiedResults by originalIndex
-        for (let j = 0; j < results.length && j < chunk.length; j++) {
-          unifiedResults[chunk[j].originalIndex] = results[j];
-        }
-
-        // Record successful batch
-        const successCount = results.filter((u: any) => u._llmSource !== 'llm-empty' && !u._llmErrorType).length;
-        const partialCount = results.filter((u: any) => u._llmSource === 'llm-partial').length;
-        const status = partialCount > 0 ? 'partial' : 'success';
-        await query(`
-          INSERT INTO llm_batches (started_at, articles_count, results_count, status, duration_ms)
-          VALUES (NOW(), $1, $2, $3, $4)
-        `, [chunk.length, successCount + partialCount, status, Date.now() - batchStartTime]).catch(() => {
-          // Silent fail — metrics are best-effort
-        });
-
-      } catch (err: any) {
-        const errorType: string =
-          err.code === 'ETIMEDOUT' ? 'llm-timeout' :
-          err.code === 'ECONNRESET' ? 'llm-error' :
-          err.response?.status === 429 ? 'llm-rate-limit' :
-          err.response?.status === 502 ? 'llm-error' :
-          err.response?.status === 503 ? 'llm-error' :
-          'llm-error';
-        const errorMsg: string = err.message?.slice(0, 200) || 'Unknown LLM error';
-        console.error(`[Cron] Batch ${batchNum}/${totalBatches} failed: ${errorType} — ${errorMsg}`);
-
-        // Record failed batch
-        await query(`
-          INSERT INTO llm_batches (started_at, articles_count, results_count, status, error_type, error_message, duration_ms)
-          VALUES (NOW(), $1, 0, 'error', $2, $3, $4)
-        `, [chunk.length, errorType, errorMsg, Date.now() - batchStartTime]).catch(() => {});
-
-        // Fallback only for articles in this chunk
-        for (const { originalIndex } of chunk) {
-          unifiedResults[originalIndex] = {
-            sentiment: 'neutral' as const, score: 0, reasoning: '', is_political: false, article_type: 'micro' as const,
-            tag_impacts: matchedTagsList[originalIndex].map((t: string) => ({ tag: t, score: 0, reasoning: '' })),
-            _llmErrorType: errorType,
-            _llmErrorMsg: errorMsg,
-            _llmBatchSize: chunk.length,
-            _llmResultsCount: 0,
-          } as UnifiedResult;
-        }
-      }
-    }
-  } else {
-    // Fallback for all non-duplicate articles
-    for (let i = 0; i < articles.length; i++) {
-      if (!skipLLM.has(i)) {
-        unifiedResults[i] = {
-          sentiment: 'neutral' as const, score: 0, reasoning: '', is_political: false, article_type: 'micro' as const,
-          tag_impacts: matchedTagsList[i].map((t: string) => ({ tag: t, score: 0, reasoning: '' })),
-        };
-      }
-    }
-  }
-  console.log(`[Cron] Unified batch done: ${unifiedResults.length} results in ${Date.now() - unifiedStart}ms`);
-
-  // 3d. Merge all results
-  processed = [];
-  for (let i = 0; i < articles.length; i++) {
-    const a = articles[i];
-    const u = unifiedResults[i] || { sentiment: 'neutral' as const, score: 0, reasoning: '', is_political: false, tag_impacts: [] };
-
-    // Determine sentiment_source: _llmErrorType (from catch) > _llmSource (from partial/empty) > 'llm' (success) > 'keyword'
-    const sentimentSource = (u as any)._llmErrorType || (u as any)._llmSource || (llmAvailable ? 'llm' : 'keyword');
-
-    processed.push({
-      ...a,
-      title_ru: a.title_ru || a.title,
-      summary_ru: a.summary_ru || a.summary,
-      sentiment: u.sentiment,
-      sentiment_score: u.score,
-      sentiment_reasoning: u.reasoning || null,
-      sentiment_source: sentimentSource,
-      llm_error: (u as any)._llmErrorMsg || null,
-      llm_attempts: (u as any)._llmErrorType ? 1 : null,  // null при успехе — deferred не берёт
-      llm_raw_preview: (u as any)._llmRaw || null,
-      llm_batch_size: (u as any)._llmBatchSize || null,
-      llm_results_count: (u as any)._llmResultsCount || null,
-      is_political: u.is_political,
-      article_type: u.article_type || 'micro',
-      matched_tags: matchedTagsList[i],
-      tag_impact: u.tag_impacts || [],
-    });
-  }
-
-  // 4. Save to DB (с защитой от дубликатов по content_hash)
-  saved = 0;
-  merged = 0;
-  const enrichmentTasks: EnrichmentTask[] = [];  // ← BATCH: собираем все задачи обогащения
-
-  for (const a of processed) {
-    try {
-      const urlNormalized = normalizeUrl(a.url || '');
-      const title_ru = a.title_ru || a.title;
-      const summary_ru = a.summary_ru || a.summary;
-      const contentHash = crypto.createHash('md5').update(`${title_ru}_${summary_ru}`.slice(0, 500)).digest('hex');
-
-      if (USE_SQLITE) {
-        // SQLite: проверяем content_hash → UPDATE или INSERT
-        const existing = await query('SELECT id, all_sources FROM news WHERE content_hash = ? LIMIT 1', [contentHash]);
-        if (existing.rows.length > 0) {
-          // Дубликат — добавляем источник если новый
-          const sources: string[] = JSON.parse(existing.rows[0].all_sources || '[]');
-          if (!sources.includes(a.source)) {
-            sources.push(a.source);
-            await query(`UPDATE news SET all_sources = ?, source_count = ?,
-              sentiment = COALESCE(sentiment, ?),
-              sentiment_score = COALESCE(sentiment_score, ?),
-              sentiment_reasoning = COALESCE(sentiment_reasoning, ?),
-              sentiment_source = COALESCE(sentiment_source, ?)
-              WHERE id = ?`,
-              [JSON.stringify(sources), sources.length,
-               a.sentiment, a.sentiment_score, a.sentiment_reasoning, a.sentiment_source,
-               existing.rows[0].id]);
-            merged++;
+        if (USE_SQLITE) {
+          // SQLite: проверяем content_hash → UPDATE или INSERT
+          const existing = await query('SELECT id, all_sources FROM news WHERE content_hash = ? LIMIT 1', [contentHash]);
+          if (existing.rows.length > 0) {
+            // Дубликат — добавляем источник если новый
+            const sources: string[] = JSON.parse(existing.rows[0].all_sources || '[]');
+            if (!sources.includes(a.source)) {
+              sources.push(a.source);
+              await query(
+                `UPDATE news SET all_sources = ?, source_count = ? WHERE id = ?`,
+                [JSON.stringify(sources), sources.length, existing.rows[0].id]
+              );
+              merged++;
+            }
+          } else {
+            // Новая новость — СЫРАЯ (title_ru=null, sentiment=null, needs_translation=1)
+            const newId = crypto.randomUUID();
+            await query(
+              `INSERT OR IGNORE INTO news (id, title_original, title_ru, summary_ru, source, source_id, url, url_normalized, content_hash, all_sources, source_count, published_at, lang_original, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, llm_error, llm_attempts, llm_raw_preview, llm_batch_size, llm_results_count, is_political, article_type, matched_tags, tag_impact, needs_translation)
+               VALUES (?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, '[]', '[]', 1)`,
+              [newId, a.title, a.source, a.sourceId, a.url, urlNormalized, contentHash, JSON.stringify([a.source]), 1, a.publishedAt.toISOString(), a.lang]
+            );
+            saved++;
+            broadcastNews({ id: newId, title_ru: a.title, summary_ru: a.summary || '', source: a.source, published_at: a.publishedAt, sentiment: null, matched_tags: [], url: a.url });
           }
         } else {
-          // Новая новость
-          const newId = crypto.randomUUID();
-          await query(
-            `INSERT OR IGNORE INTO news (id, title_original, title_ru, summary_ru, source, source_id, url, url_normalized, content_hash, all_sources, source_count, published_at, lang_original, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, llm_error, llm_attempts, llm_raw_preview, llm_batch_size, llm_results_count, is_political, article_type, matched_tags, tag_impact, needs_translation)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
-            [newId, a.title, title_ru, summary_ru, a.source, a.sourceId, a.url, urlNormalized, contentHash, JSON.stringify([a.source]), 1, a.publishedAt.toISOString(), a.lang, a.sentiment, a.sentiment_score, a.sentiment_reasoning, a.sentiment_source, a.llm_error, a.llm_attempts, a.llm_raw_preview, a.llm_batch_size, a.llm_results_count, a.is_political ? 1 : 0, a.article_type || 'micro', JSON.stringify(a.matched_tags || []), JSON.stringify(a.tag_impact || [])]
+          // PostgreSQL: INSERT с ON CONFLICT (content_hash) DO UPDATE
+          const result = await query(
+            `INSERT INTO news (title_original, title_ru, summary_ru, source, source_id, url, url_normalized, content_hash, all_sources, source_count, published_at, lang_original, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, llm_error, llm_attempts, llm_raw_preview, llm_batch_size, llm_results_count, is_political, article_type, matched_tags, tag_impact, needs_translation)
+             VALUES ($1, NULL, NULL, $2, $3, $4, $5, $6, $7::text[], $8, $9, $10, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{}'::text[], '[]'::jsonb, TRUE)
+             ON CONFLICT (content_hash) DO UPDATE
+               SET all_sources = CASE
+                 WHEN news.all_sources @> ARRAY[EXCLUDED.source]::text[] THEN news.all_sources
+                 ELSE array_append(news.all_sources, EXCLUDED.source)
+               END,
+               source_count = CASE
+                 WHEN news.all_sources @> ARRAY[EXCLUDED.source]::text[] THEN news.source_count
+                 ELSE news.source_count + 1
+               END
+             RETURNING id, (xmax = 0) as is_insert`,
+            [a.title, a.source, a.sourceId, a.url, urlNormalized, contentHash, [a.source], 1, a.publishedAt, a.lang]
           );
-          saved++;
-          // Broadcast to SSE subscribers
-          broadcastNews({ id: newId, title_ru, summary_ru, source: a.source, published_at: a.publishedAt, sentiment: a.sentiment, matched_tags: a.matched_tags, url: a.url });
-        }
-      } else {
-        // PostgreSQL: INSERT с ON CONFLICT (content_hash) DO UPDATE
-        // FIX v3: CASE WHEN вместо COALESCE — обновляем sentiment-поля ТОЛЬКО если предыдущий результат был LLM-ошибкой
-        const result = await query(
-          `INSERT INTO news (title_original, title_ru, summary_ru, source, source_id, url, url_normalized, content_hash, all_sources, source_count, published_at, lang_original, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, llm_error, llm_attempts, llm_raw_preview, llm_batch_size, llm_results_count, is_political, article_type, matched_tags, tag_impact, needs_translation)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text[], $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, FALSE)
-           ON CONFLICT (content_hash) DO UPDATE
-             SET all_sources = CASE
-               WHEN news.all_sources @> ARRAY[EXCLUDED.source]::text[] THEN news.all_sources
-               ELSE array_append(news.all_sources, EXCLUDED.source)
-             END,
-             source_count = CASE
-               WHEN news.all_sources @> ARRAY[EXCLUDED.source]::text[] THEN news.source_count
-               ELSE news.source_count + 1
-             END,
-             sentiment = CASE
-               WHEN news.sentiment_source LIKE 'llm-%' AND news.sentiment_source != 'llm-partial' THEN EXCLUDED.sentiment
-               ELSE news.sentiment
-             END,
-             sentiment_score = CASE
-               WHEN news.sentiment_source LIKE 'llm-%' AND news.sentiment_source != 'llm-partial' THEN EXCLUDED.sentiment_score
-               ELSE news.sentiment_score
-             END,
-             sentiment_reasoning = CASE
-               WHEN news.sentiment_source LIKE 'llm-%' AND news.sentiment_source != 'llm-partial' THEN EXCLUDED.sentiment_reasoning
-               ELSE news.sentiment_reasoning
-             END,
-             sentiment_source = CASE
-               WHEN news.sentiment_source LIKE 'llm-%' AND news.sentiment_source != 'llm-partial' THEN EXCLUDED.sentiment_source
-               ELSE news.sentiment_source
-             END,
-             llm_error = EXCLUDED.llm_error,
-             llm_attempts = CASE
-               WHEN news.sentiment_source LIKE 'llm-%' THEN COALESCE(news.llm_attempts, 0) + 1
-               ELSE COALESCE(news.llm_attempts, 0)
-             END,
-             last_retry_at = NOW(),
-             llm_raw_preview = EXCLUDED.llm_raw_preview,
-             llm_batch_size = EXCLUDED.llm_batch_size,
-             llm_results_count = EXCLUDED.llm_results_count,
-             needs_translation = FALSE
-           RETURNING id, (xmax = 0) as is_insert`,
-          [a.title, title_ru, summary_ru, a.source, a.sourceId, a.url, urlNormalized, contentHash, [a.source], 1, a.publishedAt, a.lang, a.sentiment, a.sentiment_score, a.sentiment_reasoning, a.sentiment_source, a.llm_error, a.llm_attempts, a.llm_raw_preview, a.llm_batch_size, a.llm_results_count, a.is_political, a.article_type || 'micro', a.matched_tags || [], JSON.stringify(a.tag_impact || [])]
-        );
 
-        if (result.rows.length > 0 && result.rows[0].is_insert === true) {
-          saved++;      // Новая запись
-          const newsId = result.rows[0].id;
-          // Broadcast to SSE subscribers
-          broadcastNews({ id: newsId || null, title_ru, summary_ru, source: a.source, published_at: a.publishedAt, sentiment: a.sentiment, matched_tags: a.matched_tags, url: a.url });
+          if (result.rows.length > 0 && result.rows[0].is_insert === true) {
+            saved++;
+            const newsId = result.rows[0].id;
+            broadcastNews({ id: newsId || null, title_ru: a.title, summary_ru: a.summary || '', source: a.source, published_at: a.publishedAt, sentiment: null, matched_tags: [], url: a.url });
 
-          // BATCH ENRICHMENT v3: собираем задачу, выполняем ПОСЛЕ цикла
-          // Использует 1 pool connection на все статьи — нет deadlock
-          enrichmentTasks.push({
-            newsId,
-            matchedTags: a.matched_tags || [],
-            tagImpacts: a.tag_impact || [],
-          });
-        } else {
-          merged++;     // Дубликат — обновили all_sources
+            // Batch enrichment placeholder (tags will be populated by News Processor)
+            enrichmentTasks.push({
+              newsId,
+              matchedTags: [],
+              tagImpacts: [],
+            });
+          } else {
+            merged++;
+          }
         }
+      } catch (e: any) {
+        console.error(`[Cron] Save error for article "${a.title?.slice(0, 40)}": ${e.message?.slice(0, 100)}`);
       }
-    } catch (e: any) {
-      console.error(`[Cron] Save error for article "${a.title?.slice(0, 40)}": ${e.message?.slice(0, 100)}`);
-    }
-  }
-
-    // Batch enrichment: ВСЕ статьи одним pool.connect()
-    // Fire-and-forget — не блокирует cron, ошибка не ломает сохранение
-    if (enrichmentTasks.length > 0) {
-      populateNewsTagLinksBatch(enrichmentTasks).catch(err => {
-        console.error(`[Cron] Batch enrichment failed: ${err.message?.slice(0, 100)}`);
-      });
     }
 
-    console.log(`[Cron] Saved ${saved} new, merged ${merged} duplicates (total ${processed.length})`);
+    console.log(`[Cron] Saved ${saved} new, merged ${merged} duplicates (total ${articles.length})`);
+
   } catch (err: any) {
     console.error(`[Cron] Fatal error in processArticlesLocked: ${err.message}`);
     errors.push(`fatal: ${err.message}`);
   } finally {
-    // Гарантированно логируем финиш — даже при ошибке
-    await logCronFinish(logId, processed.length, saved, merged, errors);
-    console.log(`[Cron] Finished. Logged: ${processed.length} processed, ${saved} saved, ${merged} merged, ${errors.length} errors`);
+    await logCronFinish(logId, articles.length, saved, merged, errors);
+    console.log(`[Cron] Finished. Logged: ${articles.length} fetched, ${saved} saved, ${merged} merged, ${errors.length} errors`);
   }
 }
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Cron Job Lock — prevents parallel runs via PostgreSQL
-// ═══════════════════════════════════════════════════════════════════════════
-
-const LOCK_TTL_MINUTES = 10; // Lock auto-expires after 10 min (cron runs in ~2-3 min, 5+5 = safety margin)
-const INSTANCE_ID = `${process.env.RENDER_INSTANCE_ID || 'local'}-${process.pid}-${Date.now()}`;
-
-// PostgreSQL vs SQLite datetime helpers (for cron lock SQL)
-const IS_SQLITE = process.env.USE_SQLITE === 'true';
-const SQL_NOW = IS_SQLITE ? "datetime('now')" : 'NOW()';
-const SQL_INTERVAL_10MIN = IS_SQLITE
-  ? "datetime('now', '+10 minutes')"
-  : "NOW() + INTERVAL '10 minutes'";
 
 async function acquireCronLock(jobName: string): Promise<boolean> {
   try {
