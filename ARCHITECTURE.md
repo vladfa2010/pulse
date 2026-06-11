@@ -1,7 +1,7 @@
 # PULSE — Backend Architecture
 
 > Техническая документация backend'а. Логика, flow, принятие решений.
-> Последнее обновление: 2026-06-11 (v9.0.0 — News Processor: единое окно обработки)
+> Последнее обновление: 2026-06-11 (v9.1.0 — Finnhub 5min + tiered removed + keyword fallback metrics)
 
 ---
 
@@ -9,7 +9,7 @@
 
 1. [News Pipeline](#1-news-pipeline) — v9.0 flow с News Processor
 2. [RSS Fetcher](#2-rss-fetcher-rssfetcherts--v90) — **только fetch + raw INSERT**
-2a. [NewsSourceManager](#2a-newssourcemanager-newssourcemanagerts--v90) — единый пул + **News Processor**
+2a. [NewsSourceManager](#2a-newssourcemanager-newssourcemanagerts--v91) — единый пул + **News Processor** + **Finnhub 5min**
 2b. [News Feed Filtering](#2b-news-feed-filtering-get-apinewstagstagid) — matched_tags, поиск по тегу
 3. [Smart Tag Matching](#3-smart-tag-matching)
 4. [Duplicate Detection](#4-duplicate-detection)
@@ -199,7 +199,7 @@ export const RSS_SOURCES: RssSource[] = [
 
 ---
 
-## 2a. NewsSourceManager (newsSourceManager.ts) — v9.0
+## 2a. NewsSourceManager (newsSourceManager.ts) — v9.1
 
 > Единый пул источников (RSS + API). Заменяет разрозненные cron-задачи.
 > Дата: 2026-06-11 | Статус: В продакшене
@@ -247,7 +247,7 @@ NewsSourceManager.run()
 
 **Flow:**
 1. Собрать теги с `exchange='USA'` + `ticker IS NOT NULL` из `user_defined_tags` + `portfolios`
-2. Tiered fetching: топ-12 каждый цикл, остальные в полночь
+2. **Все тикеры каждый цикл** (tiered fetching убран — пока тикеров мало)
 3. Запрос `/company-news?symbol=TICKER&from=DATE&to=DATE`
 4. URL dedup → content_hash dedup → INSERT `ON CONFLICT DO UPDATE`
 
@@ -261,10 +261,21 @@ VALUES ($1, NULL, NULL, ... TRUE)
 
 **Текущие ограничения:**
 - Перевод EN→RU **в News Processor** (не в адаптере)
-- Интервал фетча: **1 час** (rate limit)
-- `$13::text[]` — отдельный параметр для `all_sources`
+- Интервал фетча: **5 минут** (все тикеры)
+- Tiered fetching: **убран** (все тикеры каждый цикл)
 
 ### Колонки news для bilingual
+
+#### LLM Metrics — keyword fallback tracking
+
+| Сценарий | `sentiment_source` | `llm_batches.status` |
+|----------|-------------------|---------------------|
+| LLM успех | `'llm'` | `'success'` |
+| LLM частичный | `'llm-partial'` | `'partial'` |
+| LLM ошибка | `'llm-error'` | `'error'` |
+| **Баланс Кими пуст** | **`'keyword'`** | **`'keyword-only'`** |
+
+Dashboard (`/admin/llm-dashboard`) показывает `keyword_fallback: N` для `'keyword-only'` батчей.
 
 | Колонка | Назначение |
 |---------|-----------|
@@ -329,11 +340,11 @@ Result: needs_translation = TRUE, matched_tags = ['nvidia', ...]
 
 #### Cron schedule
 
-| Процесс | Интервал | Lock |
-|---------|----------|------|
-| RSS Fetch | 5 мин | `rss-aggregator` |
-| NSM (Finnhub + API) | 5 мин | `nsm` |
-| **News Processor** | **10 мин** | **`news-processor`** |
+| Процесс | Интервал | Lock | Примечание |
+|---------|----------|------|------------|
+| RSS Fetch | 5 мин | `rss-aggregator` | Только fetch + raw INSERT |
+| **NSM (Finnhub)** | **5 мин** | **`nsm`** | **Все тикеры, tiered убран** |
+| **News Processor** | **10 мин** | **`news-processor`** | Translate + sentiment для EN |
 
 #### Trigger endpoint
 
@@ -2177,5 +2188,4 @@ cron.schedule('0 13 * * 0', generateReport);
 ```bash
 # RSS сбор
 POST /trigger/rss
-POST /trigger/weekly
-```
+POST /
