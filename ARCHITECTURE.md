@@ -1,7 +1,7 @@
 # PULSE — Backend Architecture
 
 > Техническая документация backend'а. Логика, flow, принятие решений.
-> Последнее обновление: 2026-06-10 (v7.26.0 — TZ_TAG_EDIT_v3: фиксы редактирования тега)
+> Последнее обновление: 2026-06-11 (v8.0.0 — NewsSourceManager + Finnhub Adapter)
 
 ---
 
@@ -9,6 +9,8 @@
 
 1. [News Pipeline](#1-news-pipeline)
 2. [RSS Fetcher](#2-rss-fetcher-rssfetcherts) — 35 источников, управление (вкл/выкл)
+2a. [NewsSourceManager](#2a-newssourcemanager-newssourcemanagerts--v80) — единый пул RSS + API
+2b. [News Feed Filtering](#2b-news-feed-filtering-get-apinewstagstagid) — matched_tags, поиск по тегу
 3. [Smart Tag Matching](#3-smart-tag-matching)
 4. [Duplicate Detection](#4-duplicate-detection)
 5. [Database Layer](#5-database-layer)
@@ -165,6 +167,100 @@ export const RSS_SOURCES: RssSource[] = [
 
 - Простота: не нужен UI, endpoint'ы, миграции
 - Безопасность: случайное удаление невозможно (только git)
+
+---
+
+## 2a. NewsSourceManager (newsSourceManager.ts) — v8.0
+
+> Единый пул источников (RSS + API). Заменяет разрозненные cron-задачи.
+> Дата: 2026-06-11 | Статус: В продакшене
+
+### Архитектура
+
+```
+NewsSourceManager.run()
+│
+│  0. Backfill: UPDATE news SET matched_tags по тикерам (title/summary ILIKE '%TICKER%')
+│  1. SELECT * FROM news_sources WHERE enabled = true
+│  2. Для каждого source:
+│     ├── RSS: fetchAllRSS() → saveAPIArticles()
+│     └── API (finnhub): fetchFinnhubNews() → saveAPIArticles()
+│  3. UPDATE news_sources SET last_fetch_at = NOW()
+│  4. Catch-up: если last_fetch_at > 2ч → запуск
+```
+
+### Таблица news_sources
+
+| Колонка | Тип | Описание |
+|---------|-----|----------|
+| id | SERIAL PK | — |
+| name | VARCHAR(50) | `kommersant`, `finnhub` |
+| display_name | VARCHAR(100) | `Коммерсант`, `Finnhub News` |
+| type | VARCHAR(20) | `rss` \| `api_search` \| `api_feed` |
+| config | JSONB | `{url, api_key, rate_limit_rpm}` |
+| enabled | BOOLEAN | Вкл/выкл в админке |
+| last_fetch_at | TIMESTAMP | Для rate limiting |
+
+### Admin endpoints
+
+| Method | Path | Описание |
+|--------|------|----------|
+| GET | `/admin/news-sources` | Список всех источников |
+| PUT | `/admin/news-sources/:id/toggle` | Вкл/выкл toggle |
+
+### Finnhub Adapter (finnhubAdapter.ts)
+
+**Flow:**
+1. Собрать теги с `exchange='USA'` + `ticker IS NOT NULL` из `user_defined_tags` + `portfolios`
+2. Tiered fetching: топ-12 каждый цикл, остальные в полночь
+3. Запрос `/company-news?symbol=TICKER&from=DATE&to=DATE`
+4. URL dedup → content_hash dedup → INSERT `ON CONFLICT DO UPDATE`
+
+**Текущие ограничения:**
+- Перевод EN→RU **отключен** (баланс API Кими пустой) — EN текст сохраняется как RU
+- Интервал фетча: **5 часов** (rate limit + translate 429)
+- `$13::text[]` — отдельный параметр для `all_sources`, избегаем `$5` reuse в pg
+
+### Колонки news для bilingual
+
+| Колонка | Назначение |
+|---------|-----------|
+| `title_original` | Оригинальный заголовок (EN для Finnhub) |
+| `title_ru` | RU заголовок (перевод или копия original) |
+| `summary_original` | Оригинальный summary |
+| `summary_ru` | RU summary |
+| `source_type` | `rss` \| `api_search` — для фильтрации |
+| `lang_original` | `en` \| `ru` |
+| `matched_tags` | TEXT[] — tag_id из Finnhub или backfill |
+
+### Trigger endpoint
+
+```bash
+curl "https://pulse-api-bsov.onrender.com/trigger/nsm?secret=pulse-dev-key"
+```
+
+Fallback: `setInterval(5 мин)` если нет `CRON_SECRET_KEY`.
+
+---
+
+## 2b. News Feed Filtering (GET /api/news/tags/:tagId)
+
+### Логика
+
+```sql
+-- PostgreSQL
+SELECT * FROM news
+WHERE $1 = ANY(matched_tags)
+AND published_at > NOW() - INTERVAL '90 days'
+ORDER BY published_at DESC LIMIT 50
+```
+
+| Что | Как работает |
+|-----|-------------|
+| Тег `nvidia` → tag_id `nvidia` | `matched_tags @> '{nvidia}'` |
+| Finnhub статьи NVDA | `matched_tags = ['nvidia']` при INSERT |
+| Старые RSS-статьи | Backfill по тикеру в title/summary |
+| Frontend | `GET /api/news/tags/${tagId}` → NewsFeed loadArticles(tagId) |
 - Прозрачность: история изменений в git log
 - Trade-off: требует деплоя для каждого изменения
 
