@@ -102,12 +102,12 @@ export class NewsSourceManager {
             console.log(`[NewsSourceManager] RSS: ${source.name} — ${articles.length} articles`);
           } else if (source.type === 'api_search') {
             if (source.name === 'finnhub') {
-              // Finnhub: не чаще чем раз в час
-              const hoursSinceLastFetch = source.last_fetch_at
-                ? (Date.now() - new Date(source.last_fetch_at).getTime()) / 3600000
+              // Finnhub: каждые 5 минут (все тикеры)
+              const minutesSinceLastFetch = source.last_fetch_at
+                ? (Date.now() - new Date(source.last_fetch_at).getTime()) / 60000
                 : 999;
-              if (hoursSinceLastFetch < 1) {
-                console.log(`[NewsSourceManager] Finnhub: skip (last fetch ${hoursSinceLastFetch.toFixed(1)}h ago, interval=1h)`);
+              if (minutesSinceLastFetch < 5) {
+                console.log(`[NewsSourceManager] Finnhub: skip (last fetch ${minutesSinceLastFetch.toFixed(1)}m ago, interval=5m)`);
               } else {
                 const articles = await fetchFinnhubNews(source.config);
                 await saveAPIArticles(articles);
