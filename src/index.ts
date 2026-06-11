@@ -1330,6 +1330,10 @@ app.put('/admin/tags/:tagId', requireAdmin, async (req, res) => {
 
     // Build enriched_data JSONB patch
     const jsonbFields = ['ticker', 'website', 'description_ru', 'key_products', 'related_tags', 'synonyms_ru', 'synonyms_en', 'exchange', 'trend', 'sector'];
+    // Normalize empty strings to null (INC-004: empty string !== null in JSONB)
+    for (const f of jsonbFields) {
+      if (updates[f] === '') updates[f] = null;
+    }
     const jsonbUpdates: string[] = [];
     for (const f of jsonbFields) {
       if (updates[f] !== undefined) {
