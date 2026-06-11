@@ -2354,6 +2354,20 @@ app.get('/trigger/nsm', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// TRIGGER: News Processor (Layer 1 + Layer 2)
+// ═══════════════════════════════════════════════════════════════════════════
+app.get('/trigger/process', async (req, res) => {
+  const secret = req.headers['x-trigger-secret'] || req.query.secret;
+  if (secret !== (process.env.CRON_SECRET_KEY || 'pulse-dev-key')) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  import('./services/newsProcessor').then(({ processRawArticles }) => {
+    processRawArticles().catch(e => console.error('[Process] trigger error:', e.message));
+  });
+  res.json({ started: true });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 
 // TEMP: Test RSS fetch (no save, just fetch + count)
 app.get('/test-rss', async (req, res) => {
@@ -3095,6 +3109,7 @@ async function start() {
     { sql: `ALTER TABLE news ADD COLUMN IF NOT EXISTS sentiment_source VARCHAR(20) DEFAULT 'keyword'`, name: 'sentiment_source' },
     { sql: `ALTER TABLE news ADD COLUMN IF NOT EXISTS sentiment_score INTEGER`, name: 'sentiment_score' },
     { sql: `ALTER TABLE news ADD COLUMN IF NOT EXISTS sentiment_reasoning TEXT`, name: 'sentiment_reasoning' },
+    { sql: `ALTER TABLE news ADD COLUMN IF NOT EXISTS needs_translation BOOLEAN DEFAULT TRUE`, name: 'needs_translation' },
     { sql: `ALTER TABLE news ADD COLUMN IF NOT EXISTS is_political BOOLEAN DEFAULT FALSE`, name: 'is_political' },
     { sql: `ALTER TABLE news ADD COLUMN IF NOT EXISTS article_type VARCHAR(10) DEFAULT 'micro'`, name: 'article_type' },
     { sql: `CREATE TABLE IF NOT EXISTS cron_locks (job_name VARCHAR(50) PRIMARY KEY, locked_at TIMESTAMP, locked_by VARCHAR(100), expires_at TIMESTAMP DEFAULT ${_SQL_NOW})`, name: 'cron_locks' },
@@ -3124,6 +3139,22 @@ async function start() {
     console.log('[DB] Migration: backfilled all_sources and source_count');
   } catch (e: any) {
     console.log('[DB] Migration backfill warning:', e.message);
+  }
+
+  // News Processor: initialize needs_translation for existing articles (all → FALSE, only new articles get TRUE)
+  try {
+    await query(`UPDATE news SET needs_translation = FALSE WHERE needs_translation IS NULL OR needs_translation = TRUE`);
+    console.log('[DB] Migration: initialized needs_translation = FALSE for existing articles');
+  } catch (e: any) {
+    console.log('[DB] Migration needs_translation warning:', e.message);
+  }
+
+  // News Processor: partial index for fast lookup
+  try {
+    await query(`CREATE INDEX IF NOT EXISTS idx_news_needs_processing ON news (published_at DESC) WHERE needs_translation = TRUE`);
+    console.log('[DB] Migration: idx_news_needs_processing created');
+  } catch (e: any) {
+    console.log('[DB] Migration index warning:', e.message);
   }
   // UNIQUE(url) на news — предотвращает дубликаты одной и той же новости
   try {
@@ -3228,6 +3259,14 @@ async function start() {
     if (!process.env.CRON_SECRET_KEY) {
       setInterval(() => { nsm.run().catch((e: any) => console.error('[NSM] interval error:', e.message)); }, 5 * 60 * 1000);
     }
+
+    // News Processor cron — Layer 1 + Layer 2 (translate + sentiment)
+    // Обрабатывает "сырые" статьи (needs_translation = TRUE)
+    setInterval(() => {
+      import('./services/newsProcessor').then(({ processRawArticles }) => {
+        processRawArticles().catch(e => console.error('[NewsProcessor] interval error:', e.message));
+      });
+    }, 10 * 60 * 1000); // 10 min
 
     // Catch-up: если давно не запускали — запустить
     query(`SELECT MAX(last_fetch_at) as max FROM news_sources WHERE type = 'api_search'`).then(lastFetch => {
