@@ -433,7 +433,8 @@ app.get('/admin/llm-dashboard', requireAdmin, async (req, res) => {
     const todayArticles = await query(`
       SELECT
         COUNT(*) FILTER (WHERE sentiment_source = 'llm' OR sentiment_source = 'llm-partial') as processed,
-        COUNT(*) FILTER (WHERE sentiment_source LIKE 'llm-%' AND sentiment_source != 'llm-partial') as failed
+        COUNT(*) FILTER (WHERE sentiment_source LIKE 'llm-%' AND sentiment_source != 'llm-partial') as failed,
+        COUNT(*) FILTER (WHERE sentiment_source = 'keyword') as keyword_fallback
       FROM news
       WHERE created_at > CURRENT_DATE
     `);
@@ -499,6 +500,7 @@ app.get('/admin/llm-dashboard', requireAdmin, async (req, res) => {
         success_rate: total > 0 ? Math.round((success + partial) / total * 100 * 10) / 10 : 0,
         articles_processed: parseInt(todayArticles.rows[0]?.processed || '0'),
         articles_failed: parseInt(todayArticles.rows[0]?.failed || '0'),
+        keyword_fallback: parseInt(todayArticles.rows[0]?.keyword_fallback || '0'),
         manual_queue: parseInt(manualQueue.rows[0]?.count || '0'),
       },
       errors_by_type: errorsByType.rows,

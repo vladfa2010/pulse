@@ -259,6 +259,7 @@ async function analyzeSentiment(
     }
   } else {
     // Fallback: keyword-based (no LLM)
+    const keywordCount = articles.filter((_, i) => !skipLLM.has(i)).length;
     for (let i = 0; i < articles.length; i++) {
       if (!skipLLM.has(i)) {
         unifiedResults[i] = {
@@ -266,6 +267,26 @@ async function analyzeSentiment(
           is_political: false, article_type: 'micro',
           tag_impacts: matchedTagsList[i].map(t => ({ tag: t, score: 0, reasoning: '' })),
         } as UnifiedResult;
+      }
+    }
+    // Log keyword-only batch
+    if (keywordCount > 0) {
+      try {
+        await query(`
+          INSERT INTO llm_batches (status, started_at, finished_at, articles_count, success_count, failed_count, partial_count, error_types)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `, [
+          'keyword-only',
+          new Date().toISOString(),
+          new Date().toISOString(),
+          keywordCount,
+          keywordCount,
+          0,
+          0,
+          '{}',
+        ]);
+      } catch (logErr: any) {
+        console.error('[NewsProcessor] llm_batches log error:', logErr.message);
       }
     }
   }
