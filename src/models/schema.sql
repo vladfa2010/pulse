@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS payments (
 -- ============================================================
 CREATE TABLE IF NOT EXISTS news (
   id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  title_ru        TEXT NOT NULL,
+  title_ru        TEXT,
   summary_ru      TEXT,
   title_original  TEXT,
   summary_original TEXT,

@@ -3156,6 +3156,14 @@ async function start() {
   } catch (e: any) {
     console.log('[DB] Migration index warning:', e.message);
   }
+
+  // CRITICAL: Allow NULL in title_ru — Finnhub inserts raw articles with title_ru=null
+  try {
+    await query(`ALTER TABLE news ALTER COLUMN title_ru DROP NOT NULL`);
+    console.log('[DB] Migration: title_ru NOT NULL constraint dropped');
+  } catch (e: any) {
+    console.log('[DB] Migration title_ru warning:', e.message);
+  }
   // UNIQUE(url) на news — предотвращает дубликаты одной и той же новости
   try {
     await query(`ALTER TABLE news ADD CONSTRAINT news_url_unique UNIQUE (url)`);
