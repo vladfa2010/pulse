@@ -701,3 +701,4 @@ export function startCron() {
       console.error('[Cron] Deferred processor failed:', err.message);
     }
   });
+}
