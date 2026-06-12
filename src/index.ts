@@ -3374,10 +3374,11 @@ async function start() {
     await query(`ALTER TABLE news ADD CONSTRAINT news_url_unique UNIQUE (url)`);
     console.log('[DB] Migration: news.url unique constraint added');
   } catch { /* ignore — может уже существовать */ }
-  // UNIQUE(url_normalized) — защита от нормализованных дублей
+  // DROP UNIQUE(url_normalized) — normalizeUrl() даёт одинаковый результат
+  // для URL с разными query params (Finnhub: ?id=xxx). UNIQUE(url) достаточно.
   try {
-    await query(`ALTER TABLE news ADD CONSTRAINT news_url_norm_unique UNIQUE (url_normalized)`);
-    console.log('[DB] Migration: news.url_normalized unique constraint added');
+    await query(`ALTER TABLE news DROP CONSTRAINT IF EXISTS news_url_norm_unique`);
+    console.log('[DB] Migration: dropped UNIQUE(url_normalized) constraint');
   } catch { /* ignore */ }
   // UNIQUE(content_hash) — одна новость = одна запись
   try {

@@ -76,7 +76,8 @@ CREATE TABLE IF NOT EXISTS news (
   tag_impact      JSONB DEFAULT '[]',  -- [{"tag":"tesla","impact":"negative","reasoning":"Stock dropped"}]
   created_at      TIMESTAMP DEFAULT NOW(),
   UNIQUE(url),              -- Защита по оригинальному URL (один URL = одна запись)
-  UNIQUE(url_normalized),   -- Защита по нормализованному URL
+  -- UNIQUE(url_normalized) УБРАНО: normalizeUrl() даёт одинаковый результат
+  -- для URL с разными query params (?id=xxx). UNIQUE(url) достаточно.
   UNIQUE(content_hash)      -- Одна новость = одна запись. Дубликаты обновляют all_sources
 );
 
@@ -252,6 +253,4 @@ CREATE TABLE IF NOT EXISTS llm_batches (
 -- ============================================================
 -- Индексы (остальные)
 -- ============================================================
-CREATE INDEX IF NOT EXISTS idx_translation_hash ON translation_cache (hash);
-CREATE INDEX IF NOT EXISTS idx_llm_batches_created_at ON llm_batches (created_at DESC);
-
+CREATE INDEX IF NOT EXISTS idx_translation_hash ON tra
