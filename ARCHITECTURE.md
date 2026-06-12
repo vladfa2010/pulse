@@ -432,7 +432,7 @@ curl "https://pulse-api-bsov.onrender.com/trigger/nsm?secret=pulse-dev-key"
 curl "https://pulse-api-bsov.onrender.com/trigger/process?secret=pulse-dev-key"
 ```
 
-Fallback: `setInterval(5 мин / 10 мин)` если нет `CRON_SECRET_KEY`.
+Fallback: всегда `setInterval(5 мин / 10 мин)`. `CRON_SECRET_KEY` защищает только endpoints, не влияет на фоновые процессы.
 
 #### Admin endpoints (v9.3)
 
