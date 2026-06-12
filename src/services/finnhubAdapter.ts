@@ -239,69 +239,50 @@ async function saveArticlesBatch(
     // Дедупликация: merge дубликатов по URL (одна новость для разных тикеров)
     const deduped = aggregateByNormalizedUrl(batch);
 
-    try {
-      const rowsJson = JSON.stringify(deduped.map(a => ({
-        title_original: a.title_original,
-        title_ru: a.title_ru,
-        summary_original: a.summary_original,
-        summary_ru: a.summary_ru,
-        source: a.source,
-        source_id: a.source_id,
-        source_type: a.source_type,
-        url: a.url,
-        url_normalized: a.url_normalized,
-        content_hash: a.content_hash,
-        all_sources: a.all_sources,
-        source_count: 1,
-        published_at: a.published_at,
-        lang_original: a.lang_original,
-        matched_tags: a.matched_tags,
-        needs_translation: true,
-      })));
-
-      const result = await query(`
-        INSERT INTO news (
-          title_original, title_ru, summary_original, summary_ru,
-          source, source_id, source_type, url, url_normalized, content_hash,
-          all_sources, source_count, published_at, lang_original,
-          matched_tags, needs_translation
-        )
-        SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(
-          title_original text, title_ru text, summary_original text, summary_ru text,
-          source text, source_id text, source_type text, url text, url_normalized text, content_hash text,
-          all_sources text[], source_count int, published_at timestamptz, lang_original text,
-          matched_tags text[], needs_translation boolean
-        )
-        ON CONFLICT (url) DO UPDATE SET
-          matched_tags = (
-            SELECT array_agg(DISTINCT x)
-            FROM unnest(array_cat(
-              COALESCE(news.matched_tags, '{}'::text[]),
-              EXCLUDED.matched_tags
-            )) AS t(x)
-          ),
-          all_sources = (
-            SELECT array_agg(DISTINCT x)
-            FROM unnest(array_cat(
-              COALESCE(news.all_sources, '{}'::text[]),
-              ARRAY[EXCLUDED.source]
-            )) AS t(x)
-          ),
-          source_count = (
-            SELECT COUNT(DISTINCT x)
-            FROM unnest(array_cat(
-              COALESCE(news.all_sources, '{}'::text[]),
-              ARRAY[EXCLUDED.source]
-            )) AS t(x)
-          )
-        RETURNING (xmax = 0) AS is_insert
-      `, [rowsJson]);
-
-      for (const row of result.rows) {
-        row.is_insert ? saved++ : merged++;
+    // Пошаговый INSERT — ON CONFLICT работает надёжно (vs batch jsonb_to_recordset)
+    for (const a of deduped) {
+      try {
+        const result = await query(`
+          INSERT INTO news (
+            title_original, title_ru, summary_original, summary_ru,
+            source, source_id, source_type, url, url_normalized, content_hash,
+            all_sources, source_count, published_at, lang_original,
+            matched_tags, needs_translation
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+          ON CONFLICT (url) DO UPDATE SET
+            matched_tags = (
+              SELECT array_agg(DISTINCT x)
+              FROM unnest(array_cat(
+                COALESCE(news.matched_tags, '{}'::text[]),
+                EXCLUDED.matched_tags
+              )) AS t(x)
+            ),
+            all_sources = (
+              SELECT array_agg(DISTINCT x)
+              FROM unnest(array_cat(
+                COALESCE(news.all_sources, '{}'::text[]),
+                ARRAY[EXCLUDED.source]
+              )) AS t(x)
+            ),
+            source_count = (
+              SELECT COUNT(DISTINCT x)
+              FROM unnest(array_cat(
+                COALESCE(news.all_sources, '{}'::text[]),
+                ARRAY[EXCLUDED.source]
+              )) AS t(x)
+            )
+          RETURNING (xmax = 0) AS is_insert
+        `, [
+          a.title_original, a.title_ru, a.summary_original, a.summary_ru,
+          a.source, a.source_id, a.source_type, a.url, a.url_normalized, a.content_hash,
+          a.all_sources, 1, a.published_at, a.lang_original,
+          a.matched_tags, true,
+        ]);
+        saved += result.rows.filter(r => r.is_insert).length;
+        merged += result.rows.filter(r => !r.is_insert).length;
+      } catch (err: any) {
+        console.error(`[Finnhub] Save error for ${a.url?.slice(0, 60)}:`, err.message);
       }
-    } catch (err: any) {
-      console.error('[Finnhub] Batch save error:', err.message);
     }
   }
 
