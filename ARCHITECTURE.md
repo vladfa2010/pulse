@@ -2317,4 +2317,7 @@ cron.schedule('0 13 * * 0', generateReport);
 
 ### Manual Triggers
 
-```ba
+```bash
+# RSS сбор
+POST /trigger/rss
+POST /

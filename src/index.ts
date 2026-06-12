@@ -471,6 +471,59 @@ app.post('/admin/news-delete', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ADMIN: List news with matched_tags (GET — для браузера)
+// Query: ?source_id=finnhub&limit=50&secret=KEY
+// ═══════════════════════════════════════════════════════════════════════════
+app.get('/admin/news-list', async (req, res) => {
+  const secret = req.headers['x-trigger-secret'] || req.query.secret;
+  if (secret !== process.env.CRON_SECRET_KEY) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  try {
+    const source_id = req.query.source_id as string;
+    const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
+
+    const conditions: string[] = ['1=1'];
+    const params: any[] = [];
+    let p = 1;
+
+    if (source_id) {
+      conditions.push(`source_id = $${p++}`);
+      params.push(source_id);
+    }
+    params.push(limit);
+
+    const result = await query(`
+      SELECT id, title_ru, title_original, source, source_id, url, published_at,
+             matched_tags, sentiment, sentiment_source, lang_original, created_at
+      FROM news
+      WHERE ${conditions.join(' AND ')}
+      ORDER BY published_at DESC
+      LIMIT $${p}
+    `, params);
+
+    res.json({
+      count: result.rows.length,
+      articles: result.rows.map(r => ({
+        id: r.id,
+        title: r.title_ru || r.title_original || '(no title)',
+        source: r.source,
+        source_id: r.source_id,
+        url: r.url,
+        published_at: r.published_at,
+        matched_tags: r.matched_tags || [],
+        sentiment: r.sentiment,
+        sentiment_source: r.sentiment_source,
+        lang: r.lang_original
+      }))
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // ADMIN: Count news by filters (GET — для браузера)
 // Query: ?matched_tags=nvda,crispr&source_id=finnhub&lang_original=en&secret=KEY
 // ═══════════════════════════════════════════════════════════════════════════
