@@ -207,23 +207,6 @@ function createArticle(item: FinnhubArticle, tag: any): FetchedArticle {
 // BATCH INSERT (B1, B2 fixes)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/** Дедупликация по url_normalized + merge matched_tags внутри batch
- *  Важно: url_normalized убирает query params (?utm=1), поэтому
- *  две статьи с разными url но одинаковым url_normalized — дубликаты
- */
-function aggregateByNormalizedUrl(articles: FetchedArticle[]): FetchedArticle[] {
-  const map = new Map<string, FetchedArticle>();
-  for (const a of articles) {
-    const existing = map.get(a.url_normalized);
-    if (existing) {
-      existing.matched_tags = [...new Set([...existing.matched_tags, ...a.matched_tags])];
-    } else {
-      map.set(a.url_normalized, { ...a, matched_tags: [...a.matched_tags] });
-    }
-  }
-  return Array.from(map.values());
-}
-
 async function saveArticlesBatch(
   articles: FetchedArticle[],
   config: any
@@ -236,11 +219,11 @@ async function saveArticlesBatch(
   for (let i = 0; i < articles.length; i += BATCH_SIZE) {
     const batch = articles.slice(i, i + BATCH_SIZE);
 
-    // Дедупликация: merge дубликатов по URL (одна новость для разных тикеров)
-    const deduped = aggregateByNormalizedUrl(batch);
-
-    // Пошаговый INSERT — ON CONFLICT работает надёжно (vs batch jsonb_to_recordset)
-    for (const a of deduped) {
+    // Пошаговый INSERT — ON CONFLICT работает надёжно
+    // НЕТ aggregateByNormalizedUrl: normalizeUrl() даёт одинаковый результат
+    // для всех Finnhub URL (?id=xxx → "finnhub.io/api/news"), схлопывает 39→2
+    // UNIQUE(url) защищает — каждый ?id=xxx уникален
+    for (const a of batch) {
       try {
         const result = await query(`
           INSERT INTO news (
