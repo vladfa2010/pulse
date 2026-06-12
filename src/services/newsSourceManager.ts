@@ -4,7 +4,7 @@
  */
 
 import { query } from '../config/db';
-import { fetchFinnhubNews, saveArticles as saveAPIArticles } from './finnhubAdapter';
+import { fetchAndSaveFinnhubNews } from './finnhubAdapter';
 import { fetchAllRSS } from './rssFetcher';
 import { RssSource } from './rssSources';
 import crypto from 'crypto';
@@ -109,8 +109,8 @@ export class NewsSourceManager {
               if (minutesSinceLastFetch < 5) {
                 console.log(`[NewsSourceManager] Finnhub: skip (last fetch ${minutesSinceLastFetch.toFixed(1)}m ago, interval=5m)`);
               } else {
-                const articles = await fetchFinnhubNews(source.config);
-                await saveAPIArticles(articles);
+                const result = await fetchAndSaveFinnhubNews(source.config);
+                console.log(`[NewsSourceManager] Finnhub: ${result.totalFetched} fetched, ${result.totalSaved} saved, ${result.totalMerged} merged`);
               }
             }
           }

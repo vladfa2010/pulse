@@ -3236,6 +3236,34 @@ async function start() {
     await query(`ALTER TABLE news ADD CONSTRAINT news_content_hash_unique UNIQUE (content_hash)`);
     console.log('[DB] Migration: news.content_hash unique constraint added');
   } catch { /* ignore */ }
+
+  // ═══════════════════════════════════════════════════════════════
+  // MIGRATIONS: Finnhub Adapter v2 (TZ_FINNHUB_COMPLETE_FIX_v2)
+  // ═══════════════════════════════════════════════════════════════
+
+  // FIN-011: published_at → TIMESTAMPTZ
+  try {
+    await query(`
+      DO $$
+      BEGIN
+        ALTER TABLE news ALTER COLUMN published_at TYPE TIMESTAMPTZ;
+      EXCEPTION
+        WHEN others THEN NULL;
+      END $$;
+    `);
+    console.log('[DB] Migration: published_at → TIMESTAMPTZ');
+  } catch (e: any) {
+    console.log('[DB] Migration TIMESTAMPTZ warning:', e.message);
+  }
+
+  // news_sources.error_count для мониторинга
+  try {
+    await query(`ALTER TABLE news_sources ADD COLUMN IF NOT EXISTS error_count INTEGER DEFAULT 0`);
+    console.log('[DB] Migration: news_sources.error_count added');
+  } catch (e: any) {
+    console.log('[DB] Migration error_count warning:', e.message);
+  }
+
   // UNIQUE constraint на user_sessions.user_id
   // bilingual / source tracking columns
   const newsCols = [

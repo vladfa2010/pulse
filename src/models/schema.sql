@@ -68,7 +68,7 @@ CREATE TABLE IF NOT EXISTS news (
   content_hash    TEXT,        -- MD5 от title_ru + summary_ru (группировка дубликатов)
   all_sources     TEXT[] DEFAULT '{}',  -- Все источники публиковавшие эту новость
   source_count    INTEGER DEFAULT 1,    -- Сколько источников опубликовали
-  published_at    TIMESTAMP,
+  published_at    TIMESTAMPTZ,
   fetched_at      TIMESTAMP DEFAULT NOW(),
   sentiment       VARCHAR(20),
   sentiment_source VARCHAR(20) DEFAULT 'keyword', -- keyword | llm
@@ -137,6 +137,7 @@ CREATE TABLE IF NOT EXISTS news_sources (
   last_fetch_at TIMESTAMP,
   last_error    TEXT,                       -- последняя ошибка (429, timeout, etc)
   last_error_at TIMESTAMP,                  -- когда была ошибка
+  error_count   INTEGER DEFAULT 0,          -- счётчик ошибок для мониторинга
   created_at    TIMESTAMP DEFAULT NOW()
 );
 

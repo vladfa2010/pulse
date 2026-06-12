@@ -1,11 +1,45 @@
 /**
- * Finnhub API Adapter
- * TZ: TZ_FINNHUB_ADAPTER
- * Запрашивает новости по тикерам из user_defined_tags
+ * Finnhub API Adapter — v2 (streaming + batch + fixes)
+ * TZ: TZ_FINNHUB_COMPLETE_FIX_v2
+ *
+ * Исправлены баги v1:
+ *   B1: ReferenceError a.source_count → batch.map(() => 1)
+ *   B2: JSON.stringify портит text[] → убран JSON.stringify
+ *   B3: Нет sleep между parallel batches → sleep(RATE_LIMIT_DELAY_MS)
+ *   B4: Нет streaming → fetch→save→discard по чанкам
+ *   B5: BATCH_SIZE 100 → 500
+ *   B6: FETCH_TIMEOUT 30000 → 15000
+ *
+ * Интерфейс: NewsSourceManager вызывает fetchAndSaveFinnhubNews(config)
+ *            вместо fetchFinnhubNews() + saveArticles()
  */
 
 import { query } from '../config/db';
 import crypto from 'crypto';
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CONFIG
+// ═══════════════════════════════════════════════════════════════════════════
+
+const DEFAULTS = {
+  FETCH_TIMEOUT_MS: 15000,       // B6: было 30000
+  MAX_RETRIES: 3,
+  CONCURRENCY_LIMIT: 5,
+  BATCH_SIZE: 500,               // B5: было 100
+  RATE_LIMIT_DELAY_MS: 1000,     // B3: sleep между parallel batches
+  LOOKBACK_DAYS_FIRST: 7,        // FIN-010
+  LOOKBACK_DAYS_REGULAR: 1,
+  CB_THRESHOLD: 5,
+  CB_TIMEOUT_MS: 30 * 60 * 1000, // 30 min
+};
+
+function cfg(config: any, key: keyof typeof DEFAULTS) {
+  return config[key.toLowerCase()] || DEFAULTS[key];
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TYPES
+// ═══════════════════════════════════════════════════════════════════════════
 
 interface FinnhubArticle {
   datetime: number;
@@ -20,193 +54,397 @@ interface FetchedArticle {
   title_ru: string | null;
   summary_original: string;
   summary_ru: string | null;
-  url: string;
-  published_at: Date;
   source: string;
   source_id: string;
   source_type: string;
+  url: string;
+  url_normalized: string;
+  content_hash: string;
+  all_sources: string[];
+  source_count: number;
+  published_at: string;  // ISO string для TIMESTAMPTZ
   lang_original: string;
   matched_tags: string[];
-  content_hash: string;
+  needs_translation: boolean;
 }
 
-export async function fetchFinnhubNews(config: any): Promise<FetchedArticle[]> {
-  const apiKey = process.env.FINNHUB_API_KEY || config.api_key;
-  const baseUrl = config.base_url || 'https://finnhub.io/api/v1';
-  const rpm = config.rate_limit_rpm || 60;
-  const delayMs = Math.ceil(60000 / rpm);
+export interface FetchResult {
+  totalFetched: number;
+  totalSaved: number;
+  totalMerged: number;
+  durationMs: number;
+  errors: string[];
+}
 
-  if (!apiKey) {
-    console.error('[Finnhub] No API key. Set FINNHUB_API_KEY env var.');
-    return [];
+// ═══════════════════════════════════════════════════════════════════════════
+// CIRCUIT BREAKER
+// ═══════════════════════════════════════════════════════════════════════════
+
+class CircuitBreaker {
+  private failures = 0;
+  private lastFailure = 0;
+  private threshold: number;
+  private timeoutMs: number;
+
+  constructor(config: any) {
+    this.threshold = cfg(config, 'CB_THRESHOLD');
+    this.timeoutMs = cfg(config, 'CB_TIMEOUT_MS');
   }
 
-  // 1. Собрать теги с тикерами (только нерусские биржи: NASDAQ, NYSE, LSE и т.д.)
-  const tagResult = await query(`
-    SELECT DISTINCT
-      t.tag_id,
-      t.tag_name,
-      t.enriched_data->>'ticker' as ticker,
-      t.enriched_data->>'exchange' as exchange,
-      COUNT(p.user_id) as subscriber_count
-    FROM user_defined_tags t
-    JOIN portfolios p ON p.tag_id = t.tag_id
-    WHERE t.enriched_data->>'ticker' IS NOT NULL
-      AND LENGTH(t.enriched_data->>'ticker') > 0
-      AND t.enriched_data->>'exchange' = 'USA'
-    GROUP BY t.tag_id, t.tag_name, t.enriched_data->>'ticker', t.enriched_data->>'exchange'
-    ORDER BY subscriber_count DESC
-  `);
-  const allTags = tagResult.rows;
-
-  if (allTags.length === 0) {
-    const debugResult = await query(`
-      SELECT t.tag_id, t.tag_name, t.enriched_data->>'ticker' as t, t.enriched_data->>'exchange' as e
-      FROM user_defined_tags t
-      JOIN portfolios p ON p.tag_id = t.tag_id
-    `);
-    console.log(`[Finnhub] DEBUG All portfolio tags:`, JSON.stringify(debugResult.rows));
-    console.log('[Finnhub] No tags with exchange=USA found');
-    return [];
+  isOpen(): boolean {
+    if (this.failures < this.threshold) return false;
+    if (Date.now() - this.lastFailure > this.timeoutMs) {
+      this.failures = 0; // half-open
+      return false;
+    }
+    return true;
   }
 
-  // Все тикеры каждый цикл (пока их мало — tiered не нужен)
-  const tags = [...allTags];
-  console.log(`[Finnhub] Total: ${allTags.length} tickers, fetching ALL this cycle`);
+  recordSuccess() { this.failures = 0; }
+  recordFailure() { this.failures++; this.lastFailure = Date.now(); }
+}
 
-  // 2. Дата — сегодня
-  const today = new Date();
-  const dateStr = today.toISOString().split('T')[0];
+// ═══════════════════════════════════════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════════════════════════════════════
 
-  const articles: FetchedArticle[] = [];
+function sleep(ms: number) {
+  return new Promise(r => setTimeout(r, ms));
+}
 
-  // 3. Запрос по каждому тикеру
-  for (const tag of tags) {
-    const ticker = tag.ticker.toUpperCase();
-    const url = `${baseUrl}/company-news?symbol=${ticker}&from=${dateStr}&to=${dateStr}&token=${apiKey}`;
+/** B2 fix: fetch с таймаутом */
+async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const r = await fetch(url, { signal: controller.signal });
+    clearTimeout(timer);
+    return r;
+  } catch (err: any) {
+    clearTimeout(timer);
+    if (err.name === 'AbortError') throw new Error(`Timeout ${timeoutMs}ms: ${url}`);
+    throw err;
+  }
+}
 
+/** Логирование ВСЕХ ошибок в news_sources + инкремент счётчика */
+async function logSourceError(sourceId: string, type: string, msg: string): Promise<void> {
+  try {
+    await query(
+      `UPDATE news_sources SET last_error = $1, last_error_at = NOW(), error_count = COALESCE(error_count, 0) + 1 WHERE name = $2`,
+      [`[${type}] ${msg}`, sourceId]
+    );
+  } catch { /* logging failed — ignore */ }
+}
+
+/** Retry с exponential backoff */
+async function fetchWithRetry(
+  url: string, ticker: string, config: any
+): Promise<Response> {
+  const maxRetries = cfg(config, 'MAX_RETRIES');
+  const timeoutMs = cfg(config, 'FETCH_TIMEOUT_MS');
+
+  for (let i = 0; i < maxRetries; i++) {
     try {
-      const response = await fetch(url);
-      if (response.status === 429) {
-        console.log(`[Finnhub] 429 rate limit for ${ticker}, skipping`);
-        await query(`UPDATE news_sources SET last_error = $1, last_error_at = NOW() WHERE name = 'finnhub'`, [`429 Rate Limit for ${ticker}`]);
-        continue;
-      }
-      if (!response.ok) {
-        console.error(`[Finnhub] ${response.status} for ${ticker}`);
-        continue;
-      }
+      const response = await fetchWithTimeout(url, timeoutMs);
+      if (response.ok) return response;
 
-      const data = await response.json() as FinnhubArticle[];
-      console.log(`[Finnhub] ${ticker}: ${data.length} articles`);
+      const errorType = response.status === 429 ? 'RATE_LIMIT'
+        : response.status >= 500 ? 'SERVER_ERROR' : 'HTTP_ERROR';
+      await logSourceError('finnhub', errorType, `${response.status} for ${ticker}`);
 
-      for (const item of data) {
-        const contentHash = crypto
-          .createHash('sha256')
-          .update(item.headline + '\n' + (item.summary || ''))
-          .digest('hex');
-
-        articles.push({
-          title_original: item.headline,
-          title_ru: null,
-          summary_original: item.summary || '',
-          summary_ru: null,
-          url: item.url,
-          published_at: new Date(item.datetime * 1000),
-          source: 'Finnhub News',
-          source_id: 'finnhub',
-          source_type: 'api_search',
-          lang_original: 'en',
-          matched_tags: [tag.tag_id],
-          content_hash: contentHash,
-        });
-      }
+      if (![429, 500, 502, 503].includes(response.status)) break;
+      await sleep(Math.pow(2, i) * 1000);
     } catch (err: any) {
-      console.error(`[Finnhub] Error fetching ${ticker}:`, err.message);
+      await logSourceError('finnhub', 'FETCH_ERROR', `${err.message} for ${ticker}`);
+      if (i < maxRetries - 1) await sleep(Math.pow(2, i) * 1000);
     }
-
-    await sleep(delayMs);
   }
-
-  // title_ru и summary_ru остаются null — признак "сырой" статьи
-  // News Processor найдёт их через WHERE title_ru IS NULL и сделает перевод
-  console.log(`[Finnhub] Total articles: ${articles.length} (raw: title_ru=null, summary_ru=null)`);
-  return articles;
+  throw new Error(`Failed after ${maxRetries} retries: ${ticker}`);
 }
 
-export async function saveArticles(articles: FetchedArticle[]): Promise<void> {
-  let saved = 0;
-  let skipped = 0;
-  let urlDup = 0;
+/** Guard: пропускаем пустые статьи */
+function isValidArticle(item: any): boolean {
+  return !!(item.headline?.trim() && item.url?.trim());
+}
 
-  for (const a of articles) {
-    // 1. Проверка по URL — primary dedup + merge matched_tags
-    const existingByUrl = await query(`SELECT id, matched_tags FROM news WHERE url = $1`, [a.url]);
-    if (existingByUrl.rows.length > 0) {
-      urlDup++;
-      // MERGE matched_tags: добавляем новые теги к существующим
-      await query(`
-        UPDATE news 
-        SET matched_tags = (
-          SELECT array_agg(DISTINCT x) 
-          FROM unnest(array_cat(COALESCE(matched_tags, '{}'::text[]), $1::text[])) AS t(x)
-        )
-        WHERE url = $2
-      `, [a.matched_tags, a.url]);
-      continue;
-    }
+/** Нормализация URL для дедупликации */
+function normalizeUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.hostname}${u.pathname}`.toLowerCase();
+  } catch {
+    return url.toLowerCase();
+  }
+}
+
+/** Создание FetchedArticle из Finnhub ответа */
+function createArticle(item: FinnhubArticle, tag: any): FetchedArticle {
+  return {
+    title_original: item.headline.trim(),
+    title_ru: null,
+    summary_original: (item.summary || '').trim(),
+    summary_ru: null,
+    source: item.source || 'Finnhub News',
+    source_id: 'finnhub',
+    source_type: 'api_search',
+    url: item.url.trim(),
+    url_normalized: normalizeUrl(item.url),
+    content_hash: crypto
+      .createHash('sha256')
+      .update(`${item.headline}\n${item.summary || ''}`.slice(0, 500))
+      .digest('hex'),
+    all_sources: [item.source || 'Finnhub News'],
+    source_count: 1,
+    published_at: new Date(item.datetime * 1000).toISOString(), // FIN-011: TIMESTAMPTZ safe
+    lang_original: 'en',
+    matched_tags: [tag.tag_id],
+    needs_translation: true,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BATCH INSERT (B1, B2 fixes)
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function saveArticlesBatch(
+  articles: FetchedArticle[],
+  config: any
+): Promise<{ saved: number; merged: number }> {
+  if (articles.length === 0) return { saved: 0, merged: 0 };
+
+  const BATCH_SIZE = cfg(config, 'BATCH_SIZE');
+  let saved = 0, merged = 0;
+
+  for (let i = 0; i < articles.length; i += BATCH_SIZE) {
+    const batch = articles.slice(i, i + BATCH_SIZE);
 
     try {
-      await query(`
+      const result = await query(`
         INSERT INTO news (
           title_original, title_ru, summary_original, summary_ru,
-          source, source_id, source_type, url, content_hash,
+          source, source_id, source_type, url, url_normalized, content_hash,
           all_sources, source_count, published_at, lang_original,
-          matched_tags
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::text[], 1, $11, $12, $13)
-        ON CONFLICT (content_hash) DO UPDATE SET
+          matched_tags, needs_translation
+        )
+        SELECT * FROM unnest(
+          $1::text[], $2::text[], $3::text[], $4::text[],
+          $5::text[], $6::text[], $7::text[], $8::text[],
+          $9::text[], $10::text[], $11::text[], $12::int[],
+          $13::timestamptz[], $14::text[], $15::text[], $16::boolean[]
+        )
+        ON CONFLICT (url) DO UPDATE SET
           matched_tags = (
             SELECT array_agg(DISTINCT x)
-            FROM unnest(
-              array_cat(
-                COALESCE(news.matched_tags, '{}'::text[]),
-                EXCLUDED.matched_tags
-              )
-            ) AS t(x)
+            FROM unnest(array_cat(
+              COALESCE(news.matched_tags, '{}'::text[]),
+              EXCLUDED.matched_tags
+            )) AS t(x)
           ),
           all_sources = (
             SELECT array_agg(DISTINCT x)
-            FROM unnest(
-              array_cat(
-                COALESCE(news.all_sources, '{}'::text[]),
-                ARRAY[EXCLUDED.source]
-              )
-            ) AS t(x)
+            FROM unnest(array_cat(
+              COALESCE(news.all_sources, '{}'::text[]),
+              ARRAY[EXCLUDED.source]
+            )) AS t(x)
           ),
           source_count = (
             SELECT COUNT(DISTINCT x)
-            FROM unnest(
-              array_cat(
-                COALESCE(news.all_sources, '{}'::text[]),
-                ARRAY[EXCLUDED.source]
-              )
-            ) AS t(x)
+            FROM unnest(array_cat(
+              COALESCE(news.all_sources, '{}'::text[]),
+              ARRAY[EXCLUDED.source]
+            )) AS t(x)
           )
+        RETURNING (xmax = 0) AS is_insert
       `, [
-        a.title_original, a.title_ru, a.summary_original, a.summary_ru,
-        a.source, a.source_id, a.source_type, a.url, a.content_hash,
-        [a.source], a.published_at, a.lang_original, a.matched_tags,
+        batch.map(a => a.title_original),
+        batch.map(a => a.title_ru),
+        batch.map(a => a.summary_original),
+        batch.map(a => a.summary_ru),
+        batch.map(a => a.source),
+        batch.map(a => a.source_id),
+        batch.map(a => a.source_type),
+        batch.map(a => a.url),
+        batch.map(a => a.url_normalized),
+        batch.map(a => a.content_hash),
+        // B2 fix: убран JSON.stringify — pg драйвер конвертирует string[] → text[]
+        batch.map(a => a.all_sources),
+        // B1 fix: было batch.map(() => a.source_count) — ReferenceError
+        // Стало: batch.map(() => 1) — source_count всегда 1 для новых
+        batch.map(() => 1),
+        batch.map(a => a.published_at),
+        batch.map(a => a.lang_original),
+        // B2 fix: убран JSON.stringify
+        batch.map(a => a.matched_tags),
+        batch.map(() => true),
       ]);
-      saved++;
+
+      for (const row of result.rows) {
+        row.is_insert ? saved++ : merged++;
+      }
     } catch (err: any) {
-      console.error('[Finnhub] Save error:', err.message);
-      skipped++;
+      console.error('[Finnhub] Batch save error:', err.message);
     }
   }
 
-  console.log(`[Finnhub] Saved: ${saved}, URL dup: ${urlDup}, Error skip: ${skipped}`);
+  return { saved, merged };
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+// ═══════════════════════════════════════════════════════════════════════════
+// MAIN: fetchAndSaveFinnhubNews (B3, B4 fixes)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Единая точка входа. NewsSourceManager вызывает ЭТУ функцию.
+ *
+ * B4 fix: Streaming — fetch по чанкам → сразу save → discard.
+ * НЕ накапливаем все статьи в памяти.
+ *
+ * B3 fix: sleep(RATE_LIMIT_DELAY_MS) между parallel batches.
+ */
+export async function fetchAndSaveFinnhubNews(config: any): Promise<FetchResult> {
+  const startTime = Date.now();
+  const apiKey = process.env.FINNHUB_API_KEY || config.api_key;
+  const baseUrl = config.base_url || 'https://finnhub.io/api/v1';
+
+  const result: FetchResult = {
+    totalFetched: 0,
+    totalSaved: 0,
+    totalMerged: 0,
+    durationMs: 0,
+    errors: [],
+  };
+
+  if (!apiKey) {
+    console.error('[Finnhub] No API key');
+    await logSourceError('finnhub', 'CONFIG', 'No API key');
+    return result;
+  }
+
+  const cb = new CircuitBreaker(config);
+  if (cb.isOpen()) {
+    console.log('[Finnhub] Circuit breaker OPEN — skipping');
+    await logSourceError('finnhub', 'CIRCUIT', 'Breaker OPEN');
+    return result;
+  }
+
+  // --- 1. Получаем тикеры (FIN-003 fix: try/catch) ---
+  let allTags: any[] = [];
+  try {
+    const tagResult = await query(`
+      SELECT DISTINCT
+        t.tag_id,
+        t.enriched_data->>'ticker' as ticker,
+        COUNT(p.user_id) as subscriber_count
+      FROM user_defined_tags t
+      JOIN portfolios p ON p.tag_id = t.tag_id
+      WHERE t.enriched_data->>'ticker' IS NOT NULL
+        AND LENGTH(t.enriched_data->>'ticker') > 0
+        AND t.enriched_data->>'exchange' = 'USA'
+      GROUP BY t.tag_id
+      ORDER BY subscriber_count DESC
+    `);
+    allTags = tagResult.rows;
+  } catch (err: any) {
+    console.error('[Finnhub] DB error:', err.message);
+    await logSourceError('finnhub', 'DB_ERROR', err.message);
+    return result;
+  }
+
+  if (allTags.length === 0) {
+    console.log('[Finnhub] No USA tickers found');
+    return result;
+  }
+
+  // --- 2. Определяем период (FIN-010: first run = 7 days) ---
+  const countResult = await query(
+    `SELECT COUNT(*) as c FROM news WHERE source_type = 'api_search'`
+  );
+  const isFirstRun = parseInt(countResult.rows[0]?.c || '0') === 0;
+  const lookbackDays = isFirstRun
+    ? cfg(config, 'LOOKBACK_DAYS_FIRST')
+    : cfg(config, 'LOOKBACK_DAYS_REGULAR');
+
+  const toDate = new Date().toISOString().split('T')[0];
+  const fromDate = new Date(Date.now() - lookbackDays * 86400000)
+    .toISOString().split('T')[0];
+
+  if (isFirstRun) {
+    console.log(`[Finnhub] First run detected — fetching ${lookbackDays} days`);
+  }
+
+  // --- 3. Parallel fetch + streaming save (B3 + B4 fixes) ---
+  const CONCURRENCY_LIMIT = cfg(config, 'CONCURRENCY_LIMIT');
+  const RATE_LIMIT_DELAY_MS = cfg(config, 'RATE_LIMIT_DELAY_MS');
+
+  for (let i = 0; i < allTags.length; i += CONCURRENCY_LIMIT) {
+    const tickerBatch = allTags.slice(i, i + CONCURRENCY_LIMIT);
+
+    // Fetch 5 тикеров параллельно
+    const promises = tickerBatch.map(async (tag) => {
+      try {
+        const url = `${baseUrl}/company-news?symbol=${tag.ticker.toUpperCase()}&from=${fromDate}&to=${toDate}&token=${apiKey}`;
+        const response = await fetchWithRetry(url, tag.ticker, config);
+        const data = await response.json();
+
+        if (!Array.isArray(data)) {
+          console.error(`[Finnhub] Invalid response for ${tag.ticker}`);
+          return [];
+        }
+
+        cb.recordSuccess();
+        return data
+          .filter(isValidArticle)                          // FIN-009 guard
+          .map(item => createArticle(item as FinnhubArticle, tag));
+      } catch (err: any) {
+        cb.recordFailure();
+        console.error(`[Finnhub] ${tag.ticker}:`, err.message);
+        result.errors.push(`${tag.ticker}: ${err.message}`);
+        return [];
+      }
+    });
+
+    const batchArticles = (await Promise.all(promises)).flat();
+    result.totalFetched += batchArticles.length;
+
+    // B4 fix: Сразу сохраняем, НЕ накапливаем
+    if (batchArticles.length > 0) {
+      const { saved, merged } = await saveArticlesBatch(batchArticles, config);
+      result.totalSaved += saved;
+      result.totalMerged += merged;
+    }
+
+    // B3 fix: Rate limit — sleep между batches
+    if (i + CONCURRENCY_LIMIT < allTags.length) {
+      await sleep(RATE_LIMIT_DELAY_MS);
+    }
+  }
+
+  result.durationMs = Date.now() - startTime;
+
+  console.log(
+    `[Finnhub] Done: ${result.totalFetched} fetched, ` +
+    `${result.totalSaved} saved, ${result.totalMerged} merged, ` +
+    `${result.errors.length} errors in ${result.durationMs}ms`
+  );
+
+  return result;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BACKWARD COMPATIBILITY: старый интерфейс
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * DEPRECATED: Используйте fetchAndSaveFinnhubNews() для streaming.
+ *
+ * Эта функция сохраняет статьи, полученные извне.
+ * Нужна только если NewsSourceManager ещё не перешёл на новый интерфейс.
+ */
+export async function saveArticles(articles: FetchedArticle[]): Promise<void> {
+  const { saved, merged } = await saveArticlesBatch(articles, DEFAULTS);
+  console.log(`[Finnhub] Saved: ${saved}, Merged: ${merged}`);
+}
+
+// Legacy export for backward compatibility
+export { fetchAndSaveFinnhubNews as fetchFinnhubNews };
