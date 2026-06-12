@@ -2282,4 +2282,4 @@ cron.schedule('0 13 * * 0', generateReport);
 ```bash
 # RSS сбор
 POST /trigger/rss
-POST /  
+POST /

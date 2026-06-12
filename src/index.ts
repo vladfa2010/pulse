@@ -3505,11 +3505,9 @@ async function start() {
 
     startDigestCron(); // TG digest cron (every 3 hours)
 
-    // NewsSourceManager — фоновый запуск (setInterval / catch-up)
+    // NewsSourceManager — фоновый запуск каждые 5 мин
     // NOTE: /trigger/nsm endpoint зарегистрирован в основном потоке выше
-    if (!process.env.CRON_SECRET_KEY) {
-      setInterval(() => { nsm.run().catch((e: any) => console.error('[NSM] interval error:', e.message)); }, 5 * 60 * 1000);
-    }
+    setInterval(() => { nsm.run().catch((e: any) => console.error('[NSM] interval error:', e.message)); }, 5 * 60 * 1000);
 
     // News Processor cron — Layer 1 + Layer 2 (translate + sentiment)
     // Обрабатывает "сырые" статьи (needs_translation = TRUE)
