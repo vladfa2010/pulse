@@ -471,6 +471,48 @@ app.post('/admin/news-delete', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ADMIN: Count news by filters (GET — для браузера)
+// Query: ?matched_tags=nvda,crispr&source_id=finnhub&lang_original=en&secret=KEY
+// ═══════════════════════════════════════════════════════════════════════════
+app.get('/admin/news-count-query', async (req, res) => {
+  const secret = req.headers['x-trigger-secret'] || req.query.secret;
+  if (secret !== process.env.CRON_SECRET_KEY) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  try {
+    const matched_tags = req.query.matched_tags ? String(req.query.matched_tags).split(',') : null;
+    const source_id = req.query.source_id ? String(req.query.source_id) : null;
+    const lang_original = req.query.lang_original ? String(req.query.lang_original) : null;
+
+    const conditions: string[] = ['1=1'];
+    const params: any[] = [];
+    let p = 1;
+
+    if (matched_tags && matched_tags.length > 0) {
+      conditions.push(`matched_tags && $${p++}::text[]`);
+      params.push(matched_tags);
+    }
+    if (source_id) {
+      conditions.push(`source_id = $${p++}`);
+      params.push(source_id);
+    }
+    if (lang_original) {
+      conditions.push(`lang_original = $${p++}`);
+      params.push(lang_original);
+    }
+
+    const sql = `SELECT COUNT(*) as count FROM news WHERE ${conditions.join(' AND ')}`;
+    const result = await query(sql, params);
+    const count = parseInt(result.rows[0]?.count || '0');
+
+    res.json({ count, filters: { matched_tags, source_id, lang_original } });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Migration endpoint — applies DB migrations
 // ═══════════════════════════════════════════════════════════════════════════
 app.post('/migrate-v3', async (req, res) => {
