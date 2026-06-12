@@ -144,8 +144,8 @@ async function translateArticles(articles: RawArticle[]): Promise<void> {
 async function matchTags(articles: RawArticle[]): Promise<string[][]> {
   const results: string[][] = [];
   for (const article of articles) {
-    const title = (article as any).title_ru || article.title_original;
-    const summary = (article as any).summary_ru || article.summary_original;
+    const title = (article as any).title_ru || article.title_original || '';
+    const summary = (article as any).summary_ru || article.summary_original || '';
     const tags = await smartMatchTags(title, summary);
     const merged = [...new Set([...(article.matched_tags || []), ...tags])];
     results.push(merged);
@@ -208,8 +208,8 @@ async function analyzeSentiment(
       try {
         batchResults = await analyzeUnifiedBatch(
           chunk.map(({ article, originalIndex }) => ({
-            title: (article as any).title_ru || article.title_original,
-            summary: (article as any).summary_ru || article.summary_original,
+            title: (article as any).title_ru || article.title_original || '',
+            summary: (article as any).summary_ru || article.summary_original || '',
             tags: matchedTagsList[originalIndex],
           }))
         );
@@ -310,6 +310,12 @@ async function saveProcessedArticles(
   for (let i = 0; i < articles.length; i++) {
     const a = articles[i];
     const s = sentimentResults[i];
+
+    // Guard: missing sentiment result (batch mismatch)
+    if (!s) {
+      console.error(`[NewsProcessor] Missing sentiment for ${a.id}, skipping UPDATE`);
+      continue;
+    }
 
     // Определяем источник sentiment и LLM ошибки
     const translateError = (a as any)._llmError || null;
@@ -414,9 +420,4 @@ async function releaseCronLock(jobName: string): Promise<void> {
     await query(`
       DELETE FROM cron_locks
       WHERE job_name = $1 AND locked_by = $2
-    `, [jobName, INSTANCE_ID]);
-    console.log(`[CronLock] Released lock for "${jobName}"`);
-  } catch (err: any) {
-    console.error(`[CronLock] Release error: ${err.message?.slice(0, 100)}`);
-  }
-}
+    `, [jobName, INST
