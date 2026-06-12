@@ -1,7 +1,7 @@
 # PULSE — Backend Architecture
 
 > Техническая документация backend'а. Логика, flow, принятие решений.
-> Последнее обновление: 2026-06-12 (v9.3.0 — News Processor v3 + RSS tagging + admin endpoints + cron removed)
+> Последнее обновление: 2026-06-12 (v9.4.0 — first run fix + url_normalized constraint drop + step-by-step INSERT)
 
 ---
 
@@ -206,7 +206,7 @@ export const RSS_SOURCES: RssSource[] = [
 
 ---
 
-## 2a. NewsSourceManager (newsSourceManager.ts) — v9.3
+## 2a. NewsSourceManager (newsSourceManager.ts) — v9.4
 
 > Единый пул источников (RSS + API). Заменяет разрозненные cron-задачи.
 > Дата: 2026-06-12 | Статус: В продакшене
@@ -220,12 +220,18 @@ NewsSourceManager.run()
 │  1. SELECT * FROM news_sources WHERE enabled = true
 │  2. Для каждого source:
 │     ├── RSS: fetchAllRSS() → saveArticles()
+│     │           └── last_fetch_at обновляется ТОЛЬКО при реальном fetch
 │     └── API (finnhub): fetchAndSaveFinnhubNews() → streaming fetch+save
-│  3. UPDATE news_sources SET last_fetch_at = NOW()
-│  4. Catch-up: если last_fetch_at > 2ч → запуск
+│               └── last_fetch_at обновляется ТОЛЬКО при реальном fetch (не skip)
+│  3. Catch-up: если last_fetch_at > 2ч → запуск
 ```
 
-**v9.2 изменение:** Finnhub теперь использует `fetchAndSaveFinnhubNews()` — единую функцию со streaming (fetch→save→discard по чанкам). Нет накопления статей в памяти.
+**v9.4 изменения:**
+- `last_fetch_at` обновляется **только при реальном fetch**, не при skip
+  - Предотвращает: infinite skip loop (0 статей → skip → last_fetch_at свежий → снова skip)
+- First run определяется по `source_id = 'finnhub'` (не `source_type`)
+  - Предотвращает: first run пропущен когда другие `api_search` источники есть в базе
+- **Streaming**: fetch→save→discard по чанкам. Нет накопления статей в памяти.
 
 ### Таблица news_sources
 
@@ -246,27 +252,34 @@ NewsSourceManager.run()
 | GET | `/admin/news-sources` | Список всех источников |
 | PUT | `/admin/news-sources/:id/toggle` | Вкл/выкл toggle |
 
-### Finnhub Adapter (finnhubAdapter.ts) — v9.2
+### Finnhub Adapter (finnhubAdapter.ts) — v9.4
 
-> Streaming + batch INSERT. 6 критичных багов исправлены.
+> Streaming + step-by-step INSERT. 6 критичных багов исправлены.
 
-**Архитектура (v9.2):**
+**Архитектура (v9.4):**
 
 ```
 fetchAndSaveFinnhubNews(config)
 │
 │  1. SELECT тикеры (exchange='USA') из user_defined_tags + portfolios
 │  2. Определить период: first run → 7 дней, обычный → 1 день
+│     └── first run: COUNT(*) WHERE source_id = 'finnhub' = 0
 │  3. Parallel fetch по 5 тикеров (Promise.all) + sleep(1s) между batches
 │     ├── fetchWithRetry() — 3 попытки, exponential backoff
 │     ├── fetchWithTimeout() — AbortController 15s
 │     ├── isValidArticle() — guard (пустые headline/url пропускаются)
 │     └── CircuitBreaker — 5 ошибок → 30мин пауза
-│  4. Сразу saveArticlesBatch() — НЕ накапливаем в памяти
-│     └── unnest batch INSERT: 500 статей за 1 запрос
-│         ON CONFLICT (url) DO UPDATE — merge matched_tags + all_sources
-│  5. Return: { totalFetched, totalSaved, totalMerged, durationMs, errors }
+│  4. aggregateByNormalizedUrl() — merge дубликатов по url_normalized
+│     └── одна статья для разных тикеров = merge matched_tags
+│  5. Step-by-step INSERT — каждая статья отдельным запросом
+│     └── ON CONFLICT (url) DO UPDATE — merge matched_tags + all_sources
+│  6. Return: { totalFetched, totalSaved, totalMerged, durationMs, errors }
 ```
+
+**Почему step-by-step INSERT (не batch):**
+- `jsonb_to_recordset` batch INSERT падает на `UNIQUE(url)` при intra-batch duplicates
+- `ON CONFLICT` работает корректно только когда conflict с **уже существующей** строкой
+- Step-by-step: каждая статья — отдельный запрос → `ON CONFLICT` merge'ит надежно
 
 **INSERT — batch `unnest` (v9.2):**
 ```sql
@@ -281,7 +294,7 @@ ON CONFLICT (url) DO UPDATE SET
 -- BATCH_SIZE = 500 (один запрос на 500 статей)
 ```
 
-**v9.1 → v9.2 — Исправленные баги:**
+**v9.1 → v9.4 — Исправленные баги:**
 
 | Баг | Проблема | Фикс |
 |-----|----------|------|
@@ -291,6 +304,9 @@ ON CONFLICT (url) DO UPDATE SET
 | **B4** | Все статьи накапливались в `results[]` → OOM при 200+ тикерах | Streaming: fetch→save→discard по чанкам |
 | **B5** | `BATCH_SIZE = 100` → 50 round-trips на 5000 статей | `BATCH_SIZE = 500` |
 | **B6** | `FETCH_TIMEOUT = 30000` → Render убивал инстанс | `FETCH_TIMEOUT = 15000` |
+| **B7** | `UNIQUE(url_normalized)` — `normalizeUrl()` даёт одинаковый результат для URL с разными `?id=xxx` | **Убрано** — `UNIQUE(url)` достаточно |
+| **B8** | `last_fetch_at` обновлялся при skip → вечный skip цикл | Обновляется **только при реальном fetch** |
+| **B9** | First run определялся по `source_type = 'api_search'` — пропускался при других API | Определяется по `source_id = 'finnhub'` |
 
 **Конфигурируемые константы** (через `news_sources.config` JSONB):
 
@@ -705,6 +721,9 @@ CREATE TABLE IF NOT EXISTS smart_tag_cache (
 ALTER TABLE news ADD CONSTRAINT news_content_hash_unique UNIQUE (content_hash);
 ALTER TABLE user_sessions ADD CONSTRAINT user_sessions_user_id_unique UNIQUE (user_id);
 ALTER TABLE user_news_reads ADD CONSTRAINT user_news_reads_unique UNIQUE (user_id, news_id);
+-- v9.4: DROP UNIQUE(url_normalized) — normalizeUrl() даёт одинаковый результат
+-- для URL с разными query params (?id=xxx). UNIQUE(url) достаточно.
+ALTER TABLE news DROP CONSTRAINT IF EXISTS news_url_norm_unique;
 ```
 
 ---
