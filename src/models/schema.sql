@@ -231,7 +231,24 @@ CREATE TABLE IF NOT EXISTS rss_source_meta (
 );
 
 -- ============================================================
+-- 11. llm_batches (LLM metrics dashboard)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS llm_batches (
+  id              SERIAL PRIMARY KEY,
+  status          VARCHAR(20) NOT NULL,  -- 'success', 'partial', 'error', 'keyword-only'
+  started_at      TIMESTAMP NOT NULL,
+  finished_at     TIMESTAMP NOT NULL,
+  articles_count  INTEGER NOT NULL DEFAULT 0,
+  success_count   INTEGER NOT NULL DEFAULT 0,
+  failed_count    INTEGER NOT NULL DEFAULT 0,
+  partial_count   INTEGER NOT NULL DEFAULT 0,
+  error_types     JSONB DEFAULT '{}',
+  created_at      TIMESTAMP DEFAULT NOW()
+);
+
+-- ============================================================
 -- Индексы (остальные)
 -- ============================================================
 CREATE INDEX IF NOT EXISTS idx_translation_hash ON translation_cache (hash);
+CREATE INDEX IF NOT EXISTS idx_llm_batches_created_at ON llm_batches (created_at DESC);
 
