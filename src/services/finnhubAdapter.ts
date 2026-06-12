@@ -207,15 +207,18 @@ function createArticle(item: FinnhubArticle, tag: any): FetchedArticle {
 // BATCH INSERT (B1, B2 fixes)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/** Дедупликация по URL + merge matched_tags внутри batch */
-function aggregateByUrl(articles: FetchedArticle[]): FetchedArticle[] {
+/** Дедупликация по url_normalized + merge matched_tags внутри batch
+ *  Важно: url_normalized убирает query params (?utm=1), поэтому
+ *  две статьи с разными url но одинаковым url_normalized — дубликаты
+ */
+function aggregateByNormalizedUrl(articles: FetchedArticle[]): FetchedArticle[] {
   const map = new Map<string, FetchedArticle>();
   for (const a of articles) {
-    const existing = map.get(a.url);
+    const existing = map.get(a.url_normalized);
     if (existing) {
       existing.matched_tags = [...new Set([...existing.matched_tags, ...a.matched_tags])];
     } else {
-      map.set(a.url, { ...a, matched_tags: [...a.matched_tags] });
+      map.set(a.url_normalized, { ...a, matched_tags: [...a.matched_tags] });
     }
   }
   return Array.from(map.values());
@@ -234,7 +237,7 @@ async function saveArticlesBatch(
     const batch = articles.slice(i, i + BATCH_SIZE);
 
     // Дедупликация: merge дубликатов по URL (одна новость для разных тикеров)
-    const deduped = aggregateByUrl(batch);
+    const deduped = aggregateByNormalizedUrl(batch);
 
     try {
       const rowsJson = JSON.stringify(deduped.map(a => ({
