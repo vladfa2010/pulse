@@ -90,15 +90,19 @@ export class NewsSourceManager {
               summary_original: a.summary,
               summary_ru: a.summary_ru || null,
               url: a.url,
-              published_at: a.publishedAt,
+              published_at: a.publishedAt.toISOString(),
               source: a.source,
               source_id: a.sourceId,
               source_type: 'rss' as const,
               lang_original: a.lang,
               matched_tags: [] as string[],
-              content_hash: crypto.createHash('sha256').update(a.title + '\n' + a.summary).digest('hex')
+              url_normalized: '',
+              content_hash: crypto.createHash('sha256').update(a.title + '\n' + a.summary).digest('hex'),
+              all_sources: [a.source],
+              source_count: 1,
+              needs_translation: a.lang === 'en',
             }));
-            await saveArticles(unified);
+            await saveArticles(unified as any);
             console.log(`[NewsSourceManager] RSS: ${source.name} — ${articles.length} articles`);
           } else if (source.type === 'api_search') {
             if (source.name === 'finnhub') {
@@ -133,4 +137,5 @@ let manager: NewsSourceManager | null = null;
 
 export function getNewsSourceManager(): NewsSourceManager {
   if (!manager) manager = new NewsSourceManager();
-  ret
+  return manager;
+}
