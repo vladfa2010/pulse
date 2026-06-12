@@ -352,6 +352,125 @@ app.post('/cleanup-failed-articles', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ADMIN: Count news by filters
+// Body: { matched_tags?: string[], source_id?: string, lang_original?: string,
+//         date_from?: string, date_to?: string, title_contains?: string }
+// ═══════════════════════════════════════════════════════════════════════════
+app.post('/admin/news-count', async (req, res) => {
+  const secret = req.headers['x-trigger-secret'];
+  if (secret !== process.env.CRON_SECRET_KEY) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  try {
+    const { matched_tags, source_id, lang_original, date_from, date_to, title_contains } = req.body;
+
+    const conditions: string[] = ['1=1'];
+    const params: any[] = [];
+    let p = 1;
+
+    if (matched_tags && matched_tags.length > 0) {
+      conditions.push(`matched_tags && $${p++}::text[]`);
+      params.push(matched_tags);
+    }
+    if (source_id) {
+      conditions.push(`source_id = $${p++}`);
+      params.push(source_id);
+    }
+    if (lang_original) {
+      conditions.push(`lang_original = $${p++}`);
+      params.push(lang_original);
+    }
+    if (date_from) {
+      conditions.push(`published_at >= $${p++}`);
+      params.push(date_from);
+    }
+    if (date_to) {
+      conditions.push(`published_at <= $${p++}`);
+      params.push(date_to);
+    }
+    if (title_contains) {
+      conditions.push(`(title_original ILIKE $${p++} OR title_ru ILIKE $${p++})`);
+      params.push(`%${title_contains}%`, `%${title_contains}%`);
+    }
+
+    const sql = `SELECT COUNT(*) as count FROM news WHERE ${conditions.join(' AND ')}`;
+    const result = await query(sql, params);
+    const count = parseInt(result.rows[0]?.count || '0');
+
+    res.json({ count, filters: { matched_tags, source_id, lang_original, date_from, date_to, title_contains } });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ADMIN: Delete news by filters
+// Body: { matched_tags?: string[], source_id?: string, lang_original?: string,
+//         date_from?: string, date_to?: string, title_contains?: string,
+//         dry_run?: boolean }
+// ═══════════════════════════════════════════════════════════════════════════
+app.post('/admin/news-delete', async (req, res) => {
+  const secret = req.headers['x-trigger-secret'];
+  if (secret !== process.env.CRON_SECRET_KEY) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  try {
+    const { matched_tags, source_id, lang_original, date_from, date_to, title_contains, dry_run } = req.body;
+
+    const conditions: string[] = ['1=1'];
+    const params: any[] = [];
+    let p = 1;
+
+    if (matched_tags && matched_tags.length > 0) {
+      conditions.push(`matched_tags && $${p++}::text[]`);
+      params.push(matched_tags);
+    }
+    if (source_id) {
+      conditions.push(`source_id = $${p++}`);
+      params.push(source_id);
+    }
+    if (lang_original) {
+      conditions.push(`lang_original = $${p++}`);
+      params.push(lang_original);
+    }
+    if (date_from) {
+      conditions.push(`published_at >= $${p++}`);
+      params.push(date_from);
+    }
+    if (date_to) {
+      conditions.push(`published_at <= $${p++}`);
+      params.push(date_to);
+    }
+    if (title_contains) {
+      conditions.push(`(title_original ILIKE $${p++} OR title_ru ILIKE $${p++})`);
+      params.push(`%${title_contains}%`, `%${title_contains}%`);
+    }
+
+    const countSql = `SELECT COUNT(*) as count FROM news WHERE ${conditions.join(' AND ')}`;
+    const countResult = await query(countSql, params);
+    const count = parseInt(countResult.rows[0]?.count || '0');
+
+    if (dry_run) {
+      return res.json({ dry_run: true, would_delete: count, filters: { matched_tags, source_id, lang_original, date_from, date_to, title_contains } });
+    }
+
+    if (count === 0) {
+      return res.json({ deleted: 0, message: 'No matching articles found' });
+    }
+
+    const deleteSql = `DELETE FROM news WHERE ${conditions.join(' AND ')}`;
+    await query(deleteSql, params);
+
+    res.json({ deleted: count, filters: { matched_tags, source_id, lang_original, date_from, date_to, title_contains } });
+    console.log(`[Admin] Deleted ${count} news articles`);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Migration endpoint — applies DB migrations
 // ═══════════════════════════════════════════════════════════════════════════
 app.post('/migrate-v3', async (req, res) => {
