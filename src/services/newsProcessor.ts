@@ -417,7 +417,9 @@ async function acquireCronLock(jobName: string): Promise<boolean> {
 
 async function releaseCronLock(jobName: string): Promise<void> {
   try {
-    await query(`
-      DELETE FROM cron_locks
-      WHERE job_name = $1 AND locked_by = $2
-    `, [jobName, INST
+    await query('DELETE FROM cron_locks WHERE job_name = $1 AND locked_by = $2', [jobName, INSTANCE_ID]);
+    console.log(`[CronLock] Released lock for "${jobName}"`);
+  } catch (err: any) {
+    console.error(`[CronLock] Release error: ${err.message?.slice(0, 100)}`);
+  }
+}
