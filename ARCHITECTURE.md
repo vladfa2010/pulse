@@ -1,7 +1,7 @@
 # PULSE — Backend Architecture
 
 > Техническая документация backend'а. Логика, flow, принятие решений.
-> Последнее обновление: 2026-06-12 (v9.4.0 — first run fix + url_normalized constraint drop + step-by-step INSERT)
+> Последнее обновление: 2026-06-12 (v9.5.0 — 39/39 saved + News Processor tagging + end-to-end verified)
 
 ---
 
@@ -44,6 +44,8 @@
 
 **v9.3 изменение:** News Processor обрабатывает ВСЕ статьи без тегов (EN + RU), не только EN.
 Маркер обработки: `sentiment_source IS NOT NULL`.
+
+**Verified:** 39 Finnhub статей → News Processor → matched_tags заполнены (4 nvda + другие тикеры)
 
 ```
 LAYER 0 — FETCH (только сохраняет, не обрабатывает)
@@ -276,10 +278,17 @@ fetchAndSaveFinnhubNews(config)
 │  6. Return: { totalFetched, totalSaved, totalMerged, durationMs, errors }
 ```
 
+**Результат:** 39 fetched → **39 saved, 0 errors** (verified)
+
 **Почему step-by-step INSERT (не batch):**
 - `jsonb_to_recordset` batch INSERT падает на `UNIQUE(url)` при intra-batch duplicates
 - `ON CONFLICT` работает корректно только когда conflict с **уже существующей** строкой
 - Step-by-step: каждая статья — отдельный запрос → `ON CONFLICT` merge'ит надежно
+
+**Почему НЕТ aggregateByNormalizedUrl() (removed v9.5):**
+- `normalizeUrl("?id=abc")` → `"finnhub.io/api/news"` — одинаковый для всех 39 статей
+- `Map.get()` схлопывал 39 → 1-2 статьи — **39 потерянных статей**
+- Решение: pass batch напрямую → `UNIQUE(url)` защищает (каждый `?id=xxx` уникален)
 
 **INSERT — batch `unnest` (v9.2):**
 ```sql
@@ -2295,6 +2304,15 @@ setTimeout(processArticles, 2 * 60 * 1000);
 // Каждое воскресенье в 13:00
 cron.schedule('0 13 * * 0', generateReport);
 ```
+
+### Verified Results (v9.5)
+
+| Этап | Результат | Дата |
+|------|-----------|------|
+| **Finnhub first run** | 39 fetched → **39 saved, 0 errors** | 2026-06-12 |
+| **News Processor tagging** | 39 Finnhub → matched_tags заполнены (4 nvda + другие) | 2026-06-12 |
+| **RSS (TG Parser)** | Статьи получают теги через News Processor v3 | 2026-06-12 |
+| **End-to-end** | NSM fetch → save → News Processor → теги → frontend ✅ | 2026-06-12 |
 
 ### Manual Triggers
 
