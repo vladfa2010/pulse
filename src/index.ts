@@ -1733,9 +1733,19 @@ app.post('/migrate-v3-enrichment', async (req, res) => {
       config JSONB DEFAULT '{}',
       enabled BOOLEAN DEFAULT true,
       last_fetch_at TIMESTAMP,
+      last_error TEXT,
+      last_error_at TIMESTAMP,
       created_at TIMESTAMP DEFAULT NOW()
     )`);
     results.push('Created table: news_sources');
+
+    // Migration: add last_error columns if table exists without them
+    try {
+      await query(`ALTER TABLE news_sources ADD COLUMN IF NOT EXISTS last_error TEXT`);
+      await query(`ALTER TABLE news_sources ADD COLUMN IF NOT EXISTS last_error_at TIMESTAMP`);
+    } catch (e: any) {
+      // ignore
+    }
 
     // Migrate RSS sources
     const { RSS_SOURCES } = await import('./services/rssSources');
@@ -2127,6 +2137,16 @@ app.get('/debug-system', async (req, res) => {
     } catch (e: any) { testInsert = `failed: ${e.message?.slice(0, 100)}`; }
     res.json({ database_url_present: !!process.env.DATABASE_URL, lock: lock ? { job_name: lock.job_name, locked_by: lock.locked_by?.slice(0, 30), locked_at: lock.locked_at, expires_at: lock.expires_at } : null, news_count: parseInt(newsCount.rows[0]?.count || '0'), cron_logs: cronLog.rows.map((r: any) => ({ id: r.id, task: r.task_name, started: r.started_at, status: r.status, fetched: r.articles_fetched, saved: r.articles_saved })), test_insert: testInsert });
   } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /debug/finnhub-errors — последние ошибки Finnhub
+app.get('/debug/finnhub-errors', async (req, res) => {
+  try {
+    const result = await query(`SELECT last_error, last_error_at FROM news_sources WHERE name = 'finnhub'`);
+    res.json(result.rows[0] || { last_error: null, last_error_at: null });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // GET /debug/finnhub-tickers — сколько тикеров в портфелях (USA)

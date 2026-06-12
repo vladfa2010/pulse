@@ -135,6 +135,8 @@ CREATE TABLE IF NOT EXISTS news_sources (
   config        JSONB DEFAULT '{}',
   enabled       BOOLEAN DEFAULT true,
   last_fetch_at TIMESTAMP,
+  last_error    TEXT,                       -- последняя ошибка (429, timeout, etc)
+  last_error_at TIMESTAMP,                  -- когда была ошибка
   created_at    TIMESTAMP DEFAULT NOW()
 );
 

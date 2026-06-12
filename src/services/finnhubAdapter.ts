@@ -89,6 +89,7 @@ export async function fetchFinnhubNews(config: any): Promise<FetchedArticle[]> {
       const response = await fetch(url);
       if (response.status === 429) {
         console.log(`[Finnhub] 429 rate limit for ${ticker}, skipping`);
+        await query(`UPDATE news_sources SET last_error = $1, last_error_at = NOW() WHERE name = 'finnhub'`, [`429 Rate Limit for ${ticker}`]);
         continue;
       }
       if (!response.ok) {
