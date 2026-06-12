@@ -3409,6 +3409,15 @@ async function start() {
     console.log('[DB] Migration TIMESTAMPTZ warning:', e.message);
   }
 
+  // news_sources.last_error / last_error_at для мониторинга ошибок
+  try {
+    await query(`ALTER TABLE news_sources ADD COLUMN IF NOT EXISTS last_error TEXT`);
+    await query(`ALTER TABLE news_sources ADD COLUMN IF NOT EXISTS last_error_at TIMESTAMP`);
+    console.log('[DB] Migration: news_sources.last_error added');
+  } catch (e: any) {
+    console.log('[DB] Migration last_error warning:', e.message);
+  }
+
   // news_sources.error_count для мониторинга
   try {
     await query(`ALTER TABLE news_sources ADD COLUMN IF NOT EXISTS error_count INTEGER DEFAULT 0`);
