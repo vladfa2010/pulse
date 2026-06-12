@@ -4,7 +4,7 @@
  */
 
 import { query } from '../config/db';
-import { fetchAndSaveFinnhubNews } from './finnhubAdapter';
+import { fetchAndSaveFinnhubNews, saveArticles } from './finnhubAdapter';
 import { fetchAllRSS } from './rssFetcher';
 import { RssSource } from './rssSources';
 import crypto from 'crypto';
@@ -98,7 +98,7 @@ export class NewsSourceManager {
               matched_tags: [] as string[],
               content_hash: crypto.createHash('sha256').update(a.title + '\n' + a.summary).digest('hex')
             }));
-            await saveAPIArticles(unified);
+            await saveArticles(unified);
             console.log(`[NewsSourceManager] RSS: ${source.name} — ${articles.length} articles`);
           } else if (source.type === 'api_search') {
             if (source.name === 'finnhub') {
@@ -133,5 +133,4 @@ let manager: NewsSourceManager | null = null;
 
 export function getNewsSourceManager(): NewsSourceManager {
   if (!manager) manager = new NewsSourceManager();
-  return manager;
-}
+  ret
