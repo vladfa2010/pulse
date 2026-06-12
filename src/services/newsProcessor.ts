@@ -57,7 +57,9 @@ async function processRawArticlesLocked(): Promise<void> {
     console.log('[NewsProcessor] No raw articles to process');
     return;
   }
-  console.log(`[NewsProcessor] Processing ${rawArticles.length} raw articles`);
+  const enCount = rawArticles.filter(a => a.lang_original === 'en').length;
+  const ruCount = rawArticles.filter(a => a.lang_original === 'ru').length;
+  console.log(`[NewsProcessor] Processing ${rawArticles.length} articles (EN:${enCount}, RU:${ruCount})`);
 
   // 2. Translate — best effort, не блокирует sentiment
   try {
@@ -88,6 +90,7 @@ async function selectRawArticles(limit: number): Promise<RawArticle[]> {
       source, source_id, content_hash, matched_tags
     FROM news
     WHERE needs_translation = TRUE
+       OR (matched_tags = '{}'::text[] AND sentiment_source IS NULL)
     ORDER BY published_at DESC
     LIMIT $1
     FOR UPDATE SKIP LOCKED
