@@ -1,7 +1,7 @@
 # PULSE — Backend Architecture
 
 > Техническая документация backend'а. Логика, flow, принятие решений.
-> Последнее обновление: 2026-06-11 (v9.1.0 — Finnhub 5min + tiered removed + keyword fallback metrics)
+> Последнее обновление: 2026-06-12 (v9.2.0 — Finnhub streaming + batch INSERT + 6 bugfixes)
 
 ---
 
@@ -199,10 +199,10 @@ export const RSS_SOURCES: RssSource[] = [
 
 ---
 
-## 2a. NewsSourceManager (newsSourceManager.ts) — v9.1
+## 2a. NewsSourceManager (newsSourceManager.ts) — v9.2
 
 > Единый пул источников (RSS + API). Заменяет разрозненные cron-задачи.
-> Дата: 2026-06-11 | Статус: В продакшене
+> Дата: 2026-06-12 | Статус: В продакшене
 
 ### Архитектура
 
@@ -212,11 +212,13 @@ NewsSourceManager.run()
 │  0. Backfill: UPDATE news SET matched_tags по тикерам (title/summary ILIKE '%TICKER%')
 │  1. SELECT * FROM news_sources WHERE enabled = true
 │  2. Для каждого source:
-│     ├── RSS: fetchAllRSS() → saveAPIArticles()
-│     └── API (finnhub): fetchFinnhubNews() → saveAPIArticles()
+│     ├── RSS: fetchAllRSS() → saveArticles()
+│     └── API (finnhub): fetchAndSaveFinnhubNews() → streaming fetch+save
 │  3. UPDATE news_sources SET last_fetch_at = NOW()
 │  4. Catch-up: если last_fetch_at > 2ч → запуск
 ```
+
+**v9.2 изменение:** Finnhub теперь использует `fetchAndSaveFinnhubNews()` — единую функцию со streaming (fetch→save→discard по чанкам). Нет накопления статей в памяти.
 
 ### Таблица news_sources
 
@@ -237,32 +239,82 @@ NewsSourceManager.run()
 | GET | `/admin/news-sources` | Список всех источников |
 | PUT | `/admin/news-sources/:id/toggle` | Вкл/выкл toggle |
 
-### Finnhub Adapter (finnhubAdapter.ts)
+### Finnhub Adapter (finnhubAdapter.ts) — v9.2
 
-**Flow:**
-1. Собрать теги с `exchange='USA'` + `ticker IS NOT NULL` из `user_defined_tags` + `portfolios`
-2. Tiered fetching: топ-12 каждый цикл, остальные в полночь
-3. Запрос `/company-news?symbol=TICKER&from=DATE&to=DATE`
-4. URL dedup → content_hash dedup → INSERT `ON CONFLICT DO UPDATE`
+> Streaming + batch INSERT. 6 критичных багов исправлены.
 
-**Flow:**
-1. Собрать теги с `exchange='USA'` + `ticker IS NOT NULL` из `user_defined_tags` + `portfolios`
-2. **Все тикеры каждый цикл** (tiered fetching убран — пока тикеров мало)
-3. Запрос `/company-news?symbol=TICKER&from=DATE&to=DATE`
-4. URL dedup → content_hash dedup → INSERT `ON CONFLICT DO UPDATE`
+**Архитектура (v9.2):**
 
-**INSERT (raw — сырые данные):**
+```
+fetchAndSaveFinnhubNews(config)
+│
+│  1. SELECT тикеры (exchange='USA') из user_defined_tags + portfolios
+│  2. Определить период: first run → 7 дней, обычный → 1 день
+│  3. Parallel fetch по 5 тикеров (Promise.all) + sleep(1s) между batches
+│     ├── fetchWithRetry() — 3 попытки, exponential backoff
+│     ├── fetchWithTimeout() — AbortController 15s
+│     ├── isValidArticle() — guard (пустые headline/url пропускаются)
+│     └── CircuitBreaker — 5 ошибок → 30мин пауза
+│  4. Сразу saveArticlesBatch() — НЕ накапливаем в памяти
+│     └── unnest batch INSERT: 500 статей за 1 запрос
+│         ON CONFLICT (url) DO UPDATE — merge matched_tags + all_sources
+│  5. Return: { totalFetched, totalSaved, totalMerged, durationMs, errors }
+```
+
+**INSERT — batch `unnest` (v9.2):**
 ```sql
-INSERT INTO news (title_original, title_ru, summary_ru, ... needs_translation)
-VALUES ($1, NULL, NULL, ... TRUE)
--- title_ru = NULL → News Processor переведёт
--- matched_tags = ['nvidia'] → News Processor дополнит через smartMatchTags
+INSERT INTO news (..., matched_tags, needs_translation)
+SELECT * FROM unnest($1::text[], ..., $15::text[], $16::boolean[])
+ON CONFLICT (url) DO UPDATE SET
+  matched_tags = (SELECT array_agg(DISTINCT x) FROM unnest(
+    array_cat(COALESCE(news.matched_tags, '{}'::text[]), EXCLUDED.matched_tags)
+  ) AS t(x)),
+  all_sources = (...),  -- merge
+  source_count = (...)  -- recalc
+-- BATCH_SIZE = 500 (один запрос на 500 статей)
+```
+
+**v9.1 → v9.2 — Исправленные баги:**
+
+| Баг | Проблема | Фикс |
+|-----|----------|------|
+| **B1** | `batch.map(() => a.source_count)` → ReferenceError | `batch.map(() => 1)` |
+| **B2** | `JSON.stringify(text[])` → PostgreSQL получал строку вместо массива | Убран `JSON.stringify`, pg драйвер конвертирует нативно |
+| **B3** | Parallel fetch без sleep → 429 бан от Finnhub | `sleep(1000)` между batches |
+| **B4** | Все статьи накапливались в `results[]` → OOM при 200+ тикерах | Streaming: fetch→save→discard по чанкам |
+| **B5** | `BATCH_SIZE = 100` → 50 round-trips на 5000 статей | `BATCH_SIZE = 500` |
+| **B6** | `FETCH_TIMEOUT = 30000` → Render убивал инстанс | `FETCH_TIMEOUT = 15000` |
+
+**Конфигурируемые константы** (через `news_sources.config` JSONB):
+
+| Параметр | Default | Описание |
+|----------|---------|----------|
+| `fetch_timeout_ms` | 15000 | Таймаут HTTP-запроса |
+| `max_retries` | 3 | Попыток retry на тикер |
+| `concurrency_limit` | 5 | Parallel fetch тикеров |
+| `batch_size` | 500 | Batch INSERT размер |
+| `rate_limit_delay_ms` | 1000 | Sleep между parallel batches |
+| `lookback_days_first` | 7 | Дней истории при первом запуске |
+| `lookback_days_regular` | 1 | Дней истории обычный запуск |
+| `cb_threshold` | 5 | Ошибок до открытия Circuit Breaker |
+| `cb_timeout_ms` | 1800000 | Пауза Circuit Breaker (30 мин) |
+
+**Интерфейс:**
+```typescript
+// NewsSourceManager вызывает:
+const result = await fetchAndSaveFinnhubNews(config);
+// { totalFetched, totalSaved, totalMerged, durationMs, errors }
+
+// Backward compatibility:
+export { fetchAndSaveFinnhubNews as fetchFinnhubNews }; // alias
+export { saveArticles }; // для RSS
 ```
 
 **Текущие ограничения:**
 - Перевод EN→RU **в News Processor** (не в адаптере)
 - Интервал фетча: **5 минут** (все тикеры)
 - Tiered fetching: **убран** (все тикеры каждый цикл)
+- published_at: **TIMESTAMPTZ** (v9.2 миграция)
 
 ### Колонки news для bilingual
 
@@ -292,6 +344,18 @@ Dashboard (`/admin/llm-dashboard`) показывает `keyword_fallback: N` д
 ```sql
 ALTER TABLE news ALTER COLUMN title_ru DROP NOT NULL;
 -- Причина: Finnhub вставляет title_ru = NULL, News Processor заполняет позже
+```
+
+**published_at — TIMESTAMPTZ (v9.2):**
+```sql
+ALTER TABLE news ALTER COLUMN published_at TYPE TIMESTAMPTZ;
+-- Причина: timezone-aware сортировка для пользователей в разных TZ
+```
+
+**news_sources.error_count (v9.2):**
+```sql
+ALTER TABLE news_sources ADD COLUMN IF NOT EXISTS error_count INTEGER DEFAULT 0;
+-- Счётчик ошибок для мониторинга (инкрементируется в logSourceError)
 ```
 
 ### News Processor (newsProcessor.ts) — v9.0
@@ -343,8 +407,15 @@ Result: needs_translation = TRUE, matched_tags = ['nvidia', ...]
 | Процесс | Интервал | Lock | Примечание |
 |---------|----------|------|------------|
 | RSS Fetch | 5 мин | `rss-aggregator` | Только fetch + raw INSERT |
-| **NSM (Finnhub)** | **5 мин** | **`nsm`** | **Все тикеры, tiered убран** |
+| **NSM (Finnhub)** | **5 мин** | **`nsm`** | **Streaming + batch INSERT (v9.2)** |
 | **News Processor** | **10 мин** | **`news-processor`** | Translate + sentiment для EN |
+
+**Finnhub v9.2 — что изменилось:**
+- `fetchFinnhubNews() + saveArticles()` → `fetchAndSaveFinnhubNews()` (единая функция)
+- Нет накопления статей в памяти → streaming по чанкам
+- Batch INSERT: 500 статей за 1 запрос (было: 1 статья = 2 запроса)
+- 7 дней истории при первом запуске (было: 1 день)
+- Parallel fetch: 5 тикеров одновременно + sleep между batches
 
 #### Trigger endpoint
 
