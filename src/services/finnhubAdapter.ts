@@ -207,6 +207,20 @@ function createArticle(item: FinnhubArticle, tag: any): FetchedArticle {
 // BATCH INSERT (B1, B2 fixes)
 // ═══════════════════════════════════════════════════════════════════════════
 
+/** Дедупликация по URL + merge matched_tags внутри batch */
+function aggregateByUrl(articles: FetchedArticle[]): FetchedArticle[] {
+  const map = new Map<string, FetchedArticle>();
+  for (const a of articles) {
+    const existing = map.get(a.url);
+    if (existing) {
+      existing.matched_tags = [...new Set([...existing.matched_tags, ...a.matched_tags])];
+    } else {
+      map.set(a.url, { ...a, matched_tags: [...a.matched_tags] });
+    }
+  }
+  return Array.from(map.values());
+}
+
 async function saveArticlesBatch(
   articles: FetchedArticle[],
   config: any
@@ -219,10 +233,11 @@ async function saveArticlesBatch(
   for (let i = 0; i < articles.length; i += BATCH_SIZE) {
     const batch = articles.slice(i, i + BATCH_SIZE);
 
+    // Дедупликация: merge дубликатов по URL (одна новость для разных тикеров)
+    const deduped = aggregateByUrl(batch);
+
     try {
-      // jsonb_to_recordset — корректно обрабатывает text[] и другие сложные типы
-      // unnest с многомерными массивами даёт "is of type text" ошибку
-      const rowsJson = JSON.stringify(batch.map(a => ({
+      const rowsJson = JSON.stringify(deduped.map(a => ({
         title_original: a.title_original,
         title_ru: a.title_ru,
         summary_original: a.summary_original,
