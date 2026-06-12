@@ -139,11 +139,20 @@ export async function saveArticles(articles: FetchedArticle[]): Promise<void> {
   let urlDup = 0;
 
   for (const a of articles) {
-    // 1. Проверка по URL — primary dedup
-    const existingByUrl = await query(`SELECT id FROM news WHERE url = $1`, [a.url]);
+    // 1. Проверка по URL — primary dedup + merge matched_tags
+    const existingByUrl = await query(`SELECT id, matched_tags FROM news WHERE url = $1`, [a.url]);
     if (existingByUrl.rows.length > 0) {
       urlDup++;
-      continue; // Skip — уже есть от RSS или другого API
+      // MERGE matched_tags: добавляем новые теги к существующим
+      await query(`
+        UPDATE news 
+        SET matched_tags = (
+          SELECT array_agg(DISTINCT x) 
+          FROM unnest(array_cat(COALESCE(matched_tags, '{}'::text[]), $1::text[])) AS t(x)
+        )
+        WHERE url = $2
+      `, [a.matched_tags, a.url]);
+      continue;
     }
 
     try {
