@@ -169,7 +169,7 @@ function isValidArticle(item: any): boolean {
 }
 
 /** Нормализация URL для дедупликации */
-function normalizeUrl(url: string): string {
+export function normalizeUrl(url: string): string {
   try {
     const u = new URL(url);
     return `${u.hostname}${u.pathname}`.toLowerCase();

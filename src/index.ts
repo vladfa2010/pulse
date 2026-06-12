@@ -27,7 +27,7 @@ import webhookRoutes from './routes/webhook';
 import adminRoutes from './routes/admin';
 import { authMiddleware, AuthRequest } from './middleware/auth';
 import { apiLimiter, authLimiter, webhookLimiter } from './middleware/rateLimit';
-import { startCron, processArticles } from './services/cron';   // ← RSS агрегатор (каждые 15 мин)
+import { startCron } from './services/cron';   // RSS cron отключен (TZ_REMOVE_DUPLICATE_RSS_CRON) — модуль оставлен для отката
 import { startReportCron } from './services/reports'; // ← Еженедельные репорты
 import { startDigestCron, sendAllDigests } from './services/digest'; // ← TG дайджест (каждые 3 ч)
 import { setupYookassaWebhook } from './routes/payment'; // ← Auto-setup YuKassa webhook
@@ -2376,16 +2376,9 @@ app.post('/trigger-rss', async (req, res) => {
   if (secret !== expected) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
-  try {
-    console.log('[Trigger] Manual RSS fetch started');
-    // Run in background — don't await
-    processArticles().catch((err: any) => {
-      console.error('[Trigger] RSS fetch failed:', err.message);
-    });
-    res.json({ status: 'started', message: 'RSS fetch is running in background. Check logs.' });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
+  console.log('[Trigger] Manual RSS fetch started via NSM');
+  nsm.run().catch((err: any) => console.error('[Trigger] NSM error:', err.message));
+  res.json({ status: 'started', source: 'nsm', message: 'NSM is running in background. Check logs.' });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2435,19 +2428,18 @@ app.get('/test-rss', async (req, res) => {
   }
 });
 
-// TEMP: Full RSS process with await (for debugging)
+// TEMP: Full NSM process with await (for debugging)
 app.get('/test-process', async (req, res) => {
   try {
     const start = Date.now();
-    // Capture console.error output
     const errors: string[] = [];
     const origError = console.error;
     console.error = (...args: any[]) => errors.push(args.map(a => String(a)).join(' '));
-    await processArticles();
+    await nsm.run();
     console.error = origError;
     const elapsed = Date.now() - start;
     const count = await query('SELECT COUNT(*) as c FROM news');
-    res.json({ status: 'done', elapsed_ms: elapsed, news_count: parseInt(count.rows[0]?.c || '0'), errors: errors.slice(0, 20) });
+    res.json({ status: 'done', source: 'nsm', elapsed_ms: elapsed, news_count: parseInt(count.rows[0]?.c || '0'), errors: errors.slice(0, 20) });
   } catch (err: any) {
     res.status(500).json({ error: err.message, stack: err.stack });
   }
@@ -3304,7 +3296,8 @@ async function start() {
     console.log(`Routes: /api/auth, /api/news, /api/payment, /api/user, /api/translate, /api/webhook, /api/admin`);
 
     // ─── Шаг 5: Запуск фоновых задач ──────────────────────────────────
-    startCron();       // ← RSS агрегация (каждые 15 минут)
+    // startCron() — ОТКЛЮЧЕН (TZ_REMOVE_DUPLICATE_RSS_CRON)
+    // RSS обрабатывается NewsSourceManager каждые 5 мин
     startReportCron(); // ← Еженедельные репорты (воскресенье 13:00)
 
     // ─── Шаг 6: Настройка YuKassa webhook ─────────────────────────────

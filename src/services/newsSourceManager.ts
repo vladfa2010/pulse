@@ -4,7 +4,7 @@
  */
 
 import { query } from '../config/db';
-import { fetchAndSaveFinnhubNews, saveArticles } from './finnhubAdapter';
+import { fetchAndSaveFinnhubNews, saveArticles, normalizeUrl } from './finnhubAdapter';
 import { fetchAllRSS } from './rssFetcher';
 import { RssSource } from './rssSources';
 import crypto from 'crypto';
@@ -96,7 +96,7 @@ export class NewsSourceManager {
               source_type: 'rss' as const,
               lang_original: a.lang,
               matched_tags: [] as string[],
-              url_normalized: '',
+              url_normalized: normalizeUrl(a.url),
               content_hash: crypto.createHash('sha256').update(a.title + '\n' + a.summary).digest('hex'),
               all_sources: [a.source],
               source_count: 1,
