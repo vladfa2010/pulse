@@ -220,6 +220,27 @@ async function saveArticlesBatch(
     const batch = articles.slice(i, i + BATCH_SIZE);
 
     try {
+      // jsonb_to_recordset — корректно обрабатывает text[] и другие сложные типы
+      // unnest с многомерными массивами даёт "is of type text" ошибку
+      const rowsJson = JSON.stringify(batch.map(a => ({
+        title_original: a.title_original,
+        title_ru: a.title_ru,
+        summary_original: a.summary_original,
+        summary_ru: a.summary_ru,
+        source: a.source,
+        source_id: a.source_id,
+        source_type: a.source_type,
+        url: a.url,
+        url_normalized: a.url_normalized,
+        content_hash: a.content_hash,
+        all_sources: a.all_sources,
+        source_count: 1,
+        published_at: a.published_at,
+        lang_original: a.lang_original,
+        matched_tags: a.matched_tags,
+        needs_translation: true,
+      })));
+
       const result = await query(`
         INSERT INTO news (
           title_original, title_ru, summary_original, summary_ru,
@@ -227,11 +248,11 @@ async function saveArticlesBatch(
           all_sources, source_count, published_at, lang_original,
           matched_tags, needs_translation
         )
-        SELECT * FROM unnest(
-          $1::text[], $2::text[], $3::text[], $4::text[],
-          $5::text[], $6::text[], $7::text[], $8::text[],
-          $9::text[], $10::text[], $11::text[], $12::int[],
-          $13::timestamptz[], $14::text[], $15::text[], $16::boolean[]
+        SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(
+          title_original text, title_ru text, summary_original text, summary_ru text,
+          source text, source_id text, source_type text, url text, url_normalized text, content_hash text,
+          all_sources text[], source_count int, published_at timestamptz, lang_original text,
+          matched_tags text[], needs_translation boolean
         )
         ON CONFLICT (url) DO UPDATE SET
           matched_tags = (
@@ -256,28 +277,7 @@ async function saveArticlesBatch(
             )) AS t(x)
           )
         RETURNING (xmax = 0) AS is_insert
-      `, [
-        batch.map(a => a.title_original),
-        batch.map(a => a.title_ru),
-        batch.map(a => a.summary_original),
-        batch.map(a => a.summary_ru),
-        batch.map(a => a.source),
-        batch.map(a => a.source_id),
-        batch.map(a => a.source_type),
-        batch.map(a => a.url),
-        batch.map(a => a.url_normalized),
-        batch.map(a => a.content_hash),
-        // B2 fix: убран JSON.stringify — pg драйвер конвертирует string[] → text[]
-        batch.map(a => a.all_sources),
-        // B1 fix: было batch.map(() => a.source_count) — ReferenceError
-        // Стало: batch.map(() => 1) — source_count всегда 1 для новых
-        batch.map(() => 1),
-        batch.map(a => a.published_at),
-        batch.map(a => a.lang_original),
-        // B2 fix: убран JSON.stringify
-        batch.map(a => a.matched_tags),
-        batch.map(() => true),
-      ]);
+      `, [rowsJson]);
 
       for (const row of result.rows) {
         row.is_insert ? saved++ : merged++;
