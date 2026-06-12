@@ -115,12 +115,11 @@ export class NewsSourceManager {
               } else {
                 const result = await fetchAndSaveFinnhubNews(source.config);
                 console.log(`[NewsSourceManager] Finnhub: ${result.totalFetched} fetched, ${result.totalSaved} saved, ${result.totalMerged} merged`);
+                // Обновляем last_fetch_at ТОЛЬКО при реальном fetch (не skip)
+                await query(`UPDATE news_sources SET last_fetch_at = NOW() WHERE id = $1`, [source.id]);
               }
             }
           }
-
-          // Обновить last_fetch_at
-          await query(`UPDATE news_sources SET last_fetch_at = NOW() WHERE id = $1`, [source.id]);
         } catch (err: any) {
           console.error(`[NewsSourceManager] Error processing ${source.name}:`, err.message);
         }

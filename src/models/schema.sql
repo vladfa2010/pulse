@@ -253,4 +253,6 @@ CREATE TABLE IF NOT EXISTS llm_batches (
 -- ============================================================
 -- Индексы (остальные)
 -- ============================================================
-CREATE INDEX IF NOT EXISTS idx_translation_hash ON tra
+CREATE INDEX IF NOT EXISTS idx_translation_hash ON translation_cache (hash);
+CREATE INDEX IF NOT EXISTS idx_llm_batches_created_at ON llm_batches (created_at DESC);
+

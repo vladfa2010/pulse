@@ -357,7 +357,7 @@ export async function fetchAndSaveFinnhubNews(config: any): Promise<FetchResult>
 
   // --- 2. Определяем период (FIN-010: first run = 7 days) ---
   const countResult = await query(
-    `SELECT COUNT(*) as c FROM news WHERE source_type = 'api_search'`
+    `SELECT COUNT(*) as c FROM news WHERE source_id = 'finnhub'`
   );
   const isFirstRun = parseInt(countResult.rows[0]?.c || '0') === 0;
   const lookbackDays = isFirstRun
