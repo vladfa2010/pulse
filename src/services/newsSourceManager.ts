@@ -104,6 +104,8 @@ export class NewsSourceManager {
             }));
             await saveArticles(unified as any);
             console.log(`[NewsSourceManager] RSS: ${source.name} — ${articles.length} articles`);
+            // Обновляем last_fetch_at при реальном RSS fetch
+            await query(`UPDATE news_sources SET last_fetch_at = NOW() WHERE id = $1`, [source.id]);
           } else if (source.type === 'api_search') {
             if (source.name === 'finnhub') {
               // Finnhub: каждые 60 минут (все тикеры)
