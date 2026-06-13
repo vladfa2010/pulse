@@ -1,7 +1,7 @@
 # PULSE — Backend Architecture
 
 > Техническая документация backend'а. Логика, flow, принятие решений.
-> Последнее обновление: 2026-06-12 (v9.5.0 — 39/39 saved + News Processor tagging + end-to-end verified)
+> Последнее обновление: 2026-06-12 (v9.5.0 — 39/39 saved + RSS last_fetch_at fix + Finnhub 60min + end-to-end verified)
 
 ---
 
@@ -316,6 +316,8 @@ ON CONFLICT (url) DO UPDATE SET
 | **B7** | `UNIQUE(url_normalized)` — `normalizeUrl()` даёт одинаковый результат для URL с разными `?id=xxx` | **Убрано** — `UNIQUE(url)` достаточно |
 | **B8** | `last_fetch_at` обновлялся при skip → вечный skip цикл | Обновляется **только при реальном fetch** |
 | **B9** | First run определялся по `source_type = 'api_search'` — пропускался при других API | Определяется по `source_id = 'finnhub'` |
+| **B10** | `aggregateByNormalizedUrl()` — `normalizeUrl("?id=abc")` → `"finnhub.io/api/news"` — схлопывал 39 статей в 1-2 | **Удалена** — pass batch напрямую, `UNIQUE(url)` защищает |
+| **B11** | RSS `last_fetch_at` не обновлялся — при фиксе Finnhub interval забыли добавить UPDATE для RSS | Добавлен `UPDATE last_fetch_at` после RSS `saveArticles` (строка 108) |
 
 **Конфигурируемые константы** (через `news_sources.config` JSONB):
 
@@ -474,6 +476,9 @@ curl -X POST https://pulse-api-bsov.onrender.com/admin/news-delete \
   -H "Content-Type: application/json" \
   -H "x-trigger-secret: pulse-dev-key" \
   -d '{"matched_tags": ["nvda"], "source_id": "finnhub", "dry_run": true}'
+
+# List articles with matched_tags (view in browser)
+curl "https://pulse-api-bsov.onrender.com/admin/news-list?source_id=finnhub&secret=pulse-dev-key"
 
 # Filters: matched_tags[], source_id, lang_original, date_from, date_to, title_contains
 ```
@@ -2313,11 +2318,11 @@ cron.schedule('0 13 * * 0', generateReport);
 | **Finnhub first run** | 39 fetched → **39 saved, 0 errors** | 2026-06-12 |
 | **News Processor tagging** | 39 Finnhub → matched_tags заполнены (4 nvda + другие) | 2026-06-12 |
 | **RSS (TG Parser)** | Статьи получают теги через News Processor v3 | 2026-06-12 |
+| **RSS last_fetch_at fix** | Фикс регрессии B11 — теперь обновляется после каждого fetch | 2026-06-12 |
+| **Finnhub interval** | 5 мин → **60 мин** | 2026-06-12 |
 | **End-to-end** | NSM fetch → save → News Processor → теги → frontend ✅ | 2026-06-12 |
 
-### Manual Triggers
+---
 
-```bash
-# RSS сбор
-POST /trigger/rss
-POST /
+*Document: ARCHITECTURE.md v9.5.0 — PULSE Platform*  
+*Format: Markdown — living document, updated with each release*
