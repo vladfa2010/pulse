@@ -3572,9 +3572,29 @@ async function start() {
 
     // NewsSourceManager — фоновый запуск каждые 5 мин
     // NOTE: /trigger/nsm endpoint зарегистрирован в основном потоке выше
-    setInterval(() => { nsm.run().catch((e: any) => console.error('[NSM] interval error:', e.message)); }, 5 * 60 * 1000);
+    setInterval(() => {
+      nsm.run().catch((e: any) => console.error('[NSM] interval error:', e.message));
+    }, 5 * 60 * 1000);
 
     // News Processor cron — Layer 1 + Layer 2 (translate + sentiment)
     // Обрабатывает "сырые" статьи (needs_translation = TRUE)
     setInterval(() => {
-      import('./services/newsProcessor').then(({ processRawArticles
+      import('./services/newsProcessor').then(({ processRawArticles }) => {
+        processRawArticles().catch(e => console.error('[NewsProcessor] interval error:', e.message));
+      });
+    }, 10 * 60 * 1000); // 10 min
+
+    // Catch-up: если давно не запускали — запустить
+    query(`SELECT MAX(last_fetch_at) as max FROM news_sources WHERE type = 'api_search'`).then(lastFetch => {
+      const hoursSince = lastFetch.rows[0]?.max
+        ? (Date.now() - new Date(lastFetch.rows[0].max).getTime()) / 3600000
+        : 999;
+      if (hoursSince > 2) {
+        console.log(`[NSM] Last fetch ${hoursSince.toFixed(1)}h ago, running catch-up`);
+        nsm.run().catch((e: any) => console.error('[NSM] catch-up error:', e.message));
+      }
+    });
+  });
+}
+
+start(); 
