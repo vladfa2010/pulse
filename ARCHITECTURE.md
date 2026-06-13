@@ -2324,5 +2324,31 @@ cron.schedule('0 13 * * 0', generateReport);
 
 ---
 
+## Known Issues (не исправлены — отложено)
+
+### BUG-1: 34,403 статьи застряли без тегов (критичный)
+**Где:** `newsProcessor.ts` строка 93 — WHERE clause  
+**Проблема:** Старые статьи от cron.ts имеют `sentiment_source='keyword'` + `matched_tags='{}'`. News Processor v3 не выбирает их:
+```sql
+WHERE matched_tags = '{}'::text[] AND sentiment_source IS NULL
+--                                                     ↑ 'keyword' ≠ NULL
+```
+**Результат:** 34,403 статьи никогда не получат теги.  
+**Фикс:** `sentiment_source IS NOT DISTINCT FROM 'keyword'` вместо `IS NULL`.
+
+### BUG-2: NSM вызывает fetchAllRSS 37 раз вместо 1
+**Где:** `newsSourceManager.ts` строка 86  
+**Проблема:** `fetchAllRSS([rssSource])` — 1 элемент в массиве, цикл по каждому source.  
+**Результат:** 37 вызовов вместо 1. N+1 для RSS.  
+**Фикс:** Собрать все RSS sources в один массив, вызвать `fetchAllRSS(allRssSources)`.
+
+### BUG-3: RSS задержка проверяет RSS_SOURCES.length (37) вместо sources.length
+**Где:** `rssFetcher.ts` строка 304  
+**Проблема:** `if (i + BATCH_SIZE < RSS_SOURCES.length)` — 37 вместо 1.  
+**Результат:** При 1 source задержка 1500ms всё равно применяется.  
+**Фикс:** `sources.length` вместо `RSS_SOURCES.length`.
+
+---
+
 *Document: ARCHITECTURE.md v9.5.0 — PULSE Platform*  
 *Format: Markdown — living document, updated with each release*
