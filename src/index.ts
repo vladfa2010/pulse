@@ -3399,6 +3399,17 @@ async function start() {
     console.log('[DB] Migration backfill warning:', e.message);
   }
 
+  // llm_batches: add missing columns (for tables created before v9.5)
+  try {
+    await query(`ALTER TABLE llm_batches ADD COLUMN IF NOT EXISTS success_count INTEGER NOT NULL DEFAULT 0`);
+    await query(`ALTER TABLE llm_batches ADD COLUMN IF NOT EXISTS failed_count INTEGER NOT NULL DEFAULT 0`);
+    await query(`ALTER TABLE llm_batches ADD COLUMN IF NOT EXISTS partial_count INTEGER NOT NULL DEFAULT 0`);
+    await query(`ALTER TABLE llm_batches ADD COLUMN IF NOT EXISTS error_types JSONB DEFAULT '{}'`);
+    console.log('[DB] Migration: llm_batches columns added (success_count, failed_count, partial_count, error_types)');
+  } catch (e: any) {
+    console.log('[DB] Migration llm_batches columns warning:', e.message);
+  }
+
   // News Processor: initialize needs_translation for existing articles (all → FALSE, only new articles get TRUE)
   try {
     await query(`UPDATE news SET needs_translation = FALSE WHERE needs_translation IS NULL OR needs_translation = TRUE`);
@@ -3566,22 +3577,4 @@ async function start() {
     // News Processor cron — Layer 1 + Layer 2 (translate + sentiment)
     // Обрабатывает "сырые" статьи (needs_translation = TRUE)
     setInterval(() => {
-      import('./services/newsProcessor').then(({ processRawArticles }) => {
-        processRawArticles().catch(e => console.error('[NewsProcessor] interval error:', e.message));
-      });
-    }, 10 * 60 * 1000); // 10 min
-
-    // Catch-up: если давно не запускали — запустить
-    query(`SELECT MAX(last_fetch_at) as max FROM news_sources WHERE type = 'api_search'`).then(lastFetch => {
-      const hoursSince = lastFetch.rows[0]?.max
-        ? (Date.now() - new Date(lastFetch.rows[0].max).getTime()) / 3600000
-        : 999;
-      if (hoursSince > 2) {
-        console.log(`[NSM] Last fetch ${hoursSince.toFixed(1)}h ago, running catch-up`);
-        nsm.run().catch((e: any) => console.error('[NSM] catch-up error:', e.message));
-      }
-    });
-  });
-}
-
-start(); 
+      import('./services/newsProcessor').then(({ processRawArticles
