@@ -28,7 +28,7 @@ import adminRoutes from './routes/admin';
 import { authMiddleware, AuthRequest } from './middleware/auth';
 import { apiLimiter, authLimiter, webhookLimiter } from './middleware/rateLimit';
 import { startCron } from './services/cron';   // RSS cron отключен (TZ_REMOVE_DUPLICATE_RSS_CRON) — модуль оставлен для отката
-import { startReportCron } from './services/reports'; // ← Еженедельные репорты
+import { startReportCron, sendWeeklyReportForUser } from './services/reports'; // ← Еженедельные репорты
 import { startDigestCron, sendAllDigests } from './services/digest'; // ← TG дайджест (каждые 3 ч)
 import { setupYookassaWebhook } from './routes/payment'; // ← Auto-setup YuKassa webhook
 import { addSubscriber, getSubscriberCount } from './services/sse'; // ← Real-time news stream
@@ -518,6 +518,30 @@ app.get('/admin/news-list', async (req, res) => {
         lang: r.lang_original
       }))
     });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ADMIN: Send weekly report to specific user
+// Query: ?user_id=123&secret=KEY
+// ═══════════════════════════════════════════════════════════════════════════
+app.get('/admin/weekly-report', async (req, res) => {
+  const secret = req.headers['x-trigger-secret'] || req.query.secret;
+  if (secret !== process.env.CRON_SECRET_KEY) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  const userId = req.query.user_id as string;
+  if (!userId) {
+    return res.status(400).json({ error: 'Missing user_id parameter' });
+  }
+
+  try {
+    console.log(`[Admin] Sending weekly report to user ${userId}`);
+    const result = await sendWeeklyReportForUser(userId);
+    res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

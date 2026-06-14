@@ -262,6 +262,45 @@ export async function sendAllWeeklyReports(): Promise<void> {
 // Cron: Sunday 13:00 MSK
 // ============================================================
 
+// ============================================================
+// Manual: Send weekly report to single user
+// ============================================================
+
+export async function sendWeeklyReportForUser(userId: string): Promise<{ sent: boolean; message: string }> {
+  try {
+    // Check user has tags
+    const hasTags = await query(
+      `SELECT 1 FROM portfolios WHERE user_id = $1 LIMIT 1`,
+      [userId]
+    );
+    if (hasTags.rows.length === 0) {
+      return { sent: false, message: 'User has no tags in portfolio' };
+    }
+
+    // Generate report
+    const reportData = await generateReportForUser(userId);
+    if (!reportData) {
+      return { sent: false, message: 'No report data generated (no news for tags)' };
+    }
+
+    // Send via Telegram
+    const text = formatReportText(reportData);
+    const ok = await sendWeeklyReport(userId, text);
+
+    if (ok) {
+      return { sent: true, message: `Weekly report sent to user ${userId}` };
+    } else {
+      return { sent: false, message: 'Failed to send Telegram message' };
+    }
+  } catch (err: any) {
+    return { sent: false, message: `Error: ${err.message}` };
+  }
+}
+
+// ============================================================
+// Cron: Sunday 13:00 MSK
+// ============================================================
+
 export function startReportCron() {
   console.log('[Reports] Scheduled for every Sunday at 13:00 MSK');
   // Sunday 13:00 = '0 13 * * 0'
