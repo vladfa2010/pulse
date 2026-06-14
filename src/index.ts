@@ -533,9 +533,23 @@ app.get('/admin/weekly-report', async (req, res) => {
     return res.status(403).json({ error: 'Forbidden' });
   }
 
-  const userId = req.query.user_id as string;
+  let userId = req.query.user_id as string;
+  const chatId = req.query.chat_id as string;
+
+  // Если chat_id передан — найти user_id по Telegram chat_id
+  if (chatId && !userId) {
+    const result = await query(
+      `SELECT user_id FROM user_channels WHERE target = $1 AND channel_type = 'telegram' AND is_active = TRUE`,
+      [chatId]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'No user found for this chat_id' });
+    }
+    userId = result.rows[0].user_id;
+  }
+
   if (!userId) {
-    return res.status(400).json({ error: 'Missing user_id parameter' });
+    return res.status(400).json({ error: 'Missing user_id or chat_id parameter' });
   }
 
   try {
