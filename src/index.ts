@@ -668,6 +668,107 @@ app.get('/admin/news-count-query', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// TZ_DELETE_ACCOUNT: Check FK constraint on user_defined_tags.created_by
+// GET /debug/check-fk?secret=KEY
+// ═══════════════════════════════════════════════════════════════════════════
+app.get('/debug/check-fk', async (req, res) => {
+  const secret = req.headers['x-trigger-secret'] || req.query.secret;
+  if (secret !== process.env.CRON_SECRET_KEY) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  try {
+    const result = await query(`
+      SELECT
+        tc.constraint_name,
+        kcu.column_name,
+        ccu.table_name AS foreign_table,
+        ccu.column_name AS foreign_column,
+        rc.delete_rule,
+        rc.update_rule
+      FROM information_schema.table_constraints AS tc
+      JOIN information_schema.key_column_usage AS kcu
+        ON tc.constraint_name = kcu.constraint_name
+        AND tc.table_schema = kcu.table_schema
+      JOIN information_schema.constraint_column_usage AS ccu
+        ON ccu.constraint_name = tc.constraint_name
+        AND ccu.table_schema = tc.table_schema
+      JOIN information_schema.referential_constraints AS rc
+        ON rc.constraint_name = tc.constraint_name
+        AND rc.constraint_schema = tc.table_schema
+      WHERE tc.constraint_type = 'FOREIGN KEY'
+        AND tc.table_name = 'user_defined_tags'
+        AND kcu.column_name = 'created_by'
+    `);
+
+    if (result.rows.length === 0) {
+      res.json({ fk_exists: false, delete_rule: null, message: 'No FK constraint found on created_by' });
+    } else {
+      const fk = result.rows[0];
+      res.json({
+        fk_exists: true,
+        constraint_name: fk.constraint_name,
+        column: fk.column_name,
+        references: `${fk.foreign_table}.${fk.foreign_column}`,
+        delete_rule: fk.delete_rule,  -- CASCADE | SET NULL | NO ACTION | RESTRICT
+        update_rule: fk.update_rule,
+        is_set_null: fk.delete_rule === 'SET NULL',
+        message: fk.delete_rule === 'SET NULL' ? 'OK: ON DELETE SET NULL' : `WARNING: ON DELETE ${fk.delete_rule}`,
+      });
+    }
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TZ_DELETE_ACCOUNT: Apply SET NULL migration on demand
+// POST /migrate-set-null?secret=KEY
+// ═══════════════════════════════════════════════════════════════════════════
+app.post('/migrate-set-null', async (req, res) => {
+  const secret = req.headers['x-trigger-secret'] || req.query.secret;
+  if (secret !== process.env.CRON_SECRET_KEY) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  try {
+    // Check current FK
+    const checkResult = await query(`
+      SELECT rc.delete_rule, tc.constraint_name
+      FROM information_schema.table_constraints tc
+      JOIN information_schema.referential_constraints rc
+        ON rc.constraint_name = tc.constraint_name
+      WHERE tc.table_name = 'user_defined_tags'
+        AND tc.constraint_type = 'FOREIGN KEY'
+    `);
+
+    if (checkResult.rows.length === 0) {
+      return res.json({ applied: false, message: 'No FK found. Creating new one with SET NULL...' });
+    }
+
+    const currentRule = checkResult.rows[0].delete_rule;
+    const constraintName = checkResult.rows[0].constraint_name;
+
+    if (currentRule === 'SET NULL') {
+      return res.json({ applied: false, already_ok: true, delete_rule: currentRule, message: 'Already ON DELETE SET NULL' });
+    }
+
+    // Drop old FK and create new one with SET NULL
+    await query(`ALTER TABLE user_defined_tags DROP CONSTRAINT ${constraintName}`);
+    await query(`
+      ALTER TABLE user_defined_tags
+      ADD CONSTRAINT user_defined_tags_created_by_fkey
+      FOREIGN KEY (created_by) REFERENCES users(id)
+      ON DELETE SET NULL
+    `);
+
+    res.json({ applied: true, old_rule: currentRule, new_rule: 'SET NULL', message: 'FK updated to ON DELETE SET NULL' });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Migration endpoint — applies DB migrations
 // ═══════════════════════════════════════════════════════════════════════════
 app.post('/migrate-v3', async (req, res) => {
