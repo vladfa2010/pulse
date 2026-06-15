@@ -1198,8 +1198,18 @@ app.post('/admin/users/:id/toggle-block', requireAdmin, async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// TZ_DELETE_ACCOUNT: DELETE PREVIEW
+// TZ_DELETE_ACCOUNT v1.0 — DELETE PREVIEW
 // GET /admin/users/:id/delete-preview
+// 
+// Что делает: показывает админу ЧТО будет удалено/изменено перед удалением.
+// Зачем: админ должен понимать последствия — какие теги потеряют владельца,
+//        какие останутся (shared), есть ли активная подписка.
+// 
+// Структура ответа (4 секции):
+//   1. user — имя, email, admin-статус, подписка
+//   2. owned_tags — теги где user = created_by (жёлтые → SET NULL)
+//   3. shared_portfolio_tags — чужие теги в портфеле (зелёные → остаются)
+//   4. summary — has_owned_tags, has_shared_tags, has_auto_renew
 // ═══════════════════════════════════════════════════════════════════════════
 app.get('/admin/users/:id/delete-preview', requireAdmin, async (req, res) => {
   try {
@@ -1279,8 +1289,25 @@ app.get('/admin/users/:id/delete-preview', requireAdmin, async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// TZ_DELETE_ACCOUNT: DELETE USER
+// TZ_DELETE_ACCOUNT v1.0 — DELETE USER
 // DELETE /admin/users/:id
+//
+// Что делает: безопасное каскадное удаление пользователя с 7 слоями защиты.
+//
+// Цепочка защиты (все 7 обязательны):
+//   1. Self-delete guard — admin не может удалить себя (400)
+//   2. Advisory lock — pg_advisory_xact_lock предотвращает race condition
+//   3. TOCTOU double-check — "а вдруг пользователь уже удалён?" (404)
+//   4. YooKassa cancel — отмена auto-renew ПЕРЕД удалением
+//   5. Transaction — BEGIN → 7 DELETE → COMMIT (ROLLBACK при ошибке)
+//   6. Cascading delete — payments, portfolios, sessions, channels,
+//                          notification_settings, news_reads, users
+//   7. Audit log — запись в cron_log для расследований
+//
+// Созданные теги: created_by → SET NULL (теги остаются, но без владельца)
+// Чужие теги в портфеле: затронуты через CASCADE в portfolios
+//
+// Возвращает: { success: true } или { error: string }
 // ═══════════════════════════════════════════════════════════════════════════
 app.delete('/admin/users/:id', requireAdmin, async (req, res) => {
   try {
@@ -3445,7 +3472,20 @@ export function generateLinkToken(userId: string): string {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// TZ_DELETE_ACCOUNT: YooKassa auto-renew cancellation
+// TZ_DELETE_ACCOUNT v1.0 — YooKassa auto-renew cancellation
+//
+// Зачем: перед удалением пользователя ОБЯЗАТЕЛЬНО отменить auto-renew.
+// Иначе YooKassa продолжит списывать деньги с карты пользователя,
+// хотя аккаунт уже удалён.
+//
+// Алгоритм:
+//   1. Проверить что YOOKASSA_SHOP_ID и YOOKASSA_SECRET_KEY настроены
+//   2. POST /v3/payments/{paymentId}/cancel с Basic auth
+//   3. Idempotence-Key = уникальный (timestamp) — безопасно повторять
+//   4. Логирование результата
+//
+// Ошибки не прерывают удаление — логируем и продолжаем.
+// Пользователь уже решил удалиться, мы делаем best effort.
 // ═══════════════════════════════════════════════════════════════════════════
 async function cancelYookassaAutoRenew(paymentId: string): Promise<void> {
   const shopId = process.env.YOOKASSA_SHOP_ID;
@@ -3676,7 +3716,17 @@ async function start() {
   } catch { /* ignore */ }
 
   // ═══════════════════════════════════════════════════════════════
-  // TZ_DELETE_ACCOUNT: Migration — SET NULL on user_defined_tags.created_by
+  // TZ_DELETE_ACCOUNT v1.0 — Migration: SET NULL on user_defined_tags.created_by
+  //
+  // Проблема: старый FK был без ON DELETE — при DELETE users падал с FK violation.
+  // Решение: DROP старый FK → ADD новый с ON DELETE SET NULL.
+  //
+  // Что происходит при удалении пользователя:
+  //   - created_by = NULL (тег остаётся в системе, но без владельца)
+  //   - другие пользователи, подписанные на тег, не теряют его
+  //
+  // Универсальная миграция: ищет constraint по system catalog, не по имени.
+  // Безопасна для повторного запуска (IF constraint_name IS NOT NULL).
   // ═══════════════════════════════════════════════════════════════
   try {
     await query(`
@@ -3684,7 +3734,7 @@ async function start() {
       DECLARE
         constraint_name TEXT;
       BEGIN
-        -- Find the FK constraint on created_by
+        -- Найти FK constraint на created_by через system catalog
         SELECT tc.constraint_name INTO constraint_name
         FROM information_schema.table_constraints tc
         JOIN information_schema.constraint_column_usage ccu
@@ -3694,11 +3744,11 @@ async function start() {
           AND ccu.column_name = 'created_by';
 
         IF constraint_name IS NOT NULL THEN
-          -- Drop old FK
+          -- Удалить старый FK (без ON DELETE)
           EXECUTE format('ALTER TABLE user_defined_tags DROP CONSTRAINT %I', constraint_name);
         END IF;
 
-        -- Add new FK with SET NULL
+        -- Создать новый FK с ON DELETE SET NULL
         ALTER TABLE user_defined_tags
           ADD CONSTRAINT user_defined_tags_created_by_fkey
           FOREIGN KEY (created_by) REFERENCES users(id)
