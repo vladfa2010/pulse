@@ -1217,7 +1217,7 @@ app.get('/admin/users/:id/delete-preview', requireAdmin, async (req, res) => {
 
     // ── User ──
     const userResult = await query(`
-      SELECT u.id, u.email, u.name, u.is_admin,
+      SELECT u.id, u.email, u.username, u.is_admin,
              u.subscription_expires_at,
              p.method AS payment_method,
              EXISTS (
@@ -1270,7 +1270,7 @@ app.get('/admin/users/:id/delete-preview', requireAdmin, async (req, res) => {
       user: {
         id: user.id,
         email: user.email,
-        name: user.name,
+        name: user.username,
         is_admin: user.is_admin === true || user.is_admin === 1,
         subscription_expires_at: user.subscription_expires_at,
         payment_method: user.payment_method,  // method AS payment_method из подзапроса
@@ -3901,4 +3901,4 @@ async function start() {
   });
 }
 
-start();
+star
