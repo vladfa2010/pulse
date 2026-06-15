@@ -1198,6 +1198,156 @@ app.post('/admin/users/:id/toggle-block', requireAdmin, async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// TZ_DELETE_ACCOUNT: DELETE PREVIEW
+// GET /admin/users/:id/delete-preview
+// ═══════════════════════════════════════════════════════════════════════════
+app.get('/admin/users/:id/delete-preview', requireAdmin, async (req, res) => {
+  try {
+    const userId = req.params.id;
+
+    // ── User ──
+    const userResult = await query(`
+      SELECT u.id, u.email, u.name, u.is_admin,
+             u.subscription_expires_at,
+             p.payment_method,
+             EXISTS (
+               SELECT 1 FROM payments p2
+               WHERE p2.user_id = u.id
+                 AND p2.status = 'active'
+                 AND p2.next_billing_date > NOW()
+             ) AS has_auto_renew
+      FROM users u
+      LEFT JOIN (
+        SELECT DISTINCT ON (user_id) user_id, payment_method
+        FROM payments WHERE status = 'active'
+        ORDER BY user_id, created_at DESC
+      ) p ON p.user_id = u.id
+      WHERE u.id = $1
+    `, [userId]);
+
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const user = userResult.rows[0];
+
+    // ── Owned tags ──
+    const ownedTagsResult = await query(`
+      SELECT tag_id, tag_name
+      FROM user_defined_tags
+      WHERE created_by = $1
+    `, [userId]);
+
+    // ── Shared portfolio tags ──
+    const sharedTagsResult = await query(`
+      SELECT DISTINCT t.tag_id, t.tag_name
+      FROM portfolios p
+      JOIN user_defined_tags t ON t.tag_id = p.tag_id
+      WHERE p.user_id = $1
+        AND t.created_by IS DISTINCT FROM $1
+    `, [userId]);
+
+    // ── Summary ──
+    const summary = {
+      has_owned_tags: ownedTagsResult.rows.length > 0,
+      has_shared_tags: sharedTagsResult.rows.length > 0,
+      total_tags: ownedTagsResult.rows.length + sharedTagsResult.rows.length,
+      has_auto_renew: user.has_auto_renew,
+      subscription_expires_at: user.subscription_expires_at,
+    };
+
+    // ── Response ──
+    const preview: any = {
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        is_admin: user.is_admin === true || user.is_admin === 1,
+        subscription_expires_at: user.subscription_expires_at,
+        payment_method: user.payment_method,
+        has_auto_renew: user.has_auto_renew,
+      },
+      owned_tags: ownedTagsResult.rows,
+      shared_portfolio_tags: sharedTagsResult.rows,
+      summary,
+    };
+
+    res.json(preview);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TZ_DELETE_ACCOUNT: DELETE USER
+// DELETE /admin/users/:id
+// ═══════════════════════════════════════════════════════════════════════════
+app.delete('/admin/users/:id', requireAdmin, async (req, res) => {
+  try {
+    const userId = req.params.id;
+    const adminUser = (req as any).user;
+
+    // ── 1. Self-delete guard ──
+    if (adminUser.userId === userId) {
+      return res.status(400).json({ error: 'Cannot delete your own account' });
+    }
+
+    // ── 2. Advisory lock (prevent concurrent deletes) ──
+    await query(`SELECT pg_advisory_xact_lock(hashtext('delete_user_' || $1::text))`, [userId]);
+
+    // ── 3. TOCTOU double-check (user still exists) ──
+    const checkResult = await query(`SELECT 1 FROM users WHERE id = $1`, [userId]);
+    if (checkResult.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // ── 4. Collect info for side effects ──
+    const paymentResult = await query(`
+      SELECT payment_method, yookassa_payment_id, status
+      FROM payments
+      WHERE user_id = $1 AND status = 'active'
+        AND next_billing_date > NOW()
+    `, [userId]);
+    const activePayments = paymentResult.rows;
+
+    // ── 5. Side effects: cancel YooKassa auto-renew ──
+    for (const payment of activePayments) {
+      if (payment.payment_method === 'yookassa' && payment.yookassa_payment_id) {
+        try {
+          await cancelYookassaAutoRenew(payment.yookassa_payment_id);
+        } catch (e: any) {
+          console.warn(`[DeleteAccount] Failed to cancel auto-renew for ${userId}:`, e.message);
+        }
+      }
+    }
+
+    // ── 6. Cascading delete ──
+    await query(`BEGIN`);
+
+    await query(`DELETE FROM payments WHERE user_id = $1`, [userId]);
+    await query(`DELETE FROM portfolios WHERE user_id = $1`, [userId]);
+    await query(`DELETE FROM user_sessions WHERE user_id = $1`, [userId]);
+    await query(`DELETE FROM user_channels WHERE user_id = $1`, [userId]);
+    await query(`DELETE FROM notification_settings WHERE user_id = $1`, [userId]);
+    await query(`DELETE FROM user_news_reads WHERE user_id = $1`, [userId]);
+    await query(`DELETE FROM users WHERE id = $1`, [userId]);
+
+    await query(`COMMIT`);
+
+    // ── 7. Audit log ──
+    await query(`
+      INSERT INTO cron_log (job_name, status, details)
+      VALUES ('delete_account', 'completed', $1)
+    `, [`Deleted user ${userId} by admin ${adminUser.userId}`]);
+
+    res.json({ success: true });
+  } catch (err: any) {
+    await query(`ROLLBACK`).catch(() => {});
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // ADMIN: Tags Management
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -3294,6 +3444,38 @@ export function generateLinkToken(userId: string): string {
   return crypto.createHmac('sha256', secret).update(userId).digest('hex').slice(0, 16);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// TZ_DELETE_ACCOUNT: YooKassa auto-renew cancellation
+// ═══════════════════════════════════════════════════════════════════════════
+async function cancelYookassaAutoRenew(paymentId: string): Promise<void> {
+  const shopId = process.env.YOOKASSA_SHOP_ID;
+  const secretKey = process.env.YOOKASSA_SECRET_KEY;
+
+  if (!shopId || !secretKey) {
+    console.warn('[YooKassa] Missing credentials, skipping cancel');
+    return;
+  }
+
+  const auth = Buffer.from(`${shopId}:${secretKey}`).toString('base64');
+
+  const response = await fetch(`https://api.yookassa.ru/v3/payments/${paymentId}/cancel`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Basic ${auth}`,
+      'Content-Type': 'application/json',
+      'Idempotence-Key': `cancel-${paymentId}-${Date.now()}`,
+    },
+    body: JSON.stringify({}),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`YooKassa cancel failed: ${response.status} ${errorText}`);
+  }
+
+  console.log(`[YooKassa] Auto-renew cancelled for payment ${paymentId}`);
+}
+
 // Trigger digest manually (admin)
 // ═══════════════════════════════════════════════════════════════════════════
 app.get('/trigger-digest', async (req, res) => {
@@ -3492,6 +3674,41 @@ async function start() {
     await query(`ALTER TABLE news ADD CONSTRAINT news_content_hash_unique UNIQUE (content_hash)`);
     console.log('[DB] Migration: news.content_hash unique constraint added');
   } catch { /* ignore */ }
+
+  // ═══════════════════════════════════════════════════════════════
+  // TZ_DELETE_ACCOUNT: Migration — SET NULL on user_defined_tags.created_by
+  // ═══════════════════════════════════════════════════════════════
+  try {
+    await query(`
+      DO $$
+      DECLARE
+        constraint_name TEXT;
+      BEGIN
+        -- Find the FK constraint on created_by
+        SELECT tc.constraint_name INTO constraint_name
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.constraint_column_usage ccu
+          ON tc.constraint_name = ccu.constraint_name
+        WHERE tc.table_name = 'user_defined_tags'
+          AND tc.constraint_type = 'FOREIGN KEY'
+          AND ccu.column_name = 'created_by';
+
+        IF constraint_name IS NOT NULL THEN
+          -- Drop old FK
+          EXECUTE format('ALTER TABLE user_defined_tags DROP CONSTRAINT %I', constraint_name);
+        END IF;
+
+        -- Add new FK with SET NULL
+        ALTER TABLE user_defined_tags
+          ADD CONSTRAINT user_defined_tags_created_by_fkey
+          FOREIGN KEY (created_by) REFERENCES users(id)
+          ON DELETE SET NULL;
+      END $$;
+    `);
+    console.log('[DB] Migration: user_defined_tags.created_by → ON DELETE SET NULL');
+  } catch (e: any) {
+    console.log('[DB] Migration user_defined_tags warning:', e.message);
+  }
 
   // ═══════════════════════════════════════════════════════════════
   // MIGRATIONS: Finnhub Adapter v2 (TZ_FINNHUB_COMPLETE_FIX_v2)
