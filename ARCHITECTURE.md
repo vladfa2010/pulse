@@ -1,7 +1,7 @@
 # PULSE — Backend Architecture
 
 > Техническая документация backend'а. Логика, flow, принятие решений.
-> Последнее обновление: 2026-06-12 (v9.5.0 — 39/39 saved + RSS last_fetch_at fix + Finnhub 60min + end-to-end verified)
+> Последнее обновление: 2026-06-12 (v9.6.0 — TZ_DELETE_ACCOUNT full implementation)
 
 ---
 
@@ -2321,6 +2321,83 @@ cron.schedule('0 13 * * 0', generateReport);
 | **RSS last_fetch_at fix** | Фикс регрессии B11 — теперь обновляется после каждого fetch | 2026-06-12 |
 | **Finnhub interval** | 5 мин → **60 мин** | 2026-06-12 |
 | **End-to-end** | NSM fetch → save → News Processor → теги → frontend ✅ | 2026-06-12 |
+
+---
+
+## TZ_DELETE_ACCOUNT — Удаление пользователя (админ)
+
+### Архитектура
+
+```
+Админ открывает UserDetailModal → нажимает «Delete Account»
+  ↓
+GET /admin/users/:id/delete-preview  ← показывает preview (user, tags, payments)
+  ↓
+Админ видит confirmation overlay (4 секции)
+  ↓
+DELETE /admin/users/:id  ← advisory lock + TOCTOU + cascading delete
+  ↓
+YooKassa auto-renew cancelled (если активен)
+  ↓
+Audit log → cron_log
+  ↓
+Frontend reload (invalidate caches)
+```
+
+### Endpoints
+
+| Method | Path | Описание |
+|--------|------|----------|
+| GET | `/admin/users/:id/delete-preview` | Preview: user, owned tags, shared tags, payments |
+| DELETE | `/admin/users/:id` | Удаление с advisory lock + cascading delete |
+
+### Безопасность
+
+| Механизм | Описание |
+|----------|----------|
+| Self-delete guard | Admin не может удалить свой own account |
+| Advisory lock | `pg_advisory_xact_lock` — предотвращает concurrent delete |
+| TOCTOU double-check | Проверяет что пользователь всё ещё существует перед удалением |
+| Transaction | BEGIN → DELETE all tables → COMMIT (или ROLLBACK) |
+| YooKassa cancel | Отмена auto-renew перед удалением |
+| Audit log | Запись в `cron_log` после успешного удаления |
+
+### Cascading Delete (7 таблиц)
+
+```sql
+DELETE FROM payments          WHERE user_id = $1  -- CASCADE в schema
+DELETE FROM portfolios        WHERE user_id = $1  -- CASCADE в schema
+DELETE FROM user_sessions     WHERE user_id = $1  -- CASCADE в schema
+DELETE FROM user_channels     WHERE user_id = $1  -- CASCADE в schema
+DELETE FROM notification_settings WHERE user_id = $1  -- CASCADE в schema
+DELETE FROM user_news_reads   WHERE user_id = $1  -- CASCADE в schema
+DELETE FROM users             WHERE id = $1
+```
+
+### user_defined_tags.created_by
+
+```sql
+-- FK с ON DELETE SET NULL
+-- При удалении пользователя: created_by = NULL (тег остаётся)
+ALTER TABLE user_defined_tags
+  ADD CONSTRAINT user_defined_tags_created_by_fkey
+  FOREIGN KEY (created_by) REFERENCES users(id)
+  ON DELETE SET NULL;
+```
+
+### Frontend
+
+| Компонент | Изменения |
+|-----------|-----------|
+| UserDetailModal.tsx | Danger Zone секция, Trash2 иконка, confirmation overlay (4 секции) |
+| Admin.tsx | `onDeleted` callback — reload после удаления |
+
+### Confirmation Overlay (4 секции)
+
+1. **User info** — аватар, имя, email, admin badge
+2. **Tags** — owned (жёлтые → set NULL) + shared (зелёные → остаются)
+3. **Payments** — auto-renew warning + payment method
+4. **Final confirm** — Delete Forever / Cancel
 
 ---
 
