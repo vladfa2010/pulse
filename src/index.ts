@@ -710,7 +710,7 @@ app.get('/debug/check-fk', async (req, res) => {
         constraint_name: fk.constraint_name,
         column: fk.column_name,
         references: `${fk.foreign_table}.${fk.foreign_column}`,
-        delete_rule: fk.delete_rule,  -- CASCADE | SET NULL | NO ACTION | RESTRICT
+        delete_rule: fk.delete_rule,  // CASCADE | SET NULL | NO ACTION | RESTRICT
         update_rule: fk.update_rule,
         is_set_null: fk.delete_rule === 'SET NULL',
         message: fk.delete_rule === 'SET NULL' ? 'OK: ON DELETE SET NULL' : `WARNING: ON DELETE ${fk.delete_rule}`,
