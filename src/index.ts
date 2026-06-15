@@ -278,6 +278,70 @@ app.get('/debug-tag', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// TZ_DELETE_ACCOUNT — Verify deletion: check all tables for orphaned records
+// GET /debug/verify-delete/:userId?secret=KEY
+// ═══════════════════════════════════════════════════════════════════════════
+app.get('/debug/verify-delete/:userId', async (req, res) => {
+  const secret = req.headers['x-trigger-secret'] || req.query.secret;
+  if (secret !== process.env.CRON_SECRET_KEY) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  const userId = req.params.userId;
+
+  try {
+    const checks: any[] = [];
+
+    // 1. users — must be 0 (deleted)
+    const u = await query(`SELECT COUNT(*) as c FROM users WHERE id = $1`, [userId]);
+    checks.push({ table: 'users', count: parseInt(u.rows[0].c), expected: 0, ok: parseInt(u.rows[0].c) === 0 });
+
+    // 2. payments — must be 0 (cascade deleted)
+    const p = await query(`SELECT COUNT(*) as c FROM payments WHERE user_id = $1`, [userId]);
+    checks.push({ table: 'payments', count: parseInt(p.rows[0].c), expected: 0, ok: parseInt(p.rows[0].c) === 0 });
+
+    // 3. portfolios — must be 0 (cascade deleted)
+    const po = await query(`SELECT COUNT(*) as c FROM portfolios WHERE user_id = $1`, [userId]);
+    checks.push({ table: 'portfolios', count: parseInt(po.rows[0].c), expected: 0, ok: parseInt(po.rows[0].c) === 0 });
+
+    // 4. user_sessions — must be 0 (cascade deleted)
+    const s = await query(`SELECT COUNT(*) as c FROM user_sessions WHERE user_id = $1`, [userId]);
+    checks.push({ table: 'user_sessions', count: parseInt(s.rows[0].c), expected: 0, ok: parseInt(s.rows[0].c) === 0 });
+
+    // 5. user_channels — must be 0 (cascade deleted)
+    const c = await query(`SELECT COUNT(*) as c FROM user_channels WHERE user_id = $1`, [userId]);
+    checks.push({ table: 'user_channels', count: parseInt(c.rows[0].c), expected: 0, ok: parseInt(c.rows[0].c) === 0 });
+
+    // 6. notification_settings — must be 0 (cascade deleted)
+    const n = await query(`SELECT COUNT(*) as c FROM notification_settings WHERE user_id = $1`, [userId]);
+    checks.push({ table: 'notification_settings', count: parseInt(n.rows[0].c), expected: 0, ok: parseInt(n.rows[0].c) === 0 });
+
+    // 7. user_news_reads — must be 0 (cascade deleted)
+    const r = await query(`SELECT COUNT(*) as c FROM user_news_reads WHERE user_id = $1`, [userId]);
+    checks.push({ table: 'user_news_reads', count: parseInt(r.rows[0].c), expected: 0, ok: parseInt(r.rows[0].c) === 0 });
+
+    // 8. user_defined_tags — created_by must be NULL (SET NULL), not deleted
+    const t = await query(`SELECT COUNT(*) as c FROM user_defined_tags WHERE created_by = $1`, [userId]);
+    checks.push({ table: 'user_defined_tags (old owner)', count: parseInt(t.rows[0].c), expected: 0, ok: parseInt(t.rows[0].c) === 0 });
+
+    // 9. Tags that survived with created_by = NULL
+    const t2 = await query(`SELECT tag_id, tag_name FROM user_defined_tags WHERE created_by IS NULL`);
+    checks.push({ table: 'user_defined_tags (orphaned)', count: t2.rows.length, tags: t2.rows.map((r: any) => r.tag_id) });
+
+    const allOk = checks.filter((c: any) => c.ok !== undefined).every((c: any) => c.ok);
+
+    res.json({
+      user_id: userId,
+      all_ok: allOk,
+      checks,
+      verdict: allOk ? 'DELETION VERIFIED: No orphaned records found' : 'ORPHANED RECORDS DETECTED',
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Test model availability — checks if a specific model is accessible
 // ═══════════════════════════════════════════════════════════════════════════
 app.get('/test-model', async (req, res) => {
