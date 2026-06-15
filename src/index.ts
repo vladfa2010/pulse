@@ -1219,16 +1219,15 @@ app.get('/admin/users/:id/delete-preview', requireAdmin, async (req, res) => {
     const userResult = await query(`
       SELECT u.id, u.email, u.name, u.is_admin,
              u.subscription_expires_at,
-             p.payment_method,
+             p.method AS payment_method,
              EXISTS (
                SELECT 1 FROM payments p2
                WHERE p2.user_id = u.id
                  AND p2.status = 'active'
-                 AND p2.next_billing_date > NOW()
              ) AS has_auto_renew
       FROM users u
       LEFT JOIN (
-        SELECT DISTINCT ON (user_id) user_id, payment_method
+        SELECT DISTINCT ON (user_id) user_id, method AS payment_method
         FROM payments WHERE status = 'active'
         ORDER BY user_id, created_at DESC
       ) p ON p.user_id = u.id
@@ -1274,7 +1273,7 @@ app.get('/admin/users/:id/delete-preview', requireAdmin, async (req, res) => {
         name: user.name,
         is_admin: user.is_admin === true || user.is_admin === 1,
         subscription_expires_at: user.subscription_expires_at,
-        payment_method: user.payment_method,
+        payment_method: user.payment_method,  // method AS payment_method из подзапроса
         has_auto_renew: user.has_auto_renew,
       },
       owned_tags: ownedTagsResult.rows,
@@ -1329,19 +1328,19 @@ app.delete('/admin/users/:id', requireAdmin, async (req, res) => {
     }
 
     // ── 4. Collect info for side effects ──
+    // Колонки: method (не payment_method), provider_ref (не yookassa_payment_id)
     const paymentResult = await query(`
-      SELECT payment_method, yookassa_payment_id, status
+      SELECT method, provider_ref, status
       FROM payments
       WHERE user_id = $1 AND status = 'active'
-        AND next_billing_date > NOW()
     `, [userId]);
     const activePayments = paymentResult.rows;
 
     // ── 5. Side effects: cancel YooKassa auto-renew ──
     for (const payment of activePayments) {
-      if (payment.payment_method === 'yookassa' && payment.yookassa_payment_id) {
+      if (payment.method === 'yookassa' && payment.provider_ref) {
         try {
-          await cancelYookassaAutoRenew(payment.yookassa_payment_id);
+          await cancelYookassaAutoRenew(payment.provider_ref);
         } catch (e: any) {
           console.warn(`[DeleteAccount] Failed to cancel auto-renew for ${userId}:`, e.message);
         }
@@ -3900,6 +3899,9 @@ async function start() {
       }
     });
   });
+}
+
+start(); );
 }
 
 start(); 
