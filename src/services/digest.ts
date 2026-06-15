@@ -122,7 +122,7 @@ function formatDigest(articles: DigestArticle[]): string {
 
   text += `━━━\n`;
   text += `<a href="https://pulse-frontend-jt53.onrender.com">Открыть PULSE →</a>\n`;
-  text += `<i>⏰ Следующая подборка через 3 часа</i>`;
+  text += `<i>⏰ Следующая подборка через 1 час</i>`;
 
   return text;
 }
@@ -328,12 +328,12 @@ export async function sendAllDigests(): Promise<void> {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Cron: every 3 hours
+// Cron: every 1 hour
 // ═══════════════════════════════════════════════════════════════════════════
 export function startDigestCron() {
-  console.log('[Digest] Scheduled for every 3 hours (:00)');
-  // Every 3 hours at :00
-  cron.schedule('0 */3 * * *', () => {
+  console.log('[Digest] Scheduled for every hour (:00)');
+  // Every hour at :00
+  cron.schedule('0 * * * *', () => {
     console.log('[Digest] Triggering digest distribution');
     sendAllDigests();
   }, {
@@ -345,3 +345,4 @@ function sleep(ms: number): Promise<void> {
   return new Promise(r => setTimeout(r, ms));
 }
 // v5.0 deploy attempt 1779922629
+         
