@@ -1288,7 +1288,7 @@ app.get('/admin/users/:id/delete-preview', requireAdmin, async (req, res) => {
     const userResult = await query(`
       SELECT u.id, u.email, u.username, u.is_admin,
              u.subscription_expires_at,
-             p.method AS payment_method,
+             p.payment_method,
              EXISTS (
                SELECT 1 FROM payments p2
                WHERE p2.user_id = u.id
