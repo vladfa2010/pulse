@@ -50,33 +50,39 @@ async function buildDigest(userId: string, maxTags: number): Promise<DigestArtic
   const tagNames: Record<string, string> = {};
   for (const r of tagRows) tagNames[r.tag_id] = r.tag_name;
 
-  // Find unread news for these tags (since last digest or 3h ago)
+  // TZ_TG_DIGEST_V3: hybrid filter — fetched_at for API sources, published_at for RSS
   let articlesResult;
   if (USE_SQLITE) {
     const conditions = tagIds.map(() => 'matched_tags LIKE ?').join(' OR ');
     const likeParams = tagIds.map(id => `%"${id}"%`);
-    const since = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+    const sincePublished = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+    const sinceFetched   = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const maxAge         = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
     articlesResult = await query(
-      `SELECT id, title_ru, url, sentiment, source, matched_tags
+      `SELECT id, COALESCE(title_ru, title_original) as title, url, sentiment, source, matched_tags
        FROM news
        WHERE (${conditions})
+         AND (fetched_at > ? OR published_at > ?)
          AND published_at > ?
          AND id NOT IN (SELECT news_id FROM user_news_reads WHERE user_id = ?)
-       ORDER BY published_at DESC
+       ORDER BY fetched_at DESC
        LIMIT 20`,
-      [...likeParams, since, userId]
+      [...likeParams, sinceFetched, sincePublished, maxAge, userId]
     );
   } else {
-    const since = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+    const sincePublished = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+    const sinceFetched   = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const maxAge         = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
     articlesResult = await query(
-      `SELECT id, title_ru, url, sentiment, source, matched_tags
+      `SELECT id, COALESCE(title_ru, title_original) as title, url, sentiment, source, matched_tags
        FROM news
        WHERE matched_tags && $1::text[]
-         AND published_at > $2
-         AND id NOT IN (SELECT news_id FROM user_news_reads WHERE user_id = $3)
-       ORDER BY published_at DESC
+         AND (fetched_at > $2 OR published_at > $3)
+         AND published_at > $4
+         AND id NOT IN (SELECT news_id FROM user_news_reads WHERE user_id = $5)
+       ORDER BY GREATEST(fetched_at, published_at) DESC
        LIMIT 20`,
-      [tagIds, since, userId]
+      [tagIds, sinceFetched, sincePublished, maxAge, userId]
     );
   }
 
@@ -86,7 +92,7 @@ async function buildDigest(userId: string, maxTags: number): Promise<DigestArtic
     const matchedTags = row.matched_tags || [];
     const matchedTag = tagIds.find(t => matchedTags.includes(t)) || matchedTags[0] || '';
     articles.push({
-      title: row.title_ru,
+      title: row.title,
       url: row.url,
       sentiment: row.sentiment || 'neutral',
       source: row.source,
@@ -121,7 +127,8 @@ function formatDigest(articles: DigestArticle[]): string {
   return text;
 }
 
-function escapeHtml(text: string): string {
+function escapeHtml(text: string | null): string {
+  if (!text) return 'Без названия';
   return text
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')

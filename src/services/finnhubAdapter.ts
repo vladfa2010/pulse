@@ -230,9 +230,10 @@ async function saveArticlesBatch(
             title_original, title_ru, summary_original, summary_ru,
             source, source_id, source_type, url, url_normalized, content_hash,
             all_sources, source_count, published_at, lang_original,
-            matched_tags, needs_translation
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+            matched_tags, needs_translation, fetched_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
           ON CONFLICT (url) DO UPDATE SET
+            fetched_at = EXCLUDED.fetched_at,
             matched_tags = (
               SELECT array_agg(DISTINCT x)
               FROM unnest(array_cat(
@@ -260,6 +261,7 @@ async function saveArticlesBatch(
           a.source, a.source_id, a.source_type, a.url, a.url_normalized, a.content_hash,
           a.all_sources, 1, a.published_at, a.lang_original,
           a.matched_tags, true,
+          new Date().toISOString(),
         ]);
         saved += result.rows.filter(r => r.is_insert).length;
         merged += result.rows.filter(r => !r.is_insert).length;

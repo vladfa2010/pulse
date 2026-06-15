@@ -338,16 +338,17 @@ export async function saveArticles(articles: ParsedArticle[]): Promise<number> {
 
       if (USE_SQLITE) {
         await query(
-          `INSERT OR IGNORE INTO news (id, title_original, title_ru, summary_ru, source, source_id, url, url_normalized, content_hash, published_at, lang_original)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-          [uuidv4(), a.title, a.title_ru || a.title, a.summary_ru || a.summary, a.source, a.sourceId, a.url, urlNormalized, contentHash, a.publishedAt.toISOString(), a.lang]
+          `INSERT INTO news (id, title_original, title_ru, summary_ru, source, source_id, url, url_normalized, content_hash, published_at, lang_original, fetched_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+           ON CONFLICT (url) DO UPDATE SET fetched_at = EXCLUDED.fetched_at`,
+          [uuidv4(), a.title, a.title_ru || a.title, a.summary_ru || a.summary, a.source, a.sourceId, a.url, urlNormalized, contentHash, a.publishedAt.toISOString(), a.lang, new Date().toISOString()]
         );
       } else {
         await query(
-          `INSERT INTO news (title_original, title_ru, summary_ru, source, source_id, url, url_normalized, content_hash, published_at, lang_original)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-           ON CONFLICT (url) DO NOTHING`,
-          [a.title, a.title_ru || a.title, a.summary_ru || a.summary, a.source, a.sourceId, a.url, urlNormalized, contentHash, a.publishedAt.toISOString(), a.lang]
+          `INSERT INTO news (title_original, title_ru, summary_ru, source, source_id, url, url_normalized, content_hash, published_at, lang_original, fetched_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+           ON CONFLICT (url) DO UPDATE SET fetched_at = EXCLUDED.fetched_at`,
+          [a.title, a.title_ru || a.title, a.summary_ru || a.summary, a.source, a.sourceId, a.url, urlNormalized, contentHash, a.publishedAt.toISOString(), a.lang, new Date().toISOString()]
         );
       }
       count++;

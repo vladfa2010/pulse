@@ -42,32 +42,39 @@ async function generateReportForUser(userId: string): Promise<ReportData | null>
   if (portfolioResult.rows.length === 0) return null;
 
   const tagIds = portfolioResult.rows.map(r => r.tag_id);
-  const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
-  // Get news for user's tags from last 7 days
+  // TZ_TG_DIGEST_V3: weekly report — wider window with fetched_at fallback
   let newsResult;
   if (USE_SQLITE) {
     // SQLite: matched_tags stored as JSON text, use LIKE for each tag
     const conditions = tagIds.map((_, i) => `matched_tags LIKE $${i + 1}`).join(' OR ');
     const likeParams = tagIds.map((id: string) => `%"${id}"%`);
+    const sincePublished = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const sinceFetched   = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
     newsResult = await query(
-      `SELECT title_ru, summary_ru, source, url, published_at, sentiment, matched_tags
+      `SELECT COALESCE(title_ru, title_original) as title,
+              COALESCE(summary_ru, summary_original) as summary,
+              source, url, published_at, sentiment, matched_tags
        FROM news
        WHERE (${conditions})
-         AND published_at > $${tagIds.length + 1}
-       ORDER BY published_at DESC
+         AND (fetched_at > $${tagIds.length + 1} OR published_at > $${tagIds.length + 2})
+       ORDER BY fetched_at DESC
        LIMIT 200`,
-      [...likeParams, since]
+      [...likeParams, sinceFetched, sincePublished]
     );
   } else {
+    const sincePublished = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const sinceFetched   = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
     newsResult = await query(
-      `SELECT title_ru, summary_ru, source, url, published_at, sentiment, matched_tags
+      `SELECT COALESCE(title_ru, title_original) as title,
+              COALESCE(summary_ru, summary_original) as summary,
+              source, url, published_at, sentiment, matched_tags
        FROM news
        WHERE matched_tags && $1::text[]
-         AND published_at > $2
-       ORDER BY published_at DESC
+         AND (fetched_at > $2 OR published_at > $3)
+       ORDER BY GREATEST(fetched_at, published_at) DESC
        LIMIT 200`,
-      [tagIds, since]
+      [tagIds, sinceFetched, sincePublished]
     );
   }
 
@@ -90,8 +97,8 @@ async function generateReportForUser(userId: string): Promise<ReportData | null>
     for (const tagId of article.matched_tags || []) {
       if (tagMap.has(tagId)) {
         tagMap.get(tagId)!.articles.push({
-          title: article.title_ru,
-          summary: article.summary_ru,
+          title: article.title,
+          summary: article.summary,
           source: article.source,
           url: article.url,
           publishedAt: article.published_at,
