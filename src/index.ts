@@ -645,6 +645,75 @@ app.post('/migrate-admin', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Migration: Add missing columns to payments table
+// method, provider_ref, base_amount, discount
+// ═══════════════════════════════════════════════════════════════════════════
+app.post('/migrate-payments', async (req, res) => {
+  try {
+    const results: string[] = [];
+
+    // Check current columns
+    const colsResult = await query(`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_name = 'payments'
+      ORDER BY ordinal_position
+    `);
+    const existingCols = colsResult.rows.map((r: any) => r.column_name);
+    results.push(`Existing columns: ${existingCols.join(', ')}`);
+
+    // Add method column if missing
+    if (!existingCols.includes('method')) {
+      await query(`ALTER TABLE payments ADD COLUMN method VARCHAR(50) DEFAULT 'bank_card'`);
+      // After adding with DEFAULT, make it NOT NULL for new rows
+      await query(`ALTER TABLE payments ALTER COLUMN method SET NOT NULL`);
+      results.push('Added method column (VARCHAR(50) NOT NULL DEFAULT bank_card)');
+    } else {
+      results.push('method column already exists');
+    }
+
+    // Add provider_ref column if missing (was yookassa_payment_id)
+    if (!existingCols.includes('provider_ref')) {
+      await query(`ALTER TABLE payments ADD COLUMN provider_ref VARCHAR(255)`);
+      results.push('Added provider_ref column (VARCHAR(255))');
+    } else {
+      results.push('provider_ref column already exists');
+    }
+
+    // Add base_amount column if missing
+    if (!existingCols.includes('base_amount')) {
+      await query(`ALTER TABLE payments ADD COLUMN base_amount DECIMAL(10,2) NOT NULL DEFAULT 490.00`);
+      results.push('Added base_amount column (DECIMAL(10,2) DEFAULT 490.00)');
+    } else {
+      results.push('base_amount column already exists');
+    }
+
+    // Add discount column if missing
+    if (!existingCols.includes('discount')) {
+      await query(`ALTER TABLE payments ADD COLUMN discount INTEGER DEFAULT 0`);
+      results.push('Added discount column (INTEGER DEFAULT 0)');
+    } else {
+      results.push('discount column already exists');
+    }
+
+    // Drop old yookassa_payment_id column if exists (migration cleanup)
+    if (existingCols.includes('yookassa_payment_id')) {
+      await query(`ALTER TABLE payments DROP COLUMN yookassa_payment_id`);
+      results.push('Dropped old yookassa_payment_id column');
+    }
+
+    // Drop old payment_method column if exists (migration cleanup)
+    if (existingCols.includes('payment_method')) {
+      await query(`ALTER TABLE payments DROP COLUMN payment_method`);
+      results.push('Dropped old payment_method column');
+    }
+
+    res.json({ success: true, applied: results });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // ADMIN MIDDLEWARE & ENDPOINTS
 // ═══════════════════════════════════════════════════════════════════════════
 
