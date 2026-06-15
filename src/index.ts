@@ -3901,4 +3901,4 @@ async function start() {
   });
 }
 
-star
+start();
