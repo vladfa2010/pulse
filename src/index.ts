@@ -1430,8 +1430,9 @@ app.delete('/admin/users/:id', requireAdmin, async (req, res) => {
     await query(`COMMIT`);
 
     // ── 7. Audit log ──
+    // Колонки cron_log: task_name (VARCHAR), status (VARCHAR), errors (TEXT)
     await query(`
-      INSERT INTO cron_log (job_name, status, details)
+      INSERT INTO cron_log (task_name, status, errors)
       VALUES ('delete_account', 'completed', $1)
     `, [`Deleted user ${userId} by admin ${adminUser.userId}`]);
 
