@@ -147,7 +147,7 @@ router.post('/tags', authMiddleware, validate(AddTagSchema), async (req: AuthReq
       [userId]
     );
     const isPremium = userResult.rows[0]?.subscription_active || false;
-    const maxTags = isPremium ? 10 : 3;  // 3 tags for free users (sync with frontend)
+    const maxTags = isPremium ? 25 : 3;  // 3 tags for free users (sync with frontend)
 
     if (tagCount >= maxTags) {
       return res.status(403).json({

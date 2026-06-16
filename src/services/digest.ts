@@ -209,7 +209,7 @@ export async function sendDigestToUser(userId: string): Promise<boolean> {
 
     // Check tariff
     const premium = await isPremium(userId);
-    const maxTags = premium ? 10 : 1;
+    const maxTags = premium ? 25 : 1;
 
     // Build digest
     const articles = await buildDigest(userId, maxTags);
@@ -255,7 +255,7 @@ export async function sendDigestToUserNow(userId: string): Promise<boolean> {
 
     // Check tariff
     const premium = await isPremium(userId);
-    const maxTags = premium ? 10 : 1;
+    const maxTags = premium ? 25 : 1;
 
     // Build digest
     const articles = await buildDigest(userId, maxTags);
