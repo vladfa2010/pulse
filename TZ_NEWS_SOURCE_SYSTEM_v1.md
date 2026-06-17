@@ -397,7 +397,7 @@ if (source.type === 'rss') {
 | Rate limit 429 | Высокая | Sleep, skip, лог |
 | Дубли с RSS | Низкая | content_hash dedup |
 | Пустые тикеры | Средняя | WHERE ticker IS NOT NULL |
-| Render sleep (free tier) | Средняя | Первый запрос при логине |
+| Render cold start | Средняя | Первый запрос при логине | Платный тариф — неактуально |
 
 ---
 

@@ -296,7 +296,7 @@ Daily limit: top 12 tags hourly + rest at midnight
 | 1 | `isRunning` deadlock если ошибка до `finally` | Зависание | `try/finally` уже был ✅ |
 | 2 | API key `d8jc4r9r...` в git history | Компрометация | Убрали из миграции, env var |
 | 3 | Rate limit 300 vs 600 запросов | 429, бан | Tiered fetching (12+13) |
-| 4 | `setInterval` на Render free tier | Cron не работает | `/trigger/nsm` endpoint |
+| 4 | `setInterval` на Render | Cron не работает | `/trigger/nsm` endpoint | Платный тариф — неактуально |
 | 5 | Дедупликация по hash collision | Потеря новостей | URL dedup (primary) |
 | 6 | Нет перевода EN→RU | Русскоязычные пользователи не поймут | `translateBatch()` |
 

@@ -386,7 +386,7 @@ removeTagFromPortfolio(userId, tagId) → boolean  // удаление из loca
 savePortfolio(userId, tags) → void         // полная перезапись
 ```
 
-**Seed:** пользователь создаёт теги сам, free tier = 1 тег
+**Seed:** пользователь создаёт теги сам, Free тариф = 1 тег, Premium = 25 тегов
 
 ### 5.2 Tag Sync Flow (КРИТИЧЕСКИЙ)
 
