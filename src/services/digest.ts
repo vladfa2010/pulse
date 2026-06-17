@@ -298,6 +298,11 @@ export async function sendDigestToUserNow(userId: string): Promise<boolean> {
 export async function sendAllDigests(): Promise<void> {
   console.log('[Digest] Starting digest distribution');
 
+  // Audit log — для debug-cron endpoint
+  try {
+    await query(`INSERT INTO cron_log (task_name, started_at, status) VALUES ('digest', NOW(), 'running')`);
+  } catch { /* ignore cron_log errors */ }
+
   // Find all PREMIUM users with TG digest enabled and active Telegram channel
   const usersResult = await query(
     `SELECT DISTINCT u.id
@@ -325,20 +330,28 @@ export async function sendAllDigests(): Promise<void> {
   }
 
   console.log(`[Digest] Done: ${sent} sent, ${skipped} skipped/empty`);
+
+  // Audit log — finish
+  try {
+    await query(`INSERT INTO cron_log (task_name, started_at, finished_at, status, articles_fetched, articles_saved) VALUES ('digest', NOW(), NOW(), 'completed', ${sent + skipped}, ${sent})`);
+  } catch { /* ignore cron_log errors */ }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Cron: every 1 hour
 // ═══════════════════════════════════════════════════════════════════════════
 export function startDigestCron() {
-  console.log('[Digest] Scheduled for every hour (:00)');
-  // Every hour at :00
-  cron.schedule('0 * * * *', () => {
-    console.log('[Digest] Triggering digest distribution');
-    sendAllDigests();
-  }, {
-    timezone: 'Europe/Moscow',
-  });
+  console.log('[Digest] Scheduled for every hour (:00) MSK via setInterval');
+  // Check every minute — trigger at :00 MSK (UTC+3)
+  setInterval(() => {
+    const now = new Date();
+    const mskHour = (now.getUTCHours() + 3) % 24;
+    const mskMinute = now.getUTCMinutes();
+    if (mskMinute === 0) {
+      console.log(`[Digest] Triggering at ${String(mskHour).padStart(2,'0')}:00 MSK`);
+      sendAllDigests().catch(e => console.error('[Digest] sendAllDigests error:', e));
+    }
+  }, 60000); // check every minute
 }
 
 function sleep(ms: number): Promise<void> {
