@@ -1,7 +1,7 @@
 # PULSE — Deployment Guide
 
 > Единый документ по инфраструктуре, деплою и окружению.
-> Последнее обновление: 2026-06-24
+> Последнее обновление: 2026-06-18
 
 > **⚠️ ВАЖНО:** Все сервисы развёрнуты на **платном тарифе Render**. Instance не засыпает, крон работает 24/7. Никакого «free tier» — не использовать как аргумент при отладке.
 
@@ -33,6 +33,45 @@
 
         Связь: Frontend → Backend: REST API + JWT
 ```
+
+---
+
+## Render API и доступ к логам
+
+Для диагностики деплоев у ассистента есть локальный Render API токен.
+
+| Параметр | Значение |
+|----------|----------|
+| **Render API Token** | `rnd_qcUnW07jUo2ppdVPgqkEW2I3K1gY` |
+| **Файл с токеном** | `.render-token` в корне проекта |
+| **Owner ID** | `tea-d8a2e528qa3s73efm1g0` |
+
+### Service IDs
+
+| Сервис | Render ID | URL |
+|--------|-----------|-----|
+| pulse-frontend (Static Site) | `srv-d8ao626k1jcs73856fbg` | https://pulse-frontend-jt53.onrender.com |
+| pulse-api (Web Service) | `srv-d8a2fum7r5hc73e11pbg` | https://pulse-api-bsov.onrender.com |
+| pulse-app (Static Site, legacy) | `srv-d8aafhrbc2fs73ak9790` | https://pulse-app-nfez.onrender.com |
+
+### Чтение логов через API
+
+```bash
+TOKEN=$(cat .render-token)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "https://api.render.com/v1/logs?ownerId=tea-d8a2e528qa3s73efm1g0&resource=<SERVICE_ID>&direction=backward"
+```
+
+### Пагинация
+
+Ответ содержит `hasMore`, `nextEndTime`, `nextStartTime`. Для получения более старых логов используй `nextEndTime`:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "https://api.render.com/v1/logs?ownerId=tea-d8a2e528qa3s73efm1g0&resource=<SERVICE_ID>&direction=backward&endTime=<nextEndTime>"
+```
+
+> ⚠️ **Безопасность:** Токен хранится локально и не должен попадать в git. Если `.render-token` случайно закоммичен — отозвать токен в Render Dashboard и создать новый.
 
 ---
 
