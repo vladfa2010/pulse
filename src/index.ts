@@ -29,7 +29,7 @@ import { authMiddleware, AuthRequest } from './middleware/auth';
 import { apiLimiter, authLimiter, webhookLimiter } from './middleware/rateLimit';
 import { startCron } from './services/cron';   // RSS cron отключен (TZ_REMOVE_DUPLICATE_RSS_CRON) — модуль оставлен для отката
 import { startReportCron, sendWeeklyReportForUser } from './services/reports'; // ← Еженедельные репорты
-import { startDigestCron, sendAllDigests } from './services/digest'; // ← TG дайджест (каждые 3 ч)
+import { startDigestCron, sendAllDigests } from './services/digest'; // ← TG дайджест (каждый час)
 import { setupYookassaWebhook } from './routes/payment'; // ← Auto-setup YuKassa webhook
 import { addSubscriber, getSubscriberCount } from './services/sse'; // ← Real-time news stream
 
@@ -2679,12 +2679,12 @@ app.get('/debug-cron', async (req, res) => {
        FROM cron_log WHERE started_at > NOW() - INTERVAL '24 hours'`
     );
 
-    // Is cron alive? (last run within 30 minutes for 15-min schedule)
+    // Is cron alive? (last run within 90 minutes for hourly digest schedule)
     const lastRun = await query(
       `SELECT started_at FROM cron_log ORDER BY started_at DESC LIMIT 1`
     );
     const isAlive = lastRun.rows.length > 0 &&
-      (new Date().getTime() - new Date(lastRun.rows[0].started_at).getTime()) < 30 * 60 * 1000;
+      (new Date().getTime() - new Date(lastRun.rows[0].started_at).getTime()) < 90 * 60 * 1000;
 
     res.json({
       cron_alive: isAlive,
@@ -3865,7 +3865,7 @@ async function start() {
     { sql: `CREATE TABLE IF NOT EXISTS user_defined_tags (tag_id VARCHAR(50) PRIMARY KEY, tag_name VARCHAR(100) NOT NULL, tag_type VARCHAR(20) DEFAULT 'company', keywords TEXT[] DEFAULT '{}', enriched_data JSONB, created_by UUID REFERENCES users(id), created_at TIMESTAMP DEFAULT ${_SQL_NOW})`, name: 'user_defined_tags' },
     // Telegram digest settings
     { sql: `ALTER TABLE notification_settings ADD COLUMN IF NOT EXISTS tg_digest_enabled BOOLEAN DEFAULT FALSE`, name: 'tg_digest_enabled' },
-    { sql: `ALTER TABLE notification_settings ADD COLUMN IF NOT EXISTS digest_frequency VARCHAR(10) DEFAULT '3h'`, name: 'digest_frequency' },
+    { sql: `ALTER TABLE notification_settings ADD COLUMN IF NOT EXISTS digest_frequency VARCHAR(10) DEFAULT '1h'`, name: 'digest_frequency' },
     { sql: `ALTER TABLE user_defined_tags ADD COLUMN IF NOT EXISTS enriched_data JSONB`, name: 'enriched_data' },
     { sql: `ALTER TABLE notification_settings ADD COLUMN IF NOT EXISTS last_digest_sent TIMESTAMP`, name: 'last_digest_sent' },
     { sql: `ALTER TABLE notification_settings ADD COLUMN IF NOT EXISTS digest_email VARCHAR(255)`, name: 'digest_email' },
@@ -4109,7 +4109,7 @@ async function start() {
       }
     }, 8000);
 
-    startDigestCron(); // TG digest cron (every 3 hours)
+    startDigestCron(); // TG digest cron (every hour)
 
     // NewsSourceManager — фоновый запуск каждые 5 мин
     // NOTE: /trigger/nsm endpoint зарегистрирован в основном потоке выше

@@ -36,7 +36,7 @@ interface DigestArticle {
   tag: string;
 }
 
-async function buildDigest(userId: string, maxTags: number): Promise<DigestArticle[]> {
+async function buildDigest(userId: string, maxTags: number, lastDigestSent: Date | null): Promise<DigestArticle[]> {
   // Get user's tags (limited by tariff)
   const portfolioResult = await query(
     `SELECT tag_id, tag_name FROM portfolios WHERE user_id = $1 LIMIT $2`,
@@ -51,13 +51,17 @@ async function buildDigest(userId: string, maxTags: number): Promise<DigestArtic
   for (const r of tagRows) tagNames[r.tag_id] = r.tag_name;
 
   // TZ_TG_DIGEST_V3: hybrid filter — fetched_at for API sources, published_at for RSS
+  // For scheduled digests: RSS window starts from last_digest_sent so no unread article is lost.
+  // Fallback to 3 hours for manual /now or first-time users.
+  const rssFallbackSince = new Date(Date.now() - 3 * 60 * 60 * 1000);
+  const rssSince = lastDigestSent ? lastDigestSent : rssFallbackSince;
+  const sinceFetched   = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const maxAge         = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
   let articlesResult;
   if (USE_SQLITE) {
     const conditions = tagIds.map(() => 'matched_tags LIKE ?').join(' OR ');
     const likeParams = tagIds.map(id => `%"${id}"%`);
-    const sincePublished = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
-    const sinceFetched   = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    const maxAge         = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
     articlesResult = await query(
       `SELECT id, COALESCE(title_ru, title_original) as title, url, sentiment, source, matched_tags
        FROM news
@@ -67,12 +71,9 @@ async function buildDigest(userId: string, maxTags: number): Promise<DigestArtic
          AND id NOT IN (SELECT news_id FROM user_news_reads WHERE user_id = ?)
        ORDER BY fetched_at DESC
        LIMIT 20`,
-      [...likeParams, sinceFetched, sincePublished, maxAge, userId]
+      [...likeParams, sinceFetched.toISOString(), rssSince.toISOString(), maxAge.toISOString(), userId]
     );
   } else {
-    const sincePublished = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
-    const sinceFetched   = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    const maxAge         = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
     articlesResult = await query(
       `SELECT id, COALESCE(title_ru, title_original) as title, url, sentiment, source, matched_tags
        FROM news
@@ -82,7 +83,7 @@ async function buildDigest(userId: string, maxTags: number): Promise<DigestArtic
          AND id NOT IN (SELECT news_id FROM user_news_reads WHERE user_id = $5)
        ORDER BY GREATEST(fetched_at, published_at) DESC
        LIMIT 20`,
-      [tagIds, sinceFetched, sincePublished, maxAge, userId]
+      [tagIds, sinceFetched.toISOString(), rssSince.toISOString(), maxAge.toISOString(), userId]
     );
   }
 
@@ -211,8 +212,9 @@ export async function sendDigestToUser(userId: string): Promise<boolean> {
     const premium = await isPremium(userId);
     const maxTags = premium ? 25 : 1;
 
-    // Build digest
-    const articles = await buildDigest(userId, maxTags);
+    // Build digest (use last_digest_sent for RSS window so nothing is lost)
+    const lastDigestSent = settings.last_digest_sent ? new Date(settings.last_digest_sent) : null;
+    const articles = await buildDigest(userId, maxTags, lastDigestSent);
     if (articles.length === 0) {
       console.log(`[Digest] No articles for user ${userId}`);
       return false;
@@ -257,8 +259,8 @@ export async function sendDigestToUserNow(userId: string): Promise<boolean> {
     const premium = await isPremium(userId);
     const maxTags = premium ? 25 : 1;
 
-    // Build digest
-    const articles = await buildDigest(userId, maxTags);
+    // Build digest (manual digest uses fixed 3h RSS window)
+    const articles = await buildDigest(userId, maxTags, null);
     if (articles.length === 0) {
       console.log(`[Digest] No articles for user ${userId}`);
       return false;
@@ -298,9 +300,14 @@ export async function sendDigestToUserNow(userId: string): Promise<boolean> {
 export async function sendAllDigests(): Promise<void> {
   console.log('[Digest] Starting digest distribution');
 
-  // Audit log — для debug-cron endpoint
+  // Audit log — single row per digest task (update if exists, insert otherwise)
   try {
-    await query(`INSERT INTO cron_log (task_name, started_at, status) VALUES ('digest', NOW(), 'running')`);
+    const updatedStart = await query(
+      `UPDATE cron_log SET started_at = NOW(), status = 'running', finished_at = NULL, articles_fetched = NULL, articles_saved = NULL WHERE task_name = 'digest' RETURNING *`
+    );
+    if (updatedStart.rowCount === 0) {
+      await query(`INSERT INTO cron_log (task_name, started_at, status) VALUES ('digest', NOW(), 'running')`);
+    }
   } catch { /* ignore cron_log errors */ }
 
   // Find all PREMIUM users with TG digest enabled and active Telegram channel
@@ -333,7 +340,10 @@ export async function sendAllDigests(): Promise<void> {
 
   // Audit log — finish
   try {
-    await query(`INSERT INTO cron_log (task_name, started_at, finished_at, status, articles_fetched, articles_saved) VALUES ('digest', NOW(), NOW(), 'completed', ${sent + skipped}, ${sent})`);
+    await query(
+      `UPDATE cron_log SET finished_at = NOW(), status = 'completed', articles_fetched = $1, articles_saved = $2 WHERE task_name = 'digest'`,
+      [sent + skipped, sent]
+    );
   } catch { /* ignore cron_log errors */ }
 }
 
