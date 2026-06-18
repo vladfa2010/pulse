@@ -303,7 +303,7 @@ export async function sendAllDigests(): Promise<void> {
   // Audit log — single row per digest task (update if exists, insert otherwise)
   try {
     const updatedStart = await query(
-      `UPDATE cron_log SET started_at = NOW(), status = 'running', finished_at = NULL, articles_fetched = NULL, articles_saved = NULL WHERE task_name = 'digest' RETURNING *`
+      `UPDATE cron_log SET started_at = NOW(), status = 'running', finished_at = NULL, articles_fetched = NULL, articles_saved = NULL WHERE task_name = 'digest'`
     );
     if (updatedStart.rowCount === 0) {
       await query(`INSERT INTO cron_log (task_name, started_at, status) VALUES ('digest', NOW(), 'running')`);
