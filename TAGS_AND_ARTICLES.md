@@ -679,6 +679,7 @@ LIMIT 50;
 | `/admin/llm-dashboard` | GET | KPI, errors, hourly trend |
 | `/admin/llm-errors` | GET | Failed articles |
 | `/admin/backfill` | POST | Переобработать тег |
+| `/cleanup-failed-articles` | POST | Удалить все статьи с `llm_error` (admin JWT или `x-trigger-secret`) |
 | `/admin/source-stats` | GET | Статистика по RSS-источникам |
 | `/admin/users` | GET | Список пользователей |
 | `/admin/users/:id` | GET | Детали пользователя |

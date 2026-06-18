@@ -335,6 +335,8 @@ curl -X POST https://pulse-api-bsov.onrender.com/cleanup-failed-articles \
 {"deleted": 9276, "message": "Removed 9276 articles with llm_error"}
 ```
 
+**UI (2026-06-18):** Теперь cleanup доступен из Admin Dashboard → LLM Metrics → кнопка **"Удалить ошибки"** в правом верхнем углу. Endpoint также принимает admin JWT.
+
 **Важно:** Удалены только статьи с `llm_error`. Успешные статьи (`sentiment_source='llm'`) НЕ тронуты.
 
 #### Phase 3: Проверка
