@@ -300,6 +300,20 @@ export async function sendDigestToUserNow(userId: string): Promise<boolean> {
 export async function sendAllDigests(): Promise<void> {
   console.log('[Digest] Starting digest distribution');
 
+  // Cleanup old duplicate digest rows (pre-fix leftovers). Keep only the latest one.
+  try {
+    const latestDigest = await query(
+      `SELECT id FROM cron_log WHERE task_name = 'digest' ORDER BY started_at DESC LIMIT 1`
+    );
+    if (latestDigest.rows.length > 0) {
+      const keepId = latestDigest.rows[0].id;
+      await query(
+        `DELETE FROM cron_log WHERE task_name = 'digest' AND id <> $1`,
+        [keepId]
+      );
+    }
+  } catch { /* ignore cleanup errors */ }
+
   // Audit log — single row per digest task (update if exists, insert otherwise)
   try {
     const updatedStart = await query(
