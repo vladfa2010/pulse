@@ -539,7 +539,7 @@ router.get('/telegram-status', authMiddleware, async (req: AuthRequest, res) => 
       connected: !!channel && channel.is_active,
       chatId: channel?.target || undefined,
       digestEnabled: settings.tg_digest_enabled || false,
-      frequency: settings.digest_frequency || '3h',
+      frequency: settings.digest_frequency || '1h',
       quietHoursEnabled: settings.quiet_hours_enabled || false,
       quietHoursStart: settings.quiet_hours_start || '23:00',
       quietHoursEnd: settings.quiet_hours_end || '07:00',

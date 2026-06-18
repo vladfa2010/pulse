@@ -237,7 +237,7 @@ async function handleCallbackQuery(req: any, res: any): Promise<void> {
         break;
       }
       case 'settings': {
-        await sendMessageWithButtons(chatId, '⚙️ Настройки:\n\nЧастота дайджеста: каждые 3 часа\n\nТихие часы: 23:00 — 07:00', [
+        await sendMessageWithButtons(chatId, '⚙️ Настройки:\n\nЧастота дайджеста: каждый час\n\nТихие часы: 23:00 — 07:00', [
           [{ text: '🔕 Отключить рассылку', callback_data: 'stop_digest' }],
           [{ text: '📰 Получить дайджест', callback_data: 'digest_now' }],
         ]);
