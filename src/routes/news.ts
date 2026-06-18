@@ -30,7 +30,7 @@ import { query } from '../config/db';
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
-// ─── SQL для фильтра по времени (14 дней) ─────────────────────────────────
+// ─── SQL для фильтра по времени (90 дней) ─────────────────────────────────
 function timeFilterSql(): string {
   return USE_SQLITE
     ? "published_at > datetime('now', '-90 days')"
