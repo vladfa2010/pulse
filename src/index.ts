@@ -389,11 +389,28 @@ app.get('/test-model', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 // Cleanup failed articles — removes all articles with llm_error
 // Use when deferred processor queue is too large or after LLM downtime
+// Auth: x-trigger-secret (cron) OR admin JWT (dashboard)
 // ═══════════════════════════════════════════════════════════════════════════
 app.post('/cleanup-failed-articles', async (req, res) => {
   const secret = req.headers['x-trigger-secret'];
+  let isAdmin = false;
+
   if (secret !== process.env.CRON_SECRET_KEY) {
-    return res.status(403).json({ error: 'Forbidden' });
+    // Fallback to admin JWT auth
+    const token = req.headers.authorization?.replace('Bearer ', '') || req.cookies?.token;
+    if (token) {
+      try {
+        const jwt = require('jsonwebtoken');
+        const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
+        const decoded = jwt.verify(token, JWT_SECRET);
+        isAdmin = !!decoded.is_admin;
+      } catch {
+        isAdmin = false;
+      }
+    }
+    if (!isAdmin) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
   }
 
   try {
