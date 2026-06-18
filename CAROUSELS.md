@@ -1,7 +1,7 @@
 # PULSE — Логика трёх каруселей
 
 > Официальная спецификация. Какая карусель что показывает.
-> Последнее обновление: 2026-05-31 (v7.17.4)
+> Последнее обновление: 2026-06-18
 
 ---
 
@@ -80,7 +80,7 @@ GET /api/news?limit=50
 queryClient.setQueryData(['unreadNews'], (old: News[]) =>
   old.filter(n => n.id !== newsId)
 );
-queryClient.setQueryData(['readNews'], (old: News[] = []) =>
+queryClient.setQueryData(['historyNews'], (old: News[] = []) =>
   [news, ...old]
 );
 // Затем фоном — реальный POST /api/news/:id/read
@@ -155,8 +155,26 @@ queryClient.invalidateQueries({ queryKey: ['unreadNews'] })
 
 ### API
 ```
-GET /api/news?history=true&limit=50
+GET /api/news?history=true&limit=50&page=N
 ```
+
+Ответ:
+```json
+{
+  "articles": [...],
+  "total": 1234,
+  "page": 1,
+  "hasMore": true
+}
+```
+
+### Бесконечный скролл
+Фронтенд подгружает историю порциями по 50 через `useInfiniteQuery`:
+- `queryKey: ['historyNews']`
+- `initialPageParam: 1`
+- `getNextPageParam` использует `hasMore` из ответа
+- `sentinel` + `IntersectionObserver` внутри горизонтального скролл-контейнера
+- Новые страницы склеиваются через `pages.flatMap(p => p.articles)`
 
 ### Код компонента
 `AllNewsCarousel.tsx`
@@ -200,14 +218,24 @@ GET /api/news?history=true&limit=50
 ### SQL-запрос
 ```typescript
 // Global news — без фильтра по тегам
+const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
+const page = parseInt(req.query.page as string) || 1;
+const offset = (page - 1) * limit;
+
 const result = await query(`
   SELECT id, title_ru, summary_ru, source, published_at, sentiment, sentiment_score,
          matched_tags, tag_impact, is_political
   FROM news
   WHERE published_at > NOW() - INTERVAL '90 days'
   ORDER BY published_at DESC
-  LIMIT $1
-`, [limit]);
+  LIMIT $1 OFFSET $2
+`, [limit, offset]);
+
+const countResult = await query(`
+  SELECT COUNT(*) as c FROM news WHERE published_at > NOW() - INTERVAL '90 days'
+`);
+const total = parseInt(countResult.rows[0]?.c || '0');
+const hasMore = offset + result.rows.length < total;
 ```
 
 > **Важно:** В отличие от каруселей 1 и 2, endpoint `?global=true` **не фильтрует** по `matched_tags`. Это было изменено намеренно — чтобы пользователь (включая незалогиненного) видел больше контента.
@@ -217,8 +245,24 @@ const result = await query(`
 
 ### API
 ```
-GET /api/news?global=true&limit=50
+GET /api/news?global=true&limit=50&page=N
 ```
+
+Ответ:
+```json
+{
+  "articles": [...],
+  "total": 1234,
+  "page": 1,
+  "hasMore": true
+}
+```
+
+### Бесконечный скролл
+Фронтенд подгружает общую ленту порциями по 50 через `useInfiniteQuery`:
+- `queryKey: ['globalNews']`
+- `sentinel` + `IntersectionObserver` внутри скролл-контейнера
+- Автоподгрузка при приближении к концу
 
 ### Код компонента
 `GlobalNewsCarousel.tsx`
@@ -443,11 +487,21 @@ Query: ?hours=12 (default) | ?refresh=1 (принудительно)
 
 ## API Summary
 
-| Карусель | Endpoint | Фильтр | Сортировка |
-|----------|----------|--------|------------|
-| 1. "Не видели" | `GET /api/news` | теги + непрочитанные | DESC |
-| 2. "Вся лента" | `GET /api/news?history=true` | теги + прочитанные | DESC |
-| 3. "Общая" | `GET /api/news?global=true` | все новости за 90 дней | DESC |
+| Карусель | Endpoint | Фильтр | Пагинация | Сортировка |
+|----------|----------|--------|-----------|------------|
+| 1. "Не видели" | `GET /api/news` | теги + непрочитанные | `limit=50` (без page) | DESC |
+| 2. "Вся лента" | `GET /api/news?history=true&page=N` | теги + прочитанные | `limit=50`, `page=N` | DESC |
+| 3. "Общая" | `GET /api/news?global=true&page=N` | все новости за 90 дней | `limit=50`, `page=N` | DESC |
+
+Все ответы возвращают:
+```json
+{
+  "articles": [...],
+  "total": number,
+  "page": number,
+  "hasMore": boolean
+}
+```
 
 ---
 
@@ -694,7 +748,7 @@ Frontend: tagVersion++ → invalidateQueries
 tagVersion++ в AuthContext
     │
     ├──→ invalidateQueries(['unreadNews'])
-    ├──→ invalidateQueries(['readNews'])
+    ├──→ invalidateQueries(['historyNews'])
     └──→ invalidateQueries(['globalNews'])
 ```
 

@@ -294,7 +294,7 @@ VALUES ('uuid-user-123', 'telegram', '123456789', true);
 -- notification_settings (обновлено)
 UPDATE notification_settings
 SET tg_digest_enabled = TRUE,
-    digest_frequency = '3h',
+    digest_frequency = '1h',
     quiet_hours_enabled = TRUE,
     quiet_hours_start = '23:00',
     quiet_hours_end = '07:00'
@@ -372,7 +372,7 @@ Authorization: Bearer <JWT_TOKEN>
   "botUsername": "Insidepulse_bot",
   "settings": {
     "tg_digest_enabled": true,
-    "digest_frequency": "3h",
+    "digest_frequency": "1h",
     "quiet_hours_enabled": true,
     "quiet_hours_start": 23,
     "quiet_hours_end": 7
@@ -679,11 +679,43 @@ LIMIT 20;
 | Изменение | Описание |
 |-----------|----------|
 | **Частота** | 3ч → 1ч (`0 * * * *`) |
-| **Hybrid filter** | `(fetched_at > 24h OR published_at > 3h) AND published_at > 7d` — Finnhub статьи видны 24ч после получения |
+| **Hybrid filter** | `fetched_at > 24h OR published_at > last_digest_sent` — RSS-новости не теряются между дайджестами; fallback 3ч для ручного `/now` |
+| **cron_log** | `UPDATE` вместо `INSERT` → одна строка на задачу; cleanup старых дублей при запуске |
 | **COALESCE title** | `COALESCE(title_ru, title_original)` — EN заголовок вместо null для Finnhub |
 | **escapeHtml guard** | `escapeHtml(text: string \| null)` — защита от `null.replace()` TypeError |
 | **fetched_at INSERT** | `finnhubAdapter.ts` + `rssFetcher.ts` — `fetched_at` в INSERT + `ON CONFLICT UPDATE` |
 | **Индекс** | `CREATE INDEX idx_news_fetched_at ON news(fetched_at DESC)` — perf |
+
+### Cron log deduplication
+
+`sendAllDigests()` ведёт аудит-лог в таблице `cron_log`. Чтобы избежать дублей строк при каждом запуске:
+
+1. **Cleanup** на старте — удаляем старые дубли `digest`, оставляем одну свежую:
+   ```sql
+   SELECT id FROM cron_log WHERE task_name = 'digest' ORDER BY started_at DESC LIMIT 1;
+   DELETE FROM cron_log WHERE task_name = 'digest' AND id <> $keep_id;
+   ```
+2. **UPDATE вместо INSERT**:
+   ```sql
+   UPDATE cron_log
+   SET started_at = NOW(), status = 'running', finished_at = NULL,
+       articles_fetched = NULL, articles_saved = NULL
+   WHERE task_name = 'digest';
+   ```
+3. Если `rowCount === 0` — вставляем первую строку:
+   ```sql
+   INSERT INTO cron_log (task_name, started_at, status)
+   VALUES ('digest', NOW(), 'running');
+   ```
+4. После рассылки — один `UPDATE` финального статуса:
+   ```sql
+   UPDATE cron_log
+   SET finished_at = NOW(), status = 'completed',
+       articles_fetched = $total, articles_saved = $sent
+   WHERE task_name = 'digest';
+   ```
+
+> Результат: в `cron_log` всегда одна строка на задачу `digest`. `/debug-cron` показывает корректный `cron_alive`.
 
 ### Ручной запуск дайджеста
 
@@ -1155,14 +1187,14 @@ app.post('/webhook/telegram', async (req, res) => {
 
 | Значение | Cron-выражение | Описание |
 |----------|----------------|----------|
-| `1h` | `0 * * * *` | Каждый час в :00 |
-| `3h` | `0 */3 * * *` | Каждые 3 часа в :00 (по умолчанию) |
-| `6h` | `0 */6 * * *` | Каждые 6 часа в :00 |
+| `1h` | `0 * * * *` | Каждый час в :00 (по умолчанию) |
+| `3h` | `0 */3 * * *` | Каждые 3 часа в :00 |
+| `6h` | `0 */6 * * *` | Каждые 6 часов в :00 |
 | `12h` | `0 */12 * * *` | Каждые 12 часов в :00 |
 | `24h` | `0 9 * * *` | Раз в день в 09:00 MSK |
 
 ```
-Частота 3h (default):
+Частота 1h (default):
 00:00 ████ дайджест
 03:00 ████ дайджест
 06:00 ████ дайджест
@@ -1630,7 +1662,7 @@ ORDER BY unread_count DESC;
 
 ```
 +====================================================================+
-|  CRON TRIGGER: 0 */3 * * * (Europe/Moscow)                        |
+|  CRON TRIGGER: 0 * * * * (Europe/Moscow)                          |
 |  Например: 2025-01-15 09:00:00 MSK                                |
 +==============================+=======================================+
                                │
@@ -1685,16 +1717,18 @@ ORDER BY unread_count DESC;
 +====================================================================+
 |  STEP 5: Сбор непрочитанных новостей                               |
 |                                                                    |
+|  -- RSS window: from last_digest_sent (or 3h fallback)            |
+|  -- API window: last 24h from fetched_at                           |
 |  SELECT n.* FROM news n                                            |
-|  WHERE n.published_at >= NOW() - INTERVAL '3 hours'                |
-|    AND n.published_at <= NOW()                                     |
-|    AND n.sentiment IS NOT NULL                                     |
+|  WHERE (n.fetched_at > NOW() - INTERVAL '24 hours'                 |
+|         OR n.published_at > COALESCE($last_digest_sent, NOW() - INTERVAL '3 hours')) |
+|    AND n.published_at > NOW() - INTERVAL '7 days'                  |
 |    AND n.matched_tags && $1::text[]    -- user tags                |
 |    AND NOT EXISTS (                                                |
 |      SELECT 1 FROM user_news_reads unr                             |
 |      WHERE unr.news_id = n.id AND unr.user_id = $2                 |
 |    )                                                               |
-|  ORDER BY n.published_at DESC                                      |
+|  ORDER BY GREATEST(n.fetched_at, n.published_at) DESC              |
 |  LIMIT 20;                                                         |
 +==============================+=======================================+
                                │
