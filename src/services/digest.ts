@@ -198,7 +198,7 @@ export async function sendDigestToUser(userId: string): Promise<boolean> {
     }
 
     // Check frequency
-    const freqHours = FREQUENCY_HOURS[settings.digest_frequency] || 3;
+    const freqHours = FREQUENCY_HOURS[settings.digest_frequency] || 1;
     if (settings.last_digest_sent) {
       const lastSent = new Date(settings.last_digest_sent);
       const hoursSince = (Date.now() - lastSent.getTime()) / (60 * 60 * 1000);
