@@ -43,6 +43,36 @@ function nowSql(): string {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// GET /api/news/global — ПУБЛИЧНАЯ общая лента (все новости, без auth)
+// Используется третьей каруселью GlobalNewsCarousel.
+// ═══════════════════════════════════════════════════════════════════════════
+router.get('/global', async (req, res) => {
+  try {
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
+    const offset = (page - 1) * limit;
+    const timeFilter = timeFilterSql();
+
+    const result = await query(
+      `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags,
+              tag_impact, source_count, all_sources
+       FROM news
+       WHERE ${timeFilter}
+       ORDER BY published_at DESC
+       LIMIT $1 OFFSET $2`,
+      [limit, offset]
+    );
+    const countResult = await query(`SELECT COUNT(*) as c FROM news WHERE ${timeFilter}`, []);
+    const total = parseInt(countResult.rows[0]?.c || '0');
+
+    res.json({ articles: result.rows, total, page, hasMore: offset + result.rows.length < total });
+  } catch (err: any) {
+    console.error('[News] Global error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch global news' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // GET /api/news — ЛЕНТА НОВОСТЕЙ
 // ═══════════════════════════════════════════════════════════════════════════
 // Параметры:
