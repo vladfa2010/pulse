@@ -87,6 +87,28 @@ export function broadcastNews(article: any): void {
 }
 
 /**
+ * Broadcast a refresh signal — tells all clients to refetch their news lists.
+ * Used when the NewsSourceManager finishes a cycle and new articles were saved.
+ */
+export function broadcastRefresh(): void {
+  if (subscribers.size === 0) return;
+
+  const message = `event: refresh\ndata: ${JSON.stringify({ time: new Date().toISOString() })}\n\n`;
+
+  let sent = 0;
+  for (const res of subscribers) {
+    if (!res.writableEnded) {
+      res.write(message);
+      sent++;
+    }
+  }
+
+  if (sent > 0) {
+    console.log(`[SSE] Broadcasted refresh signal to ${sent} subscriber(s)`);
+  }
+}
+
+/**
  * Get current subscriber count (for health/debug)
  */
 export function getSubscriberCount(): number {

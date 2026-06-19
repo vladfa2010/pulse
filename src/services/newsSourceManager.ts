@@ -7,6 +7,7 @@ import { query } from '../config/db';
 import { fetchAndSaveFinnhubNews, saveArticles, normalizeUrl } from './finnhubAdapter';
 import { fetchAllRSS } from './rssFetcher';
 import { RssSource } from './rssSources';
+import { broadcastRefresh } from './sse';
 import crypto from 'crypto';
 
 interface NewsSource {
@@ -72,6 +73,7 @@ export class NewsSourceManager {
       console.log(`[NewsSourceManager] ${sources.length} sources enabled`);
 
       // 2. Обработать каждый
+      let hasNewArticles = false;
       for (const source of sources) {
         try {
           if (source.type === 'rss') {
@@ -103,6 +105,7 @@ export class NewsSourceManager {
               needs_translation: a.lang === 'en',
             }));
             await saveArticles(unified as any);
+            if (articles.length > 0) hasNewArticles = true;
             console.log(`[NewsSourceManager] RSS: ${source.name} — ${articles.length} articles`);
             // Обновляем last_fetch_at при реальном RSS fetch
             await query(`UPDATE news_sources SET last_fetch_at = NOW() WHERE id = $1`, [source.id]);
@@ -116,6 +119,7 @@ export class NewsSourceManager {
                 console.log(`[NewsSourceManager] Finnhub: skip (last fetch ${minutesSinceLastFetch.toFixed(1)}m ago, interval=60m)`);
               } else {
                 const result = await fetchAndSaveFinnhubNews(source.config);
+                if (result.totalSaved > 0 || result.totalMerged > 0) hasNewArticles = true;
                 console.log(`[NewsSourceManager] Finnhub: ${result.totalFetched} fetched, ${result.totalSaved} saved, ${result.totalMerged} merged`);
                 // Обновляем last_fetch_at ТОЛЬКО при реальном fetch (не skip)
                 await query(`UPDATE news_sources SET last_fetch_at = NOW() WHERE id = $1`, [source.id]);
@@ -125,6 +129,10 @@ export class NewsSourceManager {
         } catch (err: any) {
           console.error(`[NewsSourceManager] Error processing ${source.name}:`, err.message);
         }
+      }
+
+      if (hasNewArticles) {
+        broadcastRefresh();
       }
 
       console.log('[NewsSourceManager] Cycle complete');
