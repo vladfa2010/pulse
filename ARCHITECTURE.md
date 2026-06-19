@@ -1,7 +1,7 @@
 # PULSE — Backend Architecture
 
 > Техническая документация backend'а. Логика, flow, принятие решений.
-> Последнее обновление: 2026-06-12 (v9.6.0 — TZ_DELETE_ACCOUNT full implementation)
+> Последнее обновление: 2026-06-19 (v10.0.0 — NewsFeed search + Keyword-First Pipeline)
 
 ---
 
@@ -27,6 +27,7 @@
 9g. [NewsFeed — фильтр по тегу](#9g-newsfeed--фильтр-по-тегу)
 9h. [Дублирующий GET endpoint](#9h-дублирующий-get-endpoint--данные-не-подтягивались)
 9i. [Tag Detail Modal — фиксы редактирования](#9i-tag-detail-modal--фиксы-редактирования-тега)
+9j. [NewsFeed — поиск по словам](#9j-newsfeed--поиск-по-словам)
 10. [API Design](#10-api-design)
 10a. [Daily Summary](#10a-daily-summary--ai-саммари-для-пользователя)
 11. [Cron Jobs](#11-cron-jobs)
@@ -1993,6 +1994,83 @@ if (value !== undefined && value !== null) {
 
 ---
 
+## 9j. NewsFeed — поиск по словам
+
+> **Дата:** 2026-06-19
+> **Коммиты:** `ed6af7c` (backend), `58bb368` (frontend)
+> **Файлы:** `backend/src/routes/news.ts`, `frontend/src/pages/NewsFeed.tsx`
+
+### Проблема
+
+Поисковое поле в `NewsFeed.tsx` работало только как клиентский `.filter()` по уже загруженным `title_ru`:
+
+```typescript
+const filtered = articles.filter(a => {
+  const matchSearch = !filter || a.title_ru.toLowerCase().includes(filter.toLowerCase())
+  return matchSearch
+})
+```
+
+Это означало:
+- Поиск не шёл на backend.
+- Искался только заголовок, не текст новости.
+- Если выбран тег — поиск ограничивался маленькой выборкой статей этого тега.
+- Для no-tags EN-новостей `title_ru` мог быть `null` — поиск по ним ломался.
+
+### Решение: backend-поиск
+
+Добавлен endpoint:
+
+```http
+GET /api/news/search?q={query}&tag={tagId}&page={page}&limit={limit}
+```
+
+| Параметр | Описание |
+|----------|----------|
+| `q` | Поисковый запрос (обязательный) |
+| `tag` | `tag_id` — искать только среди статей с этим тегом (опционально) |
+| `page` | Пагинация (default: 1) |
+| `limit` | Количество результатов (default: 50, max: 100) |
+
+Поиск идёт по четырём колонкам:
+
+```sql
+WHERE (
+  title_ru ILIKE '%query%' OR
+  title_original ILIKE '%query%' OR
+  summary_ru ILIKE '%query%' OR
+  summary_original ILIKE '%query%'
+)
+```
+
+Wildcards `%` и `_` в запросе пользователя экранируются, чтобы поиск вёл себя предсказуемо.
+
+### Frontend
+
+```typescript
+const loadArticlesSearch = (q: string, tagId: string | null) => {
+  const params = new URLSearchParams({ q: q.trim(), limit: '50' })
+  if (tagId) params.set('tag', tagId)
+  api.get(`/news/search?${params.toString()}`)
+    .then(data => setArticles(data.articles || []))
+}
+```
+
+- Поиск отправляется на backend с debounce 400ms.
+- Если поле поиска пустое — лента возвращается к обычному режиму (`/news?all=true` или `/news/tags/:tagId`).
+- Если выбран тег и введён поисковый запрос — ищется только внутри этого тега.
+
+### Режимы работы ленты
+
+| Выбор пользователя | Endpoint | Описание |
+|--------------------|----------|----------|
+| «Все» + пустой поиск | `GET /news?all=true` | Все новости |
+| «Все» + поиск | `GET /news/search?q=...` | Поиск по всем новостям |
+| Тег + пустой поиск | `GET /news/tags/{tagId}` | Новости по тегу |
+| Тег + поиск | `GET /news/search?q=...&tag={tagId}` | Поиск внутри тега |
+
+---
+
 ## 10. API Design
 
 ### News Feed Logic
@@ -2001,8 +2079,16 @@ if (value !== undefined && value !== null) {
 GET /api/news
 |---> Без параметров:   непрочитанные по тегам (default)
 |---> ?history=true:    все по тегам (read + unread)
-|---> ?global=true:     все новости (без фильтра тегов)
+|---> ?all=true:        все новости по тегам (read + unread) — страница /feed
+|---> ?global=true:     все новости (без фильтра тегов) — общая лента
 |---> ?limit=N:         пагинация (default: 50, max: 100)
+
+GET /api/news/tags/:tagId
+|---> Новости по конкретному тегу
+
+GET /api/news/search?q=...&tag=...&page=...&limit=...
+|---> Поиск по словам в title/summary
+|---> tag (опционально): ограничить поиск статьями с этим тегом
 ```
 
 ### News Detail Modal
