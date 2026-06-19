@@ -294,6 +294,100 @@ router.get('/tags/:tagId', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// GET /api/news/search — поиск по словам в title/summary
+// Параметры:
+//   ?q=текст     — обязательный поисковый запрос
+//   ?tag=tagId   — искать только внутри тега (опционально)
+//   ?page=N      — пагинация (default: 1)
+//   ?limit=N     — количество (default: 50, max: 100)
+// ═══════════════════════════════════════════════════════════════════════════
+router.get('/search', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const q = (req.query.q as string || '').trim();
+    const tagId = req.query.tag as string;
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
+    const offset = (page - 1) * limit;
+
+    if (!q) {
+      return res.json({ articles: [], total: 0, page, hasMore: false });
+    }
+
+    const timeFilter = timeFilterSql();
+    const likePattern = `%${escapeLikePattern(q)}%`;
+
+    let articles: any[];
+    let total: number;
+
+    if (USE_SQLITE) {
+      const tagCondition = tagId ? `matched_tags LIKE ? AND ` : '';
+      const tagParams = tagId ? [`%"${tagId}"%`] : [];
+      const searchCondition = `(LOWER(title_ru) LIKE LOWER(?) ESCAPE '\\' OR LOWER(title_original) LIKE LOWER(?) ESCAPE '\\' OR LOWER(summary_ru) LIKE LOWER(?) ESCAPE '\\' OR LOWER(summary_original) LIKE LOWER(?) ESCAPE '\\')`;
+
+      const where = `${tagCondition}${timeFilter} AND ${searchCondition}`;
+      const params = [...tagParams, likePattern, likePattern, likePattern, likePattern];
+
+      const countResult = await query(
+        `SELECT COUNT(*) as count FROM news WHERE ${where}`,
+        params
+      );
+      total = parseInt(countResult.rows[0]?.count || '0');
+
+      const result = await query(
+        `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags, tag_impact, source_count, all_sources
+         FROM news
+         WHERE ${where}
+         ORDER BY published_at DESC
+         LIMIT ? OFFSET ?`,
+        [...params, limit, offset]
+      );
+      articles = result.rows;
+    } else {
+      const tagCondition = tagId
+        ? `($1 = ANY(matched_tags) OR matched_tags @> ARRAY[$1]::text[]) AND `
+        : '';
+      const tagParams = tagId ? [tagId] : [];
+      const searchParamIndex = tagId ? '$2' : '$1';
+      const searchCondition = `(title_ru ILIKE ${searchParamIndex} ESCAPE '\\' OR title_original ILIKE ${searchParamIndex} ESCAPE '\\' OR summary_ru ILIKE ${searchParamIndex} ESCAPE '\\' OR summary_original ILIKE ${searchParamIndex} ESCAPE '\\')`;
+
+      const where = `${tagCondition}${timeFilter} AND ${searchCondition}`;
+      const params = [...tagParams, likePattern];
+
+      const countResult = await query(
+        `SELECT COUNT(*) as count FROM news WHERE ${where}`,
+        params
+      );
+      total = parseInt(countResult.rows[0]?.count || '0');
+
+      const result = await query(
+        `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags, tag_impact, source_count, all_sources
+         FROM news
+         WHERE ${where}
+         ORDER BY published_at DESC
+         LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+        [...params, limit, offset]
+      );
+      articles = result.rows;
+    }
+
+    res.json({
+      articles,
+      total,
+      page,
+      hasMore: offset + articles.length < total,
+    });
+  } catch (err: any) {
+    console.error('[News] Search error:', err.message, err.stack?.substring(0, 200));
+    res.status(500).json({ error: 'Failed to search news', details: err.message });
+  }
+});
+
+// Escape LIKE wildcards to treat user input as literal text
+function escapeLikePattern(q: string): string {
+  return q.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // GET /api/news/:id/tag-enrichments — enriched data для всех тегов новости
 // ═══════════════════════════════════════════════════════════════════════════
 // ⚠️ ДОЛЖЕН идти ДО /:id — иначе Express сопоставит "123/tag-enrichments"
