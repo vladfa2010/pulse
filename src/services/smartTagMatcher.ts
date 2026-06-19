@@ -415,15 +415,16 @@ For each article, rate sentiment on scale -10 to +10:
 
 Return ONLY a JSON object with "results" key containing an array (one object per article, in same order):
 {"results": [
-  {"score": 5, "reasoning": "Apple reported record earnings of $120B, beating forecasts by 25% on strong iPhone demand in China.\\n\\nFor Apple investors this signals continued services growth and strong Chinese market penetration, likely driving the stock higher in near-term trading sessions."}
+  {"score": 5, "reasoning": "Apple отчиталась о рекордной выручке в $120 млрд, превысив прогнозы на 25% благодаря сильному спросу на iPhone в Китае.\\n\\nДля инвесторов Apple это сигнализирует о продолжающемся росте сервисного сегмента и уверенных позициях на китайском рынке, что, вероятно, поддержит рост акций в ближайших торговых сессиях."}
 ]}
 
 Rules:
 1. Return EXACTLY ${batch.length} objects — same order as articles above
 2. Each reasoning: 2 paragraphs separated by \\n\\n. P1 = facts (what happened). P2 = investment significance (why it matters to investors).
-3. Consider ONLY investor perspective (layoff may be positive for investors = cost cutting)
-4. Lawsuits = always negative
-5. Return ONLY JSON, no markdown, no extra text`;
+3. **ALL reasoning MUST be in Russian**
+4. Consider ONLY investor perspective (layoff may be positive for investors = cost cutting)
+5. Lawsuits = always negative
+6. Return ONLY JSON, no markdown, no extra text`;
 
   const response = await llmRequestWithRetry(
     () => axios.post(
@@ -600,15 +601,16 @@ ${articlesText}
 
 Return ONLY a JSON object with "results" key. Each element in results is an array of tag impacts for that article, in SAME order as articles above:
 {"results": [
-  [{"tag":"tesla","score":-5,"reasoning":"Stock dropped"}, {"tag":"nvda","score":0,"reasoning":"No direct effect"}],
-  [{"tag":"apple","score":8,"reasoning":"Strong earnings"}]
+  [{"tag":"tesla","score":-5,"reasoning":"Акции упали на фоне слабых поставок"}, {"tag":"nvda","score":0,"reasoning":"Прямого влияния нет"}],
+  [{"tag":"apple","score":8,"reasoning":"Сильная отчётность превзошла прогнозы"}]
 ]}
 
 Rules:
 1. Return EXACTLY ${batch.length} inner arrays — same order as articles
 2. Each inner array must have one object per tag from that article
-3. Consider ONLY investor perspective
-4. Return ONLY JSON array, no markdown, no extra text`;
+3. **ALL reasoning MUST be in Russian**
+4. Consider ONLY investor perspective
+5. Return ONLY JSON array, no markdown, no extra text`;
 
   const response = await llmRequestWithRetry(
     () => axios.post(
@@ -747,13 +749,13 @@ For each article you MUST provide:
 
    MACRO (economy/politics) — score ALWAYS 0, sentiment "neutral". Detailed tag_impacts show WHO benefits/suffers.
 
-3. **reasoning** (3 paragraphs separated by \\n\\n):
+3. **reasoning** (3 paragraphs separated by \\n\\n, **ALL TEXT IN RUSSIAN**):
    Paragraph 1: What happened — factual summary (1-2 sentences)
    Paragraph 2: Direct investment impact — why it matters to holders of affected assets
    Paragraph 3: Secondary/cascade effects — implications for suppliers, competitors, and the broader sector
 
 4. **is_political** (true/false)
-5. **tag_impacts**: For EACH tag — impact + why (1 sentence with numbers)
+5. **tag_impacts**: For EACH tag — impact + why (1 sentence with numbers, **IN RUSSIAN**)
 
    Context-aware rules:
    - M&A: target = positive (+5..+10), acquirer = ambiguous (-2..+5)
@@ -765,12 +767,13 @@ Articles:
 ${articlesText}
 
 Return ONLY JSON with "results" array:
-{"results": [{"score": 5, "article_type": "micro", "reasoning": "Apple reported record Q3 earnings of $2.18 per share, beating analyst estimates by 15%. Revenue grew 8% year-over-year to $94.9 billion, driven by strong iPhone 16 sales.\\n\\nFor Apple shareholders this is a strong positive signal. The earnings beat validates the premium pricing strategy and suggests continued demand despite economic headwinds. Dividend safety is confirmed.\\n\\nCompetitors like Samsung face increased pressure to match Apple's performance. Suppliers (TSMC, Foxconn) benefit from higher orders. The broader tech sector may see positive sentiment spillover.", "is_political": false, "tag_impacts": [{"tag": "apple", "score": 8, "reasoning": "Earnings beat 15% above consensus"}]}]}
+{"results": [{"score": 5, "article_type": "micro", "reasoning": "Apple отчиталась о рекордной прибыли в $2.18 на акцию за Q3, превысив прогнозы аналитиков на 15%. Выручка выросла на 8% г/г до $94.9 млрд благодаря сильным продажам iPhone 16.\\n\\nДля акционеров Apple это сильный позитивный сигнал. Превышение прогнозов подтверждает стратегию премиального ценообразования и устойчивый спрос несмотря на экономические трудности. Дивиденды остаются надёжными.\\n\\nКонкуренты вроде Samsung столкнутся с давлением, чтобы соответствовать результатам Apple. Поставщики (TSMC, Foxconn) выиграют от увеличения заказов. Технологический сектор в целом может получить позитивный импульс.", "is_political": false, "tag_impacts": [{"tag": "apple", "score": 8, "reasoning": "Прибыль превысила прогнозы на 15%"}]}]}
 
 MANDATORY:
 - EXACTLY ${batch.length} objects
 - MICRO: full -10..+10 scale. MACRO: score ALWAYS 0
 - Reasoning MUST have 3 paragraphs separated by \\n\\n
+- **ALL reasoning and tag_impact reasoning MUST be in Russian**
 - Tag impacts MUST be context-aware
 - ONLY JSON, no markdown`;
 
