@@ -114,8 +114,10 @@ LLM оценивает новость как опытный инвестицио
 **API:** все `/api/news/*` endpoint'ы возвращают `sentiment_score`
 
 ### 2 уровня определения
-- L1: Keyword-based (быстро, без API) — `sentiment_source='keyword'`, score = ±5
-- L2: LLM через Kimi API — `sentiment_source='llm'`, score = −10..+10
+- **L1:** Keyword-based tag matching (быстро, без API) — ищет теги в тексте.
+- **L2:** LLM smart tag matching через Kimi API — для статей с тегами вызывается всегда (`forceLLM: true`) начиная с v10.0.
+- **L3:** Unified sentiment + tag impact через Kimi API — `sentiment_source='llm'`, score = −10..+10.
+- **`no-tags`:** Keyword pre-filter не нашёл тегов — статья сохраняется в сыром виде, LLM не вызывается (`sentiment_source='no-tags'`, sentiment = NULL).
 
 ### Legacy sentiment (backward compatibility)
 

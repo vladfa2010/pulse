@@ -1,9 +1,12 @@
 # PULSE — Теги и Статьи: Полная архитектура и спецификация
 
-> **Версия:** 9.0
-> **Дата:** 2026-06-04
+> **Версия:** 10.0
+> **Дата:** 2026-06-19
 > **Статус:** Production
-> **Файлы:** `cron.ts`, `smartTagMatcher.ts`, `enrichment.ts`, `index.ts`
+> **Файлы:** `newsProcessor.ts`, `smartTagMatcher.ts`, `tagManager.ts`, `index.ts`
+>
+> **⚠️ Актуальная документация по pipeline:** [PIPELINE.md](PIPELINE.md) v10.0 (Keyword-First Pipeline).
+> В этом файле сохраняются детали схемы, API и метрик; логический поток обработки отражён в PIPELINE.md.
 
 ---
 
@@ -75,6 +78,16 @@
 │  Max 3 попытки, 30 мин между retries                             │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+### 1.2 Keyword-First Pipeline (v10.0)
+
+Начиная с v10.0 перед Stage 2 добавлен **keyword pre-filter** на оригинальном тексте:
+
+- Статьи **с тегами** → полный pipeline (translate при необходимости → Layer 1 + Layer 2 `forceLLM` → Layer 3).
+- Статьи **без тегов** → сохраняются как `sentiment_source = 'no-tags'`, LLM не вызывается.
+- При создании/обновлении тега no-tags статьи "пробуждаются" (`needs_translation = TRUE`) для перепроверки.
+
+Подробная диаграмма и экономика токенов: [PIPELINE.md §1.1](PIPELINE.md#11-keyword-first-pipeline-v100--текущая-архитектура).
 
 ---
 
@@ -202,9 +215,10 @@ for (const [tagId, keywords] of userTags) {
 
 **Сложность:** O(T × K × L) где T — теги, K — keywords/тег, L — длина текста.
 
-#### Layer 2: LLM Smart Matching (expensive fallback)
+#### Layer 2: LLM Smart Matching (expensive)
 
-Срабатывает ТОЛЬКО если Layer 1 не нашёл теги. Отдельный LLM call.
+- **По умолчанию (fallback):** срабатывает только если Layer 1 не нашёл теги.
+- **Для статей с тегами (v10.0):** в `newsProcessor.ts` вызывается с `forceLLM: true`, поэтому Layer 2 отрабатывает всегда, позволяя LLM найти дополнительные смарт-теги поверх keyword matching.
 
 #### Layer 3: Hashtag Matching (0 токенов, external DB)
 
@@ -303,7 +317,9 @@ for (const [tagId, keywords] of userTags) {
 
 ### 4.2 Layer 2: LLM Smart Matching
 
-**Когда срабатывает:** Только если Layer 1 вернул пустой результат.
+**Когда срабатывает:**
+- По умолчанию — только если Layer 1 вернул пустой результат (fallback).
+- В `newsProcessor.ts` (v10.0) — всегда для статей с тегами через `smartMatchTags(..., { forceLLM: true })`.
 
 **Стоимость:** ~$0.002-0.005 за статью.
 
@@ -570,7 +586,8 @@ LIMIT 50;
 | `'llm-parse'` | JSON.parse упал | 1 | Невалидный JSON от LLM |
 | `'llm-empty'` | Пустой results[] | 1 | LLM вернул пустой массив |
 | `'llm-error'` | Другая ошибка | 1 | Любая другая ошибка |
-| `'keyword'` | Нет тегов | 1 | Layer 1 не нашёл теги, LLM не вызывался |
+| `'keyword'` | Translate упал, sentiment fallback | 1 | Translate не сработал, sentiment keyword-only |
+| `'no-tags'` | **v10.0:** keyword pre-filter не нашёл тегов | 1 | Статья сохранена в сыром виде, LLM не вызывался |
 
 #### `article_type` — тип статьи
 
@@ -621,6 +638,7 @@ LIMIT 50;
 | `llm-parse` | JSON.parse упал | Да (deferred) | Two-pass parsing |
 | `llm-empty` | Пустой results[] | Да (deferred) | Проверить prompt |
 | `llm-error` | Другая ошибка | Да (deferred) | Логировать |
+| `no-tags` | **v10.0:** keyword pre-filter не нашёл тегов | Нет (wake-up при создании тега) | Не ошибка — экономия токенов |
 
 ### 9.2 Populate ошибки (enrichment)
 

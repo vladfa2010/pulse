@@ -1,9 +1,11 @@
-# PULSE — Полный пайплайн обработки новости (v9.0)
+# PULSE — Полный пайплайн обработки новости (v10.0)
 
-> **Версия:** 9.1 (kimi-k2.5 + Cron Freeze Runbook)
-> **Дата:** 2026-06-05
-> **Файлы:** `cron.ts`, `smartTagMatcher.ts`, `enrichment.ts`, `index.ts`
-> **LLM Model:** `kimi-k2.5` (default)
+> **Версия:** 10.0 (Keyword-First Pipeline)
+> **Дата:** 2026-06-19
+> **Файлы:** `newsProcessor.ts`, `smartTagMatcher.ts`, `tagManager.ts`, `index.ts`, `GlobalNewsCarousel.tsx`
+> **LLM Model:** `moonshot-v1-32k` (default, env override)
+>
+> **Ключевое изменение v10.0:** Перед любыми LLM-вызовами запускается keyword pre-filter на оригинальном тексте (0 токенов). Статьи без совпадений сохраняются в сыром виде (`sentiment_source = 'no-tags'`) и пропускают translate + Layer 2 + Layer 3. Статьи с тегами проходят полный pipeline, включая Layer 2 (force LLM).
 
 ---
 
@@ -133,7 +135,7 @@ index.ts (/health)  →  moonshot-v1-32k  (default display)
 
 ---
 
-## 1. ОБЗОР АРХИТЕКТУРЫ
+## 1. ОБЗОР АРХИТЕКТУРЫ (legacy diagram — see 1.1 for v10.0)
 
 ```
 RSS Feed / External DB → Новость (title, summary, hashtags?)
@@ -226,6 +228,74 @@ RSS Feed / External DB → Новость (title, summary, hashtags?)
 
 ---
 
+## 1.1 KEYWORD-FIRST PIPELINE (v10.0) — ТЕКУЩАЯ АРХИТЕКТУРА
+
+Диаграмма выше (раздел 1) описывает общий поток. Начиная с v10.0 между Stage 1 и Stage 2 добавлен **keyword pre-filter**, который решает, пойдёт ли статья через LLM.
+
+```
+raw article (needs_translation = TRUE)
+    │
+    ▼
+┌─────────────────────────────────────────┐
+│ KEYWORD PRE-FILTER                      │
+│ matchTagsByKeywords(title_original +    │
+│   summary_original)                     │
+│ 0 tokens, fast                          │
+└────────────────────┬────────────────────┘
+                     │
+        ┌────────────┴────────────┐
+        │                         │
+   tags found                 no tags
+        │                         │
+        ▼                         ▼
+┌───────────────┐         ┌───────────────┐
+│ FULL PIPELINE │         │ NO-TAGS SKIP  │
+│ • translate   │         │ sentiment_    │
+│ • Layer 1+2   │         │   source =    │
+│ • Layer 3     │         │   'no-tags'   │
+└───────────────┘         └───────────────┘
+```
+
+### Почему это важно
+
+| Путь | Translate | Layer 2 | Layer 3 | Расход |
+|------|-----------|---------|---------|--------|
+| **Старый (v9.x)** | Все EN | fallback при пустом L1 | Все статьи | Высокий |
+| **Новый (v10.0)** | Только статьи с тегами | Только статьи с тегами (force) | Только статьи с тегами | **Низкий** |
+| **No-tags** | Нет | Нет | Нет | **$0** |
+
+### Код
+
+```typescript
+// newsProcessor.ts → processRawArticlesLocked()
+const withTags: RawArticle[] = [];
+const withoutTags: RawArticle[] = [];
+
+for (const article of rawArticles) {
+  const hasPreMatched = (article.matched_tags || []).length > 0;
+  let keywordTags: string[] = [];
+  if (!hasPreMatched) {
+    const text = `${article.title_original || ''} ${article.summary_original || ''}`;
+    keywordTags = await matchTagsByKeywords(text);
+  }
+
+  if (hasPreMatched || keywordTags.length > 0) {
+    (article as any)._keywordTags = [...new Set([...(article.matched_tags || []), ...keywordTags])];
+    withTags.push(article);
+  } else {
+    withoutTags.push(article);
+  }
+}
+```
+
+### Особенности
+
+- **Finnhub:** статьи от Finnhub уже содержат `matched_tags` по тикеру, поэтому проходят pre-filter автоматически.
+- **RSS EN:** keyword matching работает на оригинальном английском тексте. Для покрытия важно, чтобы у тегов были английские синонимы / ticker (генерируются автоматически при создании тега через `enrichTagViaLLM`).
+- **RSS RU:** matching работает на русских keywords без перевода.
+
+---
+
 ## 2. STAGE 1: DEDUPLICATION
 
 ### Ключ дедупликации
@@ -260,6 +330,10 @@ ON CONFLICT (content_hash) DO UPDATE
 ## 3. STAGE 2: TAG MATCHING
 
 ### Layer 1: Keyword Matching (0 токенов)
+Запускается **дважды**:
+1. В `newsProcessor.ts` как **pre-filter** на оригинальном тексте — решает, идёт ли статья в LLM pipeline.
+2. Внутри `smartMatchTags()` как часть полного pipeline для статей с тегами.
+
 ```typescript
 const userTags = tagManager.getEnrichedKeywords();
 for (const [tagId, keywords] of userTags) {
@@ -270,7 +344,13 @@ for (const [tagId, keywords] of userTags) {
 ```
 
 ### Layer 2: LLM Smart Matching (expensive)
-Срабатывает только если Layer 1 не нашёл теги.
+- **По умолчанию:** срабатывает только если Layer 1 не нашёл теги (fallback).
+- **Для статей с тегами (v10.0):** вызывается всегда через `smartMatchTags(..., { forceLLM: true })`. Это позволяет LLM найти дополнительные смарт-теги, даже когда keyword matching уже что-то нашёл.
+
+```typescript
+// newsProcessor.ts → matchTags()
+const tags = await smartMatchTags(title, summary, { forceLLM: true });
+```
 
 ### External DB: Hashtag Matching (0 токенов, будущее)
 ```typescript
@@ -489,18 +569,52 @@ LIMIT 50;
 
 ---
 
-## 7. КЛАССИФИКАЦИЯ ОШИБОК (sentiment_source)
+## 7. КЛАССИФИКАЦИЯ СОСТОЯНИЙ (sentiment_source)
 
-| Значение | Когда | enrichment_version |
-|----------|-------|-------------------|
-| `'llm'` | Успех, полный batch | 2 (если populate сработал) |
-| `'llm-partial'` | Успех, неполный batch | 2 (если populate сработал) |
-| `'llm-timeout'` | ETIMEDOUT | 1 или NULL |
-| `'llm-rate-limit'` | 429 | 1 или NULL |
-| `'llm-parse'` | JSON.parse упал | 1 или NULL |
-| `'llm-empty'` | Пустой results[] | 1 или NULL |
-| `'llm-error'` | Другая ошибка | 1 или NULL |
-| `'keyword'` | Нет тегов — LLM не вызывался | 1 или NULL |
+| Значение | Когда | enrichment_version | LLM вызовы |
+|----------|-------|-------------------|------------|
+| `'llm'` | Успех, полный batch | 2 (если populate сработал) | ✅ translate + L2 + L3 |
+| `'llm-partial'` | Успех, неполный batch | 2 (если populate сработал) | ✅ translate + L2 + L3 |
+| `'llm-timeout'` | ETIMEDOUT | 1 или NULL | ✅ (упал) |
+| `'llm-rate-limit'` | 429 | 1 или NULL | ✅ (упал) |
+| `'llm-parse'` | JSON.parse упал | 1 или NULL | ✅ (упал) |
+| `'llm-empty'` | Пустой results[] | 1 или NULL | ✅ (упал) |
+| `'llm-error'` | Другая ошибка | 1 или NULL | ✅ (упал) |
+| `'keyword'` | Translate упал, sentiment fallback | 1 или NULL | ❌ translate |
+| `'no-tags'` | **v10.0:** keyword pre-filter не нашёл тегов | 1 или NULL | ❌ **ни одного** |
+
+### `no-tags` — специальное состояние
+
+- Статья сохранена в БД в сыром виде.
+- `needs_translation = FALSE` — процессор не трогает её повторно.
+- `sentiment = NULL`, `sentiment_score = NULL`, `sentiment_reasoning = NULL` — нет фейкового нейтрального сентимента.
+- `matched_tags = '{}'`, `tag_impact = '[]'`.
+- В Global carousel отображается `title_original` (EN) или `title_ru` (RU), sentiment badge не показывается (`sentiment_source !== 'llm'`).
+
+---
+
+## 7.1 NO-TAGS WAKE-UP (при добавлении/обновлении тега)
+
+Когда пользователь создаёт или обновляет тег, статьи с `sentiment_source = 'no-tags'` автоматически возвращаются в очередь на обработку — они могут подходить под новый тег.
+
+```typescript
+// tagManager.ts
+export async function wakeUpNoTagsArticles(): Promise<number> {
+  const result = await query(
+    `UPDATE news
+     SET needs_translation = TRUE
+     WHERE sentiment_source = 'no-tags'
+       AND (matched_tags IS NULL OR matched_tags = '{}')
+     RETURNING id`,
+    []
+  );
+  return result.rows.length;
+}
+```
+
+Вызовы:
+- `createUserTag()` — после INSERT нового тега.
+- `PUT /admin/tags/:tagId` — если изменились `keywords`, `ticker`, `synonyms_ru`, `synonyms_en` или `key_products`.
 
 ---
 
@@ -562,6 +676,17 @@ cron.schedule('*/10 * * * *', async () => {
 | batch_size | 5 | > 5 |
 | llm-timeout | 0 | > 5 |
 | **enrichment_version=2 / total_llm** | **> 90%** | **< 50%** |
+| **no-tags / total_processed** | **высокий % = экономия** | — |
+
+### Проверка no-tags (экономия токенов)
+```sql
+-- Сколько статей пропущено без LLM
+SELECT 
+  COUNT(*) FILTER (WHERE sentiment_source = 'no-tags') as no_tags,
+  COUNT(*) FILTER (WHERE sentiment_source LIKE 'llm%') as llm_processed,
+  COUNT(*) as total
+FROM news;
+```
 
 ### Проверка enrichment
 ```sql
@@ -572,13 +697,6 @@ SELECT
 FROM news;
 ```
 
----
-
-*Документ создан: 2026-06-02*
-*Версия 9.0 — Article Enrichment v3.0 (news_tag_links, гибридное хранилище)*
-*Версия 9.1 — переключение на kimi-k2.5, добавлен runbook CRON FREEZE*
-
-> **⚠️ ВАЖНО: Пос
 ---
 
 ## 11. SQL BEST PRACTICES
@@ -621,7 +739,37 @@ UPDATE tags SET keywords = CASE WHEN $2 IS NOT NULL THEN $2 ELSE keywords END WH
 
 ---
 
-*Документ создан: 2026-06-02*
-*Версия 9.2 — добавлен SQL Best Practices (COALESCE rule)*
-*Версия 9.1 — переключение на kimi-k2.5, добавлен runbook CRON FREEZE*
-*Версия 9.0 — Article Enrichment v3.0 (news_tag_links, гибридное хранилище)*
+## 12. FRONTEND: ОТОБРАЖЕНИЕ NO-TAGS НОВОСТЕЙ (v10.0)
+
+### Global carousel
+
+Global carousel (`GlobalNewsCarousel.tsx`) показывает **все** новости, включая без тегов. Если `title_ru` отсутствует (например, no-tags EN-новость), отображается `title_original`.
+
+```tsx
+// NewsCard.tsx
+<h3>{article.title_ru || article.title_original || '(без заголовка)'}</h3>
+```
+
+### Sentiment badge
+
+Sentiment badge показывается **только** для статей с `sentiment_source === 'llm' || sentiment_source === 'llm-partial'`. Для `no-tags` и `keyword` fallback badge не отображается.
+
+```tsx
+const hasRealSentiment = article.sentiment_source === 'llm' || article.sentiment_source === 'llm-partial'
+```
+
+### Изменённые файлы frontend
+
+- `pulse-frontend/src/components/GlobalNewsCarousel.tsx` — расширен интерфейс `NewsArticle`.
+- `pulse-frontend/src/components/NewsCard.tsx` — уже поддерживал `title_original` и условный sentiment badge.
+
+---
+
+## 13. ИСТОРИЯ ВЕРСИЙ
+
+| Версия | Дата | Что изменилось |
+|--------|------|----------------|
+| 9.0 | 2026-06-02 | Article Enrichment v3.0 (`news_tag_links`) |
+| 9.1 | 2026-06-05 | Переключение на `kimi-k2.5`, CRON FREEZE runbook |
+| 9.2 | 2026-06-05 | SQL Best Practices (COALESCE rule) |
+| **10.0** | **2026-06-19** | **Keyword-First Pipeline: pre-filter, no-tags skip, force LLM для статей с тегами, no-tags wake-up** |
