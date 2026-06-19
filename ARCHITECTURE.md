@@ -2110,8 +2110,9 @@ GET /api/news/stream
 ### News Detail Modal
 
 Модальное окно при клике на карточку новости. Заменяет `window.open(url)`.
+Используется в каруселях на главной (`Home.tsx`) и в ленте (`NewsFeed.tsx`).
 
-**Endpoint'ы:**
+**Endpoint'ы:
 ```
 GET /api/news/:id              — детали статьи (title, summary, sentiment, tag_impact...)
 GET /api/news/:id/tag-enrichments  — enriched_data для всех тегов статьи

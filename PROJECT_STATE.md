@@ -46,6 +46,11 @@
 - `GET /api/news?history=true&page=N` — карусель 2 (прочитанные по тегам, DESC, infinite scroll)
 - `GET /api/news/global?page=N` — карусель 3 (все новости, infinite scroll, публичный)
 - `GET /api/news/stream` — SSE поток: backend рассылает `refresh` при появлении новых статей
+- `GET /api/news?all=true` — страница /news (все новости по тегам пользователя)
+- `GET /api/news/search?q=...&tag=...` — поиск по новостям в /news
+- `GET /api/news/:id` — детали статьи для NewsDetailModal
+- `GET /api/news/:id/tag-enrichments` — enriched данные по тегам статьи
+- `POST /api/news/:id/read` — отметить статью прочитанной
 - `GET /sentiment-stats?userId={uuid}&days={N}` — дельта сантимента по тегам
 - `GET /sentiment-total?days={N}` — общая дельта всех новостей
 - `GET /source-stats` — статистика по источникам RSS

@@ -877,8 +877,9 @@ tagVersion++ в AuthContext
 | **URL** | `/news` — через React Router | Нет отдельного URL, часть `/` |
 | **Открытие** | Клик на теге → `navigate('/news')` | Выбор тега в портфолио → фильтр внутри Home |
 | **Вид** | Вертикальный список статей | 3 горизонтальные прокрутки |
-| **API** | СВОЙ endpoint (если нужен) | `GET /api/news`, `?history=true`, `/api/news/global` |
-| **Компоненты** | `NewsFeed.tsx` | `UnreadNewsCarousel.tsx`, `AllNewsCarousel.tsx`, `GlobalNewsCarousel.tsx` |
+| **API** | `GET /api/news?all=true`, `GET /api/news/search`, `GET /api/news/tags/:tagId`, `POST /api/news/:id/read` | `GET /api/news`, `?history=true`, `/api/news/global` |
+| **Компоненты** | `NewsFeed.tsx`, `NewsDetailModal.tsx` | `UnreadNewsCarousel.tsx`, `AllNewsCarousel.tsx`, `GlobalNewsCarousel.tsx` |
+| **Клик по карточке** | Открывает `NewsDetailModal` (детали + теги + сантимент) | Открывает `NewsDetailModal` (тот же компонент) |
 | **Назначение** | Подробный просмотр новостей по тегу | Быстрый обзор на главной |
 
 ### Архитектура (две независимые системы)
