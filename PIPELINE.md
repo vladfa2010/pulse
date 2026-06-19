@@ -364,6 +364,13 @@ const matchedTags = mapHashtagsToTags(hashtags);  // ["сбер", "россия"
 
 ## 4. STAGE 3: LLM UNIFIED BATCH
 
+### Язык reasoning (v10.0+)
+
+Начиная с v10.0 все поля `reasoning` и `tag_impact[].reasoning` генерируются **на русском языке**. В prompt явно указано: `"ALL reasoning and tag_impact reasoning MUST be in Russian"`.
+
+- Это увеличивает время ответа, но не критично для cron-процессора.
+- Пользователь видит обоснование сентимента и влияния тегов на русском.
+
 ### LLM Model: `kimi-k2.5` (since 2026-06-05)
 
 | Параметр | `moonshot-v1-32k` (legacy) | `kimi-k2.5` (default) |
