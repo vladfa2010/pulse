@@ -2091,6 +2091,22 @@ GET /api/news/search?q=...&tag=...&page=...&limit=...
 |---> tag (опционально): ограничить поиск статьями с этим тегом
 ```
 
+### Real-time Updates (SSE)
+
+```
+GET /api/news/stream
+|---> text/event-stream
+|---> event: connected — начальное приветствие
+|---> event: ping      — heartbeat каждые 30s
+|---> event: refresh   — NewsSourceManager сохранил новые статьи
+```
+
+- `NewsSourceManager.run()` выставляет флаг `hasNewArticles`, если RSS/Finnhub сохранили статьи.
+- По завершении цикла вызывается `broadcastRefresh()` → всем подписчикам шлётся `event: refresh`.
+- Frontend `useSseNews.ts` подключается к потоку на `Home.tsx` для всех пользователей.
+- При получении `refresh` вызывается `queryClient.refetchQueries()` для активных каруселей:
+  `globalNews`, `unreadNews`, `historyNews`.
+
 ### News Detail Modal
 
 Модальное окно при клике на карточку новости. Заменяет `window.open(url)`.

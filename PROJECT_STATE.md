@@ -45,6 +45,7 @@
 - `GET /api/news` — карусель 1 (непрочитанные по тегам)
 - `GET /api/news?history=true&page=N` — карусель 2 (прочитанные по тегам, DESC, infinite scroll)
 - `GET /api/news/global?page=N` — карусель 3 (все новости, infinite scroll, публичный)
+- `GET /api/news/stream` — SSE поток: backend рассылает `refresh` при появлении новых статей
 - `GET /sentiment-stats?userId={uuid}&days={N}` — дельта сантимента по тегам
 - `GET /sentiment-total?days={N}` — общая дельта всех новостей
 - `GET /source-stats` — статистика по источникам RSS
@@ -59,7 +60,7 @@ Phase 2: Translate EN→RU (Kimi API, moonshot-v1-32k)
 Phase 3a: BATCH SENTIMENT (v7.13) — 10 статей/LLM-запрос, score -10..+10 + reasoning
 Phase 3b: Smart Tag Matching (3-layer: keywords → LLM → related)
 Phase 3c: BATCH TAG IMPACT (v7.14) — 10 статей/LLM-запрос, impact per tag
-Phase 4: Save (INSERT ON CONFLICT content_hash) → SSE broadcast
+Phase 4: Save (INSERT ON CONFLICT content_hash) → SSE `refresh` broadcast
 ```
 
 **Batch Processing (v7.13-7.14):**
@@ -82,6 +83,26 @@ Phase 4: Save (INSERT ON CONFLICT content_hash) → SSE broadcast
 **Ограничение:** max 100 свежих статей за цикл.
 
 **Скорость:** ~15-25 секунд на весь batch (v7.14+, batch mode)
+
+---
+
+## 4a. Real-time Updates (SSE)
+
+Когда `NewsSourceManager` сохраняет новые статьи, backend рассылает `refresh` через SSE.
+
+```
+GET /api/news/stream
+  ├── event: connected
+  ├── event: ping          (heartbeat каждые 30s)
+  └── event: refresh       (когда появились новые статьи)
+```
+
+Frontend (`useSseNews.ts`) слушает поток и вызывает `refetchQueries` для:
+- `['globalNews']` — Общая лента
+- `['unreadNews']` — Это вы ещё не видели
+- `['historyNews']` — Вся лента
+
+SSE включён для всех пользователей, в том числе незалогиненных (для «Общей ленты»).
 
 ---
 
