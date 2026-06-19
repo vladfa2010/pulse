@@ -15,7 +15,7 @@
 
 import { query } from '../config/db';
 import { translateBatch } from './translate';
-import { smartMatchTags, analyzeUnifiedBatch, UnifiedResult } from './smartTagMatcher';
+import { smartMatchTags, analyzeUnifiedBatch, UnifiedResult, matchTagsByKeywords } from './smartTagMatcher';
 
 const INSTANCE_ID = `${process.env.HOSTNAME || 'unknown'}-${Date.now()}`;
 const SQL_NOW = "NOW()";
@@ -61,21 +61,52 @@ async function processRawArticlesLocked(): Promise<void> {
   const ruCount = rawArticles.filter(a => a.lang_original === 'ru').length;
   console.log(`[NewsProcessor] Processing ${rawArticles.length} articles (EN:${enCount}, RU:${ruCount})`);
 
-  // 2. Translate — best effort, не блокирует sentiment
-  try {
-    await translateArticles(rawArticles);
-  } catch (err: any) {
-    console.log('[NewsProcessor] Translate skipped (API unavailable), continuing with sentiment');
+  // 1. Fast keyword pre-filter on ORIGINAL text — 0 tokens.
+  //    Only articles with at least one user-defined tag go through LLM.
+  const withTags: RawArticle[] = [];
+  const withoutTags: RawArticle[] = [];
+
+  for (const article of rawArticles) {
+    const hasPreMatched = (article.matched_tags || []).length > 0;
+    let keywordTags: string[] = [];
+    if (!hasPreMatched) {
+      const text = `${article.title_original || ''} ${article.summary_original || ''}`;
+      keywordTags = await matchTagsByKeywords(text);
+    }
+
+    if (hasPreMatched || keywordTags.length > 0) {
+      (article as any)._keywordTags = [...new Set([...(article.matched_tags || []), ...keywordTags])];
+      withTags.push(article);
+    } else {
+      withoutTags.push(article);
+    }
   }
 
-  // 3. Tag matching — ВСЕГДА
-  const matchedTagsList = await matchTags(rawArticles);
+  console.log(`[NewsProcessor] Tag pre-filter: withTags=${withTags.length}, withoutTags=${withoutTags.length}`);
 
-  // 4. Sentiment analysis — ВСЕГДА, даже если translate упал
-  const sentimentResults = await analyzeSentiment(rawArticles, matchedTagsList);
+  // 2. Articles WITH tags: translate -> Layer 1/2 smart tags -> Layer 3 sentiment
+  if (withTags.length > 0) {
+    // Translate — best effort, не блокирует sentiment
+    try {
+      await translateArticles(withTags);
+    } catch (err: any) {
+      console.log('[NewsProcessor] Translate skipped (API unavailable), continuing with sentiment');
+    }
 
-  // 5. UPDATE — needs_translation = FALSE
-  await saveProcessedArticles(rawArticles, matchedTagsList, sentimentResults);
+    // Tag matching — Layer 1 + Layer 2 (force LLM even when Layer 1 found tags)
+    const matchedTagsList = await matchTagsWithLLM(withTags);
+
+    // Sentiment analysis — для статей с тегами
+    const sentimentResults = await analyzeSentiment(withTags, matchedTagsList);
+
+    // UPDATE — needs_translation = FALSE
+    await saveProcessedArticles(withTags, matchedTagsList, sentimentResults);
+  }
+
+  // 3. Articles WITHOUT tags: save raw, skip all LLM. Rechecked when new tags are added.
+  if (withoutTags.length > 0) {
+    await markNoTags(withoutTags);
+  }
 
   console.log(`[NewsProcessor] Done: ${rawArticles.length} articles processed`);
 }
@@ -139,15 +170,15 @@ async function translateArticles(articles: RawArticle[]): Promise<void> {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Tag Matching
+// Tag Matching (Layer 1 + Layer 2 LLM, forced even if Layer 1 found tags)
 // ═══════════════════════════════════════════════════════════════════════════
-async function matchTags(articles: RawArticle[]): Promise<string[][]> {
+async function matchTagsWithLLM(articles: RawArticle[]): Promise<string[][]> {
   const results: string[][] = [];
   for (const article of articles) {
     const title = (article as any).title_ru || article.title_original || '';
     const summary = (article as any).summary_ru || article.summary_original || '';
-    const tags = await smartMatchTags(title, summary);
-    const merged = [...new Set([...(article.matched_tags || []), ...tags])];
+    const tags = await smartMatchTags(title, summary, { forceLLM: true });
+    const merged = [...new Set([...((article as any)._keywordTags || []), ...tags])];
     results.push(merged);
   }
   return results;
@@ -387,6 +418,39 @@ async function saveProcessedArticles(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// No-tags: save raw, skip all LLM. Rechecked when new tags are added.
+// ═══════════════════════════════════════════════════════════════════════════
+async function markNoTags(articles: RawArticle[]): Promise<void> {
+  let updated = 0;
+  for (const a of articles) {
+    try {
+      await query(`
+        UPDATE news
+        SET needs_translation = FALSE,
+            sentiment_source = 'no-tags',
+            sentiment = NULL,
+            sentiment_score = NULL,
+            sentiment_reasoning = NULL,
+            matched_tags = '{}',
+            tag_impact = '[]',
+            is_political = FALSE,
+            article_type = 'micro',
+            llm_error = NULL,
+            llm_attempts = NULL,
+            llm_raw_preview = NULL,
+            llm_batch_size = NULL,
+            llm_results_count = NULL
+        WHERE id = $1
+      `, [a.id]);
+      updated++;
+    } catch (err: any) {
+      console.error(`[NewsProcessor] markNoTags failed for ${a.id}:`, err.message);
+    }
+  }
+  console.log(`[NewsProcessor] Marked no-tags: ${updated}/${articles.length}`);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Cron Lock (local copy — self-contained module)
 // ═══════════════════════════════════════════════════════════════════════════
 async function acquireCronLock(jobName: string): Promise<boolean> {
@@ -423,3 +487,42 @@ async function releaseCronLock(jobName: string): Promise<void> {
     console.error(`[CronLock] Release error: ${err.message?.slice(0, 100)}`);
   }
 }
+
+/*
+═══════════════════════════════════════════════════════════════════════════════
+LEGACY PIPELINE — commented out 2026-06-18
+Old flow: translate -> tag matching -> sentiment for ALL articles.
+Preserved for reference / rollback.
+═══════════════════════════════════════════════════════════════════════════════
+
+async function processRawArticlesLocked_LEGACY(): Promise<void> {
+  const BATCH_SIZE = 50;
+
+  const rawArticles = await selectRawArticles(BATCH_SIZE);
+  if (rawArticles.length === 0) {
+    console.log('[NewsProcessor] No raw articles to process');
+    return;
+  }
+  const enCount = rawArticles.filter(a => a.lang_original === 'en').length;
+  const ruCount = rawArticles.filter(a => a.lang_original === 'ru').length;
+  console.log(`[NewsProcessor] Processing ${rawArticles.length} articles (EN:${enCount}, RU:${ruCount})`);
+
+  // 2. Translate — best effort, не блокирует sentiment
+  try {
+    await translateArticles(rawArticles);
+  } catch (err: any) {
+    console.log('[NewsProcessor] Translate skipped (API unavailable), continuing with sentiment');
+  }
+
+  // 3. Tag matching — ВСЕГДА
+  const matchedTagsList = await matchTags(rawArticles);
+
+  // 4. Sentiment analysis — ВСЕГДА, даже если translate упал
+  const sentimentResults = await analyzeSentiment(rawArticles, matchedTagsList);
+
+  // 5. UPDATE — needs_translation = FALSE
+  await saveProcessedArticles(rawArticles, matchedTagsList, sentimentResults);
+
+  console.log(`[NewsProcessor] Done: ${rawArticles.length} articles processed`);
+}
+*/

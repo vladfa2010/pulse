@@ -277,17 +277,19 @@ Response format: ["tag1", "tag2"] or []`;
 export async function smartMatchTags(
   title: string,
   summary: string,
-  options: { useLLM?: boolean } = {}
+  options: { useLLM?: boolean; forceLLM?: boolean } = {}
 ): Promise<string[]> {
   const fullText = `${title} ${summary}`;
 
   // Layer 1: Keyword matching (user-defined tags from DB) — всегда выполняем
   const keywordTags = await matchTagsByKeywords(fullText);
 
-  // Layer 2: LLM matching — ТОЛЬКО если Layer 1 ничего не нашёл (оптимизация)
-  // Обогащённые keywords в Layer 1 покрывают ~85-90% случаев
+  // Layer 2: LLM matching — по умолчанию ТОЛЬКО если Layer 1 ничего не нашёл (оптимизация).
+  // forceLLM=true вызывает Layer 2 даже при непустом Layer 1 (полный pipeline для статей с тегами).
   let llmTags: string[] = [];
-  if (keywordTags.length === 0 && options.useLLM !== false && KIMI_API_KEY) {
+  const shouldUseLLM = options.useLLM !== false && KIMI_API_KEY;
+  const needLLM = keywordTags.length === 0 || options.forceLLM === true;
+  if (needLLM && shouldUseLLM) {
     const availableTags = await getAllTagNames();
     llmTags = await callLLMForTags(title, summary, availableTags);
   }

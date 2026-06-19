@@ -2073,6 +2073,18 @@ app.put('/admin/tags/:tagId', requireAdmin, async (req, res) => {
       sector: ed.sector || null,
     };
 
+    // If keywords or keyword-relevant enriched data changed, wake up articles
+    // previously skipped as 'no-tags' so they can be re-checked.
+    const keywordsAffected =
+      updates.keywords !== undefined ||
+      ['ticker', 'synonyms_ru', 'synonyms_en', 'key_products'].some(f => updates[f] !== undefined);
+    if (keywordsAffected) {
+      const { wakeUpNoTagsArticles } = await import('./services/tagManager');
+      wakeUpNoTagsArticles().catch((err: any) => {
+        console.error('[AdminTags] wakeUpNoTagsArticles error:', err.message);
+      });
+    }
+
     res.json({
       success: true,
       updated_fields: Object.keys(updates),

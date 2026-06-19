@@ -401,6 +401,12 @@ export async function createUserTag(userId: string, tagId: string, tagName: stri
       [tagId, tagName, finalType, keywords, enrichment ? JSON.stringify(enrichment) : null, userId]
     );
 
+    // Wake up articles that were previously skipped due to no tags.
+    // They will be re-checked by the news processor against the new tag.
+    wakeUpNoTagsArticles().catch((err: any) => {
+      console.error('[TagManager] wakeUpNoTagsArticles error:', err.message);
+    });
+
     // Добавляем в портфель пользователя
     await query(
       `INSERT INTO portfolios (user_id, tag_id, tag_name, tag_type)
@@ -472,5 +478,30 @@ export async function getAllTagNames(): Promise<string[]> {
     return result.rows.map((row: any) => row.tag_id);
   } catch {
     return [];
+  }
+}
+
+/**
+ * Wake up articles previously marked as 'no-tags' so the news processor
+ * can re-check them against newly created/updated tags.
+ */
+export async function wakeUpNoTagsArticles(): Promise<number> {
+  try {
+    const result = await query(
+      `UPDATE news
+       SET needs_translation = TRUE
+       WHERE sentiment_source = 'no-tags'
+         AND (matched_tags IS NULL OR matched_tags = '{}')
+       RETURNING id`,
+      []
+    );
+    const count = result.rows.length;
+    if (count > 0) {
+      console.log(`[TagManager] Woke up ${count} no-tags articles for re-check`);
+    }
+    return count;
+  } catch (err: any) {
+    console.error('[TagManager] wakeUpNoTagsArticles error:', err.message);
+    return 0;
   }
 }
