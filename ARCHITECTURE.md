@@ -2080,7 +2080,7 @@ GET /api/news
 |---> Без параметров:   непрочитанные по тегам (default)
 |---> ?history=true:    все по тегам (read + unread)
 |---> ?all=true:        все новости по тегам (read + unread) — страница /feed
-|---> ?global=true:     все новости (без фильтра тегов) — общая лента
+|---> /global:          все новости (без фильтра тегов, публичный) — общая лента
 |---> ?limit=N:         пагинация (default: 50, max: 100)
 
 GET /api/news/tags/:tagId
@@ -2156,7 +2156,7 @@ WHERE matched_tags && $1::text[]
 ORDER BY published_at DESC
 LIMIT 50;
 
--- Global (?global=true)
+-- Global (/api/news/global)
 SELECT * FROM news
 WHERE published_at > NOW() - INTERVAL '90 days'
 ORDER BY published_at DESC

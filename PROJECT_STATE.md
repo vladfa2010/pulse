@@ -44,7 +44,7 @@
 **API endpoints:**
 - `GET /api/news` — карусель 1 (непрочитанные по тегам)
 - `GET /api/news?history=true&page=N` — карусель 2 (прочитанные по тегам, DESC, infinite scroll)
-- `GET /api/news?global=true&page=N` — карусель 3 (все новости, infinite scroll)
+- `GET /api/news/global?page=N` — карусель 3 (все новости, infinite scroll, публичный)
 - `GET /sentiment-stats?userId={uuid}&days={N}` — дельта сантимента по тегам
 - `GET /sentiment-total?days={N}` — общая дельта всех новостей
 - `GET /source-stats` — статистика по источникам RSS

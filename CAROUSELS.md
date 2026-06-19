@@ -238,14 +238,14 @@ const total = parseInt(countResult.rows[0]?.c || '0');
 const hasMore = offset + result.rows.length < total;
 ```
 
-> **Важно:** В отличие от каруселей 1 и 2, endpoint `?global=true` **не фильтрует** по `matched_tags`. Это было изменено намеренно — чтобы пользователь (включая незалогиненного) видел больше контента.
+> **Важно:** В отличие от каруселей 1 и 2, endpoint `/api/news/global` **не фильтрует** по `matched_tags` и **не требует авторизации**. Это было изменено намеренно — чтобы пользователь (включая незалогиненного) видел больше контента.
 
 ### Сортировка
 Новые сверху (`published_at DESC`)
 
 ### API
 ```
-GET /api/news?global=true&limit=50&page=N
+GET /api/news/global?limit=50&page=N
 ```
 
 Ответ:
@@ -491,7 +491,7 @@ Query: ?hours=12 (default) | ?refresh=1 (принудительно)
 |----------|----------|--------|-----------|------------|
 | 1. "Не видели" | `GET /api/news` | теги + непрочитанные | `limit=50` (без page) | DESC |
 | 2. "Вся лента" | `GET /api/news?history=true&page=N` | теги + прочитанные | `limit=50`, `page=N` | DESC |
-| 3. "Общая" | `GET /api/news?global=true&page=N` | все новости за 90 дней | `limit=50`, `page=N` | DESC |
+| 3. "Общая" | `GET /api/news/global?page=N` | все новости за 90 дней, без auth | `limit=50`, `page=N` | DESC |
 
 Все ответы возвращают:
 ```json
@@ -871,7 +871,7 @@ tagVersion++ в AuthContext
 | **URL** | `/news` — через React Router | Нет отдельного URL, часть `/` |
 | **Открытие** | Клик на теге → `navigate('/news')` | Выбор тега в портфолио → фильтр внутри Home |
 | **Вид** | Вертикальный список статей | 3 горизонтальные прокрутки |
-| **API** | СВОЙ endpoint (если нужен) | `GET /api/news`, `?history=true`, `?global=true` |
+| **API** | СВОЙ endpoint (если нужен) | `GET /api/news`, `?history=true`, `/api/news/global` |
 | **Компоненты** | `NewsFeed.tsx` | `UnreadNewsCarousel.tsx`, `AllNewsCarousel.tsx`, `GlobalNewsCarousel.tsx` |
 | **Назначение** | Подробный просмотр новостей по тегу | Быстрый обзор на главной |
 
