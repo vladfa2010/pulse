@@ -623,6 +623,31 @@ export async function wakeUpNoTagsArticles(): Promise<number> {
 - `createUserTag()` — после INSERT нового тега.
 - `PUT /admin/tags/:tagId` — если изменились `keywords`, `ticker`, `synonyms_ru`, `synonyms_en` или `key_products`.
 
+### ⚠️ Масштаб и окно свежести (важно)
+
+Текущая реализация `wakeUpNoTagsArticles()` воскрешает **все** no-tags статьи без ограничения по времени.
+
+Если таких статей накопится слишком много (десятки или сотни тысяч):
+- Один `UPDATE` может выполняться несколько секунд.
+- News processor будет разгребать очередь батчами по 50. 100 000 статей = 2000 запусков cron.
+- Это может занять дни и временно забить очередь.
+
+**Рекомендация на будущее:** если метрика `no-tags` растёт неконтролируемо, добавить окно свежести в `wakeUpNoTagsArticles()`:
+
+```typescript
+const result = await query(
+  `UPDATE news
+   SET needs_translation = TRUE
+   WHERE sentiment_source = 'no-tags'
+     AND (matched_tags IS NULL OR matched_tags = '{}')
+     AND published_at > NOW() - INTERVAL '90 days'
+   RETURNING id`,
+  []
+);
+```
+
+> **Статус:** пока отложено. Ждём роста объёма no-tags статей в проде.
+
 ---
 
 ## 8. DEFERRED PROCESSOR
