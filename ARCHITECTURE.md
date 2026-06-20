@@ -748,79 +748,59 @@ ALTER TABLE news DROP CONSTRAINT IF EXISTS news_url_norm_unique;
 
 ### translate.ts
 
-**API:** Kimi (`moonshot-v1-8k`) через `api.moonshot.ai`
+**API:** Kimi (`moonshot-v1-32k` по умолчанию, env override через `KIMI_MODEL`) через `https://api.moonshot.ai/v1/chat/completions`.
 > Ранее: Google Translate — был заблокирован на Render.
 
-```typescript
-// === translateBatch ===
-// Основной batch-перевод
-async function translateBatch(texts: string[]): Promise<string[]> {
-  // 1. Фильтруем только EN тексты
-  const enTexts = texts.filter(t =>
-    hasLatin(t) && !hasCyrillic(t) && t.length > 5
-  );
+### 6.1 translateBatch
 
-  // 2. Проверяем кэш
-  const cached = await getCachedTranslations(enTexts);
-  const toTranslate = enTexts.filter(t => !cached[t]);
+1. **Фильтрует** тексты: только EN (`hasLatin && !hasCyrillic && length > 5`).
+2. **Отправляет batch** в Kimi (5 текстов для `moonshot-v1-32k`, 3 для `kimi-k2.5`).
+3. **Парсит ответ** — поддерживает 3 формата:
+   - JSON-array: `["Перевод 1", "Перевод 2"]`
+   - JSON-object с числовыми ключами: `{"0": "Перевод 1", "1": "Перевод 2"}`
+   - Markdown code block с любым из двух выше
+4. **Возвращает оригиналы** при любом parse-failure (best effort).
 
-  // 3. Отправляем batch из 5 текстов в Kimi
-  const translated: string[] = [];
-  for (let i = 0; i < toTranslate.length; i += 5) {
-    const batch = toTranslate.slice(i, i + 5);
-    const results = await translateWithKimi(batch);
-    translated.push(...results);
-    await saveToCache(batch, results);
+### 6.2 Почему JSON-object
 
-    // 4. Задержка между batches
-    if (i + 5 < toTranslate.length) {
-      await delay(500);
-    }
-  }
+При `response_format: { type: 'json_object' }` Kimi не всегда возвращает JSON-array. Для нумерованного списка переводов модель возвращает:
 
-  // 5. Мапим обратно в оригинальные позиции
-  return mergeResults(texts, cached, translated);
-}
-
-// === translateWithKimi ===
-async function translateWithKimi(texts: string[]): Promise<string[]> {
-  const response = await fetch('https://api.moonshot.cn/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${process.env.KIMI_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'moonshot-v1-8k',
-      messages: [
-        {
-          role: 'system',
-          content: 'Translate English financial news to Russian. ' +
-                   'Return ONLY a JSON array of translated strings. ' +
-                   'Preserve financial terminology. Do not add commentary.'
-        },
-        {
-          role: 'user',
-          content: JSON.stringify(texts)
-        }
-      ],
-      temperature: 0.1,
-      max_tokens: 2000,
-    }),
-  });
-
-  const data = await response.json();
-  return JSON.parse(data.choices[0].message.content);
-}
+```json
+{"0": "CoreWeave: Почему единственный платиновый Neocloud...", "1": "..."}
 ```
 
-| Параметр | Значение |
-|----------|----------|
-| Batch size | 5 текстов |
-| Temperature | 0.1 |
-| Max tokens | 2000 |
-| Delay между batches | 500 мс |
-| Cache | `translation_cache` table |
+Если парсить только `[]`, перевод молча теряется и `translateBatch` возвращает оригиналы.
+
+### 6.3 Retry в newsProcessor.ts
+
+Если EN-статья осталась с `title_ru = title_original`, News Processor повторно выбирает её:
+
+```sql
+SELECT ... FROM news
+WHERE needs_translation = TRUE
+   OR (matched_tags = '{}'::text[] AND sentiment_source IS NULL)
+   OR (
+     lang_original = 'en'
+     AND (title_ru IS NULL OR title_ru = title_original)
+     AND sentiment_source IS NOT NULL
+     AND COALESCE(llm_attempts, 0) < 3
+   )
+```
+
+- `translateArticles()` переводит статьи, даже если `title_ru` уже заполнен, но равен оригиналу.
+- Если перевод не удался (`title_ru` всё ещё равен `title_original`), `needs_translation` остаётся `TRUE`.
+- Максимум 3 попытки (`llm_attempts < 3`).
+
+### 6.4 Параметры
+
+| Параметр | `moonshot-v1-32k` | `kimi-k2.5` |
+|----------|-------------------|-------------|
+| Batch size | 5 | 3 |
+| Temperature | 0.3 | 0.6 |
+| Max tokens | 3000 | 4000 |
+| Timeout | 30 sec | 60 sec |
+| Delay между batches | 500 ms | 1000 ms |
+| thinking | n/a | `{ type: 'disabled' }` |
 
 ---
 

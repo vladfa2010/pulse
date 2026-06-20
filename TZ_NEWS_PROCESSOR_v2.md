@@ -140,6 +140,7 @@ WHERE title_ru IS NULL OR sentiment IS NULL OR sentiment_source IS NULL;
 
 ```sql
 -- Выбрать 50 сырых статей (из любого источника: RSS, Finnhub, etc.)
+-- + EN-статьи, у которых предыдущий перевод не удался (title_ru = title_original)
 SELECT 
   id, title_original, summary_original, lang_original,
   source, source_id, content_hash, matched_tags
@@ -147,6 +148,12 @@ FROM news
 WHERE title_ru IS NULL
    OR sentiment IS NULL
    OR sentiment_source IS NULL
+   OR (
+     lang_original = 'en'
+     AND (title_ru IS NULL OR title_ru = title_original)
+     AND sentiment_source IS NOT NULL
+     AND COALESCE(llm_attempts, 0) < 3
+   )
 ORDER BY published_at DESC
 LIMIT 50
 FOR UPDATE SKIP LOCKED;  -- не блокировать, пропустить если кто-то обрабатывает
@@ -281,7 +288,11 @@ async function selectRawArticles(limit: number): Promise<RawArticle[]> {
 
 ```typescript
 async function translateArticles(articles: RawArticle[]): Promise<void> {
-  const toTranslate = articles.filter(a => a.lang_original === 'en' && !(a as any).title_ru);
+  // Retry EN articles where previous translation failed (title_ru equals original)
+  const toTranslate = articles.filter(
+    a => a.lang_original === 'en' &&
+         (!((a as any).title_ru) || (a as any).title_ru === a.title_original)
+  );
   if (toTranslate.length === 0) return;
   
   try {
@@ -292,13 +303,50 @@ async function translateArticles(articles: RawArticle[]): Promise<void> {
     const translatedSummaries = await translateBatch(summaries);
     
     for (let i = 0; i < toTranslate.length; i++) {
-      (toTranslate[i] as any).title_ru = translatedTitles[i] || toTranslate[i].title_original;
-      (toTranslate[i] as any).summary_ru = translatedSummaries[i] || toTranslate[i].summary_original;
+      const a = toTranslate[i];
+      const translatedTitle = translatedTitles[i];
+      const translatedSummary = translatedSummaries[i];
+
+      // Only accept translation if it differs from original
+      if (translatedTitle && translatedTitle !== a.title_original) {
+        (a as any).title_ru = translatedTitle;
+      } else {
+        (a as any)._llmError = translatedTitle === a.title_original
+          ? 'Translation returned original title (parse issue)'
+          : 'Translation returned empty title';
+        (a as any)._llmAttempts = ((a as any)._llmAttempts || 0) + 1;
+      }
+
+      if (translatedSummary && translatedSummary !== a.summary_original) {
+        (a as any).summary_ru = translatedSummary;
+      }
     }
   } catch (err: any) {
     console.error('[NewsProcessor] Translate error:', err.message);
     // НЕ выбрасываем ошибку — sentiment всё равно делаем
     throw err; // Пусть caller решает — но processRawArticles ловит и продолжает
+  }
+}
+```
+
+#### 5.3.1 JSON-object parsing fix (2026-06-20)
+
+Kimi с `response_format: { type: 'json_object' }` возвращает переводы как:
+
+```json
+{"0": "CoreWeave: Почему...", "1": "Apple превзошла..."}
+```
+
+`translate.ts` раньше парсил только JSON-array `[]` → object не распознавался → возвращались оригиналы.
+
+**Фикс:** добавлен парсинг JSON-object с числовыми ключами:
+
+```typescript
+const parsedObj = JSON.parse(content);
+if (parsedObj && typeof parsedObj === 'object' && !Array.isArray(parsedObj)) {
+  const values = Object.values(parsedObj).filter(v => typeof v === 'string') as string[];
+  if (values.length === validTexts.length) {
+    // use values as translations
   }
 }
 ```
@@ -378,11 +426,16 @@ async function saveProcessedArticles(
     const a = articles[i];
     const tags = matchedTagsList[i];
     const s = sentimentResults[i];
+
+    // If English title was not translated, keep needs_translation = TRUE for retry
+    const titleRu = (a as any).title_ru;
+    const isTranslationSuccessful = a.lang_original !== 'en' || (!!titleRu && titleRu !== a.title_original);
     
     try {
       await query(`
         UPDATE news
-        SET title_ru = COALESCE($1, title_ru, title_original),
+        SET needs_translation = $17,
+            title_ru = COALESCE($1, title_ru, title_original),
             summary_ru = COALESCE($2, summary_ru, summary_original),
             sentiment = $3,
             sentiment_score = $4,
@@ -409,6 +462,7 @@ async function saveProcessedArticles(
         (s as any)._llmErrorMsg || null,
         (s as any)._llmErrorType ? 1 : null,
         a.id,
+        !isTranslationSuccessful,
       ]);
       updated++;
     } catch (err: any) {

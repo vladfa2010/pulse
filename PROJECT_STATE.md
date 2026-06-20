@@ -1,9 +1,9 @@
 # PULSE — Project State (Session Resume)
 
 > **Файл для быстрого входа в контекст после сброса.**
-> **Дата:** 2026-05-30
-> **Версия API:** 7.15
-> **Актуальные коммиты:** backend `45d1629`, frontend `775d546`
+> **Дата:** 2026-06-20
+> **Версия API:** 10.1
+> **Актуальные коммиты:** backend `5e7d0be`, frontend `892be64`
 >
 > ✅ Batch sentiment + batch tag impact + retry logic + job lock
 
@@ -57,7 +57,7 @@
 
 ---
 
-## 4. News Pipeline (RSS → БД) — v7.15
+## 4. News Pipeline (RSS → БД) — v10.1
 
 ```
 Phase 1: RSS Fetch (32 sources, batch×4, 1500ms) → Parse XML → URL Normalize
@@ -78,6 +78,8 @@ Phase 4: Save (INSERT ON CONFLICT content_hash) → SSE `refresh` broadcast
 **Retry Logic (v7.14.1):** 3 попытки при 429/502/ECONNRESET/ETIMEDOUT. Backoff: 2s→4s→8s. Fallback: keyword-based neutral.
 
 **JSON Guarantee (v7.14.2):** `response_format: { type: "json_object" }` — LLM всегда возвращает валидный JSON.
+
+**Translation Retry (v10.1):** Если EN-статья осталась с `title_ru = title_original` (например, из-за parse-ошибки JSON-object от Kimi), News Processor повторно выбирает её и переводит заново (макс. 3 попытки). См. `translate.ts` и `newsProcessor.ts`.
 
 **Job Lock (v7.15):** PostgreSQL `cron_locks` таблица. `acquireCronLock('rss-aggregator')` + `releaseCronLock(DELETE)`. TTL = 15 минут. Предотвращает parallel runs.
 

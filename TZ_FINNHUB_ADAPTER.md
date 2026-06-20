@@ -46,6 +46,13 @@ INSERT INTO news_sources (name, display_name, type, config, enabled) VALUES
    - content_hash = SHA256(headline + '\n' + summary)
 
 4. INSERT INTO news ... ON CONFLICT (content_hash) DO UPDATE
+
+## 2.1 Перевод
+
+- Finnhub отдаёт только `headline` (title) и иногда `summary`.
+- Adapter НЕ переводит — `title_ru = null`, `summary_ru = null`.
+- Перевод выполняется позже News Processor (`translate.ts`).
+- Если перевод не удался (например, Kimi вернул JSON-object, который не распарсился), News Processor повторно выберет статью и попробует снова (до 3 попыток). См. `TZ_NEWS_PROCESSOR_v2.md` раздел 5.3.1.
 ```
 
 ---

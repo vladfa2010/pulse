@@ -697,6 +697,33 @@ cron.schedule('*/10 * * * *', async () => {
 
 **Фикс:** `populateNewsTagLinksBatch()` — 1 connection на весь batch после цикла (fire-and-forget).
 
+### 🚨 Баг 11: Translate returns English title though reasoning is Russian (2026-06-20)
+**Симптом:** В карусели «Это вы ещё не видели» висит новость с английским `title_ru`, но у неё есть русский `sentiment_reasoning` и `sentiment_source = 'llm'`.
+
+**Причина:** `translate.ts` использует `response_format: { type: 'json_object' }`. Kimi API для массива переводов возвращает не JSON-array `["..."]` и не объект с ключом `translations`, а нумерованный JSON-object:
+
+```json
+{"0": "CoreWeave: Почему единственный платиновый Neocloud...", "1": "..."}
+```
+
+Код парсил только `\[[\s\S]*?\]` (JSON-array). Object не распознавался → `translateBatch` возвращала оригиналы → `title_ru = title_original`.
+
+Sentiment и reasoning работали, потому что это отдельный LLM-вызов, который получал на вход `title_original` и генерировал reasoning на русском по prompt.
+
+**Фикс:**
+1. В `translate.ts` добавлен парсинг JSON-object с числовыми ключами `{"0": "...", "1": "..."}`.
+2. В `newsProcessor.ts`:
+   - `selectRawArticles` теперь повторно выбирает EN-статьи, у которых `title_ru = title_original` (но не более 3 попыток).
+   - `translateArticles` переводит EN-статьи, даже если `title_ru` уже заполнен, но равен оригиналу.
+   - Если перевод не удался (`title_ru` совпадает с `title_original`), `needs_translation` остаётся `TRUE` для retry.
+
+**Проверка:**
+```bash
+# Статья, которая раньше была без перевода
+curl "https://pulse-api-bsov.onrender.com/api/news/182fe8ef-f56e-4068-89d7-eae036205437" | jq '.title_ru'
+# → "CoreWeave: Почему единственный платиновый Neocloud не будет дешевле долго"
+```
+
 ---
 
 ## 10. МЕТРИКИ КОНТРОЛЯ
@@ -805,3 +832,4 @@ const hasRealSentiment = article.sentiment_source === 'llm' || article.sentiment
 | 9.1 | 2026-06-05 | Переключение на `kimi-k2.5`, CRON FREEZE runbook |
 | 9.2 | 2026-06-05 | SQL Best Practices (COALESCE rule) |
 | **10.0** | **2026-06-19** | **Keyword-First Pipeline: pre-filter, no-tags skip, force LLM для статей с тегами, no-tags wake-up** |
+| **10.1** | **2026-06-20** | **Fix translate JSON-object parsing + retry EN articles with title_ru = title_original (Баг 11)** |
