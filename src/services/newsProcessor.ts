@@ -122,6 +122,12 @@ async function selectRawArticles(limit: number): Promise<RawArticle[]> {
     FROM news
     WHERE needs_translation = TRUE
        OR (matched_tags = '{}'::text[] AND sentiment_source IS NULL)
+       OR (
+         lang_original = 'en'
+         AND (title_ru IS NULL OR title_ru = title_original)
+         AND sentiment_source IS NOT NULL
+         AND COALESCE(llm_attempts, 0) < 3
+       )
     ORDER BY published_at DESC
     LIMIT $1
     FOR UPDATE SKIP LOCKED
@@ -143,7 +149,10 @@ async function selectRawArticles(limit: number): Promise<RawArticle[]> {
 // Translate (best effort — НЕ throw, НЕ блокирует sentiment)
 // ═══════════════════════════════════════════════════════════════════════════
 async function translateArticles(articles: RawArticle[]): Promise<void> {
-  const toTranslate = articles.filter(a => a.lang_original === 'en' && !(a as any).title_ru);
+  const toTranslate = articles.filter(
+    a => a.lang_original === 'en' &&
+         (!((a as any).title_ru) || (a as any).title_ru === a.title_original)
+  );
   if (toTranslate.length === 0) return;
 
   try {
@@ -154,8 +163,23 @@ async function translateArticles(articles: RawArticle[]): Promise<void> {
     const translatedSummaries = await translateBatch(summaries);
 
     for (let i = 0; i < toTranslate.length; i++) {
-      (toTranslate[i] as any).title_ru = translatedTitles[i] || toTranslate[i].title_original;
-      (toTranslate[i] as any).summary_ru = translatedSummaries[i] || toTranslate[i].summary_original;
+      const a = toTranslate[i];
+      const translatedTitle = translatedTitles[i];
+      const translatedSummary = translatedSummaries[i];
+
+      if (translatedTitle && translatedTitle !== a.title_original) {
+        (a as any).title_ru = translatedTitle;
+      } else {
+        // Mark as failed so the article will be retried
+        (a as any)._llmError = translatedTitle === a.title_original
+          ? 'Translation returned original title (parse issue)'
+          : 'Translation returned empty title';
+        (a as any)._llmAttempts = ((a as any)._llmAttempts || 0) + 1;
+      }
+
+      if (translatedSummary && translatedSummary !== a.summary_original) {
+        (a as any).summary_ru = translatedSummary;
+      }
     }
   } catch (err: any) {
     console.error('[NewsProcessor] Translate error:', err.message);
@@ -370,11 +394,15 @@ async function saveProcessedArticles(
     // LLM ошибка: translate или sentiment
     const llmError = translateError || sentimentError || null;
     const llmAttempts = translateAttempts + (sentimentErrorType ? 1 : 0);
+
+    // If English title was not translated, keep needs_translation = TRUE for retry
+    const titleRu = (a as any).title_ru;
+    const isTranslationSuccessful = a.lang_original !== 'en' || (!!titleRu && titleRu !== a.title_original);
     
     try {
       await query(`
         UPDATE news
-        SET needs_translation = FALSE,
+        SET needs_translation = $17,
             title_ru = COALESCE($1, title_ru, title_original),
             summary_ru = COALESCE($2, summary_ru, summary_original),
             sentiment = $3,
@@ -408,6 +436,7 @@ async function saveProcessedArticles(
         (s as any)._llmBatchSize || null,
         (s as any)._llmResultsCount || null,
         a.id,
+        !isTranslationSuccessful,
       ]);
       updated++;
     } catch (err: any) {

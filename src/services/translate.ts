@@ -148,6 +148,28 @@ export async function translateWithKimi(texts: string[]): Promise<string[]> {
         }
       }
 
+      // Extract JSON object (e.g. {"0": "...", "1": "..."}) — common with response_format: json_object
+      try {
+        const parsedObj = JSON.parse(content);
+        if (parsedObj && typeof parsedObj === 'object' && !Array.isArray(parsedObj)) {
+          const values = Object.values(parsedObj).filter(v => typeof v === 'string') as string[];
+          if (values.length === validTexts.length) {
+            const cleaned = values.map((s: string) => s.replace(/^\d+\.\s*/, '').trim());
+            let validIdx = 0;
+            for (const original of batch) {
+              if (original && original.length > 2 && validIdx < cleaned.length) {
+                results.push(cleaned[validIdx]);
+                validIdx++;
+              } else {
+                results.push(original);
+              }
+            }
+            console.log(`[Translate] ${KIMI_MODEL} object-parsed ${validTexts.length} texts`);
+            continue;
+          }
+        }
+      } catch {}
+
       // Fallback: try line-by-line parsing
       const lines = content.split('\n').filter((l: string) => l.trim() && !l.trim().startsWith('[') && !l.trim().startsWith(']'));
       if (lines.length === validTexts.length) {
