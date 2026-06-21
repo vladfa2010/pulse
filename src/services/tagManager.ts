@@ -166,10 +166,10 @@ export function buildEnrichedKeywords(tagName: string, enrichment: TagEnrichment
   const enriched: string[] = [
     ...baseKeywords,
     // Synonyms (both languages, lowercase)
-    ...enrichment.synonyms_en.map(s => s.toLowerCase()),
-    ...enrichment.synonyms_ru.map(s => s.toLowerCase()),
+    ...(enrichment.synonyms_en || []).map(s => s.toLowerCase()),
+    ...(enrichment.synonyms_ru || []).map(s => s.toLowerCase()),
     // Key products (both languages, lowercase)
-    ...enrichment.key_products.map(s => s.toLowerCase()),
+    ...(enrichment.key_products || []).map(s => s.toLowerCase()),
   ];
 
   // Add ticker as keyword if present
