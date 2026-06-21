@@ -1879,7 +1879,6 @@ const TAG_UPDATE_RULES: Record<string, any> = {
   ticker: { type: 'string', min: 1, max: 20, pattern: /^[A-Z0-9\.\-]+$/, optional: true },
   website: { type: 'url', max: 500, optional: true },
   description_ru: { type: 'string', max: 5000, optional: true },
-  keywords: { type: 'array', minItems: 1, maxItems: 50, items: { type: 'string', max: 100 } },
   key_products: { type: 'array', maxItems: 20, items: { type: 'string', max: 100 }, optional: true },
   related_tags: { type: 'array', maxItems: 20, items: { type: 'string' }, optional: true },
   synonyms_ru: { type: 'array', maxItems: 20, items: { type: 'string', max: 100 }, optional: true },
@@ -1988,14 +1987,6 @@ app.put('/admin/tags/:tagId', requireAdmin, async (req, res) => {
       updates.website = 'https://' + updates.website;
     }
 
-    // keywords minItems check (defense in depth)
-    if (updates.keywords !== undefined && updates.keywords.length === 0) {
-      return res.status(400).json({
-        error: 'keywords cannot be empty (min 1 required)',
-        field: 'keywords',
-      });
-    }
-
     // Build SET clauses for flat columns AND enriched_data JSONB
     const setClauses: string[] = [];
     const params: any[] = [tagId];
@@ -2004,10 +1995,6 @@ app.put('/admin/tags/:tagId', requireAdmin, async (req, res) => {
     if (updates.tag_type !== undefined) {
       setClauses.push(`tag_type = $${paramIdx++}`);
       params.push(updates.tag_type);
-    }
-    if (updates.keywords !== undefined) {
-      setClauses.push(`keywords = $${paramIdx++}`);
-      params.push(updates.keywords);
     }
 
     // Build enriched_data JSONB patch
@@ -2053,17 +2040,11 @@ app.put('/admin/tags/:tagId', requireAdmin, async (req, res) => {
     }
     const ed = enrichedDataPut;
 
-    // If enriched fields changed but keywords were not explicitly provided,
-    // recalculate keywords so ticker/synonyms/products are reflected in matching.
-    if (updates.keywords === undefined && jsonbUpdates.length > 0) {
-      const { buildEnrichedKeywords } = await import('./services/tagManager');
-      const newKeywords = buildEnrichedKeywords(tagId, ed);
-      await query(
-        `UPDATE user_defined_tags SET keywords = $1 WHERE tag_id = $2`,
-        [newKeywords, tagId]
-      );
-      updated.keywords = newKeywords;
-    }
+    // Rebuild keywords from enriched_data after any update.
+    // enriched_data is the single source of truth for matching keywords.
+    const { rebuildKeywordsFromEnrichment } = await import('./services/tagManager');
+    const newKeywords = await rebuildKeywordsFromEnrichment(tagId);
+    updated.keywords = newKeywords;
 
     // Build tag response — always include ticker/exchange/trend/sector (frontend expects them)
     const tagResponse: any = {
@@ -2085,19 +2066,14 @@ app.put('/admin/tags/:tagId', requireAdmin, async (req, res) => {
       sector: ed.sector || null,
     };
 
-    // If keywords or keyword-relevant enriched data changed, wake up articles
-    // previously skipped as 'no-tags' so they can be re-checked.
-    const keywordsAffected =
-      updates.keywords !== undefined ||
-      ['ticker', 'synonyms_ru', 'synonyms_en', 'key_products'].some(f => updates[f] !== undefined);
-    if (keywordsAffected) {
-      const { wakeUpNoTagsArticles } = await import('./services/tagManager');
-      const { invalidateUserTagsCache } = await import('./services/smartTagMatcher');
-      invalidateUserTagsCache();
-      wakeUpNoTagsArticles().catch((err: any) => {
-        console.error('[AdminTags] wakeUpNoTagsArticles error:', err.message);
-      });
-    }
+    // Any successful tag update may affect matching keywords.
+    // Invalidate cache and wake up no-tags articles for re-check.
+    const { wakeUpNoTagsArticles } = await import('./services/tagManager');
+    const { invalidateUserTagsCache } = await import('./services/smartTagMatcher');
+    invalidateUserTagsCache();
+    wakeUpNoTagsArticles().catch((err: any) => {
+      console.error('[AdminTags] wakeUpNoTagsArticles error:', err.message);
+    });
 
     res.json({
       success: true,

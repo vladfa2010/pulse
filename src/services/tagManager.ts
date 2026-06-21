@@ -449,19 +449,16 @@ export async function getAllUserDefinedTags(): Promise<Record<string, string[]>>
     );
     const tags: Record<string, string[]> = {};
     for (const row of result.rows) {
-      // Use enriched keywords if available, otherwise fall back to base keywords
+      // Use enriched keywords if available, otherwise fall back to stored keywords
       if (row.enriched_data) {
         try {
           const enrichment: TagEnrichment =
             typeof row.enriched_data === 'string' ? JSON.parse(row.enriched_data) : row.enriched_data;
-          const enrichedKeywords = buildEnrichedKeywords(row.tag_id, enrichment);
-          // Merge with stored keywords (deduplicate)
-          const storedKeywords: string[] = row.keywords || [];
-          tags[row.tag_id] = [...new Set([...enrichedKeywords, ...storedKeywords])];
+          tags[row.tag_id] = buildEnrichedKeywords(row.tag_id, enrichment);
           continue;
         } catch (err: any) {
           console.error('[TagManager] getAllUserDefinedTags parse error:', err.message);
-          // JSON parse failed, fall through to base keywords
+          // JSON parse failed, fall through to stored keywords
         }
       }
       tags[row.tag_id] = row.keywords || [row.tag_id];
@@ -483,6 +480,32 @@ export async function getAllTagNames(): Promise<string[]> {
   } catch {
     return [];
   }
+}
+
+/**
+ * Rebuild stored keywords from enriched_data.
+ * Call this whenever enriched_data changes (admin edits, enrichment updates).
+ */
+export async function rebuildKeywordsFromEnrichment(tagId: string): Promise<string[]> {
+  const result = await query(
+    `SELECT enriched_data FROM user_defined_tags WHERE tag_id = $1`,
+    [tagId]
+  );
+  if (result.rows.length === 0) {
+    return [];
+  }
+
+  let enrichment = result.rows[0].enriched_data;
+  if (typeof enrichment === 'string') {
+    try { enrichment = JSON.parse(enrichment); } catch { enrichment = null; }
+  }
+
+  const keywords = buildEnrichedKeywords(tagId, enrichment || null);
+  await query(
+    `UPDATE user_defined_tags SET keywords = $1 WHERE tag_id = $2`,
+    [keywords, tagId]
+  );
+  return keywords;
 }
 
 /**
