@@ -2053,6 +2053,18 @@ app.put('/admin/tags/:tagId', requireAdmin, async (req, res) => {
     }
     const ed = enrichedDataPut;
 
+    // If enriched fields changed but keywords were not explicitly provided,
+    // recalculate keywords so ticker/synonyms/products are reflected in matching.
+    if (updates.keywords === undefined && jsonbUpdates.length > 0) {
+      const { buildEnrichedKeywords } = await import('./services/tagManager');
+      const newKeywords = buildEnrichedKeywords(tagId, ed);
+      await query(
+        `UPDATE user_defined_tags SET keywords = $1 WHERE tag_id = $2`,
+        [newKeywords, tagId]
+      );
+      updated.keywords = newKeywords;
+    }
+
     // Build tag response — always include ticker/exchange/trend/sector (frontend expects them)
     const tagResponse: any = {
       tag_id: updated.tag_id,
@@ -3120,6 +3132,40 @@ app.get('/trigger/wake-no-tags', async (req, res) => {
     res.json({ started: true, woken });
   } catch (err: any) {
     console.error('[WakeNoTags] error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TRIGGER: Recalculate keywords for all tags from enriched_data
+// ═══════════════════════════════════════════════════════════════════════════
+app.get('/trigger/recalculate-keywords', async (req, res) => {
+  const secret = req.headers['x-trigger-secret'] || req.query.secret;
+  if (secret !== (process.env.CRON_SECRET_KEY || 'pulse-dev-key')) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  try {
+    const { buildEnrichedKeywords } = await import('./services/tagManager');
+    const result = await query(
+      `SELECT tag_id, tag_name, enriched_data FROM user_defined_tags`,
+      []
+    );
+    let updated = 0;
+    for (const row of result.rows) {
+      let enrichment = row.enriched_data;
+      if (typeof enrichment === 'string') {
+        try { enrichment = JSON.parse(enrichment); } catch { enrichment = null; }
+      }
+      const keywords = buildEnrichedKeywords(row.tag_id, enrichment);
+      await query(
+        `UPDATE user_defined_tags SET keywords = $1 WHERE tag_id = $2`,
+        [keywords, row.tag_id]
+      );
+      updated++;
+    }
+    res.json({ started: true, updated });
+  } catch (err: any) {
+    console.error('[RecalculateKeywords] error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
