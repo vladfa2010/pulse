@@ -161,7 +161,7 @@ function parseRSS(xml: string, source: RssSource): ParsedArticle[] {
 
     articles.push({
       title: stripHtml(title),
-      summary: stripHtml(description || title).slice(0, 300),
+      summary: stripHtml(description || title),
       url: link || '',
       publishedAt: pubDate ? normalizePubDate(pubDate, source.lang) : new Date(),
       source: source.name,
