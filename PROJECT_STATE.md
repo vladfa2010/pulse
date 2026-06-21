@@ -369,6 +369,25 @@ frontend/src/
 
 ---
 
+## 20. Telegram-Connect Banner (главная страница)
+
+Промо-баннер под каруселью «Общая лента» предлагает залогиненным пользователям подключить Telegram.
+
+**Компонент:** `pulse-frontend/src/components/TelegramConnectBanner.tsx`  
+**Размещение:** `pulse-frontend/src/pages/Home.tsx` сразу после `<GlobalNewsCarousel />`
+
+**Логика:**
+- Показывается только залогиненным пользователям без подключённого Telegram.
+- Бесплатным пользователям кнопка ведёт на `/pricing`.
+- Premium-пользователям кнопка запрашивает `GET /api/telegram/link`, открывает deep link `@Insidepulse_bot`.
+- После открытия Telegram запускается polling `GET /api/user/telegram-status` каждые 5 сек; баннер скрывается при `connected = true`.
+
+**Backend endpoints (без изменений):**
+- `GET /api/user/telegram-status`
+- `GET /api/telegram/link`
+
+---
+
 ## 19. Полная документация (ссылки)
 
 | Файл | Где | Описание |
