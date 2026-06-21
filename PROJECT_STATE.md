@@ -3,7 +3,7 @@
 > **Файл для быстрого входа в контекст после сброса.**
 > **Дата:** 2026-06-20
 > **Версия API:** 10.1
-> **Актуальные коммиты:** backend `e51abf5`, frontend `e5bd5d5`
+> **Актуальные коммиты:** backend `1512ebf`, frontend `e5bd5d5`
 >
 > ✅ Batch sentiment + batch tag impact + retry logic + job lock
 
@@ -61,6 +61,7 @@
 
 ```
 Phase 1: RSS Fetch (32 sources, batch×4, 1500ms) → Parse XML → URL Normalize
+  - `summary_original` сохраняется полностью (TEXT); обрезка до 300 символов убрана
 Phase 2: Translate EN→RU (Kimi API, moonshot-v1-32k)
 Phase 3a: BATCH SENTIMENT (v7.13) — 10 статей/LLM-запрос, score -10..+10 + reasoning
 Phase 3b: Smart Tag Matching (3-layer: keywords → LLM → related)
