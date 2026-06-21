@@ -11,6 +11,7 @@
 
 import { query } from '../config/db';
 import axios from 'axios';
+import { invalidateUserTagsCache } from './smartTagMatcher';
 
 const KIMI_API_KEY = process.env.KIMI_API_KEY;
 const KIMI_MODEL = process.env.KIMI_MODEL || 'moonshot-v1-32k';
@@ -403,6 +404,7 @@ export async function createUserTag(userId: string, tagId: string, tagName: stri
 
     // Wake up articles that were previously skipped due to no tags.
     // They will be re-checked by the news processor against the new tag.
+    invalidateUserTagsCache();
     wakeUpNoTagsArticles().catch((err: any) => {
       console.error('[TagManager] wakeUpNoTagsArticles error:', err.message);
     });
@@ -486,6 +488,7 @@ export async function getAllTagNames(): Promise<string[]> {
  * can re-check them against newly created/updated tags.
  */
 export async function wakeUpNoTagsArticles(): Promise<number> {
+  invalidateUserTagsCache();
   try {
     const result = await query(
       `UPDATE news

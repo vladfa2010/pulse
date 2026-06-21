@@ -42,6 +42,10 @@ let userTagsCache: Record<string, string[]> = {};
 let userTagsCacheTime = 0;
 const USER_TAGS_CACHE_TTL = 60 * 1000;
 
+export function invalidateUserTagsCache(): void {
+  userTagsCacheTime = 0;
+}
+
 async function getCachedUserTags(): Promise<Record<string, string[]>> {
   const now = Date.now();
   if (now - userTagsCacheTime > USER_TAGS_CACHE_TTL) {

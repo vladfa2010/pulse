@@ -2080,6 +2080,8 @@ app.put('/admin/tags/:tagId', requireAdmin, async (req, res) => {
       ['ticker', 'synonyms_ru', 'synonyms_en', 'key_products'].some(f => updates[f] !== undefined);
     if (keywordsAffected) {
       const { wakeUpNoTagsArticles } = await import('./services/tagManager');
+      const { invalidateUserTagsCache } = await import('./services/smartTagMatcher');
+      invalidateUserTagsCache();
       wakeUpNoTagsArticles().catch((err: any) => {
         console.error('[AdminTags] wakeUpNoTagsArticles error:', err.message);
       });
@@ -3099,6 +3101,27 @@ app.get('/trigger/process', async (req, res) => {
     processRawArticles().catch(e => console.error('[Process] trigger error:', e.message));
   });
   res.json({ started: true });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TRIGGER: Wake up no-tags articles and re-run processor
+// ═══════════════════════════════════════════════════════════════════════════
+app.get('/trigger/wake-no-tags', async (req, res) => {
+  const secret = req.headers['x-trigger-secret'] || req.query.secret;
+  if (secret !== (process.env.CRON_SECRET_KEY || 'pulse-dev-key')) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  try {
+    const { wakeUpNoTagsArticles } = await import('./services/tagManager');
+    const { processRawArticles } = await import('./services/newsProcessor');
+    const woken = await wakeUpNoTagsArticles();
+    // Run processor in background to pick up woken articles
+    processRawArticles().catch(e => console.error('[WakeNoTags] processor error:', e.message));
+    res.json({ started: true, woken });
+  } catch (err: any) {
+    console.error('[WakeNoTags] error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
