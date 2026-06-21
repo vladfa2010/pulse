@@ -3,7 +3,7 @@
 > **Файл для быстрого входа в контекст после сброса.**
 > **Дата:** 2026-06-20
 > **Версия API:** 10.1
-> **Актуальные коммиты:** backend `1512ebf`, frontend `e5bd5d5`
+> **Актуальные коммиты:** backend `3899539`, frontend `e5bd5d5`
 >
 > ✅ Batch sentiment + batch tag impact + retry logic + job lock
 
@@ -175,8 +175,9 @@ LLM оценивает новость как опытный инвестицио
 Flow создания:
 1. Пользователь вводит название в поиск → "Создать тег 'X'"
 2. `POST /api/user/tags/custom` → backend:
-   - `generateTagKeywords(tagName)` → keywords + транслит + склонения
-   - INSERT в `user_defined_tags`
+   - LLM `enrichTagViaLLM(tagName)` → `enriched_data` (tag_type, ticker, synonyms, key_products)
+   - `buildEnrichedKeywords(tagName, enrichment)` → keywords + транслит + склонения + ticker/synonyms/products
+   - INSERT в `user_defined_tags` (keywords + enriched_data)
    - INSERT в `portfolios`
    - **BACKFILL:** сканирует ВСЕ новости, обновляет `matched_tags`
 3. `tagVersion++` → `invalidateQueries(['unreadNews', 'historyNews'])`
@@ -185,11 +186,12 @@ Flow создания:
 **Таблица:** `user_defined_tags` (tag_id, tag_name, tag_type, keywords[], enriched_data JSONB, created_by, created_at)
 
 **Keywords vs enriched_data:**
-- `keywords[]` — плоский массив, используемый Layer 1 keyword matcher'ом.
-- `enriched_data` — JSONB с ticker, synonyms, key_products и т.д.
-- `buildEnrichedKeywords(tagName, enrichment)` строит effective keywords из обоих источников.
-- При обновлении enriched fields через admin (`ticker`, `synonyms_*`, `key_products`) keywords пересчитываются автоматически.
-- `getAllUserDefinedTags` корректно обрабатывает JSONB-объект (pg driver возвращает объект, а не строку).
+- `enriched_data` JSONB — единственный источник правды для matching keywords.
+- `keywords[]` — производный плоский массив, который пересчитывается из `enriched_data`.
+- `buildEnrichedKeywords(tagName, enrichment)` строит effective keywords из base keywords + ticker + synonyms + key_products.
+- При создании тега и при любом admin-изменении `keywords` пересчитываются через `rebuildKeywordsFromEnrichment`.
+- `getAllUserDefinedTags` больше не мерджит stored keywords с enriched; используется только `buildEnrichedKeywords(enriched_data)`.
+- `related_entities` используются только в UI, НЕ участвуют в matching (чтобы избежать false positives).
 
 ---
 
