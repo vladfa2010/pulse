@@ -452,13 +452,15 @@ export async function getAllUserDefinedTags(): Promise<Record<string, string[]>>
       // Use enriched keywords if available, otherwise fall back to base keywords
       if (row.enriched_data) {
         try {
-          const enrichment: TagEnrichment = JSON.parse(row.enriched_data);
+          const enrichment: TagEnrichment =
+            typeof row.enriched_data === 'string' ? JSON.parse(row.enriched_data) : row.enriched_data;
           const enrichedKeywords = buildEnrichedKeywords(row.tag_id, enrichment);
           // Merge with stored keywords (deduplicate)
           const storedKeywords: string[] = row.keywords || [];
           tags[row.tag_id] = [...new Set([...enrichedKeywords, ...storedKeywords])];
           continue;
-        } catch {
+        } catch (err: any) {
+          console.error('[TagManager] getAllUserDefinedTags parse error:', err.message);
           // JSON parse failed, fall through to base keywords
         }
       }
