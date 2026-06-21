@@ -3,7 +3,7 @@
 > **Файл для быстрого входа в контекст после сброса.**
 > **Дата:** 2026-06-20
 > **Версия API:** 10.1
-> **Актуальные коммиты:** backend `77624eb`, frontend `e5bd5d5`
+> **Актуальные коммиты:** backend `e51abf5`, frontend `e5bd5d5`
 >
 > ✅ Batch sentiment + batch tag impact + retry logic + job lock
 
@@ -181,7 +181,14 @@ Flow создания:
 3. `tagVersion++` → `invalidateQueries(['unreadNews', 'historyNews'])`
 4. Карусели автоматически перезагружаются
 
-**Таблица:** `user_defined_tags` (tag_id, tag_name, tag_type, keywords[], created_by, created_at)
+**Таблица:** `user_defined_tags` (tag_id, tag_name, tag_type, keywords[], enriched_data JSONB, created_by, created_at)
+
+**Keywords vs enriched_data:**
+- `keywords[]` — плоский массив, используемый Layer 1 keyword matcher'ом.
+- `enriched_data` — JSONB с ticker, synonyms, key_products и т.д.
+- `buildEnrichedKeywords(tagName, enrichment)` строит effective keywords из обоих источников.
+- При обновлении enriched fields через admin (`ticker`, `synonyms_*`, `key_products`) keywords пересчитываются автоматически.
+- `getAllUserDefinedTags` корректно обрабатывает JSONB-объект (pg driver возвращает объект, а не строку).
 
 ---
 
