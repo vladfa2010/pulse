@@ -3,7 +3,7 @@
 > **Файл для быстрого входа в контекст после сброса.**
 > **Дата:** 2026-06-20
 > **Версия API:** 10.1
-> **Актуальные коммиты:** backend `5e7d0be`, frontend `892be64`
+> **Актуальные коммиты:** backend `77624eb`, frontend `e5bd5d5`
 >
 > ✅ Batch sentiment + batch tag impact + retry logic + job lock
 
