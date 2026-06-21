@@ -55,6 +55,22 @@ async function getCachedUserTags(): Promise<Record<string, string[]>> {
   return userTagsCache;
 }
 
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function keywordMatches(text: string, keyword: string): boolean {
+  // Word-boundary match: keyword must not be preceded/followed by a letter or digit.
+  // Supports both Latin and Cyrillic via Unicode properties.
+  try {
+    const re = new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegex(keyword)}(?![\\p{L}\\p{N}])`, 'iu');
+    return re.test(text);
+  } catch {
+    // Fallback for environments without lookbehind/unicode support
+    return text.includes(keyword);
+  }
+}
+
 export async function matchTagsByKeywords(text: string): Promise<string[]> {
   const lower = text.toLowerCase();
   const matched: string[] = [];
@@ -62,7 +78,7 @@ export async function matchTagsByKeywords(text: string): Promise<string[]> {
   // Only user-defined tags from DB — no hardcoded keywords
   const userTags = await getCachedUserTags();
   for (const [tagId, keywords] of Object.entries(userTags)) {
-    if (keywords.some(kw => lower.includes(kw.toLowerCase()))) {
+    if (keywords.some(kw => keywordMatches(lower, kw.toLowerCase()))) {
       if (!matched.includes(tagId)) {
         matched.push(tagId);
       }
