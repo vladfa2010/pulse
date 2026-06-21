@@ -3147,6 +3147,36 @@ app.get('/trigger/recalculate-keywords', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// TRIGGER: Reprocess articles that contain a specific matched tag
+// ═══════════════════════════════════════════════════════════════════════════
+app.get('/trigger/reprocess-tag/:tagId', async (req, res) => {
+  const secret = req.headers['x-trigger-secret'] || req.query.secret;
+  if (secret !== (process.env.CRON_SECRET_KEY || 'pulse-dev-key')) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  try {
+    const tagId = req.params.tagId.toLowerCase();
+    const { processRawArticles } = await import('./services/newsProcessor');
+    const result = await query(
+      `UPDATE news
+       SET needs_translation = TRUE,
+           sentiment_source = NULL,
+           matched_tags = '{}',
+           tag_impact = '[]'
+       WHERE $1 = ANY(matched_tags)
+       RETURNING id`,
+      [tagId]
+    );
+    const count = result.rows.length;
+    processRawArticles().catch(e => console.error('[ReprocessTag] processor error:', e.message));
+    res.json({ started: true, tagId, count });
+  } catch (err: any) {
+    console.error('[ReprocessTag] error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 
 // TEMP: Test RSS fetch (no save, just fetch + count)
 app.get('/test-rss', async (req, res) => {
