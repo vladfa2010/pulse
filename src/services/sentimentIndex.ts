@@ -10,11 +10,11 @@
  */
 
 import { query } from '../config/db';
-import { getImoex5minForDay, ImoexCandle } from './imoexAdapter';
+import { getImoex5minForDay, ImoexCandle, extendWithFlatLine } from './imoexAdapter';
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 const VOTE_COOLDOWN_MINUTES = 30;
-const IMOEX_MOCK_VALUE = 3200;
+const SBER_MOCK_VALUE = 300;
 const IMOEX_CACHE_TTL_MS = 5 * 60 * 1000;
 
 export interface MoscowDayBounds {
@@ -279,8 +279,30 @@ export async function getImoexData(now: Date = new Date()): Promise<ImoexData> {
   }
 
   if (candles.length === 0) {
+    // Если сегодня ещё не торговалось (ночь/выходные) — подтягиваем закрытие предыдущего дня
+    const prevDate = new Date(getMoscowDayBounds(now).start.getTime() - 24 * 60 * 60 * 1000);
+    const { dateStr: prevDateStr } = getMoscowDayBounds(prevDate);
+    const prevCached = await getCachedImoex(prevDateStr);
+
+    if (prevCached.candles.length > 0) {
+      const lastClose = prevCached.candles[prevCached.candles.length - 1].close;
+      const { start, end } = getMoscowDayBounds(now);
+      const flat = extendWithFlatLine(
+        [{ time: start.toISOString(), open: lastClose, high: lastClose, low: lastClose, close: lastClose }],
+        start,
+        end
+      );
+      return {
+        current: lastClose,
+        sessionActive,
+        sessionStart: sessionStart.toISOString(),
+        sessionEnd: sessionEnd.toISOString(),
+        candles: flat,
+      };
+    }
+
     return {
-      current: IMOEX_MOCK_VALUE,
+      current: SBER_MOCK_VALUE,
       sessionActive,
       sessionStart: sessionStart.toISOString(),
       sessionEnd: sessionEnd.toISOString(),
