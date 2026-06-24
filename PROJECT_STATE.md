@@ -57,6 +57,40 @@
 
 ---
 
+## 3a. Sentiment Index (MVP) — страница `/sentiment`
+
+Игровая механика: пользователь голосует за настроение рынка (`-1` / `0` / `+1`) каждые 30 минут и получает доступ к общему графику настроения сообщества.
+
+**Сущность:** кумулятивная сумма голосов за текущий день по МСК.
+
+**Таблицы:**
+- `sentiment_votes` — голоса пользователей.
+- `sentiment_user_windows` — персональные окна, статистика, streak.
+- `sentiment_index_cache` — кэш 5-минутных свечей SBER (MOEX ISS API).
+
+**API endpoints:**
+- `GET /api/sentiment/index` — публичный индекс + история + свечи SBER.
+- `GET /api/sentiment/status` — персональный статус и метрики (auth).
+- `POST /api/sentiment/vote` — проголосовать (auth).
+- `GET /api/sentiment/stream` — SSE `sentiment-update`.
+
+**Логика:**
+- Персональный 30-минутный кулдаун (`next_vote_at = last_vote_at + 30 мин`).
+- Состояния страницы: `anonymous` / `active` / `voting` (blind vote).
+- Индекс = `SUM(vote_value)` за день по МСК.
+- Сброс `vote_count_today` и пересчёт `streak_days` — cron в 00:00 МСК.
+- Обновление кэша SBER — cron каждые 5 минут в торговые часы.
+
+**График:**
+- Recharts `AreaChart`.
+- Линия индекса (левая ось) + линия SBER (правая ось, жёлтая пунктир).
+- Зона торговой сессии 10:00–19:00 МСК.
+- SSE + fallback polling каждые 10 сек.
+
+**Подробнее:** см. `TZ_Sentiment_Index_v3.md` в корне проекта.
+
+---
+
 ## 4. News Pipeline (RSS → БД) — v10.1
 
 ```
@@ -221,9 +255,9 @@ Flow создания:
 
 ---
 
-## 11. Таблицы БД (10 штук)
+## 11. Таблицы БД (13 штук)
 
-`users`, `portfolios`, `payments`, `news`, `user_sessions`, `user_channels`, `notification_settings`, `translation_cache`, `smart_tag_cache`, `user_defined_tags`
+`users`, `portfolios`, `payments`, `news`, `user_sessions`, `user_channels`, `notification_settings`, `translation_cache`, `smart_tag_cache`, `user_defined_tags`, `sentiment_votes`, `sentiment_user_windows`, `sentiment_index_cache`
 
 **Ключевые колонки в `news`:** id, title_ru, summary_ru, title_original, lang_original, source, url, published_at, sentiment, sentiment_source, matched_tags, tag_impact, content_hash, all_sources, source_count
 
@@ -269,11 +303,15 @@ backend/src/
     translate.ts         — Kimi API translation (moonshot-v1-32k)
     tagManager.ts        — User-defined tags + keyword generation + backfill
     reports.ts           — Weekly email reports
+    sentimentIndex.ts    — Индекс настроения: голоса, окна, метрики, кэш
+    imoexAdapter.ts      — MOEX ISS адаптер для свечей SBER
+    sse.ts               — SSE-рассылка (news + sentiment)
   routes/
     news.ts              — 3 режима ленты
     user.ts              — Tags CRUD + custom tag creation
     auth.ts              — Login/register
-  index.ts               — Entry point, debug endpoints, migrations
+    sentiment.ts         — API индекса настроения
+  index.ts               — Entry point, debug endpoints, migrations, cron
 
 frontend/src/
   components/
@@ -286,6 +324,7 @@ frontend/src/
     useNewsStream.ts         — Новые статьи → isNew → CSS анимация
   pages/
     Home.tsx                 — 3 карусели + tag search + create tag
+    SentimentIndex.tsx       — Страница индекса настроения (Recharts + SSE)
 ```
 
 ---
