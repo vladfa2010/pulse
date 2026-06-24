@@ -103,17 +103,6 @@ app.get('/health', async (req, res) => {
   });
 });
 
-// TEMP debug: IMOEX adapter
-app.get('/debug/imoex', async (req, res) => {
-  try {
-    const { getImoex5minForDay } = await import('./services/imoexAdapter');
-    const candles = await getImoex5minForDay(new Date());
-    res.json({ count: candles.length, first: candles[0], last: candles[candles.length - 1] });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message, stack: err.stack });
-  }
-});
-
 // ═══════════════════════════════════════════════════════════════════════════
 // Debug admins — list users with is_admin = true
 // ═══════════════════════════════════════════════════════════════════════════
