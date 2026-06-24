@@ -14,7 +14,7 @@ import { getImoex5minForDay, ImoexCandle, extendWithFlatLine } from './imoexAdap
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 const VOTE_COOLDOWN_MINUTES = 30;
-const SBER_MOCK_VALUE = 300;
+const IMOEX_MOCK_VALUE = 2200;
 const IMOEX_CACHE_TTL_MS = 5 * 60 * 1000;
 
 export interface MoscowDayBounds {
@@ -266,14 +266,14 @@ async function getOrRefreshCandles(date: Date): Promise<ImoexCandle[]> {
     try {
       candles = await refreshImoexCache(date);
     } catch (err: any) {
-      console.error('[SBER] refresh error:', err.message);
+      console.error('[IMOEX] refresh error:', err.message);
     }
   }
   return candles;
 }
 
 /**
- * SBER: реальные 5-минутные свечи из MOEX ISS за вчера и сегодня.
+ * IMOEX: реальные 5-минутные свечи из MOEX ISS за вчера и сегодня.
  * Если сегодня ещё не торговалось — дублируем закрытие вчерашнего дня flat line'ом.
  * Fallback — mock.
  */
@@ -317,7 +317,7 @@ export async function getImoexData(now: Date = new Date()): Promise<ImoexData> {
 
   if (combined.length === 0) {
     return {
-      current: SBER_MOCK_VALUE,
+      current: IMOEX_MOCK_VALUE,
       sessionActive,
       sessionStart: sessionStart.toISOString(),
       sessionEnd: sessionEnd.toISOString(),
