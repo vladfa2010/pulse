@@ -32,7 +32,7 @@ import { startCron } from './services/cron';   // RSS cron отключен (TZ_
 import { startReportCron, sendWeeklyReportForUser } from './services/reports'; // ← Еженедельные репорты
 import { startDigestCron, sendAllDigests } from './services/digest'; // ← TG дайджест (каждый час)
 import cron from 'node-cron';
-import { resetDailyWindows } from './services/sentimentIndex';
+import { resetDailyWindows, refreshImoexCache } from './services/sentimentIndex';
 import { setupYookassaWebhook } from './routes/payment'; // ← Auto-setup YuKassa webhook
 import { addSubscriber, getSubscriberCount, addSentimentSubscriber } from './services/sse'; // ← Real-time news stream
 
@@ -4001,7 +4001,9 @@ async function start() {
     { sql: `CREATE INDEX IF NOT EXISTS idx_sentiment_votes_check ON sentiment_votes(check_status, created_at)`, name: 'idx_sentiment_votes_check' },
     { sql: `CREATE TABLE IF NOT EXISTS sentiment_user_windows (user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, last_vote_at TIMESTAMPTZ, next_vote_at TIMESTAMPTZ, vote_count_today INT DEFAULT 0, total_votes_all_time INT DEFAULT 0, sync_count INT DEFAULT 0, total_votes_count INT DEFAULT 0, streak_days INT DEFAULT 0, max_streak_days INT DEFAULT 0, favorite_sentiment VARCHAR(10) DEFAULT NULL, impact_sum INT DEFAULT 0, last_streak_date DATE DEFAULT NULL, unlocked_badges JSONB DEFAULT '[]', forecast_streak INT DEFAULT 0, max_forecast_streak INT DEFAULT 0, contrarian_count INT DEFAULT 0, updated_at TIMESTAMPTZ DEFAULT ${_SQL_NOW})`, name: 'sentiment_user_windows' },
     { sql: `CREATE INDEX IF NOT EXISTS idx_sentiment_windows_next_vote ON sentiment_user_windows(next_vote_at)`, name: 'idx_sentiment_windows_next_vote' },
-    { sql: `CREATE TABLE IF NOT EXISTS sentiment_index_cache (date DATE PRIMARY KEY, current_value INT DEFAULT 0, vote_count INT DEFAULT 0, updated_at TIMESTAMPTZ DEFAULT ${_SQL_NOW})`, name: 'sentiment_index_cache' },
+    { sql: `CREATE TABLE IF NOT EXISTS sentiment_index_cache (date DATE PRIMARY KEY, current_value INT DEFAULT 0, vote_count INT DEFAULT 0, imoex_candles JSONB DEFAULT '[]', imoex_updated_at TIMESTAMPTZ, updated_at TIMESTAMPTZ DEFAULT ${_SQL_NOW})`, name: 'sentiment_index_cache' },
+    { sql: `ALTER TABLE sentiment_index_cache ADD COLUMN IF NOT EXISTS imoex_candles JSONB DEFAULT '[]'`, name: 'sentiment_index_cache_imoex_candles' },
+    { sql: `ALTER TABLE sentiment_index_cache ADD COLUMN IF NOT EXISTS imoex_updated_at TIMESTAMPTZ`, name: 'sentiment_index_cache_imoex_updated_at' },
   ];
   for (const m of migrations) {
     try {
@@ -4238,6 +4240,11 @@ async function start() {
     // Sentiment Index — daily reset of vote_count_today / streak at 00:00 MSK (21:00 UTC)
     cron.schedule('0 21 * * *', () => {
       resetDailyWindows().catch((e: any) => console.error('[Sentiment] daily reset error:', e.message));
+    });
+
+    // IMOEX 5-min cache refresh during trading hours (MSK 10:00–23:00 → UTC 07:00–20:00)
+    cron.schedule('*/5 7-20 * * 1-5', () => {
+      refreshImoexCache().catch((e: any) => console.error('[IMOEX] cron refresh error:', e.message));
     });
 
     // NewsSourceManager — фоновый запуск каждые 5 мин

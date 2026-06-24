@@ -10,10 +10,12 @@
  */
 
 import { query } from '../config/db';
+import { getImoex5minForDay, ImoexCandle } from './imoexAdapter';
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 const VOTE_COOLDOWN_MINUTES = 30;
 const IMOEX_MOCK_VALUE = 3200;
+const IMOEX_CACHE_TTL_MS = 5 * 60 * 1000;
 
 export interface MoscowDayBounds {
   dateStr: string;
@@ -31,6 +33,7 @@ export interface ImoexData {
   sessionActive: boolean;
   sessionStart: string; // ISO
   sessionEnd: string; // ISO
+  candles: ImoexCandle[];
 }
 
 /**
@@ -225,20 +228,74 @@ export async function getCommunityMetrics(): Promise<{
   };
 }
 
+async function getCachedImoex(dateStr: string): Promise<{ candles: ImoexCandle[]; updatedAt: Date | null }> {
+  const result = await query(`SELECT imoex_candles, imoex_updated_at FROM sentiment_index_cache WHERE date = $1`, [dateStr]);
+  if (result.rows.length === 0) return { candles: [], updatedAt: null };
+  let candles: ImoexCandle[] = result.rows[0].imoex_candles || [];
+  if (typeof candles === 'string') {
+    try { candles = JSON.parse(candles); } catch { candles = []; }
+  }
+  return { candles, updatedAt: result.rows[0].imoex_updated_at ? new Date(result.rows[0].imoex_updated_at) : null };
+}
+
+async function saveImoexCache(dateStr: string, candles: ImoexCandle[]): Promise<void> {
+  await query(
+    `INSERT INTO sentiment_index_cache (date, imoex_candles, imoex_updated_at, updated_at)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (date) DO UPDATE
+       SET imoex_candles = EXCLUDED.imoex_candles,
+           imoex_updated_at = EXCLUDED.imoex_updated_at,
+           updated_at = EXCLUDED.updated_at`,
+    [dateStr, JSON.stringify(candles), formatPg(new Date()), formatPg(new Date())]
+  );
+}
+
+export async function refreshImoexCache(date: Date = new Date()): Promise<ImoexCandle[]> {
+  const { dateStr } = getMoscowDayBounds(date);
+  const candles = await getImoex5minForDay(date);
+  if (candles.length > 0) {
+    await saveImoexCache(dateStr, candles);
+  }
+  return candles;
+}
+
 /**
- * IMOEX для MVP: mock + сессия 10:00–19:00 МСК.
+ * IMOEX: реальные 5-минутные свечи из MOEX ISS + flat line за пределами сессии.
+ * Если данных нет или кэш протух — пытаемся обновить. Fallback — mock.
  */
-export function getImoexData(now: Date = new Date()): ImoexData {
+export async function getImoexData(now: Date = new Date()): Promise<ImoexData> {
   const { dateStr } = getMoscowDayBounds(now);
   const sessionStart = new Date(`${dateStr}T10:00:00+03:00`);
   const sessionEnd = new Date(`${dateStr}T19:00:00+03:00`);
   const sessionActive = now >= sessionStart && now < sessionEnd;
 
+  let { candles, updatedAt } = await getCachedImoex(dateStr);
+  if (!updatedAt || now.getTime() - updatedAt.getTime() > IMOEX_CACHE_TTL_MS) {
+    try {
+      candles = await refreshImoexCache(now);
+    } catch (err: any) {
+      console.error('[IMOEX] refresh error:', err.message);
+    }
+  }
+
+  if (candles.length === 0) {
+    return {
+      current: IMOEX_MOCK_VALUE,
+      sessionActive,
+      sessionStart: sessionStart.toISOString(),
+      sessionEnd: sessionEnd.toISOString(),
+      candles: [],
+    };
+  }
+
+  // Текущее значение — последний close, независимо от активности сессии (flat line)
+  const current = candles[candles.length - 1].close;
   return {
-    current: IMOEX_MOCK_VALUE,
+    current,
     sessionActive,
     sessionStart: sessionStart.toISOString(),
     sessionEnd: sessionEnd.toISOString(),
+    candles,
   };
 }
 

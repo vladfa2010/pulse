@@ -280,6 +280,8 @@ export async function initSQLiteSchema(): Promise<void> {
       date TEXT PRIMARY KEY,
       current_value INTEGER DEFAULT 0,
       vote_count INTEGER DEFAULT 0,
+      imoex_candles TEXT DEFAULT '[]',
+      imoex_updated_at TEXT,
       updated_at TEXT DEFAULT (datetime('now'))
     );
   `;

@@ -305,9 +305,11 @@ CREATE INDEX IF NOT EXISTS idx_sentiment_windows_next_vote ON sentiment_user_win
 -- 14. sentiment_index_cache (кэш текущего индекса)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS sentiment_index_cache (
-  date          DATE PRIMARY KEY,
-  current_value INT DEFAULT 0,
-  vote_count    INT DEFAULT 0,
-  updated_at    TIMESTAMPTZ DEFAULT NOW()
+  date             DATE PRIMARY KEY,
+  current_value    INT DEFAULT 0,
+  vote_count       INT DEFAULT 0,
+  imoex_candles    JSONB DEFAULT '[]',
+  imoex_updated_at TIMESTAMPTZ,
+  updated_at       TIMESTAMPTZ DEFAULT NOW()
 );
 
