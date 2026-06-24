@@ -361,25 +361,40 @@ const sync = Math.sign(value) === Math.sign(afterIndex);
 - **Индекс настроения** — точки из `indexData.history`.
 - **IMOEX** — 5-минутные свечи из `indexData.imoex.candles`.
 
+**Важное правило:** график не строится в будущее. Последнее известное значение — самая правая точка. Данные обрезаются по `clipTs`:
+
+```ts
+const nowTs = Date.now();
+const lastCandleTs = imoexCandles.length > 0
+  ? new Date(imoexCandles[imoexCandles.length - 1].time).getTime()
+  : nowTs;
+const clipTs = Math.min(nowTs, lastCandleTs);
+```
+
+- Текущий день во время торгов — обрезка по текущему времени.
+- Исторический/закрытый день — показывается полный день до последней свечи.
+
 ```ts
 const points = new Map<number, { value?: number; imoex?: number }>();
 
 // Индекс
 for (const p of history) {
   const ts = new Date(p.time).getTime();
+  if (ts > clipTs) continue;
   points.set(ts, { ...points.get(ts), value: p.value });
 }
 
 // IMOEX
 for (const c of imoexCandles) {
   const ts = new Date(c.time).getTime();
+  if (ts > clipTs) continue;
   points.set(ts, { ...points.get(ts), imoex: c.close });
 }
 
 // Сортируем и заполняем пропуски последними известными значениями
 const sorted = Array.from(points.keys()).sort((a, b) => a - b);
 let lastValue = 0;
-let lastImoex = imoexCandles[0]?.close ?? IMOEX_MOCK_VALUE;
+let lastImoex = imoexCandles[0]?.close ?? indexData?.imoex?.current ?? IMOEX_MOCK_VALUE;
 
 return sorted.map(ts => {
   const p = points.get(ts)!;
@@ -396,7 +411,7 @@ return sorted.map(ts => {
 - **Правая ось Y:** IMOEX, масштаб вычисляется динамически от `min`/`max` свечей с отступом 10%:
 
 ```ts
-const sberDomain = useMemo(() => {
+const imoexDomain = useMemo(() => {
   if (candles.length === 0) return ['auto', 'auto'];
   const min = Math.min(...closes);
   const max = Math.max(...closes);
