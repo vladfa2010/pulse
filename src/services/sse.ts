@@ -17,6 +17,7 @@ import { Response } from 'express';
 
 // Active SSE subscribers
 const subscribers: Set<Response> = new Set();
+const sentimentSubscribers: Set<Response> = new Set();
 
 /**
  * Register a new SSE subscriber
@@ -113,4 +114,58 @@ export function broadcastRefresh(): void {
  */
 export function getSubscriberCount(): number {
   return subscribers.size;
+}
+
+/**
+ * Register a new Sentiment Index SSE subscriber
+ */
+export function addSentimentSubscriber(res: Response): void {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
+
+  res.write('event: connected\n');
+  res.write(`data: ${JSON.stringify({ time: new Date().toISOString() })}\n\n`);
+
+  sentimentSubscribers.add(res);
+  console.log(`[SSE] Sentiment subscriber added. Total: ${sentimentSubscribers.size}`);
+
+  const heartbeat = setInterval(() => {
+    if (res.writableEnded) {
+      clearInterval(heartbeat);
+      return;
+    }
+    res.write('event: ping\n');
+    res.write('data: {}\n\n');
+  }, 30000);
+
+  res.on('close', () => {
+    sentimentSubscribers.delete(res);
+    clearInterval(heartbeat);
+    console.log(`[SSE] Sentiment subscriber disconnected. Total: ${sentimentSubscribers.size}`);
+  });
+}
+
+/**
+ * Broadcast a sentiment index update to all connected sentiment subscribers
+ */
+export function broadcastSentimentUpdate(payload: any): void {
+  if (sentimentSubscribers.size === 0) return;
+
+  const data = JSON.stringify(payload);
+  const message = `event: sentiment-update\ndata: ${data}\n\n`;
+
+  let sent = 0;
+  for (const res of sentimentSubscribers) {
+    if (!res.writableEnded) {
+      res.write(message);
+      sent++;
+    }
+  }
+
+  if (sent > 0) {
+    console.log(`[SSE] Broadcasted sentiment update to ${sent} subscriber(s): ${data.slice(0, 80)}`);
+  }
 }

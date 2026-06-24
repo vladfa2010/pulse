@@ -238,6 +238,50 @@ export async function initSQLiteSchema(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_payments_user_id ON payments (user_id);
     CREATE INDEX IF NOT EXISTS idx_user_channels_user_id ON user_channels (user_id);
     CREATE INDEX IF NOT EXISTS idx_translation_hash ON translation_cache (hash);
+
+    CREATE TABLE IF NOT EXISTS sentiment_votes (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      vote_value INTEGER NOT NULL CHECK (vote_value IN (-1, 0, 1)),
+      created_at TEXT DEFAULT (datetime('now')),
+      tickers TEXT DEFAULT '[]',
+      index_at_vote INTEGER DEFAULT 0,
+      imoex_at_vote REAL,
+      imoex_after_1h REAL,
+      index_after_2h INTEGER,
+      check_status TEXT DEFAULT 'pending'
+    );
+    CREATE INDEX IF NOT EXISTS idx_sentiment_votes_user_time ON sentiment_votes(user_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_sentiment_votes_created ON sentiment_votes(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_sentiment_votes_check ON sentiment_votes(check_status, created_at);
+
+    CREATE TABLE IF NOT EXISTS sentiment_user_windows (
+      user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      last_vote_at TEXT,
+      next_vote_at TEXT,
+      vote_count_today INTEGER DEFAULT 0,
+      total_votes_all_time INTEGER DEFAULT 0,
+      sync_count INTEGER DEFAULT 0,
+      total_votes_count INTEGER DEFAULT 0,
+      streak_days INTEGER DEFAULT 0,
+      max_streak_days INTEGER DEFAULT 0,
+      favorite_sentiment TEXT DEFAULT NULL,
+      impact_sum INTEGER DEFAULT 0,
+      last_streak_date TEXT DEFAULT NULL,
+      unlocked_badges TEXT DEFAULT '[]',
+      forecast_streak INTEGER DEFAULT 0,
+      max_forecast_streak INTEGER DEFAULT 0,
+      contrarian_count INTEGER DEFAULT 0,
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_sentiment_windows_next_vote ON sentiment_user_windows(next_vote_at);
+
+    CREATE TABLE IF NOT EXISTS sentiment_index_cache (
+      date TEXT PRIMARY KEY,
+      current_value INTEGER DEFAULT 0,
+      vote_count INTEGER DEFAULT 0,
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
   `;
 
   const statements = schema.split(';').filter(s => s.trim());

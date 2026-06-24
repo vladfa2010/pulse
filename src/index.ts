@@ -25,13 +25,16 @@ import userRoutes from './routes/user';
 import translateRoutes from './routes/translate';
 import webhookRoutes from './routes/webhook';
 import adminRoutes from './routes/admin';
+import sentimentRoutes from './routes/sentiment';
 import { authMiddleware, AuthRequest } from './middleware/auth';
 import { apiLimiter, authLimiter, webhookLimiter } from './middleware/rateLimit';
 import { startCron } from './services/cron';   // RSS cron отключен (TZ_REMOVE_DUPLICATE_RSS_CRON) — модуль оставлен для отката
 import { startReportCron, sendWeeklyReportForUser } from './services/reports'; // ← Еженедельные репорты
 import { startDigestCron, sendAllDigests } from './services/digest'; // ← TG дайджест (каждый час)
+import cron from 'node-cron';
+import { resetDailyWindows } from './services/sentimentIndex';
 import { setupYookassaWebhook } from './routes/payment'; // ← Auto-setup YuKassa webhook
-import { addSubscriber, getSubscriberCount } from './services/sse'; // ← Real-time news stream
+import { addSubscriber, getSubscriberCount, addSentimentSubscriber } from './services/sse'; // ← Real-time news stream
 
 dotenv.config();
 
@@ -2480,6 +2483,14 @@ app.get('/api/news/stream', (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// SSE — Sentiment Index stream
+// ═══════════════════════════════════════════════════════════════════════════
+app.get('/api/sentiment/stream', (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  addSentimentSubscriber(res);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // NEWS SEARCH — гибридный поиск по тегу (v2 news_tag_links + v1 tag_impact JSONB)
 // ═══════════════════════════════════════════════════════════════════════════
 app.get('/news/search', async (req, res) => {
@@ -3483,6 +3494,7 @@ app.use('/api/user', userRoutes);       // GET/POST/DELETE /api/user/tags
 app.use('/api/translate', translateRoutes);
 app.use('/api/webhook', webhookLimiter, webhookRoutes); // Высокий лимит для YuKassa
 app.use('/api/admin', adminRoutes);     // GET /api/admin/users, /stats
+app.use('/api/sentiment', sentimentRoutes); // Sentiment Index
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Telegram Bot — generate secure link for connecting account
@@ -3982,6 +3994,14 @@ async function start() {
     { sql: `CREATE TABLE IF NOT EXISTS llm_batches (id SERIAL PRIMARY KEY, status VARCHAR(20) NOT NULL, started_at TIMESTAMP NOT NULL, finished_at TIMESTAMP NOT NULL, articles_count INTEGER NOT NULL DEFAULT 0, success_count INTEGER NOT NULL DEFAULT 0, failed_count INTEGER NOT NULL DEFAULT 0, partial_count INTEGER NOT NULL DEFAULT 0, error_types JSONB DEFAULT '{}', created_at TIMESTAMP DEFAULT ${_SQL_NOW})`, name: 'llm_batches' },
     // TGparser — RSS source (exists in rssSources.ts but missing in news_sources table)
     { sql: `INSERT INTO news_sources (name, display_name, type, config, enabled) VALUES ('tgparser', 'TG Parser News', 'rss', '{"url": "https://tgparser-web.onrender.com/rss", "lang": "ru", "category": "news"}', true) ON CONFLICT (name) DO NOTHING`, name: 'news_source_tgparser' },
+    // Sentiment Index tables
+    { sql: `CREATE TABLE IF NOT EXISTS sentiment_votes (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, vote_value SMALLINT NOT NULL CHECK (vote_value IN (-1, 0, 1)), created_at TIMESTAMPTZ DEFAULT ${_SQL_NOW}, tickers JSONB DEFAULT '[]', index_at_vote INT DEFAULT 0, imoex_at_vote DECIMAL(10,2), imoex_after_1h DECIMAL(10,2), index_after_2h INT, check_status VARCHAR(20) DEFAULT 'pending')`, name: 'sentiment_votes' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_sentiment_votes_user_time ON sentiment_votes(user_id, created_at DESC)`, name: 'idx_sentiment_votes_user_time' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_sentiment_votes_created ON sentiment_votes(created_at DESC)`, name: 'idx_sentiment_votes_created' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_sentiment_votes_check ON sentiment_votes(check_status, created_at)`, name: 'idx_sentiment_votes_check' },
+    { sql: `CREATE TABLE IF NOT EXISTS sentiment_user_windows (user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, last_vote_at TIMESTAMPTZ, next_vote_at TIMESTAMPTZ, vote_count_today INT DEFAULT 0, total_votes_all_time INT DEFAULT 0, sync_count INT DEFAULT 0, total_votes_count INT DEFAULT 0, streak_days INT DEFAULT 0, max_streak_days INT DEFAULT 0, favorite_sentiment VARCHAR(10) DEFAULT NULL, impact_sum INT DEFAULT 0, last_streak_date DATE DEFAULT NULL, unlocked_badges JSONB DEFAULT '[]', forecast_streak INT DEFAULT 0, max_forecast_streak INT DEFAULT 0, contrarian_count INT DEFAULT 0, updated_at TIMESTAMPTZ DEFAULT ${_SQL_NOW})`, name: 'sentiment_user_windows' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_sentiment_windows_next_vote ON sentiment_user_windows(next_vote_at)`, name: 'idx_sentiment_windows_next_vote' },
+    { sql: `CREATE TABLE IF NOT EXISTS sentiment_index_cache (date DATE PRIMARY KEY, current_value INT DEFAULT 0, vote_count INT DEFAULT 0, updated_at TIMESTAMPTZ DEFAULT ${_SQL_NOW})`, name: 'sentiment_index_cache' },
   ];
   for (const m of migrations) {
     try {
@@ -4214,6 +4234,11 @@ async function start() {
     }, 8000);
 
     startDigestCron(); // TG digest cron (every hour)
+
+    // Sentiment Index — daily reset of vote_count_today / streak at 00:00 MSK (21:00 UTC)
+    cron.schedule('0 21 * * *', () => {
+      resetDailyWindows().catch((e: any) => console.error('[Sentiment] daily reset error:', e.message));
+    });
 
     // NewsSourceManager — фоновый запуск каждые 5 мин
     // NOTE: /trigger/nsm endpoint зарегистрирован в основном потоке выше

@@ -256,3 +256,58 @@ CREATE TABLE IF NOT EXISTS llm_batches (
 CREATE INDEX IF NOT EXISTS idx_translation_hash ON translation_cache (hash);
 CREATE INDEX IF NOT EXISTS idx_llm_batches_created_at ON llm_batches (created_at DESC);
 
+-- ============================================================
+-- 12. sentiment_votes (голоса пользователей за индекс настроения)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS sentiment_votes (
+  id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  vote_value      SMALLINT NOT NULL CHECK (vote_value IN (-1, 0, 1)),
+  created_at      TIMESTAMPTZ DEFAULT NOW(),
+  tickers         JSONB DEFAULT '[]',
+  index_at_vote   INT DEFAULT 0,
+  imoex_at_vote   DECIMAL(10,2),
+  imoex_after_1h  DECIMAL(10,2),
+  index_after_2h  INT,
+  check_status    VARCHAR(20) DEFAULT 'pending'
+);
+
+CREATE INDEX IF NOT EXISTS idx_sentiment_votes_user_time ON sentiment_votes(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sentiment_votes_created    ON sentiment_votes(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sentiment_votes_check      ON sentiment_votes(check_status, created_at);
+
+-- ============================================================
+-- 13. sentiment_user_windows (персональные окна и статистика)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS sentiment_user_windows (
+  user_id              UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  last_vote_at         TIMESTAMPTZ,
+  next_vote_at         TIMESTAMPTZ,
+  vote_count_today     INT DEFAULT 0,
+  total_votes_all_time INT DEFAULT 0,
+  sync_count           INT DEFAULT 0,
+  total_votes_count    INT DEFAULT 0,
+  streak_days          INT DEFAULT 0,
+  max_streak_days      INT DEFAULT 0,
+  favorite_sentiment   VARCHAR(10) DEFAULT NULL,
+  impact_sum           INT DEFAULT 0,
+  last_streak_date     DATE DEFAULT NULL,
+  unlocked_badges      JSONB DEFAULT '[]',
+  forecast_streak      INT DEFAULT 0,
+  max_forecast_streak  INT DEFAULT 0,
+  contrarian_count     INT DEFAULT 0,
+  updated_at           TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_sentiment_windows_next_vote ON sentiment_user_windows(next_vote_at);
+
+-- ============================================================
+-- 14. sentiment_index_cache (кэш текущего индекса)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS sentiment_index_cache (
+  date          DATE PRIMARY KEY,
+  current_value INT DEFAULT 0,
+  vote_count    INT DEFAULT 0,
+  updated_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
