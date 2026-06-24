@@ -20,7 +20,7 @@
 - Индекс(t) = Σ vote_value за текущий день.
 - График строится по временным меткам голосований + стартовой точке `00:00`.
 
-Поверх индекса на графике накладывается линия рыночного актива **SBER** (ранее планировался IMOEX) для визуальной корреляции настроения и рынка.
+Поверх индекса на графике накладывается линия индекса **IMOEX** МосБиржи для визуальной корреляции настроения сообщества и рынка.
 
 ---
 
@@ -113,7 +113,7 @@ CREATE TABLE IF NOT EXISTS sentiment_index_cache (
 ```
 
 Хранит:
-- `imoex_candles` — массив 5-минутных свечей SBER за день.
+- `imoex_candles` — массив 5-минутных свечей IMOEX за день.
 - `imoex_updated_at` — время последнего обновления кэша.
 - `current_value` / `vote_count` — зарезервированы, в MVP не используются.
 
@@ -136,8 +136,8 @@ CREATE TABLE IF NOT EXISTS sentiment_index_cache (
 | `recordVote(userId, value)` | Записывает голос, обновляет окно, пересчитывает индекс, возвращает `newIndex`, `nextVoteAt`, `sync`. |
 | `getCommunityMetrics()` | Метрики сообщества: онлайн, голоса за день, распределение за час. |
 | `getUserVoteHistory(userId, limit)` | История голосов пользователя. |
-| `refreshImoexCache(date)` | Запрашивает свечи SBER и сохраняет в кэш. |
-| `getImoexData(now)` | Возвращает текущее значение + свечи SBER из кэша (с обновлением при необходимости). |
+| `refreshImoexCache(date)` | Запрашивает свечи IMOEX и сохраняет в кэш. |
+| `getImoexData(now)` | Возвращает текущее значение + свечи IMOEX из кэша (с обновлением при необходимости). |
 | `resetDailyWindows()` | Сброс `vote_count_today` и пересчёт `streak_days` в 00:00 МСК. |
 
 ### 4.2. Адаптер рыночных данных `imoexAdapter.ts`
@@ -147,11 +147,11 @@ CREATE TABLE IF NOT EXISTS sentiment_index_cache (
 Источник: бесплатный **MOEX ISS API**, без авторизации.
 
 ```ts
-const BASE_URL = 'https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities/SBER/candles.json';
+const BASE_URL = 'https://iss.moex.com/iss/engines/stock/markets/index/boards/SNDX/securities/IMOEX/candles.json';
 ```
 
 Логика получения данных:
-1. Запрашиваем 1-минутные свечи SBER за текущий день по МСК (пагинация по 500 свечей за запрос).
+1. Запрашиваем 1-минутные свечи IMOEX за текущий день по МСК (пагинация по 500 свечей за запрос).
 2. Агрегируем 1-минутные свечи в 5-минутные (OHLC) функцией `aggregateTo5min()`.
 3. Заполняем пропуски (неторговое время) последним `close` — получаем `flat line` функцией `extendWithFlatLine()`.
 4. Итоговая функция `getImoex5minForDay(date)` возвращает 288 точек (24 часа × 12 пятиминуток).
@@ -162,7 +162,7 @@ const BASE_URL = 'https://iss.moex.com/iss/engines/stock/markets/shares/boards/T
 
 #### `GET /api/sentiment/index` (публичный)
 
-Возвращает текущий индекс, историю для графика и свечи SBER.
+Возвращает текущий индекс, историю для графика и свечи IMOEX.
 
 ```json
 {
@@ -266,7 +266,7 @@ cron.schedule('0 21 * * *', () => {
   resetDailyWindows().catch(...);
 });
 
-// Обновление кэша SBER каждые 5 минут в торговые часы (MSK 10:00–23:00 → UTC 07:00–20:00)
+// Обновление кэша IMOEX каждые 5 минут в торговые часы (MSK 10:00–23:00 → UTC 07:00–20:00)
 cron.schedule('*/5 7-20 * * 1-5', () => {
   refreshImoexCache().catch(...);
 });
@@ -345,7 +345,7 @@ const sync = Math.sign(value) === Math.sign(afterIndex);
 ### 6.2. Поток данных
 
 1. При загрузке страницы фронтенд делает два запроса:
-   - `GET /api/sentiment/index` — общий индекс и SBER.
+   - `GET /api/sentiment/index` — общий индекс и IMOEX.
    - `GET /api/sentiment/status` — персональный статус (если залогинен).
 2. Подключается к `GET /api/sentiment/stream` через `EventSource`.
 3. При событии `sentiment-update` или по таймеру каждые 10 секунд перезапрашивает данные.
@@ -359,7 +359,7 @@ const sync = Math.sign(value) === Math.sign(afterIndex);
 Функция `chartData` объединяет две временные серии:
 
 - **Индекс настроения** — точки из `indexData.history`.
-- **SBER** — 5-минутные свечи из `indexData.imoex.candles`.
+- **IMOEX** — 5-минутные свечи из `indexData.imoex.candles`.
 
 ```ts
 const points = new Map<number, { value?: number; imoex?: number }>();
@@ -370,7 +370,7 @@ for (const p of history) {
   points.set(ts, { ...points.get(ts), value: p.value });
 }
 
-// SBER
+// IMOEX
 for (const c of imoexCandles) {
   const ts = new Date(c.time).getTime();
   points.set(ts, { ...points.get(ts), imoex: c.close });
@@ -379,7 +379,7 @@ for (const c of imoexCandles) {
 // Сортируем и заполняем пропуски последними известными значениями
 const sorted = Array.from(points.keys()).sort((a, b) => a - b);
 let lastValue = 0;
-let lastImoex = imoexCandles[0]?.close ?? SBER_MOCK_VALUE;
+let lastImoex = imoexCandles[0]?.close ?? IMOEX_MOCK_VALUE;
 
 return sorted.map(ts => {
   const p = points.get(ts)!;
@@ -393,7 +393,7 @@ return sorted.map(ts => {
 
 - **Ось X:** числовая, по timestamp (миллисекунды). Метки времени форматируются в **МСК** (`Europe/Moscow`) через `toLocaleTimeString`.
 - **Левая ось Y:** индекс настроения, авто-масштаб.
-- **Правая ось Y:** SBER, масштаб вычисляется динамически от `min`/`max` свечей с отступом 10%:
+- **Правая ось Y:** IMOEX, масштаб вычисляется динамически от `min`/`max` свечей с отступом 10%:
 
 ```ts
 const sberDomain = useMemo(() => {
@@ -410,9 +410,9 @@ const sberDomain = useMemo(() => {
 | Элемент | Описание |
 |---------|----------|
 | **Area (sentiment)** | Линия индекса цветом в зависимости от знака (`#34D399` / `#EF4444` / `#9CA3AF`) + градиентная заливка. |
-| **Line (SBER)** | Жёлтая пунктирная линия (`#f59e0b`, `strokeDasharray="6 6"`) по правой оси. |
+| **Line (IMOEX)** | Жёлтая пунктирная линия (`#f59e0b`, `strokeDasharray="6 6"`) по правой оси. |
 | **ReferenceArea** | Полупрозрачная зона торговой сессии МосБиржи (10:00–19:00 МСК). |
-| **Tooltip** | Показывает время (МСК), значение индекса и значение SBER. |
+| **Tooltip** | Показывает время (МСК), значение индекса и значение IMOEX. |
 | **CartesianGrid** | Горизонтальные линии сетки. |
 
 ### 6.6. Оверлеи
@@ -423,10 +423,10 @@ const sberDomain = useMemo(() => {
 ### 6.7. Цвета и легенда
 
 - Индекс настроения: зелёный/красный/серый.
-- SBER: янтарный (`#f59e0b`).
+- IMOEX: янтарный (`#f59e0b`).
 - Легенда под графиком:
   - «Индекс настроения»
-  - «SBER»
+  - «IMOEX»
   - «Сессия МосБиржи»
 
 ---
@@ -446,7 +446,7 @@ const sberDomain = useMemo(() => {
 | Файл | Назначение |
 |------|------------|
 | `pulse-backend/src/services/sentimentIndex.ts` | Вся бизнес-логика: индекс, голосование, метрики, кэш, cron-сброс. |
-| `pulse-backend/src/services/imoexAdapter.ts` | Адаптер MOEX ISS API для получения свечей SBER. |
+| `pulse-backend/src/services/imoexAdapter.ts` | Адаптер MOEX ISS API для получения свечей IMOEX. |
 | `pulse-backend/src/services/sse.ts` | SSE-рассылка `sentiment-update`. |
 | `pulse-backend/src/routes/sentiment.ts` | API endpoints `/api/sentiment/*`. |
 | `pulse-backend/src/index.ts` | Подключение роутера, SSE endpoint, cron-задачи, миграции таблиц. |
@@ -466,15 +466,15 @@ const sberDomain = useMemo(() => {
 - [x] Три состояния страницы (S0/S1/S2).
 - [x] Голосование с персональным 30-минутным кулдауном.
 - [x] Кумулятивный индекс настроения за текущий день по МСК.
-- [x] График индекса + линия SBER (реальные 5-минутные свечи MOEX ISS).
+- [x] График индекса + линия IMOEX (реальные 5-минутные свечи MOEX ISS).
 - [x] Зона торговой сессии МосБиржи на графике.
-- [x] Flat line SBER за неторговое время.
+- [x] Flat line IMOEX за неторговое время.
 - [x] SSE-обновления + fallback polling.
 - [x] Персональные метрики (totalVotes, todayVotes, syncRate, streakDays, impactSum).
 - [x] Общие метрики сообщества (onlineNow, votesToday, distribution).
 - [x] История голосов пользователя.
 - [x] Ежедневный сброс `vote_count_today` и пересчёт `streak_days` через cron.
-- [x] Кэширование свечей SBER в PostgreSQL.
+- [x] Кэширование свечей IMOEX в PostgreSQL.
 
 ---
 
@@ -486,15 +486,15 @@ const sberDomain = useMemo(() => {
 - [ ] Toast + конфетти после голоса.
 - [ ] Отложенные проверки бейджей («Точный прогноз», «Контрарианец») через cron.
 - [ ] Нормализация индекса (относительный % вместо абсолютной суммы).
-- [ ] Возможность переключения рыночного актива (SBER / IMOEX / другие).
+- [ ] Возможность переключения рыночного актива (IMOEX / IMOEX / другие).
 - [ ] Мобильная оптимизация нижних блоков (метрики, история, лидерборд).
 
 ---
 
 ## 11. Известные нюансы
 
-1. **Поле `imoex` в API.** Имя поля осталось историческим (ранее планировался IMOEX). Внутри лежат данные по SBER. Переименование в `sber` — технический долг.
-2. **Fallback mock.** Если MOEX ISS недоступен, фронтенд использует `SBER_MOCK_VALUE = 320` как запасное значение.
+1. **Поле `imoex` в API.** Имя поля историческое, но теперь внутри действительно данные по IMOEX. Переименование в `marketIndex` или `imoex` — по желанию.
+2. **Fallback mock.** Если MOEX ISS недоступен, фронтенд использует `IMOEX_MOCK_VALUE = 2200` как запасное значение.
 3. **Время на графике.** Все метки и тултипы отображаются в московском часовом поясе независимо от локального времени пользователя.
 4. **Торговая сессия.** Сессия считается жёстко 10:00–19:00 МСК. В праздничные/сокращённые дни flat line может отличаться от реальности.
 

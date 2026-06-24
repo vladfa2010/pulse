@@ -66,10 +66,10 @@
 **Таблицы:**
 - `sentiment_votes` — голоса пользователей.
 - `sentiment_user_windows` — персональные окна, статистика, streak.
-- `sentiment_index_cache` — кэш 5-минутных свечей SBER (MOEX ISS API).
+- `sentiment_index_cache` — кэш 5-минутных свечей IMOEX (MOEX ISS API).
 
 **API endpoints:**
-- `GET /api/sentiment/index` — публичный индекс + история + свечи SBER.
+- `GET /api/sentiment/index` — публичный индекс + история + свечи IMOEX.
 - `GET /api/sentiment/status` — персональный статус и метрики (auth).
 - `POST /api/sentiment/vote` — проголосовать (auth).
 - `GET /api/sentiment/stream` — SSE `sentiment-update`.
@@ -79,11 +79,11 @@
 - Состояния страницы: `anonymous` / `active` / `voting` (blind vote).
 - Индекс = `SUM(vote_value)` за день по МСК.
 - Сброс `vote_count_today` и пересчёт `streak_days` — cron в 00:00 МСК.
-- Обновление кэша SBER — cron каждые 5 минут в торговые часы.
+- Обновление кэша IMOEX — cron каждые 5 минут в торговые часы.
 
 **График:**
 - Recharts `AreaChart`.
-- Линия индекса (левая ось) + линия SBER (правая ось, жёлтая пунктир).
+- Линия индекса (левая ось) + линия IMOEX (правая ось, жёлтая пунктир).
 - Зона торговой сессии 10:00–19:00 МСК.
 - SSE + fallback polling каждые 10 сек.
 
@@ -304,7 +304,7 @@ backend/src/
     tagManager.ts        — User-defined tags + keyword generation + backfill
     reports.ts           — Weekly email reports
     sentimentIndex.ts    — Индекс настроения: голоса, окна, метрики, кэш
-    imoexAdapter.ts      — MOEX ISS адаптер для свечей SBER
+    imoexAdapter.ts      — MOEX ISS адаптер для свечей IMOEX
     sse.ts               — SSE-рассылка (news + sentiment)
   routes/
     news.ts              — 3 режима ленты
