@@ -30,10 +30,11 @@ const router = Router();
 router.get('/index', async (req, res) => {
   try {
     const now = new Date();
+    const forceRefresh = req.query.refresh === '1';
     const [currentValue, history, imoex] = await Promise.all([
       getCurrentIndex(now),
       getIndexHistory(now),
-      getImoexData(now),
+      getImoexData(now, forceRefresh),
     ]);
 
     res.json({

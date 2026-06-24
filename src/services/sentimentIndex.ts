@@ -259,10 +259,10 @@ export async function refreshImoexCache(date: Date = new Date()): Promise<ImoexC
   return candles;
 }
 
-async function getOrRefreshCandles(date: Date): Promise<ImoexCandle[]> {
+async function getOrRefreshCandles(date: Date, force = false): Promise<ImoexCandle[]> {
   const { dateStr } = getMoscowDayBounds(date);
   let { candles, updatedAt } = await getCachedImoex(dateStr);
-  if (!updatedAt || Date.now() - updatedAt.getTime() > IMOEX_CACHE_TTL_MS) {
+  if (force || !updatedAt || Date.now() - updatedAt.getTime() > IMOEX_CACHE_TTL_MS) {
     try {
       candles = await refreshImoexCache(date);
     } catch (err: any) {
@@ -277,16 +277,16 @@ async function getOrRefreshCandles(date: Date): Promise<ImoexCandle[]> {
  * Если сегодня ещё не торговалось — дублируем закрытие вчерашнего дня flat line'ом.
  * Fallback — mock.
  */
-export async function getImoexData(now: Date = new Date()): Promise<ImoexData> {
+export async function getImoexData(now: Date = new Date(), forceRefresh = false): Promise<ImoexData> {
   const { dateStr, start, end } = getMoscowDayBounds(now);
   const sessionStart = new Date(`${dateStr}T10:00:00+03:00`);
   const sessionEnd = new Date(`${dateStr}T19:00:00+03:00`);
   const sessionActive = now >= sessionStart && now < sessionEnd;
 
-  const todayCandles = await getOrRefreshCandles(now);
+  const todayCandles = await getOrRefreshCandles(now, forceRefresh);
 
   const yesterday = new Date(start.getTime() - 24 * 60 * 60 * 1000);
-  let yesterdayCandles = await getOrRefreshCandles(yesterday);
+  let yesterdayCandles = await getOrRefreshCandles(yesterday, forceRefresh);
 
   // Если вчера нет данных — пробуем взять закрытие позавчера как fallback
   if (yesterdayCandles.length === 0) {
