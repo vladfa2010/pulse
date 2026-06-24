@@ -54,7 +54,7 @@ async function fetchChunk(from: Date, till: Date): Promise<any[]> {
   url.searchParams.set('interval', '1');
   url.searchParams.set('iss.meta', 'off');
 
-  const res = await fetch(url.toString(), { timeout: 30000 } as any);
+  const res = await fetch(url.toString());
   if (!res.ok) {
     throw new Error(`MOEX ISS error: ${res.status}`);
   }
