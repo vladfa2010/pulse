@@ -1,10 +1,10 @@
 /**
  * =============================================================================
- * PULSE — IMOEX 5-min adapter via MOEX ISS API
+ * PULSE — SBER 5-min adapter via MOEX ISS API
  * =============================================================================
  *
  * MOEX ISS не отдаёт 5-минутные свечи напрямую, поэтому:
- *   1. Запрашиваем 1-минутные свечи IMOEX (board SNDX).
+ *   1. Запрашиваем 1-минутные свечи SBER (board TQBR).
  *   2. Агрегируем в 5-минутные самостоятельно.
  *   3. Заполняем пропуски (неторговое время) последним close — flat line.
  */
@@ -19,7 +19,7 @@ export interface ImoexCandle {
   close: number
 }
 
-const BASE_URL = 'https://iss.moex.com/iss/engines/stock/markets/index/boards/SNDX/securities/IMOEX/candles.json';
+const BASE_URL = 'https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities/SBER/candles.json';
 const CHUNK_MINUTES = 500; // максимум свечей за запрос
 
 function getMoscowDayBounds(now: Date = new Date()) {
@@ -80,7 +80,7 @@ async function fetchChunk(from: Date, till: Date): Promise<any[]> {
 }
 
 /**
- * Запросить 1-минутные свечи IMOEX за период с пагинацией.
+ * Запросить 1-минутные свечи SBER за период с пагинацией.
  */
 export async function fetchImoex1minCandles(from: Date, till: Date): Promise<ImoexCandle[]> {
   const all: ImoexCandle[] = [];
@@ -173,7 +173,7 @@ export function extendWithFlatLine(candles: ImoexCandle[], from: Date, till: Dat
 }
 
 /**
- * Получить 5-минутные свечи IMOEX за текущий день по МСК с flat line.
+ * Получить 5-минутные свечи SBER за текущий день по МСК с flat line.
  */
 export async function getImoex5minForDay(date: Date = new Date()): Promise<ImoexCandle[]> {
   const { start, end } = getMoscowDayBounds(date);
