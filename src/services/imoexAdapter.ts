@@ -9,6 +9,8 @@
  *   3. Заполняем пропуски (неторговое время) последним close — flat line.
  */
 
+import axios from 'axios';
+
 export interface ImoexCandle {
   time: string // ISO UTC
   open: number
@@ -48,18 +50,18 @@ function formatMskLocal(date: Date): string {
 }
 
 async function fetchChunk(from: Date, till: Date): Promise<any[]> {
-  const url = new URL(BASE_URL);
-  url.searchParams.set('from', formatMskLocal(from));
-  url.searchParams.set('till', formatMskLocal(till));
-  url.searchParams.set('interval', '1');
-  url.searchParams.set('iss.meta', 'off');
+  const params = {
+    from: formatMskLocal(from),
+    till: formatMskLocal(till),
+    interval: '1',
+    'iss.meta': 'off',
+  };
 
-  const res = await fetch(url.toString());
-  if (!res.ok) {
+  const res = await axios.get(BASE_URL, { params });
+  if (res.status !== 200) {
     throw new Error(`MOEX ISS error: ${res.status}`);
   }
-  const json = await res.json();
-  const candles = json.candles;
+  const candles = res.data.candles;
   if (!candles || !Array.isArray(candles.data) || candles.data.length === 0) {
     return [];
   }
