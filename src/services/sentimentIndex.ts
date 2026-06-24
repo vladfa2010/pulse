@@ -259,48 +259,63 @@ export async function refreshImoexCache(date: Date = new Date()): Promise<ImoexC
   return candles;
 }
 
+async function getOrRefreshCandles(date: Date): Promise<ImoexCandle[]> {
+  const { dateStr } = getMoscowDayBounds(date);
+  let { candles, updatedAt } = await getCachedImoex(dateStr);
+  if (!updatedAt || Date.now() - updatedAt.getTime() > IMOEX_CACHE_TTL_MS) {
+    try {
+      candles = await refreshImoexCache(date);
+    } catch (err: any) {
+      console.error('[SBER] refresh error:', err.message);
+    }
+  }
+  return candles;
+}
+
 /**
- * IMOEX: реальные 5-минутные свечи из MOEX ISS + flat line за пределами сессии.
- * Если данных нет или кэш протух — пытаемся обновить. Fallback — mock.
+ * SBER: реальные 5-минутные свечи из MOEX ISS за вчера и сегодня.
+ * Если сегодня ещё не торговалось — дублируем закрытие вчерашнего дня flat line'ом.
+ * Fallback — mock.
  */
 export async function getImoexData(now: Date = new Date()): Promise<ImoexData> {
-  const { dateStr } = getMoscowDayBounds(now);
+  const { dateStr, start, end } = getMoscowDayBounds(now);
   const sessionStart = new Date(`${dateStr}T10:00:00+03:00`);
   const sessionEnd = new Date(`${dateStr}T19:00:00+03:00`);
   const sessionActive = now >= sessionStart && now < sessionEnd;
 
-  let { candles, updatedAt } = await getCachedImoex(dateStr);
-  if (!updatedAt || now.getTime() - updatedAt.getTime() > IMOEX_CACHE_TTL_MS) {
-    try {
-      candles = await refreshImoexCache(now);
-    } catch (err: any) {
-      console.error('[IMOEX] refresh error:', err.message);
+  const todayCandles = await getOrRefreshCandles(now);
+
+  const yesterday = new Date(start.getTime() - 24 * 60 * 60 * 1000);
+  let yesterdayCandles = await getOrRefreshCandles(yesterday);
+
+  // Если вчера нет данных — пробуем взять закрытие позавчера как fallback
+  if (yesterdayCandles.length === 0) {
+    const dayBeforeYesterday = new Date(start.getTime() - 2 * 24 * 60 * 60 * 1000);
+    const prevCached = await getOrRefreshCandles(dayBeforeYesterday);
+    if (prevCached.length > 0) {
+      const lastClose = prevCached[prevCached.length - 1].close;
+      const { start: yStart, end: yEnd } = getMoscowDayBounds(yesterday);
+      yesterdayCandles = extendWithFlatLine(
+        [{ time: yStart.toISOString(), open: lastClose, high: lastClose, low: lastClose, close: lastClose }],
+        yStart,
+        yEnd
+      );
     }
   }
 
-  if (candles.length === 0) {
-    // Если сегодня ещё не торговалось (ночь/выходные) — подтягиваем закрытие предыдущего дня
-    const prevDate = new Date(getMoscowDayBounds(now).start.getTime() - 24 * 60 * 60 * 1000);
-    const { dateStr: prevDateStr } = getMoscowDayBounds(prevDate);
-    const prevCached = await getCachedImoex(prevDateStr);
+  let todayFinal = todayCandles;
+  if (todayFinal.length === 0 && yesterdayCandles.length > 0) {
+    const lastClose = yesterdayCandles[yesterdayCandles.length - 1].close;
+    todayFinal = extendWithFlatLine(
+      [{ time: start.toISOString(), open: lastClose, high: lastClose, low: lastClose, close: lastClose }],
+      start,
+      end
+    );
+  }
 
-    if (prevCached.candles.length > 0) {
-      const lastClose = prevCached.candles[prevCached.candles.length - 1].close;
-      const { start, end } = getMoscowDayBounds(now);
-      const flat = extendWithFlatLine(
-        [{ time: start.toISOString(), open: lastClose, high: lastClose, low: lastClose, close: lastClose }],
-        start,
-        end
-      );
-      return {
-        current: lastClose,
-        sessionActive,
-        sessionStart: sessionStart.toISOString(),
-        sessionEnd: sessionEnd.toISOString(),
-        candles: flat,
-      };
-    }
+  const combined = [...yesterdayCandles, ...todayFinal];
 
+  if (combined.length === 0) {
     return {
       current: SBER_MOCK_VALUE,
       sessionActive,
@@ -310,14 +325,13 @@ export async function getImoexData(now: Date = new Date()): Promise<ImoexData> {
     };
   }
 
-  // Текущее значение — последний close, независимо от активности сессии (flat line)
-  const current = candles[candles.length - 1].close;
+  const current = combined[combined.length - 1].close;
   return {
     current,
     sessionActive,
     sessionStart: sessionStart.toISOString(),
     sessionEnd: sessionEnd.toISOString(),
-    candles,
+    candles: combined,
   };
 }
 
