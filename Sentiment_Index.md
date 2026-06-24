@@ -515,4 +515,4 @@ const imoexDomain = useMemo(() => {
 
 ---
 
-*Документ актуален для коммитов backend `bdf0896` и frontend `2df1ceb`.*
+*Документ актуален для коммитов backend `90b7770` и frontend `b3834eb`.*
