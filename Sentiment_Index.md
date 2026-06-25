@@ -449,6 +449,7 @@ const imoexDomain = useMemo(() => {
 ## 7. Роутинг и интеграция
 
 - Страница доступна по `/sentiment`.
+- Полная карточка индекса также встроена в главную страницу (`Home.tsx`) в самый низ, после блока Features. Для этого логика вынесена в переиспользуемый компонент `SentimentChartCard`.
 - Backend router подключается как `app.use('/api/sentiment', sentimentRoutes)`.
 - SSE endpoint регистрируется отдельно: `app.get('/api/sentiment/stream', ...)`.`
 
@@ -472,7 +473,9 @@ const imoexDomain = useMemo(() => {
 
 | Файл | Назначение |
 |------|------------|
-| `pulse-frontend/src/pages/SentimentIndex.tsx` | Страница графика, состояния, голосование, SSE, polling. |
+| `pulse-frontend/src/components/SentimentChartCard.tsx` | Переиспользуемая карточка индекса: график, состояния, голосование, SSE, polling. |
+| `pulse-frontend/src/pages/SentimentIndex.tsx` | Страница `/sentiment` — обёртка над `SentimentChartCard`. |
+| `pulse-frontend/src/pages/Home.tsx` | Главная страница; внизу выводится `SentimentChartCard` с шириной, равной баннеру портфеля инвестиционно.рф (`max-w-[1200px]`). |
 
 ---
 
@@ -490,6 +493,7 @@ const imoexDomain = useMemo(() => {
 - [x] История голосов пользователя.
 - [x] Ежедневный сброс `vote_count_today` и пересчёт `streak_days` через cron.
 - [x] Кэширование свечей IMOEX в PostgreSQL.
+- [x] Блок индекса настроения на главной странице (`Home`).
 
 ---
 
@@ -512,7 +516,9 @@ const imoexDomain = useMemo(() => {
 2. **Fallback mock.** Если MOEX ISS недоступен, фронтенд использует `IMOEX_MOCK_VALUE = 2200` как запасное значение.
 3. **Время на графике.** Все метки и тултипы отображаются в московском часовом поясе независимо от локального времени пользователя.
 4. **Торговая сессия.** Сессия считается жёстко 10:00–19:00 МСК. В праздничные/сокращённые дни flat line может отличаться от реальности.
+5. **Блок на главной.** На `Home` отображается та же карточка `SentimentChartCard`, что и на `/sentiment`, но без метрик сообщества (`showMetrics={false}`). Ширина блока привязана к ширине баннера портфеля инвестиционно.рф (`max-w-[1200px]`).
+6. **Дизайн карточки.** Карточка использует единый с `NewsCard` liquid-glass стиль: скругление `rounded-xl`, цветная рамка по знаку индекса, highlight-линия сверху, glow-линия снизу.
 
 ---
 
-*Документ актуален для коммитов backend `90b7770` и frontend `b3834eb`.*
+*Документ актуален для коммитов backend `90b7770` и frontend `d6cc744`.*
