@@ -3,8 +3,8 @@
 **Проект:** PULSE — анализ новостей для инвесторов  
 **Фича:** Индекс настроения сообщества  
 **Дата:** 2026-06-26  
-**Статус:** MVP реализован и задеплоен в продакшен, toast-фидбек обновлён  
-**Актуальные коммиты:** backend `bdf0896`, frontend `b5a3d17`  
+**Статус:** MVP реализован и задеплоен в продакшен, VoteToast V2 (Liquid Glass + 3D confetti) в продакшене  
+**Актуальные коммиты:** backend `bdf0896`, frontend `c9caffe`  
 **URL:** https://pulse-frontend-jt53.onrender.com/sentiment
 
 > Этот документ описывает **реальную реализацию** MVP. Исторический черновик с полным дизайном фичи (бейджи, лидерборд, топ-тикеры и т.д.) сохранён в `TZ_Sentiment_Index_10.md`.
@@ -434,12 +434,28 @@ const imoexDomain = useMemo(() => {
 
 - **S0 (anonymous):** встроенная в правую часть графика стилизованная карточка (`rounded-xl`, внутренние отступы, glass/blur-фон, тонкая рамка `border-white/10`). Содержит иконку замка, заголовок «Актуальная динамика скрыта», подзаголовок и кнопку «Войти» в стиле кнопки «Начать» из Navbar (градиент `#00D4FF → #0099CC`, тёмный текст, `rounded-pill`). На десктопе карточка занимает вписанную правую половину, на мобильном — компактную карточку поверх графика.
 - **S2 (voting):** полное затемнение + blur поверх графика, три кнопки голосования. Текущий индекс скрыт (blind vote).
-- **Toast после голосования:** под графиком появляется compact-окошко `VoteToast`. Три варианта:
-  - `sync` — «Вы в синхроне с настроением сообщества» + 🔥 + зелёная рамка/свечение.
-  - `balance` — «Вы держите баланс» + ⚖️.
+- **Toast после голосования:** `VoteToast` монтируется **сразу под графиком** (после `chart-wrapper`) внутри `SentimentChartCard`. Внутренняя карточка индекса больше не имеет `overflow-hidden`, поэтому glow и confetti не обрезаются. Три варианта:
+  - `sync` — «Вы в синхроне с настроением сообщества» + 🔥 + зелёная рамка/свечение + пульсация glow.
+  - `balance` — «Вы держите баланс» + ⚖️ + серая/белая рамка.
   - `contrarian` — «Ваше мнение отличается — вы мыслите вне рамок» + 🧠 + фиолетовая рамка/свечение.
   - Toast показывается одинаково и на `/sentiment`, и на главной (внутри блока `SentimentChartCard`).
-- **Анимация конфетти (только `sync`):** при совпадении голоса с общим настроением вокруг центра toast вылетает SVG-конфетти из `Animations_Reference.md` (`confettiPop` + `glowPop`). 24 частицы (`rect`/`circle`/`star`), палитра зелёных/жёлтых/белых тонов. Анимация рендерится через `createPortal` в `document.body`, чтобы не обрезалась родительскими `overflow-hidden`/`backdrop-filter`, и центрируется по `getBoundingClientRect()` самого toast. Продолжительность: взрыв 1.8s, glow 1.5s.
+- **Дизайн Toast (Liquid Glass v2):**
+  - Фон: `linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02))`.
+  - `backdrop-filter: blur(24px) saturate(180%)`.
+  - Градиентная рамка через `::before` (`mask-composite: exclude`).
+  - Верхний блик через `::after` (radial-gradient + `mix-blend-mode: overlay`).
+  - Shine sweep: блик пробегает слева направо при появлении.
+  - `border-radius: 1.25rem`, padding `1rem 1.75rem`.
+- **Анимации Toast:**
+  - `toastEnter` — 0.7s spring с overshoot (`translateY(30px) scale(0.85) rotateX(10deg)` → `translateY(0) scale(1) rotateX(0deg)`).
+  - `toastExit` — 0.5s, автозакрытие через 4s.
+  - `shineSweep` — 1.2s с задержкой 0.3s.
+  - `glowPulse` — только для `sync`, бесконечная пульсация зелёного свечения после появления.
+- **Анимация синхрона (только `sync`):** при совпадении голоса с общим настроением вокруг центра Toast запускается полный набор эффектов:
+  - **Shockwave** — 3 расширяющихся зелёных кольца.
+  - **3D Confetti** — 40 частиц на десктопе, 20 на мобильных (`< 768px`). Типы: `sphere`, `cube`, `ring`, `star`. 7 цветов. Траектории через CSS-переменные `--tx/--ty/--tz` → `--tx2/--ty2/--tz2`, вращение через `particleRotate`.
+  - **Ambient Floaters** — 12 лёгких частиц, поднимающихся вверх и растворяющихся.
+  - Все эффекты рендерятся через `createPortal` в `document.body` и центрируются по `getBoundingClientRect()` Toast'а, чтобы не обрезались родителями. Учитывается `prefers-reduced-motion`.
 
 ### 6.7. Цвета и легенда
 
@@ -504,7 +520,7 @@ const imoexDomain = useMemo(() => {
 - [x] Ежедневный сброс `vote_count_today` и пересчёт `streak_days` через cron.
 - [x] Кэширование свечей IMOEX в PostgreSQL.
 - [x] Блок индекса настроения на главной странице (`Home`).
-- [x] Toast-фидбек после голосования: три варианта (`sync`/`balance`/`contrarian`), SVG-конфетти из `Animations_Reference.md` при совпадении с настроением сообщества, центр взрыва — центр toast.
+- [x] Toast-фидбек после голосования: три варианта (`sync`/`balance`/`contrarian`), 3D CSS-confetti + shockwave + ambient floaters при совпадении с настроением сообщества, центр взрыва — центр toast.
 
 ---
 
@@ -529,9 +545,9 @@ const imoexDomain = useMemo(() => {
 5. **Блок на главной.** На `Home` отображается та же карточка `SentimentChartCard`, что и на `/sentiment`, но без метрик сообщества (`showMetrics={false}`). Располагается сразу после общей карусели `GlobalNewsCarousel` и перед блоком «Популярные теги». Ширина блока привязана к ширине баннера портфеля инвестиционно.рф (`max-w-[1200px]`).
 6. **Дизайн карточки.** Карточка использует единый с `NewsCard` liquid-glass стиль: скругление `rounded-xl`, цветная рамка по знаку индекса, highlight-линия сверху, glow-линия снизу.
 7. **Анонимный оверлей.** Оформлен не как сплошная серая накладка, а как вписанная карточка внутри области графика: `rounded-xl`, padding, `backdrop-filter blur`, `border-white/10`, кнопка «Войти» — градиент `#00D4FF → #0099CC` с тёмным текстом.
-8. **Toast-фидбек.** Реализован в `pulse-frontend/src/components/VoteToast.tsx`. Toast монтируется внутри `SentimentChartCard` под графиком. Анимация появления/исчезновения — `toastIn`/`toastOut` из `Animations_Reference.md`. Конфетти рендерится через `createPortal` в `document.body` и центрируется относительно toast, чтобы избежать обрезки карточкой. Срабатывает только при `variant === 'sync'`.
+8. **Toast-фидбек.** Реализован в `pulse-frontend/src/components/VoteToast.tsx` + стили в `pulse-frontend/src/index.css`. Toast монтируется внутри `SentimentChartCard` сразу под `chart-wrapper`. Внутренняя карточка индекса не имеет `overflow-hidden`, поэтому glow и confetti не обрезаются. Эффекты синхрона вынесены в портал (`createPortal` → `document.body`) и центрируются относительно toast. Срабатывают только при `variant === 'sync'`. Поддерживается `prefers-reduced-motion`: при включённой настройке confetti отключается, а длительности анимаций Toast сокращаются.
 9. **Переиспользуемость.** `SentimentChartCard` используется и на `/sentiment`, и на главной. Toast-фидбек работает в обоих местах одинаково.
 
 ---
 
-*Документ актуален для коммитов backend `90b7770` и frontend `b5a3d17`.*
+*Документ актуален для коммитов backend `90b7770` и frontend `c9caffe`.*
