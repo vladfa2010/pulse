@@ -213,14 +213,18 @@ LLM оценивает новость как опытный инвестицио
 
 Flow создания:
 1. Пользователь вводит название в поиск → "Создать тег 'X'"
-2. `POST /api/user/tags/custom` → backend:
-   - LLM `enrichTagViaLLM(tagName)` → `enriched_data` (tag_type, ticker, synonyms, key_products)
-   - `buildEnrichedKeywords(tagName, enrichment)` → keywords + транслит + склонения + ticker/synonyms/products
-   - INSERT в `user_defined_tags` (keywords + enriched_data)
-   - INSERT в `portfolios`
-   - **BACKFILL:** сканирует ВСЕ новости, обновляет `matched_tags`
+2. `POST /api/user/tags` или `POST /api/user/tags/custom` → backend:
+   - `createUserTag()` проверяет существование тега в `user_defined_tags`.
+   - Если тега нет — вызывает LLM `enrichTagViaLLM(tagName)`, строит keywords и делает `INSERT`.
+   - Если тег уже есть — **не модифицирует** `user_defined_tags` (защита enriched_data/keywords/created_by).
+   - INSERT/IGNORE в `portfolios` (подписка).
+   - `POST /api/user/tags/custom` дополнительно делает **BACKFILL** по всем новостям.
 3. `tagVersion++` → `invalidateQueries(['unreadNews', 'historyNews'])`
 4. Карусели автоматически перезагружаются
+
+**Инвариант защиты тегов:**
+- Повторное добавление существующего тега в портфель никогда не обновляет `user_defined_tags`.
+- Ручное изменение enriched-полей возможно только через `PUT /admin/tags/:tagId`.
 
 **Таблица:** `user_defined_tags` (tag_id, tag_name, tag_type, keywords[], enriched_data JSONB, created_by, created_at)
 

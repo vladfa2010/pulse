@@ -66,6 +66,7 @@ function generateTagKeywords(tagName: string): string[]
 - **Таблица:** `user_defined_tags` (tag_id, tag_name, tag_type, keywords[], created_by)
 - **Портфель:** `portfolios` (user_id, tag_id, tag_name, tag_type)
 - **Кэш:** in-memory, TTL 1 минута
+- **Инвариант:** повторное добавление существующего тега в портфель не изменяет `user_defined_tags` (не перезаписывает `enriched_data`, `keywords`, `tag_type`, `created_by`).
 
 ### 2.4 Почему нет хардкод тегов
 

@@ -362,54 +362,79 @@ export function heuristicTagType(tagName: string): TagType {
 
 // Создать пользовательский тег
 // Если tagType = 'auto' или пустой — определяем через LLM + enrichment
+// При добавлении существующего тега user_defined_tags НЕ модифицируется.
 export async function createUserTag(userId: string, tagId: string, tagName: string, tagType: string): Promise<{ success: boolean; detectedType?: TagType; enrichment?: TagEnrichment }> {
   try {
-    // Single LLM call: type detection + enrichment (synonyms, ticker, products)
-    let finalType = tagType;
+    // 1. Проверяем, существует ли тег
+    const existingResult = await query(
+      `SELECT tag_id, tag_type, enriched_data, keywords, created_by
+       FROM user_defined_tags WHERE tag_id = $1`,
+      [tagId]
+    );
+
+    let finalType: string;
     let detectedType: TagType | undefined;
     let enrichment: TagEnrichment | null = null;
+    let isNewTag = false;
 
-    if (!tagType || tagType === 'auto') {
-      enrichment = await enrichTagViaLLM(tagName);
-      if (enrichment) {
-        detectedType = enrichment.tag_type;
-        finalType = enrichment.tag_type;
+    if (existingResult.rows.length > 0) {
+      // --- Тег уже есть: НЕ трогаем user_defined_tags ---
+      const existing = existingResult.rows[0];
+      finalType = existing.tag_type;
+      detectedType = existing.tag_type as TagType;
+      enrichment = existing.enriched_data || null;
+    } else {
+      // --- Тега нет: создаём с LLM-обогащением ---
+      if (!tagType || tagType === 'auto') {
+        enrichment = await enrichTagViaLLM(tagName);
+        if (enrichment) {
+          detectedType = enrichment.tag_type;
+          finalType = enrichment.tag_type;
+        } else {
+          detectedType = await detectTagTypeViaLLM(tagName);
+          finalType = detectedType;
+        }
       } else {
-        detectedType = await detectTagTypeViaLLM(tagName);
-        finalType = detectedType;
+        finalType = tagType;
+      }
+
+      // Validate type
+      if (!TAG_TYPES.includes(finalType as TagType)) {
+        finalType = 'company';
+      }
+
+      // Build enriched keywords (base + LLM synonyms + products)
+      const keywords = enrichment
+        ? buildEnrichedKeywords(tagName, enrichment)
+        : generateTagKeywords(tagName);
+
+      // Save tag with enrichment data (no ON CONFLICT UPDATE)
+      try {
+        await query(
+          `INSERT INTO user_defined_tags (tag_id, tag_name, tag_type, keywords, enriched_data, created_by)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [tagId, tagName, finalType, keywords, enrichment ? JSON.stringify(enrichment) : null, userId]
+        );
+        isNewTag = true;
+        console.log(`[TagManager] Created tag "${tagId}": type=${finalType}, keywords=${keywords.length}${enrichment ? ', enriched' : ''}`);
+      } catch (err: any) {
+        if (err.code === '23505') {
+          // Race condition: другой пользователь создал тег между SELECT и INSERT
+          const raceResult = await query(
+            `SELECT tag_type FROM user_defined_tags WHERE tag_id = $1`,
+            [tagId]
+          );
+          finalType = raceResult.rows[0]?.tag_type || finalType;
+          detectedType = finalType as TagType;
+          enrichment = null;
+          console.log(`[TagManager] Tag "${tagId}" created by another user, using existing type=${finalType}`);
+        } else {
+          throw err;
+        }
       }
     }
 
-    // Validate type
-    if (!TAG_TYPES.includes(finalType as TagType)) {
-      finalType = 'company';
-    }
-
-    // Build enriched keywords (base + LLM synonyms + products + related entities)
-    const keywords = enrichment
-      ? buildEnrichedKeywords(tagName, enrichment)
-      : generateTagKeywords(tagName);
-
-    // Save tag with enrichment data
-    await query(
-      `INSERT INTO user_defined_tags (tag_id, tag_name, tag_type, keywords, enriched_data, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       ON CONFLICT (tag_id) DO UPDATE SET
-         tag_name = $2,
-         tag_type = $3,
-         keywords = $4,
-         enriched_data = $5`,
-      [tagId, tagName, finalType, keywords, enrichment ? JSON.stringify(enrichment) : null, userId]
-    );
-
-    // Wake up articles that were previously skipped due to no tags.
-    // They will be re-checked by the news processor against the new tag.
-    invalidateUserTagsCache();
-    wakeUpNoTagsArticles().catch((err: any) => {
-      console.error('[TagManager] wakeUpNoTagsArticles error:', err.message);
-    });
-
-    // Добавляем в портфель пользователя
+    // 2. Подписка в портфель (всегда, независимо от создания/существования)
     await query(
       `INSERT INTO portfolios (user_id, tag_id, tag_name, tag_type)
        VALUES ($1, $2, $3, $4)
@@ -417,7 +442,13 @@ export async function createUserTag(userId: string, tagId: string, tagName: stri
       [userId, tagId, tagName, finalType]
     );
 
-    console.log(`[TagManager] Created tag "${tagId}": type=${finalType}, keywords=${keywords.length}${enrichment ? ', enriched' : ''}`);
+    // 3. Wake up no-tags articles только если тег был действительно создан сейчас
+    if (isNewTag) {
+      invalidateUserTagsCache();
+      wakeUpNoTagsArticles().catch((err: any) => {
+        console.error('[TagManager] wakeUpNoTagsArticles error:', err.message);
+      });
+    }
 
     return { success: true, detectedType, enrichment: enrichment || undefined };
   } catch (err: any) {

@@ -140,26 +140,158 @@ async function runCriticalPath(): Promise<TestResult[]> {
 
 // ─── Run if called directly ───────────────────────────────────────────────
 if (require.main === module) {
-  console.log('🧪 PULSE E2E — Critical Path Test\n');
-  runCriticalPath().then(results => {
-    let passed = 0;
-    let failed = 0;
+  (async () => {
+    console.log('🧪 PULSE E2E — Critical Path Test\n');
+    const criticalResults = await runCriticalPath();
+    printResults(criticalResults);
 
-    for (const r of results) {
-      const icon = r.passed ? '✅' : '❌';
-      console.log(`${icon} ${r.step}`);
-      if (r.data) console.log(`   📊 ${JSON.stringify(r.data)}`);
-      if (r.error) console.log(`   ⚠️  ${r.error}`);
+    console.log('\n🛡️ PULSE E2E — Tag Protection Test\n');
+    const protectionResults = await runTagProtectionTest();
+    printResults(protectionResults);
 
-      if (r.passed) passed++; else failed++;
-    }
+    const allResults = [...criticalResults, ...protectionResults];
+    const passed = allResults.filter(r => r.passed).length;
+    const failed = allResults.filter(r => !r.passed).length;
 
     console.log(`\n${'='.repeat(40)}`);
-    console.log(`Результат: ${passed} passed, ${failed} failed`);
+    console.log(`Итого: ${passed} passed, ${failed} failed`);
     console.log(`${'='.repeat(40)}`);
 
     process.exit(failed > 0 ? 1 : 0);
-  });
+  })();
 }
 
-export { runCriticalPath };
+function printResults(results: TestResult[]) {
+  for (const r of results) {
+    const icon = r.passed ? '✅' : '❌';
+    console.log(`${icon} ${r.step}`);
+    if (r.data) console.log(`   📊 ${JSON.stringify(r.data)}`);
+    if (r.error) console.log(`   ⚠️  ${r.error}`);
+  }
+}
+
+// ─── Tag Protection Test ──────────────────────────────────────────────────
+// Проверяет, что повторное добавление существующего тега не перезаписывает
+// enriched_data, keywords, tag_type и created_by в user_defined_tags.
+async function runTagProtectionTest(): Promise<TestResult[]> {
+  const results: TestResult[] = [];
+  const timestamp = Date.now();
+  const tagId = `pulse_test_tag_${timestamp}`;
+  const tagName = `Pulse Test Tag ${timestamp}`;
+
+  async function registerUser(suffix: string): Promise<{ email: string; password: string; token: string } | null> {
+    const email = `test_${suffix}_${timestamp}@pulse.local`;
+    const password = 'TestPass123!';
+    const r = await post('/auth/register', { email, password, username: `testuser_${suffix}_${timestamp}` });
+    if (r.status === 201 && r.data.token) {
+      return { email, password, token: r.data.token };
+    }
+    return null;
+  }
+
+  // Step 1: User A creates the tag
+  let userA: { email: string; password: string; token: string } | null = null;
+  try {
+    userA = await registerUser('a');
+    if (!userA) {
+      results.push({ step: 'TP1. Регистрация пользователя A', passed: false, error: 'Registration failed' });
+      return results;
+    }
+    results.push({ step: 'TP1. Регистрация пользователя A', passed: true });
+  } catch (e: any) {
+    results.push({ step: 'TP1. Регистрация пользователя A', passed: false, error: e.message });
+    return results;
+  }
+
+  try {
+    const r = await post('/user/tags', { tagId, tagName, tagType: 'auto' }, userA.token);
+    if (r.status === 200 || r.status === 201) {
+      results.push({ step: 'TP2. Пользователь A добавляет тег', passed: true, data: { tag: r.data.tag } });
+    } else {
+      results.push({ step: 'TP2. Пользователь A добавляет тег', passed: false, error: r.data.error || `HTTP ${r.status}` });
+      return results;
+    }
+  } catch (e: any) {
+    results.push({ step: 'TP2. Пользователь A добавляет тег', passed: false, error: e.message });
+    return results;
+  }
+
+  // Snapshot user_defined_tags after first creation
+  let snapshotBefore: any = null;
+  try {
+    const snap = await query(
+      `SELECT tag_id, tag_name, tag_type, keywords, enriched_data, created_by
+       FROM user_defined_tags WHERE tag_id = $1`,
+      [tagId]
+    );
+    if (snap.rows.length === 0) {
+      results.push({ step: 'TP3. Снимок тега после создания', passed: false, error: 'Tag not found in DB' });
+      return results;
+    }
+    snapshotBefore = snap.rows[0];
+    results.push({ step: 'TP3. Снимок тега после создания', passed: true });
+  } catch (e: any) {
+    results.push({ step: 'TP3. Снимок тега после создания', passed: false, error: e.message });
+    return results;
+  }
+
+  // Step 4: User B adds the same tag
+  let userB: { email: string; password: string; token: string } | null = null;
+  try {
+    userB = await registerUser('b');
+    if (!userB) {
+      results.push({ step: 'TP4. Регистрация пользователя B', passed: false, error: 'Registration failed' });
+      return results;
+    }
+    const r = await post('/user/tags', { tagId, tagName, tagType: 'auto' }, userB.token);
+    if (r.status === 200 || r.status === 201) {
+      results.push({ step: 'TP4. Пользователь B добавляет тот же тег', passed: true });
+    } else {
+      results.push({ step: 'TP4. Пользователь B добавляет тот же тег', passed: false, error: r.data.error || `HTTP ${r.status}` });
+      return results;
+    }
+  } catch (e: any) {
+    results.push({ step: 'TP4. Пользователь B добавляет тот же тег', passed: false, error: e.message });
+    return results;
+  }
+
+  // Step 5: Verify user_defined_tags was not modified
+  try {
+    const snap = await query(
+      `SELECT tag_id, tag_name, tag_type, keywords, enriched_data, created_by
+       FROM user_defined_tags WHERE tag_id = $1`,
+      [tagId]
+    );
+    const snapshotAfter = snap.rows[0];
+
+    const sameType = snapshotBefore.tag_type === snapshotAfter.tag_type;
+    const sameKeywords = JSON.stringify(snapshotBefore.keywords?.sort()) === JSON.stringify(snapshotAfter.keywords?.sort());
+    const sameEnriched = JSON.stringify(snapshotBefore.enriched_data) === JSON.stringify(snapshotAfter.enriched_data);
+    const sameCreator = snapshotBefore.created_by === snapshotAfter.created_by;
+
+    if (sameType && sameKeywords && sameEnriched && sameCreator) {
+      results.push({ step: 'TP5. Проверка: user_defined_tags не изменился', passed: true });
+    } else {
+      results.push({
+        step: 'TP5. Проверка: user_defined_tags не изменился',
+        passed: false,
+        error: `Changed: type=${!sameType}, keywords=${!sameKeywords}, enriched=${!sameEnriched}, creator=${!sameCreator}`,
+      });
+    }
+  } catch (e: any) {
+    results.push({ step: 'TP5. Проверка: user_defined_tags не изменился', passed: false, error: e.message });
+  }
+
+  // Cleanup
+  try {
+    await query('DELETE FROM user_defined_tags WHERE tag_id = $1', [tagId]);
+    if (userA) await query('DELETE FROM users WHERE email = $1', [userA.email]);
+    if (userB) await query('DELETE FROM users WHERE email = $1', [userB.email]);
+  } catch {
+    // ignore cleanup errors
+  }
+
+  return results;
+}
+
+export { runCriticalPath, runTagProtectionTest };
