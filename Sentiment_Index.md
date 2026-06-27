@@ -448,7 +448,7 @@ const imoexDomain = useMemo(() => {
   - `border-radius: 1.25rem`, padding `1rem 1.75rem`.
 - **Анимации Toast:**
   - `toastEnter` — 0.7s spring с overshoot (`translateY(30px) scale(0.85) rotateX(10deg)` → `translateY(0) scale(1) rotateX(0deg)`).
-  - `toastExit` — 0.6s, чистое растворение (`opacity: 1 → 0`) на месте, автозакрытие через 4s.
+  - `toastExit` — 0.6s, чистое растворение (`opacity: 1 → 0`) на месте. Toast стартует в 0s, `glowPulse` начинается в 0.7s, растворение начинается в 4.8s, удаление в 5.3s.
   - `shineSweep` — 1.2s с задержкой 0.3s.
   - `glowPulse` — только для `sync`, бесконечная пульсация брендового синего свечения (`#00D4FF`) после появления.
 - **Анимация синхрона (только `sync`):** при совпадении голоса с общим настроением вокруг центра Toast запускается полный набор эффектов:
