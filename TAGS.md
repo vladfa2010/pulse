@@ -1,9 +1,9 @@
 # PULSE — Методология тегов
 
-> Дата: 2026-05-30
-> Файлы: `smartTagMatcher.ts`, `tagManager.ts`
-> Статус: ✅ Только пользовательские теги + LLM
-> Последнее обновление: v7.11 — sentiment score −10..+10
+> Дата: 2026-06-18
+> Файлы: `smartTagMatcher.ts`, `tagManager.ts`, `routes/user.ts`, `index.ts`
+> Статус: ✅ Только пользовательские теги + LLM + защита от перезаписи
+> Последнее обновление: v8.1+ — tag protection (`createUserTag` SELECT-first, forceLLM pipeline)
 
 ---
 
@@ -13,7 +13,7 @@
 |---|---------|--------|
 | 1 | **Нет хардкод тегов** — только пользовательские | ✅ Удалены TAG_KEYWORDS + RELATED_TAGS |
 | 2 | **Related tags через LLM** — динамические связи | ✅ Реализовано |
-| 3 | **Free = 1 тег** — бизнес-правило | ✅ |
+| 3 | **Free = 3 тега / Premium = 25** — лимиты подписок | ✅ |
 | 4 | **Пользователь создаёт первый тег сам** — нет forced suggestions | ✅ |
 
 ---
@@ -41,14 +41,28 @@
 
 ### 2.1 Создание
 
+Два endpoint'а создания тега:
+
+**`POST /api/user/tags`** — обычное добавление в портфель (используется фронтендом):
 ```
 Пользователь вводит "Лукойл"
-  → generateTagKeywords("Лукойл")
-    → ["лукойл", "lukoil", "лукойла", "лукойлу", "лукойле", "лукойлом", "лукойлов", ...]
-  → INSERT INTO user_defined_tags
-  → INSERT INTO portfolios
-  → BACKFILL: scanAllNewsForTag(keywords) — по всей базе новостей
+  → createUserTag()
+    → SELECT user_defined_tags по tag_id
+    → если тега нет:
+      → enrichTagViaLLM() / detectTagTypeViaLLM()
+      → buildEnrichedKeywords() / generateTagKeywords()
+      → INSERT INTO user_defined_tags (без ON CONFLICT UPDATE)
+    → INSERT INTO portfolios ON CONFLICT DO NOTHING
+  → invalidateUserTagsCache()
 ```
+
+**`POST /api/user/tags/custom`** — добавление + ручной backfill по всей базе:
+```
+Тот же flow, что и /user/tags
+  + BACKFILL: сканирует ВСЕ новости и дописывает tag_id в matched_tags
+```
+
+> Если в запросе передан конкретный `tagType` (не `'auto'`), LLM-обогащение **не вызывается** — используется переданный тип и базовые keywords.
 
 ### 2.2 Генерация keywords
 
@@ -63,7 +77,7 @@ function generateTagKeywords(tagName: string): string[]
 
 ### 2.3 Хранение
 
-- **Таблица:** `user_defined_tags` (tag_id, tag_name, tag_type, keywords[], created_by)
+- **Таблица:** `user_defined_tags` (tag_id, tag_name, tag_type, keywords[], enriched_data JSONB, created_by)
 - **Портфель:** `portfolios` (user_id, tag_id, tag_name, tag_type)
 - **Кэш:** in-memory, TTL 1 минута
 - **Инвариант:** повторное добавление существующего тега в портфель не изменяет `user_defined_tags` (не перезаписывает `enriched_data`, `keywords`, `tag_type`, `created_by`).
@@ -138,6 +152,8 @@ function heuristicTagType(tagName: string): TagType
 GET /api/user/tags/detect-type?tagName=Apple
 → { "tag_name": "Apple", "tag_type": "company", "tag_type_label": "Компания" }
 ```
+
+> **Примечание:** preview endpoint всегда вызывает `detectTagTypeViaLLM`. При реальном создании (`POST /api/user/tags`) с переданным `tagType` отличным от `'auto'` LLM-обогащение пропускается.
 
 ---
 
@@ -232,24 +248,29 @@ function matchTagsByKeywords(text: string): string[]
 Результат: ["apple", "ai"]
 ```
 
-### Метод 2: Умный поиск через AI (Smart AI Search) — ТОЛЬКО если Метод 1 пуст
+### Метод 2: Умный поиск через AI (Smart AI Search)
 
 ```typescript
-function smartMatchTags(title, summary, { useLLM? }): string[]
+function smartMatchTags(title, summary, { useLLM?, forceLLM? }): string[]
 ```
 
-- **Условие:** запускается ТОЛЬКО если Метод 1 ничего не нашёл
-  (если `keywordTags.length === 0` И `useLLM !== false` И `KIMI_API_KEY` установлен)
 - **API:** Kimi (api.moonshot.ai)
 - **Список тегов:** `getAllTagNames()` — все tag_id из `user_defined_tags`
 - **Как работает:** отправляем текст + список всех тегов в нейросеть → она решает какие теги подходят
 - **Кэш:** `smart_tag_cache` таблица, TTL 7 дней
 - **Скорость:** 1-5 секунд (только когда нужен)
-- **Экономия:** ~60% меньше LLM-вызовов (Layer 1 с enriched keywords покрывает ~85-90%)
+
+**Два режима вызова:**
+
+1. **Экономичный (по умолчанию):** Layer 2 вызывается **только если Метод 1 ничего не нашёл**.
+   Это снижает расход токенов на ~60%.
+2. **Полный pipeline (`forceLLM: true`):** Layer 2 вызывается даже при непустом Layer 1.
+   Используется в RSS pipeline для статей, у которых уже найдены keyword-теги — чтобы
+   LLM мог найти дополнительные релевантные теги.
 
 **Union:** Результат = Метод 1 ∪ Метод 2 (без дубликатов)
 
-**Пример — Метод 1 нашёл (Метод 2 НЕ запущен):**
+**Пример — Метод 1 нашёл, forceLLM=false (Метод 2 НЕ запущен):**
 ```
 Новость: "NVIDIA builds AI-powered data centers for cloud computing"
 Теги в БД: nvidia, ai, tech, cloud, arm (enriched: keywords включают "rtx", "gpu", "ai")
@@ -271,9 +292,9 @@ function smartMatchTags(title, summary, { useLLM? }): string[]
 
 **Зачем так:** Enriched keywords в Layer 1 (base + synonyms RU/EN + key products + ticker)
 покрывают ~85-90% случаев. Layer 2 — fallback для необычных новостей, где
-семантический анализ нужен.
+семантический анализ нужен; с `forceLLM` он же используется для полного покрытия.
 
-> **Note (v7.10.5):** `related_entities` из LLM enrichment **НЕ** используются для
+> **Note (v7.10.5+):** `related_entities` из LLM enrichment **НЕ** используются для
 > keyword matching. Они отображаются в UI ("связанные компании"), но не добавляются
 > в keywords — это предотвращает ложные срабатывания (например, новость "Сбер повысил
 > ставки" не получит тег "Яндекс" только потому, что Сбер в `related_entities` Яндекса).
@@ -311,7 +332,12 @@ Negative: падение, убыток, кризис, снижение, крах
 
 ### 4.2 LLM-based (Kimi API)
 ```typescript
-function analyzeSentimentLLM(title, summary): 'positive' | 'negative' | 'neutral'
+function analyzeSentimentLLM(title, summary): Promise<SentimentResult>
+interface SentimentResult {
+  sentiment: 'positive' | 'negative' | 'neutral'
+  score: number       // −10..+10
+  reasoning: string
+}
 ```
 - Температура: 0.1 (v1-8k) или 1 (k2.5)
 - Max tokens: 10
@@ -319,11 +345,16 @@ function analyzeSentimentLLM(title, summary): 'positive' | 'negative' | 'neutral
 
 ### 4.3 Tag Impact
 ```typescript
-function analyzeTagImpact(title, summary, tags): TagImpact[]
+function analyzeTagImpactBatch(items: { title, summary, tags }[]): Promise<TagImpact[][]>
+interface TagImpact {
+  tag: string
+  score: number       // −10..+10
+  reasoning: string
+}
 ```
 - Определяет: как новость влияет на КАЖДЫЙ тег
-- Возвращает: `{ tag, impact, reasoning }[]`
 - Max tokens: 500
+- BATCH: 5 статей на запрос
 
 ---
 
@@ -351,19 +382,22 @@ function analyzeTagImpact(title, summary, tags): TagImpact[]
 CREATE TABLE user_defined_tags (
   tag_id VARCHAR(50) PRIMARY KEY,
   tag_name VARCHAR(100) NOT NULL,
-  tag_type VARCHAR(20) DEFAULT 'custom',
-  keywords TEXT[],
+  tag_type VARCHAR(20) DEFAULT 'company',
+  keywords TEXT[] DEFAULT '{}',
+  enriched_data JSONB,                        -- LLM enrichment: ticker, description, synonyms, etc.
   created_by UUID REFERENCES users(id),
   created_at TIMESTAMP DEFAULT NOW()
 );
 
 -- Портфель пользователя
 CREATE TABLE portfolios (
-  user_id UUID REFERENCES users(id),
-  tag_id VARCHAR(50),
-  tag_name VARCHAR(100),
-  tag_type VARCHAR(20),
-  PRIMARY KEY (user_id, tag_id)
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  tag_id VARCHAR(50) NOT NULL,
+  tag_name VARCHAR(100) NOT NULL,
+  tag_type VARCHAR(20) NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW(),
+  UNIQUE(user_id, tag_id)
 );
 
 -- Кэш LLM результатов (tag matching)
@@ -386,14 +420,35 @@ CREATE TABLE news (
 
 ---
 
-## 10. Эндпоинты
+## 10. Эндпоинты тегов
 
-### GET /api/user/tags/detect-type?tagName={name}
+### Пользовательские теги
 
-Автоопределение типа тега (preview перед созданием).
+| Метод | Endpoint | Описание |
+|-------|----------|----------|
+| `GET` | `/api/user/tags` | Список тегов текущего пользователя (из `portfolios`) |
+| `POST` | `/api/user/tags` | Добавить тег в портфель (c LLM-обогащением при `tagType='auto'`) |
+| `POST` | `/api/user/tags/custom` | Создать тег + backfill по всей базе новостей |
+| `DELETE` | `/api/user/tags/:tagId` | Удалить тег из портфеля пользователя |
+| `GET` | `/api/user/tags/detect-type?tagName={name}` | Preview типа тега через LLM |
+| `GET` | `/api/user/tags/related?tag={tagId}` | Связанные теги через LLM |
+| `GET` | `/api/user/tags/:tagName/enrichment` | Enriched-данные тега (public) |
+| `GET` | `/api/tags/search?q={query}` | Поиск тегов по названию / ticker / synonyms / keywords |
+
+### Администрирование тегов
+
+| Метод | Endpoint | Описание |
+|-------|----------|----------|
+| `GET` | `/admin/tags` | Все теги с агрегатами (подписчики, статьи за 24ч/7д/30д) |
+| `GET` | `/admin/tags/:tagId` | Детали тега |
+| `PUT` | `/admin/tags/:tagId` | Ручное редактирование enriched-полей и `tag_type` |
+| `DELETE` | `/admin/tags/:tagId` | Каскадное удаление тега (PostgreSQL ONLY) |
+| `GET` | `/admin/tags/:tagId/delete-preview` | Статистика для модалки подтверждения удаления |
+
+### Пример: автоопределение типа
 
 ```json
-// Запрос: /api/user/tags/detect-type?tagName=AAPL
+// GET /api/user/tags/detect-type?tagName=AAPL
 {
   "tag_name": "AAPL",
   "tag_type": "ticker",
@@ -401,13 +456,10 @@ CREATE TABLE news (
 }
 ```
 
-### GET /api/user/tags/related?tag={tagId}
-
-Возвращает связанные теги через LLM.
+### Пример: связанные теги
 
 ```json
-// Запрос: /api/user/tags/related?tag=nvda
-// Теги в БД: nvda, tech, ai, gaming, apple, sber
+// GET /api/user/tags/related?tag=nvda
 {
   "tag": "nvda",
   "related": [
@@ -419,21 +471,19 @@ CREATE TABLE news (
 
 ---
 
-## 11. Диагностика
+## 14. Инвариант защиты тегов (v8.1+)
 
-```sql
--- Распределение тегов по новостям
-SELECT unnest(matched_tags) as tag, COUNT(*) 
-FROM news GROUP BY tag ORDER BY count DESC;
+- `POST /api/user/tags` и `POST /api/user/tags/custom` при повторном добавлении существующего тега **не обновляют** `user_defined_tags` (`enriched_data`, `keywords`, `tag_type`, `created_by`).
+- Подписка в `portfolios` выполняется всегда через `INSERT ... ON CONFLICT DO NOTHING`.
+- Ручное изменение enriched-полей возможно только через `PUT /admin/tags/:tagId`.
+- При admin-изменении `enriched_data` мержится через `COALESCE(enriched_data, '{}') || jsonb_build_object(...)`, а `keywords[]` пересчитываются через `rebuildKeywordsFromEnrichment()`.
 
--- Новости без тегов
-SELECT COUNT(*) FROM news WHERE matched_tags IS NULL OR array_length(matched_tags, 1) = 0;
+## 15. Известные ограничения
 
--- Все пользовательские теги
-SELECT * FROM user_defined_tags;
-
--- Кэш LLM matching
-SELECT COUNT(*) FROM smart_tag_cache;
+- **Race condition:** `SELECT` + `INSERT` в `createUserTag()` неатомарны. Текущая реализация ловит `23505` и использует существующий тег, но для 100% защиты в будущем стоит обернуть создание в транзакцию или advisory lock.
+- **Нормализация `tag_id`:** фронтенд (`Home.tsx`) и `/api/user/tags/custom` формируют `tag_id` по одной логике (lowercase + замена пробелов на `_`), но расхождения возможны, если другие клиенты шлют иной `tagId`.пользователя
+SELECT tag_id, tag_name, tag_type FROM portfolios WHERE user_id = '...';
+```
 
 ## 12. Sentiment Score — инвестиционная оценка (v7.11)
 
@@ -494,20 +544,14 @@ ALTER TABLE news ADD COLUMN sentiment_score INTEGER;
 
 ---
 
-## 11. Диагностика
+## 14. Инвариант защиты тегов (v8.1+)
 
-```sql
--- Распределение тегов по новостям
-SELECT unnest(matched_tags) as tag, COUNT(*) 
-FROM news GROUP BY tag ORDER BY count DESC;
+- `POST /api/user/tags` и `POST /api/user/tags/custom` при повторном добавлении существующего тега **не обновляют** `user_defined_tags` (`enriched_data`, `keywords`, `tag_type`, `created_by`).
+- Подписка в `portfolios` выполняется всегда через `INSERT ... ON CONFLICT DO NOTHING`.
+- Ручное изменение enriched-полей возможно только через `PUT /admin/tags/:tagId`.
+- При admin-изменении `enriched_data` мержится через `COALESCE(enriched_data, '{}') || jsonb_build_object(...)`, а `keywords[]` пересчитываются через `rebuildKeywordsFromEnrichment()`.
 
--- Новости без тегов
-SELECT COUNT(*) FROM news WHERE matched_tags IS NULL OR array_length(matched_tags, 1) = 0;
+## 15. Известные ограничения
 
--- Все пользовательские теги
-SELECT * FROM user_defined_tags;
-
--- Кэш LLM matching
-SELECT COUNT(*) FROM smart_tag_cache;
-
--- Теги конкретного 
+- **Race condition:** `SELECT` + `INSERT` в `createUserTag()` неатомарны. Текущая реализация ловит `23505` и использует существующий тег, но для 100% защиты в будущем стоит обернуть создание в транзакцию или advisory lock.
+- **Нормализация `tag_id`:** фронтенд (`Home.tsx`) и `/api/user/tags/custom` формируют `tag_id` по одной логике (lowercase + замена пробелов на `_`), но расхождения возможны, если другие клиенты шлют иной `tagId`.

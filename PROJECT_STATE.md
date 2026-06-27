@@ -1,11 +1,11 @@
 # PULSE — Project State (Session Resume)
 
 > **Файл для быстрого входа в контекст после сброса.**
-> **Дата:** 2026-06-20
+> **Дата:** 2026-06-18
 > **Версия API:** 10.1
-> **Актуальные коммиты:** backend `36e04d6`, frontend `e5bd5d5`
+> **Актуальные коммиты:** backend `306bcbe`, frontend `1b86152`
 >
-> ✅ Batch sentiment + batch tag impact + retry logic + job lock
+> ✅ Batch sentiment + batch tag impact + retry logic + job lock + tag protection
 
 ---
 
@@ -233,8 +233,13 @@ Flow создания:
 - `keywords[]` — производный плоский массив, который пересчитывается из `enriched_data`.
 - `buildEnrichedKeywords(tagName, enrichment)` строит effective keywords из base keywords + ticker + synonyms + key_products.
 - При создании тега и при любом admin-изменении `keywords` пересчитываются через `rebuildKeywordsFromEnrichment`.
-- `getAllUserDefinedTags` больше не мерджит stored keywords с enriched; используется только `buildEnrichedKeywords(enriched_data)`.
+- `getAllUserDefinedTags` предпочитает `buildEnrichedKeywords(enriched_data)`; если enriched_data отсутствует или не парсится — fallback на сохранённые `keywords[]` (или `[tag_id]`).
 - `related_entities` используются только в UI, НЕ участвуют в matching (чтобы избежать false positives).
+
+**Лимиты тегов:**
+- Бесплатный пользователь: до 3 тегов (`maxTags = 3`).
+- Premium: до 25 тегов (`maxTags = 25`).
+- Проверка выполняется и на фронтенде (`Home.tsx`), и в `POST /api/user/tags`.
 
 ---
 
@@ -349,8 +354,8 @@ frontend/src/
 
 | Репо | URL | Путь локально |
 |------|-----|---------------|
-| Backend | https://github.com/vladfa2010/pulse | `/mnt/agents/projects/backend` |
-| Frontend | https://github.com/vladfa2010/pulse-frontend | `/mnt/agents/projects/frontend` |
+| Backend | https://github.com/vladfa2010/pulse | `pulse-backend/` |
+| Frontend | https://github.com/vladfa2010/pulse-frontend | `pulse-frontend/` |
 
 **Push:** `GIT_HTTP_LOW_SPEED_TIME=300 git push origin main`
 **При ошибке GnuTLS:** повторить через 3 секунды
@@ -454,7 +459,7 @@ frontend/src/
 
 | Файл | Где | Описание |
 |------|-----|----------|
-| `CAROUSELS.md` | `/mnt/agents/projects/frontend/CAROUSELS.md` | Логика 3 каруселей, sentiment, optimistic updates, user tags, **NewsFeed vs Карусели** |
-| `ARCHITECTURE.md` | `/mnt/agents/projects/backend/ARCHITECTURE.md` | Pipeline, smart matching, translation, sentiment, API design |
-| `DEPLOYMENT.md` | `/mnt/agents/projects/backend/DEPLOYMENT.md` | Инфраструктура, env vars, тестовый логин, troubleshooting |
-| `PRODUCT_CONTEXT.md` | `/mnt/agents/projects/backend/PRODUCT_CONTEXT.md` | Критические правила, договорённости, тарифы, workflow |
+| `CAROUSELS.md` | `pulse-frontend/CAROUSELS.md` | Логика 3 каруселей, sentiment, optimistic updates, user tags, **NewsFeed vs Карусели** |
+| `ARCHITECTURE.md` | `pulse-backend/ARCHITECTURE.md` | Pipeline, smart matching, translation, sentiment, API design |
+| `DEPLOYMENT.md` | `pulse-backend/DEPLOYMENT.md` | Инфраструктура, env vars, тестовый логин, troubleshooting |
+| `PRODUCT_CONTEXT.md` | `pulse-backend/PRODUCT_CONTEXT.md` | Критические правила, договорённости, тарифы, workflow |
