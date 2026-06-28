@@ -162,11 +162,16 @@
 |---------|-----|----------|----------|
 | `tag_id` | VARCHAR(50) | NO | Первичный ключ (apple, sber, россия) |
 | `tag_name` | VARCHAR(100) | NO | Отображаемое имя (Apple, Сбер) |
-| `tag_type` | VARCHAR(20) | NO | company / sector / person / commodity |
+| `tag_type` | VARCHAR(20) | NO | company / ticker / sector / trend / person / commodity / index / currency |
 | `keywords` | TEXT[] | YES | Ключевые слова для Layer 1 matching |
 | `enriched_data` | JSONB | YES | `{ticker, related_entities, synonyms, ...}` |
 | `created_at` | TIMESTAMP | NO DEFAULT NOW() | Когда создан |
 | `updated_at` | TIMESTAMP | NO DEFAULT NOW() | Когда обновлён |
+
+**Защита от дублей:**
+- Перед созданием `createUserTag()` ищет тег по `tag_id` **или** `LOWER(tag_name)`.
+- Если тег с таким названием уже есть — пользователь подписывается на существующий `tag_id`, новая запись не создаётся.
+- Индекс: `idx_user_defined_tags_lower_name ON user_defined_tags (LOWER(tag_name))`.
 
 ### 2.4 Таблица `portfolios` — подписки пользователей на теги
 
@@ -179,6 +184,8 @@
 | `created_at` | TIMESTAMP | NO DEFAULT NOW() | Когда подписался |
 
 **Первичный ключ:** `(user_id, tag_id)`
+
+**Примечание:** подписка всегда выполняется на канонический `tag_id`, найденный по `tag_id` или `LOWER(tag_name)`.
 
 ---
 

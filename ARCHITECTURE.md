@@ -942,105 +942,118 @@ which the market typically rewards with multiple expansion.
 
 ```typescript
 // === createUserTag ===
-// Создание тега + автоматический бэкфилл
-async function createUserTag(
+// Создание тега с защитой от дублей по названию
+export async function createUserTag(
   userId: string,
   tagId: string,
   tagName: string,
-  tagType: 'stock' | 'crypto' | 'sector'
-): Promise<{ tag: UserTag; backfill: { scanned: number; matched: number } }> {
+  tagType: string
+): Promise<{ success: boolean; detectedType?: TagType; enrichment?: TagEnrichment }> {
 
-  // 1. Генерируем keywords автоматически
-  const keywords = generateTagKeywords(tagName);
+  // 1. Проверяем, существует ли тег (по tag_id или по названию)
+  const existingResult = await query(
+    `SELECT tag_id, tag_name, tag_type, enriched_data, keywords, created_by
+     FROM user_defined_tags
+     WHERE tag_id = $1 OR LOWER(tag_name) = LOWER($2)
+     LIMIT 1`,
+    [tagId, tagName]
+  );
 
-  // 2. INSERT INTO user_defined_tags
-  const tag = await query(`
-    INSERT INTO user_defined_tags (tag_id, tag_name, tag_type, keywords, created_by)
-    VALUES ($1, $2, $3, $4, $5)
-    RETURNING *
-  `, [tagId, tagName, tagType, keywords, userId]);
+  let finalTagId = tagId;
+  let finalType: string;
+  let detectedType: TagType | undefined;
+  let enrichment: TagEnrichment | null = null;
 
-  // 3. INSERT INTO portfolios (для UI)
-  await query(`
-    INSERT INTO portfolios (user_id, tag_id, tag_name, tag_type)
-    VALUES ($1, $2, $3, $4)
-  `, [userId, tagId, tagName, tagType]);
+  if (existingResult.rows.length > 0) {
+    // --- Тег уже есть: подписываемся на существующий ---
+    const existing = existingResult.rows[0];
+    finalTagId = existing.tag_id;
+    finalType = existing.tag_type;
+    detectedType = existing.tag_type as TagType;
+    enrichment = existing.enriched_data || null;
+  } else {
+    // --- Тега нет: создаём с LLM-обогащением ---
+    if (!tagType || tagType === 'auto') {
+      enrichment = await enrichTagViaLLM(tagName);
+      finalType = enrichment?.tag_type || await detectTagTypeViaLLM(tagName);
+    } else {
+      finalType = tagType;
+    }
 
-  // 4. BACKFILL: сканируем все новости
-  const backfill = await scanAllNewsForTag(tagId, keywords);
+    if (!TAG_TYPES.includes(finalType as TagType)) {
+      finalType = 'company';
+    }
 
-  return { tag, backfill };
-}
+    const keywords = enrichment
+      ? buildEnrichedKeywords(tagName, enrichment)
+      : generateTagKeywords(tagName);
 
-// === generateTagKeywords ===
-// Автогенерация keywords из названия тега
-function generateTagKeywords(tagName: string): string[] {
-  const keywords = new Set<string>();
-
-  // Основное: lowerCase
-  keywords.add(tagName.toLowerCase());
-
-  // Транслит: латинская транслитерация (если русское слово)
-  const translit = transliterateToLatin(tagName);
-  keywords.add(translit.toLowerCase());
-
-  // Склонения: суффиксные формы
-  // Например, для "лукойл" -> ['лукойл', 'лукойлу', 'лукойла', 'лукойле']
-  const declensions = generateDeclensions(tagName);
-  declensions.forEach(d => keywords.add(d.toLowerCase()));
-
-  return [...keywords];
-}
-
-// === scanAllNewsForTag ===
-// Бэкфилл: обновляет matched_tags для существующих новостей
-async function scanAllNewsForTag(
-  tagId: string,
-  keywords: string[]
-): Promise<{ scanned: number; matched: number }> {
-  // Новости без этого тега
-  const { rows } = await query(`
-    SELECT id, title, summary FROM news
-    WHERE matched_tags IS NULL
-       OR NOT (matched_tags @> ARRAY[$1]::text[])
-  `, [tagId]);
-
-  let matched = 0;
-  for (const news of rows) {
-    const text = `${news.title} ${news.summary || ''}`.toLowerCase();
-    if (keywords.some(kw => text.includes(kw.toLowerCase()))) {
-      await query(`
-        UPDATE news
-        SET matched_tags = array_append(COALESCE(matched_tags, ARRAY[]::text[]), $1)
-        WHERE id = $2
-      `, [tagId, news.id]);
-      matched++;
+    try {
+      await query(
+        `INSERT INTO user_defined_tags
+           (tag_id, tag_name, tag_type, keywords, enriched_data, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [tagId, tagName, finalType, keywords,
+         enrichment ? JSON.stringify(enrichment) : null, userId]
+      );
+    } catch (err: any) {
+      if (err.code === '23505') {
+        // Race condition: другой пользователь создал тег между SELECT и INSERT
+        const raceResult = await query(
+          `SELECT tag_id, tag_type FROM user_defined_tags
+           WHERE tag_id = $1 OR LOWER(tag_name) = LOWER($2) LIMIT 1`,
+          [tagId, tagName]
+        );
+        finalTagId = raceResult.rows[0]?.tag_id || tagId;
+        finalType = raceResult.rows[0]?.tag_type || finalType;
+        detectedType = finalType as TagType;
+        enrichment = null;
+      } else {
+        throw err;
+      }
     }
   }
 
-  return { scanned: rows.length, matched };
+  // 2. Подписка в портфель
+  await query(
+    `INSERT INTO portfolios (user_id, tag_id, tag_name, tag_type)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (user_id, tag_id) DO NOTHING`,
+    [userId, finalTagId, tagName, finalType]
+  );
+
+  return { success: true, detectedType, enrichment: enrichment || undefined };
 }
 ```
 
 ### User-Defined Tags Flow
 
 ```
-Пользователь создает тег "лукойл"
+Пользователь вводит "Лукойл"
 |
-|---> generateTagKeywords("лукойл")
-|     |---> ['лукойл', 'lukoil', 'лукойлу', 'лукойла', 'лукойле', 'lukoyl']
+|---> Frontend: если в searchResults есть exact match по tag_name
+|     |---> подписываемся на существующий тег (handleSelectSuggestion)
 |
-|---> INSERT INTO user_defined_tags
-|     (tag_id='lukoil', tag_name='Лукойл', keywords=[...])
+|---> Иначе: POST /api/user/tags { tagId, tagName, tagType: 'auto' }
+|     |
+|     |---> Backend createUserTag()
+|           |
+|           |---> SELECT FROM user_defined_tags
+|           |     WHERE tag_id = $1 OR LOWER(tag_name) = LOWER($2)
+|           |
+|           |---> Тег уже есть?
+|           |     └── Подписываемся на существующий tag_id (без LLM, без INSERT)
+|           |
+|           |---> Тега нет?
+|                 ├── enrichTagViaLLM() / detectTagTypeViaLLM()
+|                 ├── buildEnrichedKeywords() / generateTagKeywords()
+|                 └── INSERT INTO user_defined_tags
+|                       (tag_id, tag_name, tag_type, keywords, enriched_data, created_by)
 |
-|---> INSERT INTO portfolios
-|     (user_id, tag_id='lukoil', tag_name='Лукойл')
+|---> INSERT INTO portfolios ON CONFLICT DO NOTHING
 |
-|---> BACKFILL: scanAllNewsForTag('lukoil', keywords)
-|     |---> SELECT * FROM news WHERE matched_tags IS NULL OR NOT ('lukoil' = ANY(matched_tags))
-|     |---> Для каждой новости: matchTagsByKeywords(title + summary)
-|     |---> Если совпало -> UPDATE matched_tags = array_append(matched_tags, 'lukoil')
-|     |---> Возвращает { scanned: 1523, matched: 47 }
+|---> Новые теги попадают в ленту через обычный RSS pipeline
+|     (backfill по всей базе — только в POST /api/user/tags/custom)
 ```
 
 ### LLM Enrichment — когда вызывается
