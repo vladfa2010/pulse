@@ -80,7 +80,7 @@ function generateTagKeywords(tagName: string): string[]
 - **Таблица:** `user_defined_tags` (tag_id, tag_name, tag_type, keywords[], enriched_data JSONB, created_by)
 - **Портфель:** `portfolios` (user_id, tag_id, tag_name, tag_type)
 - **Кэш:** in-memory, TTL 1 минута
-- **Инвариант:** повторное добавление существующего тега в портфель не изменяет `user_defined_tags` (не перезаписывает `enriched_data`, `keywords`, `tag_type`, `created_by`).
+- **Инвариант:** повторное добавление существующего тега в портфель не изменяет `user_defined_tags` (не перезаписывает `enriched_data`, `keywords`, `tag_type`, `created_by`). Создание ищет тег как по `tag_id`, так и по `LOWER(tag_name)`; при совпадении по названию пользователь подписывается на существующий `tag_id`.
 
 ### 2.4 Почему нет хардкод тегов
 
@@ -474,6 +474,7 @@ CREATE TABLE news (
 ## 14. Инвариант защиты тегов (v8.1+)
 
 - `POST /api/user/tags` и `POST /api/user/tags/custom` при повторном добавлении существующего тега **не обновляют** `user_defined_tags` (`enriched_data`, `keywords`, `tag_type`, `created_by`).
+- Перед созданием тег ищется по `tag_id` **или** `LOWER(tag_name)`. Если найден по названию — пользователь подписывается на существующий `tag_id`, дубль не создаётся.
 - Подписка в `portfolios` выполняется всегда через `INSERT ... ON CONFLICT DO NOTHING`.
 - Ручное изменение enriched-полей возможно только через `PUT /admin/tags/:tagId`.
 - При admin-изменении `enriched_data` мержится через `COALESCE(enriched_data, '{}') || jsonb_build_object(...)`, а `keywords[]` пересчитываются через `rebuildKeywordsFromEnrichment()`.

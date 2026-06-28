@@ -3,7 +3,7 @@
 > **Файл для быстрого входа в контекст после сброса.**
 > **Дата:** 2026-06-18
 > **Версия API:** 10.1
-> **Актуальные коммиты:** backend `306bcbe`, frontend `1b86152`
+> **Актуальные коммиты:** backend `39d5fea`, frontend `0b70506`
 >
 > ✅ Batch sentiment + batch tag impact + retry logic + job lock + tag protection
 
@@ -214,9 +214,9 @@ LLM оценивает новость как опытный инвестицио
 Flow создания:
 1. Пользователь вводит название в поиск → "Создать тег 'X'"
 2. `POST /api/user/tags` или `POST /api/user/tags/custom` → backend:
-   - `createUserTag()` проверяет существование тега в `user_defined_tags`.
+   - `createUserTag()` проверяет существование тега в `user_defined_tags` по `tag_id` **или** `LOWER(tag_name)`.
+   - Если тег уже есть — **не модифицирует** `user_defined_tags` и подписывает на существующий `tag_id` (защита от дублей + сохранение enriched_data/keywords/created_by).
    - Если тега нет — вызывает LLM `enrichTagViaLLM(tagName)`, строит keywords и делает `INSERT`.
-   - Если тег уже есть — **не модифицирует** `user_defined_tags` (защита enriched_data/keywords/created_by).
    - INSERT/IGNORE в `portfolios` (подписка).
    - `POST /api/user/tags/custom` дополнительно делает **BACKFILL** по всем новостям.
 3. `tagVersion++` → `invalidateQueries(['unreadNews', 'historyNews'])`
