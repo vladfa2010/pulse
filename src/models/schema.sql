@@ -107,6 +107,10 @@ CREATE TABLE IF NOT EXISTS user_defined_tags (
 ALTER TABLE user_defined_tags
   ADD COLUMN IF NOT EXISTS enriched_data JSONB;
 
+-- Index for fast lookup by tag name (deduplication)
+CREATE INDEX IF NOT EXISTS idx_user_defined_tags_lower_name
+ON user_defined_tags (LOWER(tag_name));
+
 -- ============================================================
 -- 5d. news_tag_links (tag ↔ news связи)
 -- ============================================================

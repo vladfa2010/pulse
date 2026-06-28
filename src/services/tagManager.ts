@@ -365,14 +365,17 @@ export function heuristicTagType(tagName: string): TagType {
 // При добавлении существующего тега user_defined_tags НЕ модифицируется.
 export async function createUserTag(userId: string, tagId: string, tagName: string, tagType: string): Promise<{ success: boolean; detectedType?: TagType; enrichment?: TagEnrichment }> {
   try {
-    // 1. Проверяем, существует ли тег
+    // 1. Проверяем, существует ли тег (по tag_id или по названию)
     const existingResult = await query(
-      `SELECT tag_id, tag_type, enriched_data, keywords, created_by
-       FROM user_defined_tags WHERE tag_id = $1`,
-      [tagId]
+      `SELECT tag_id, tag_name, tag_type, enriched_data, keywords, created_by
+       FROM user_defined_tags
+       WHERE tag_id = $1 OR LOWER(tag_name) = LOWER($2)
+       LIMIT 1`,
+      [tagId, tagName]
     );
 
     let finalType: string;
+    let finalTagId = tagId;
     let detectedType: TagType | undefined;
     let enrichment: TagEnrichment | null = null;
     let isNewTag = false;
@@ -380,9 +383,11 @@ export async function createUserTag(userId: string, tagId: string, tagName: stri
     if (existingResult.rows.length > 0) {
       // --- Тег уже есть: НЕ трогаем user_defined_tags ---
       const existing = existingResult.rows[0];
+      finalTagId = existing.tag_id;
       finalType = existing.tag_type;
       detectedType = existing.tag_type as TagType;
       enrichment = existing.enriched_data || null;
+      console.log(`[TagManager] Tag already exists by name/id "${existing.tag_name}" (${finalTagId}), subscribing user ${userId}`);
     } else {
       // --- Тега нет: создаём с LLM-обогащением ---
       if (!tagType || tagType === 'auto') {
@@ -421,13 +426,14 @@ export async function createUserTag(userId: string, tagId: string, tagName: stri
         if (err.code === '23505') {
           // Race condition: другой пользователь создал тег между SELECT и INSERT
           const raceResult = await query(
-            `SELECT tag_type FROM user_defined_tags WHERE tag_id = $1`,
-            [tagId]
+            `SELECT tag_id, tag_type FROM user_defined_tags WHERE tag_id = $1 OR LOWER(tag_name) = LOWER($2) LIMIT 1`,
+            [tagId, tagName]
           );
+          finalTagId = raceResult.rows[0]?.tag_id || tagId;
           finalType = raceResult.rows[0]?.tag_type || finalType;
           detectedType = finalType as TagType;
           enrichment = null;
-          console.log(`[TagManager] Tag "${tagId}" created by another user, using existing type=${finalType}`);
+          console.log(`[TagManager] Tag "${tagId}" created by another user, using existing ${finalTagId} type=${finalType}`);
         } else {
           throw err;
         }
@@ -439,7 +445,7 @@ export async function createUserTag(userId: string, tagId: string, tagName: stri
       `INSERT INTO portfolios (user_id, tag_id, tag_name, tag_type)
        VALUES ($1, $2, $3, $4)
        ON CONFLICT (user_id, tag_id) DO NOTHING`,
-      [userId, tagId, tagName, finalType]
+      [userId, finalTagId, tagName, finalType]
     );
 
     // 3. Wake up no-tags articles только если тег был действительно создан сейчас

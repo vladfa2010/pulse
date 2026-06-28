@@ -149,7 +149,11 @@ if (require.main === module) {
     const protectionResults = await runTagProtectionTest();
     printResults(protectionResults);
 
-    const allResults = [...criticalResults, ...protectionResults];
+    console.log('\n🔍 PULSE E2E — Tag Name Deduplication Test\n');
+    const dedupResults = await runTagNameDedupTest();
+    printResults(dedupResults);
+
+    const allResults = [...criticalResults, ...protectionResults, ...dedupResults];
     const passed = allResults.filter(r => r.passed).length;
     const failed = allResults.filter(r => !r.passed).length;
 
@@ -294,4 +298,94 @@ async function runTagProtectionTest(): Promise<TestResult[]> {
   return results;
 }
 
-export { runCriticalPath, runTagProtectionTest };
+// ─── Tag Name Deduplication Test ──────────────────────────────────────────
+// Проверяет, что повторный ввод того же названия с другим tag_id
+// не создаёт дубликат в user_defined_tags.
+async function runTagNameDedupTest(): Promise<TestResult[]> {
+  const results: TestResult[] = [];
+  const timestamp = Date.now();
+  const tagName = `Pulse Dedup Tag ${timestamp}`;
+  const tagIdA = `pulse_dedup_tag_${timestamp}`;
+  const tagIdB = `pulse_dedup_tag_b_${timestamp}`;
+
+  async function registerUser(suffix: string): Promise<{ email: string; password: string; token: string } | null> {
+    const email = `test_dedup_${suffix}_${timestamp}@pulse.local`;
+    const password = 'TestPass123!';
+    const r = await post('/auth/register', { email, password, username: `testdedup_${suffix}_${timestamp}` });
+    if (r.status === 201 && r.data.token) {
+      return { email, password, token: r.data.token };
+    }
+    return null;
+  }
+
+  let userA: { email: string; password: string; token: string } | null = null;
+  let userB: { email: string; password: string; token: string } | null = null;
+
+  try {
+    userA = await registerUser('a');
+    if (!userA) {
+      results.push({ step: 'TD1. Регистрация пользователя A', passed: false, error: 'Registration failed' });
+      return results;
+    }
+    results.push({ step: 'TD1. Регистрация пользователя A', passed: true });
+
+    const rA = await post('/user/tags', { tagId: tagIdA, tagName, tagType: 'company' }, userA.token);
+    if (rA.status === 200 || rA.status === 201) {
+      results.push({ step: 'TD2. Пользователь A создаёт тег', passed: true, data: { tag: rA.data.tag } });
+    } else {
+      results.push({ step: 'TD2. Пользователь A создаёт тег', passed: false, error: rA.data.error || `HTTP ${rA.status}` });
+      return results;
+    }
+
+    userB = await registerUser('b');
+    if (!userB) {
+      results.push({ step: 'TD3. Регистрация пользователя B', passed: false, error: 'Registration failed' });
+      return results;
+    }
+    results.push({ step: 'TD3. Регистрация пользователя B', passed: true });
+
+    const rB = await post('/user/tags', { tagId: tagIdB, tagName, tagType: 'company' }, userB.token);
+    if (rB.status === 200 || rB.status === 201) {
+      results.push({ step: 'TD4. Пользователь B добавляет тот же тег (другой tagId)', passed: true, data: { tag: rB.data.tag } });
+    } else {
+      results.push({ step: 'TD4. Пользователь B добавляет тот же тег (другой tagId)', passed: false, error: rB.data.error || `HTTP ${rB.status}` });
+      return results;
+    }
+
+    const countResult = await query(
+      `SELECT COUNT(*) as count FROM user_defined_tags WHERE LOWER(tag_name) = LOWER($1)`,
+      [tagName]
+    );
+    const count = parseInt(countResult.rows[0].count);
+    const tagRow = await query(
+      `SELECT tag_id FROM user_defined_tags WHERE LOWER(tag_name) = LOWER($1) LIMIT 1`,
+      [tagName]
+    );
+    const canonicalTagId = tagRow.rows[0]?.tag_id;
+
+    if (count === 1 && rB.data.tag?.tag_id === canonicalTagId) {
+      results.push({ step: 'TD5. Дубль не создан — оба пользователя на одном теге', passed: true, data: { count, canonicalTagId } });
+    } else {
+      results.push({
+        step: 'TD5. Дубль не создан — оба пользователя на одном теге',
+        passed: false,
+        error: `Expected 1 tag with canonical id ${canonicalTagId}, got count=${count}, returned id=${rB.data.tag?.tag_id}`,
+      });
+    }
+  } catch (e: any) {
+    results.push({ step: 'TD? Неожиданная ошибка', passed: false, error: e.message });
+  }
+
+  // Cleanup
+  try {
+    await query('DELETE FROM user_defined_tags WHERE LOWER(tag_name) = LOWER($1)', [tagName]);
+    if (userA) await query('DELETE FROM users WHERE email = $1', [userA.email]);
+    if (userB) await query('DELETE FROM users WHERE email = $1', [userB.email]);
+  } catch {
+    // ignore cleanup errors
+  }
+
+  return results;
+}
+
+export { runCriticalPath, runTagProtectionTest, runTagNameDedupTest };
