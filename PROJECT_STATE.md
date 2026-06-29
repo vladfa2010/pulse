@@ -3,9 +3,9 @@
 > **Файл для быстрого входа в контекст после сброса.**
 > **Дата:** 2026-06-18
 > **Версия API:** 10.1
-> **Актуальные коммиты:** backend `eb73d9f`, frontend `24921ca`
+> **Актуальные коммиты:** backend `eb73d9f`, frontend `4184b19`
 >
-> ✅ Batch sentiment + batch tag impact + retry logic + job lock + tag protection + VoteToast confetti layering fix
+> ✅ Batch sentiment + batch tag impact + retry logic + job lock + tag protection + VoteToast confetti layering fix + Frost Appear animation for AllNewsCarousel
 
 ---
 
