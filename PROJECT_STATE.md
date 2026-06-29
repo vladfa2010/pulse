@@ -3,7 +3,7 @@
 > **Файл для быстрого входа в контекст после сброса.**
 > **Дата:** 2026-06-18
 > **Версия API:** 10.1
-> **Актуальные коммиты:** backend `eb73d9f`, frontend `6212131`
+> **Актуальные коммиты:** backend `eb73d9f`, frontend `b385c38`
 >
 > ✅ Batch sentiment + batch tag impact + retry logic + job lock + tag protection + VoteToast confetti layering fix + Frost Appear + FLIP shift for carousels 2 & 3
 
