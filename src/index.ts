@@ -3536,6 +3536,116 @@ app.get('/api/telegram/link', authMiddleware, async (req: AuthRequest, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Telegram Login Widget — callback endpoint
+// ═══════════════════════════════════════════════════════════════════════════
+app.post('/api/auth/telegram', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.userId;
+
+    // ── 1. Check Premium ──
+    const userResult = await query(
+      `SELECT subscription_active FROM users WHERE id = $1`,
+      [userId]
+    );
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    if (!userResult.rows[0].subscription_active) {
+      return res.status(403).json({ error: 'Premium subscription required' });
+    }
+
+    // ── 2. Extract Telegram data ──
+    const { id, hash, auth_date, first_name, username, last_name, photo_url } = req.body;
+    if (!id || !hash || !auth_date) {
+      return res.status(400).json({ error: 'Missing Telegram auth data' });
+    }
+
+    const chatId = id.toString();
+
+    // ── 3. Verify hash (Telegram Login Widget signature) ──
+    const botToken = process.env.TELEGRAM_BOT_TOKEN || '';
+    if (!botToken) {
+      return res.status(500).json({ error: 'Telegram bot token not configured' });
+    }
+
+    const authFields: Record<string, string | number | undefined> = {
+      id,
+      first_name,
+      last_name,
+      username,
+      photo_url,
+      auth_date,
+    };
+
+    const dataCheckArr: string[] = [];
+    const keys = Object.keys(authFields).sort();
+    for (const key of keys) {
+      const value = authFields[key];
+      if (value !== undefined && value !== null && value !== '') {
+        dataCheckArr.push(`${key}=${value}`);
+      }
+    }
+    const dataCheckString = dataCheckArr.join('\n');
+
+    const secretKey = crypto.createHmac('sha256', botToken).update('WebAppData').digest();
+    const expectedHash = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
+
+    try {
+      const hashBuf = Buffer.from(hash, 'hex');
+      const expectedBuf = Buffer.from(expectedHash, 'hex');
+      if (!crypto.timingSafeEqual(hashBuf, expectedBuf)) {
+        return res.status(403).json({ error: 'Invalid Telegram auth signature' });
+      }
+    } catch {
+      return res.status(403).json({ error: 'Invalid hash format' });
+    }
+
+    // ── 4. Check auth_date freshness (max 24h) ──
+    const authDateMs = parseInt(auth_date) * 1000;
+    if (Date.now() - authDateMs > 24 * 60 * 60 * 1000) {
+      return res.status(403).json({ error: 'Auth data expired' });
+    }
+
+    // ── 5. Save channel ──
+    if (USE_SQLITE) {
+      await query(
+        `INSERT OR REPLACE INTO user_channels (id, user_id, channel, target, is_active)
+         VALUES ($1, $2, 'telegram', $3, 1)`,
+        [crypto.randomUUID(), userId, chatId]
+      );
+    } else {
+      await query(
+        `INSERT INTO user_channels (id, user_id, channel, target, is_active)
+         VALUES ($1, $2, 'telegram', $3, TRUE)
+         ON CONFLICT (user_id, channel) DO UPDATE SET target = $3, is_active = TRUE`,
+        [crypto.randomUUID(), userId, chatId]
+      );
+    }
+
+    // ── 6. Enable digest ──
+    if (USE_SQLITE) {
+      await query(
+        `INSERT OR REPLACE INTO notification_settings (user_id, tg_digest_enabled) VALUES ($1, 1)`,
+        [userId]
+      );
+    } else {
+      await query(
+        `INSERT INTO notification_settings (user_id, tg_digest_enabled)
+         VALUES ($1, TRUE)
+         ON CONFLICT (user_id) DO UPDATE SET tg_digest_enabled = TRUE`,
+        [userId]
+      );
+    }
+
+    console.log(`[Telegram Widget] User ${userId} linked to TG ${chatId}`);
+    res.json({ success: true, chatId });
+  } catch (err: any) {
+    console.error('[Telegram Widget] Error:', err.message);
+    res.status(500).json({ error: 'Failed to link Telegram account' });
+  }
+});
+
 // TEMP: Backfill matched_tags for existing articles without tags
 app.get('/backfill-tags', async (req, res) => {
   const secret = req.headers['x-trigger-secret'] || req.query.secret;
