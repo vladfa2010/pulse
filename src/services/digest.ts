@@ -25,6 +25,14 @@ const FREQUENCY_HOURS: Record<string, number> = {
   '24h': 24,
 };
 
+const FREQUENCY_LABELS: Record<string, string> = {
+  '1h': 'каждый час',
+  '3h': 'каждые 3 часа',
+  '6h': 'каждые 6 часов',
+  '12h': '2 раза в сутки',
+  '24h': 'раз в сутки',
+};
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Build digest for a single user
 // ═══════════════════════════════════════════════════════════════════════════
@@ -107,7 +115,7 @@ async function buildDigest(userId: string, maxTags: number, lastDigestSent: Date
 // ═══════════════════════════════════════════════════════════════════════════
 // Format digest as Telegram HTML
 // ═══════════════════════════════════════════════════════════════════════════
-function formatDigest(articles: DigestArticle[]): string {
+function formatDigest(articles: DigestArticle[], frequency: string = '1h'): string {
   if (articles.length === 0) return '';
 
   let text = `🔔 <b>PULSE — непрочитанные новости</b>\n`;
@@ -123,7 +131,7 @@ function formatDigest(articles: DigestArticle[]): string {
 
   text += `━━━\n`;
   text += `<a href="https://pulse-frontend-jt53.onrender.com">Открыть PULSE →</a>\n`;
-  text += `<i>⏰ Следующая подборка через 1 час</i>`;
+  text += `<i>⏰ Следующая подборка — ${FREQUENCY_LABELS[frequency] || 'по расписанию'}</i>`;
 
   return text;
 }
@@ -229,7 +237,7 @@ export async function sendDigestToUser(userId: string): Promise<boolean> {
     const chatId = chatResult.rows[0].target;
 
     // Format and send
-    const text = formatDigest(articles);
+    const text = formatDigest(articles, settings.digest_frequency);
     const ok = await sendTelegramMessage(chatId, text);
 
     if (ok) {
