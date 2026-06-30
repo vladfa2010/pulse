@@ -3588,7 +3588,9 @@ app.post('/api/auth/telegram', authMiddleware, async (req: AuthRequest, res) => 
     }
     const dataCheckString = dataCheckArr.join('\n');
 
-    const secretKey = crypto.createHmac('sha256', botToken).update('WebAppData').digest();
+    // Login Widget / OAuth widget use SHA256(bot_token) as the HMAC key.
+    // (WebAppData HMAC is only for Telegram Mini Apps.)
+    const secretKey = crypto.createHash('sha256').update(botToken).digest();
     const expectedHash = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
 
     try {
