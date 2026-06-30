@@ -2682,6 +2682,7 @@ app.get('/debug-telegram', async (req, res) => {
         url: whResp.data.result?.url,
         has_custom_certificate: whResp.data.result?.has_custom_certificate,
         pending_update_count: whResp.data.result?.pending_update_count,
+        allowed_updates: whResp.data.result?.allowed_updates,
         last_error_date: whResp.data.result?.last_error_date,
         last_error_message: whResp.data.result?.last_error_message,
       } : null,
