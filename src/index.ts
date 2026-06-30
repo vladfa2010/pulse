@@ -3646,6 +3646,31 @@ app.post('/api/auth/telegram', authMiddleware, async (req: AuthRequest, res) => 
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Telegram Bot Config — public bot info for frontend OAuth
+// ═══════════════════════════════════════════════════════════════════════════
+app.get('/api/telegram/config', async (req, res) => {
+  try {
+    const botToken = process.env.TELEGRAM_BOT_TOKEN || '';
+    if (!botToken) {
+      return res.status(500).json({ error: 'Telegram bot not configured' });
+    }
+
+    const botId = botToken.split(':')[0];
+    if (!botId || isNaN(parseInt(botId))) {
+      return res.status(500).json({ error: 'Invalid bot token format' });
+    }
+
+    res.json({
+      botId: parseInt(botId),
+      botUsername: 'Insidepulse_bot',
+    });
+  } catch (err: any) {
+    console.error('[Telegram Config] Error:', err.message);
+    res.status(500).json({ error: 'Failed to get telegram config' });
+  }
+});
+
 // TEMP: Backfill matched_tags for existing articles without tags
 app.get('/backfill-tags', async (req, res) => {
   const secret = req.headers['x-trigger-secret'] || req.query.secret;
