@@ -446,12 +446,21 @@ frontend/src/
 **Логика:**
 - Показывается только залогиненным пользователям без подключённого Telegram.
 - Бесплатным пользователям кнопка ведёт на `/pricing`.
-- Premium-пользователям кнопка запрашивает `GET /api/telegram/link`, открывает deep link `@Insidepulse_bot`.
-- После открытия Telegram запускается polling `GET /api/user/telegram-status` каждые 5 сек; баннер скрывается при `connected = true`.
+- Premium-пользователям отображается кнопка **«Подключить бота»**.
+- Кнопка использует официальный Telegram Login API (`Telegram.Login.auth` из `https://telegram.org/js/telegram-widget.js`), который открывает popup `oauth.telegram.org` и возвращает данные пользователя через `postMessage`.
+- Полученные `{ id, first_name, username, photo_url, auth_date, hash }` отправляются на `POST /api/auth/telegram`.
+- Backend проверяет HMAC-SHA256 подпись (`SHA256(TELEGRAM_BOT_TOKEN)` как ключ) и сохраняет канал.
+- После успешного ответа запускается polling `GET /api/user/telegram-status` каждые 5 сек; баннер скрывается при `connected = true`.
+- Fallback: если библиотека Telegram не загрузилась, работает классическая кнопка «Не работает? Нажмите здесь» → `GET /api/telegram/link` → deep link `@Insidepulse_bot`.
 
-**Backend endpoints (без изменений):**
-- `GET /api/user/telegram-status`
-- `GET /api/telegram/link`
+**Backend endpoints:**
+- `GET /api/telegram/config` — публичный конфиг (`botId`, `botUsername`) для инициализации виджета.
+- `POST /api/auth/telegram` — приём данных от OAuth-виджета, проверка подписи, сохранение канала.
+- `GET /api/user/telegram-status` — статус подключения.
+- `GET /api/telegram/link` — генерация HMAC-deep-link (fallback).
+
+**Требования @BotFather:**
+- Домен сайта (`pulse.inside-trade.ru`) должен быть добавлен через `/setdomain` для работы официального Login Widget.
 
 ---
 

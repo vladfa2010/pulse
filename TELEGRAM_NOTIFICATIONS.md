@@ -12,6 +12,7 @@
 | **Бот @Insidepulse_bot** | ✅ Работает | Отвечает на команды, webhook активен |
 | **Webhook auto-setup** | ✅ Реализовано | Автоматическая регистрация при старте сервера |
 | **HMAC-linking** | ✅ Реализовано | `/start <userId>:<token>` с verifyLinkToken |
+| **OAuth Login Widget (banner)** | ✅ Реализовано | Кнопка «Подключить бота» на главной через `Telegram.Login.auth` |
 | **Профиль → Уведомления** | ✅ Реализовано | UI подключения/отключения бота |
 | **Desktop fallback** | ✅ Реализовано | Кнопка "Копировать" с `/start ...` для десктоп |
 | **Premium-only проверка** | ✅ Реализовано | `subscription_active = TRUE` |
@@ -177,6 +178,62 @@
        │ ╚═══════════════════════════════════╝    │
        │                    │                    │
 ```
+
+### Альтернативный поток: баннер «Подключить бота» (OAuth Login Widget)
+
+На главной странице (под каруселью «Общая лента») авторизованным Premium-пользователям без подключённого Telegram показывается баннер с кнопкой **«Подключить бота»**.
+
+```
+┌───────────────────────────────────────────────────────────┐
+│  Главная страница → TelegramConnectBanner                 │
+└──────────────────────┬────────────────────────────────────┘
+                       │
+                       ▼
+┌───────────────────────────────────────────────────────────┐
+│  Frontend: GET /api/telegram/config                       │
+│  Response: { botId, botUsername }                         │
+└──────────────────────┬────────────────────────────────────┘
+                       │
+                       ▼
+┌───────────────────────────────────────────────────────────┐
+│  Пользователь нажимает «Подключить бота»                  │
+│                                                           │
+│  Frontend: Telegram.Login.auth({                          │
+│              bot_id: <botId>,                             │
+│              request_access: 'write',                     │
+│              lang: 'ru'                                   │
+│            }, callback)                                   │
+│            из https://telegram.org/js/telegram-widget.js  │
+└──────────────────────┬────────────────────────────────────┘
+                       │
+                       ▼
+┌───────────────────────────────────────────────────────────┐
+│  Popup oauth.telegram.org → пользователь авторизуется     │
+│  Telegram возвращает данные через postMessage             │
+│  callback(user) = { id, first_name, username,             │
+│                     photo_url, auth_date, hash }          │
+└──────────────────────┬────────────────────────────────────┘
+                       │
+                       ▼
+┌───────────────────────────────────────────────────────────┐
+│  Frontend: POST /api/auth/telegram (Bearer JWT)           │
+│  Backend: проверяет HMAC-SHA256 hash                      │
+│           (secret_key = SHA256(bot_token))                │
+│           INSERT/UPDATE user_channels                     │
+│           SET tg_digest_enabled = TRUE                    │
+└──────────────────────┬────────────────────────────────────┘
+                       │
+                       ▼
+┌───────────────────────────────────────────────────────────┐
+│  Frontend запускает polling GET /api/user/telegram-status │
+│  каждые 5 секунд; баннер скрывается при connected=true    │
+└───────────────────────────────────────────────────────────┘
+```
+
+**Особенности:**
+- Не требует ручного перехода в бота и ввода `/start`.
+- Работает только если домен (`pulse.inside-trade.ru`) добавлен в `@BotFather` через `/setdomain`.
+- Fallback: если библиотека не загрузилась — кнопка «Не работает? Нажмите здесь» открывает классический deep link.
 
 ### Шаги подключения (подробно)
 
@@ -345,7 +402,8 @@ WHERE user_id = 'uuid-user-123';
 
 | Элемент | Условие отображения | Действие | Статус |
 |---------|---------------------|----------|--------|
-| **"Получить ссылку для подключения"** | Не подключено + Premium | Генерирует HMAC-ссылку | ✅ |
+| **Баннер «Подключить бота»** | Главная страница, залогинен, Premium, Telegram не подключён | Открывает OAuth popup через `Telegram.Login.auth` | ✅ |
+| **"Получить ссылку для подключения"** | Не подключено + Premium (Профиль → Уведомления) | Генерирует HMAC-ссылку | ✅ |
 | **Статус "Подключено"** | `user_channels.is_active = TRUE` | Показывает chat_id (маскированный) | ✅ |
 | **Кнопка "Отключить"** | Подключено | `POST /api/user/telegram-disconnect` | ✅ |
 | **Частота дайджеста** | Всегда (если Premium) | `digest_frequency`: 1h, 3h, 6h, 12h, 24h | ✅ |
@@ -1314,6 +1372,79 @@ async function shouldSendDigest(userId: string, frequency: string): Promise<bool
 ---
 
 ## 11. API Endpoints
+
+### `GET /api/telegram/config` — Конфигурация для OAuth-виджета ✅
+
+Публичный endpoint. Возвращает `botId` и `botUsername`, необходимые frontend'у для инициализации официального Telegram Login Widget.
+
+**Request:**
+```http
+GET /api/telegram/config
+```
+
+**Response (успех):**
+```json
+{
+  "botId": 8226463754,
+  "botUsername": "Insidepulse_bot"
+}
+```
+
+**Response (бот не настроен):**
+```json
+{ "error": "Telegram bot not configured" }
+```
+
+### `POST /api/auth/telegram` — Подключение через OAuth-виджет ✅
+
+Принимает данные пользователя, полученные от официального Telegram Login Widget после успешной авторизации в popup. Требует авторизацию (Bearer JWT).
+
+**Request:**
+```http
+POST /api/auth/telegram
+Authorization: Bearer <JWT_TOKEN>
+Content-Type: application/json
+
+{
+  "id": 123456789,
+  "first_name": "Vlad",
+  "username": "vladfa",
+  "photo_url": "https://t.me/i/userpic/...",
+  "auth_date": 1751300000,
+  "hash": "..."
+}
+```
+
+**Проверка backend:**
+- Пользователь существует и имеет `subscription_active = TRUE`.
+- Проверка HMAC-SHA256 подписи (`secret_key = SHA256(TELEGRAM_BOT_TOKEN)`).
+- Проверка свежести `auth_date` (не старше 24 часов).
+
+**Действия backend:**
+```sql
+INSERT INTO user_channels (id, user_id, channel, target, is_active)
+VALUES (gen_random_uuid(), '<current_user_id>', 'telegram', '<id>', TRUE)
+ON CONFLICT (user_id, channel) DO UPDATE SET target = '<id>', is_active = TRUE;
+
+INSERT INTO notification_settings (user_id, tg_digest_enabled)
+VALUES ('<current_user_id>', TRUE)
+ON CONFLICT (user_id) DO UPDATE SET tg_digest_enabled = TRUE;
+```
+
+**Response (успех):**
+```json
+{ "success": true, "chatId": "123456789" }
+```
+
+**Response (ошибка подписи):**
+```json
+{ "error": "Invalid Telegram auth signature" }
+```
+
+**Response (нет Premium):**
+```json
+{ "error": "Premium subscription required" }
+```
 
 ### `GET /api/telegram/link` — Генерация ссылки подключения ✅
 

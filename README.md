@@ -78,11 +78,18 @@ docker-compose up
 |--------|----------|----------|
 | POST | `/api/translate` | Перевод EN→RU |
 
-### Webhook
+### Telegram (бот и уведомления)
+
+Подробная документация: [`TELEGRAM_NOTIFICATIONS.md`](./TELEGRAM_NOTIFICATIONS.md)
+
 | Method | Endpoint | Описание |
 |--------|----------|----------|
-| POST | `/api/webhook/yookassa` | ЮKassa callback |
-| POST | `/api/webhook/telegram` | Telegram callback |
+| GET | `/api/telegram/config` | Конфиг OAuth-виджета (`botId`, `botUsername`) |
+| POST | `/api/auth/telegram` | Подключение через Telegram Login Widget |
+| GET | `/api/telegram/link` | Генерация HMAC-deep-link для fallback |
+| GET | `/api/user/telegram-status` | Статус подключения Telegram |
+| POST | `/api/user/telegram-disconnect` | Отключить Telegram-уведомления |
+| POST | `/api/webhook/telegram` | Webhook от Telegram API |
 
 ### Admin
 | Method | Endpoint | Описание |
