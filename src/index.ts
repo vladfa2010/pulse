@@ -4395,10 +4395,13 @@ async function start() {
         const axios = await import('axios');
         // Delete old webhook first
         await axios.default.post(`https://api.telegram.org/bot${TG_TOKEN}/deleteWebhook`, {}, { timeout: 15000 });
-        // Set new webhook
+        // Set new webhook (explicit allowed_updates to receive my_chat_member)
         const resp = await axios.default.post(
           `https://api.telegram.org/bot${TG_TOKEN}/setWebhook`,
-          { url: WEBHOOK_URL },
+          {
+            url: WEBHOOK_URL,
+            allowed_updates: ['message', 'my_chat_member', 'callback_query'],
+          },
           { timeout: 15000 }
         );
         if (resp.data.ok) {
