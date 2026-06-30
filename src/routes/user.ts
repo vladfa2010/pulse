@@ -537,6 +537,7 @@ router.get('/telegram-status', authMiddleware, async (req: AuthRequest, res) => 
 
     res.json({
       connected: !!channel && channel.is_active,
+      channelExists: !!channel,
       chatId: channel?.target || undefined,
       digestEnabled: settings.tg_digest_enabled || false,
       frequency: settings.digest_frequency || '1h',

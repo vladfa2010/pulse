@@ -17,6 +17,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import crypto from 'crypto';
+import axios from 'axios';
 import { query, pool } from './config/db';  // ← query + pool (for transactions)
 import authRoutes from './routes/auth';
 import newsRoutes from './routes/news';
@@ -3670,6 +3671,44 @@ app.get('/api/telegram/config', async (req, res) => {
   } catch (err: any) {
     console.error('[Telegram Config] Error:', err.message);
     res.status(500).json({ error: 'Failed to get telegram config' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Debug: validate Telegram chat/channel
+// ═══════════════════════════════════════════════════════════════════════════
+app.get('/api/debug/telegram-channel/:chatId', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const chatId = req.params.chatId;
+    const botToken = process.env.TELEGRAM_BOT_TOKEN || '';
+    if (!botToken) {
+      return res.status(500).json({ error: 'Telegram bot not configured' });
+    }
+
+    const { data } = await axios.get(`https://api.telegram.org/bot${botToken}/getChat`, {
+      params: { chat_id: chatId },
+    });
+
+    res.json({
+      valid: true,
+      chat: {
+        id: data.result.id,
+        type: data.result.type,
+        username: data.result.username,
+        title: data.result.title,
+      },
+    });
+  } catch (error: any) {
+    const code = error.response?.data?.error_code;
+    const description = error.response?.data?.description;
+    if (code === 400 || code === 403) {
+      return res.json({
+        valid: false,
+        error: description,
+        suggestion: 'Channel should be deactivated',
+      });
+    }
+    res.status(500).json({ error: error.message });
   }
 });
 

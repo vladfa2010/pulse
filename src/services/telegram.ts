@@ -24,7 +24,38 @@ export async function sendTelegramMessage(chatId: string, text: string): Promise
       disable_web_page_preview: false,
     });
     return true;
-  } catch (err) {
+  } catch (err: any) {
+    const errorCode = err.response?.data?.error_code;
+    const description = err.response?.data?.description || '';
+
+    // User blocked the bot or deleted the chat — deactivate channel
+    if (errorCode === 403 || (errorCode === 400 && /chat not found/i.test(description))) {
+      if (description.includes('blocked') || description.includes('deactivated') || description.includes('user is deactivated') || /chat not found/i.test(description)) {
+        console.warn(`[Telegram] User ${chatId} inaccessible: ${description}`);
+        try {
+          const channelResult = await query(
+            `SELECT user_id FROM user_channels WHERE channel = 'telegram' AND target = $1`,
+            [chatId]
+          );
+          if (channelResult.rows.length > 0) {
+            const userId = channelResult.rows[0].user_id;
+            await query(
+              `UPDATE user_channels SET is_active = FALSE WHERE channel = 'telegram' AND target = $1`,
+              [chatId]
+            );
+            await query(
+              `UPDATE notification_settings SET tg_digest_enabled = FALSE WHERE user_id = $1`,
+              [userId]
+            );
+            console.log(`[Telegram] Auto-deactivated channel for chat ${chatId}, user ${userId}`);
+          }
+        } catch (dbErr: any) {
+          console.error('[Telegram] Failed to deactivate channel:', dbErr.message);
+        }
+        return false;
+      }
+    }
+
     console.error('[Telegram] Send failed:', (err as Error).message);
     return false;
   }

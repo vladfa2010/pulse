@@ -96,6 +96,49 @@ router.post('/yookassa', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 router.post('/telegram', async (req, res) => {
   try {
+    // Handle chat member status changes (block / unblock / delete chat)
+    if (req.body.my_chat_member) {
+      const { chat, new_chat_member } = req.body.my_chat_member;
+      const chatId = chat.id.toString();
+      const status = new_chat_member.status;
+
+      console.log(`[Webhook] my_chat_member: chat=${chatId}, status=${status}`);
+
+      if (status === 'kicked' || status === 'left') {
+        try {
+          const channelResult = await query(
+            `SELECT user_id FROM user_channels WHERE channel = 'telegram' AND target = $1`,
+            [chatId]
+          );
+
+          if (channelResult.rows.length > 0) {
+            const userId = channelResult.rows[0].user_id;
+            await query(
+              `UPDATE user_channels SET is_active = FALSE WHERE channel = 'telegram' AND target = $1`,
+              [chatId]
+            );
+            await query(
+              `UPDATE notification_settings SET tg_digest_enabled = FALSE WHERE user_id = $1`,
+              [userId]
+            );
+            console.log(`[Webhook] Deactivated telegram channel for user ${userId}, chat ${chatId}`);
+          } else {
+            console.log(`[Webhook] No channel found for chat ${chatId}`);
+          }
+        } catch (err: any) {
+          console.error(`[Webhook] Failed to deactivate channel for chat ${chatId}:`, err.message);
+        }
+        return res.sendStatus(200);
+      }
+
+      if (status === 'member') {
+        console.log(`[Webhook] User ${chatId} re-added the bot (status=member)`);
+        return res.sendStatus(200);
+      }
+
+      return res.sendStatus(200);
+    }
+
     // Handle callback queries from inline buttons
     if (req.body.callback_query) {
       return handleCallbackQuery(req, res);
