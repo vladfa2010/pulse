@@ -47,6 +47,7 @@ export async function sendPushNotification(
   body: string,
   data: PushData = {}
 ): Promise<boolean> {
+  console.log(`[Push] sendPushNotification user=${userId} title="${title}"`);
   if (!messaging) {
     console.log('[Push] Not configured, skipping');
     return false;
@@ -123,7 +124,11 @@ export async function sendNewArticlePush(
   source: string,
   matchedTags: string[]
 ): Promise<void> {
-  if (!messaging || matchedTags.length === 0) return;
+  console.log(`[Push] sendNewArticlePush called for ${newsId}, tags=${JSON.stringify(matchedTags)}, messaging=${!!messaging}`);
+  if (!messaging || matchedTags.length === 0) {
+    console.log(`[Push] Skipping article ${newsId}: messaging=${!!messaging}, tags=${matchedTags.length}`);
+    return;
+  }
 
   try {
     const result = await query(
@@ -140,9 +145,8 @@ export async function sendNewArticlePush(
     );
 
     const userIds: string[] = result.rows.map(r => r.user_id);
+    console.log(`[Push] Article ${newsId}: ${userIds.length} candidate users`);
     if (userIds.length === 0) return;
-
-    console.log(`[Push] Notifying ${userIds.length} users about article ${newsId}`);
 
     const body = source || 'Новая новость';
     const data: PushData = {
@@ -160,9 +164,13 @@ export async function sendNewArticlePush(
            RETURNING id`,
           [userId, newsId]
         );
-        if (insertResult.rows.length === 0) continue;
+        if (insertResult.rows.length === 0) {
+          console.log(`[Push] Article ${newsId}: already sent to user ${userId}`);
+          continue;
+        }
 
-        await sendPushNotification(userId, title, body, data);
+        const ok = await sendPushNotification(userId, title, body, data);
+        console.log(`[Push] Article ${newsId}: sent to user ${userId} = ${ok}`);
       } catch (err: any) {
         console.error(`[Push] Failed to notify user ${userId} about article ${newsId}:`, err.message);
       }
