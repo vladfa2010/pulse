@@ -4181,6 +4181,9 @@ async function start() {
     { sql: `CREATE TABLE IF NOT EXISTS sentiment_index_cache (date DATE PRIMARY KEY, current_value INT DEFAULT 0, vote_count INT DEFAULT 0, imoex_candles JSONB DEFAULT '[]', imoex_updated_at TIMESTAMPTZ, updated_at TIMESTAMPTZ DEFAULT ${_SQL_NOW})`, name: 'sentiment_index_cache' },
     { sql: `ALTER TABLE sentiment_index_cache ADD COLUMN IF NOT EXISTS imoex_candles JSONB DEFAULT '[]'`, name: 'sentiment_index_cache_imoex_candles' },
     { sql: `ALTER TABLE sentiment_index_cache ADD COLUMN IF NOT EXISTS imoex_updated_at TIMESTAMPTZ`, name: 'sentiment_index_cache_imoex_updated_at' },
+    { sql: `CREATE TABLE IF NOT EXISTS push_notifications_sent (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, news_id UUID NOT NULL REFERENCES news(id) ON DELETE CASCADE, sent_at TIMESTAMP DEFAULT ${_SQL_NOW}, UNIQUE(user_id, news_id))`, name: 'push_notifications_sent' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_push_notifications_sent_user_id ON push_notifications_sent(user_id)`, name: 'idx_push_notifications_sent_user_id' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_push_notifications_sent_news_id ON push_notifications_sent(news_id)`, name: 'idx_push_notifications_sent_news_id' },
   ];
   for (const m of migrations) {
     try {
