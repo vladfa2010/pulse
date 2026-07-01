@@ -2,6 +2,7 @@ import cron from 'node-cron';
 import { query } from '../config/db';
 import { sendWeeklyReport } from './telegram';
 import { sendWeeklyReportEmail } from './email';
+import { sendPushNotification } from './push';
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
@@ -221,12 +222,12 @@ export async function sendAllWeeklyReports(): Promise<void> {
     try {
       // Get user's notification settings
       const settingsResult = await query(
-        `SELECT tg_enabled, email_enabled, report_format
+        `SELECT tg_enabled, email_enabled, push_enabled, report_format
          FROM notification_settings WHERE user_id = $1`,
         [user.id]
       );
 
-      const settings = settingsResult.rows[0] || { tg_enabled: true, email_enabled: true, report_format: 'full' };
+      const settings = settingsResult.rows[0] || { tg_enabled: true, email_enabled: true, push_enabled: false, report_format: 'full' };
 
       // Generate report
       const reportData = await generateReportForUser(user.id);
@@ -252,6 +253,19 @@ export async function sendAllWeeklyReports(): Promise<void> {
           const ok = await sendWeeklyReportEmail(userEmail, reportData.tagSummaries.flatMap(t => t.articles), { total: reportData.totalArticles, ...stats });
           if (ok) sent++;
         }
+      }
+
+      // Send via Push
+      if (settings.push_enabled) {
+        const pushBody = reportData.totalArticles === 1
+          ? '1 новость за неделю'
+          : `${reportData.totalArticles} новостей за неделю`;
+        await sendPushNotification(
+          user.id,
+          '📊 PULSE — Еженедельный отчёт',
+          pushBody,
+          { type: 'weekly_report', count: reportData.totalArticles.toString() }
+        );
       }
 
       // Rate limit

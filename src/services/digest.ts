@@ -12,6 +12,7 @@
 
 import { query } from '../config/db';
 import { sendTelegramMessage } from './telegram';
+import { sendPushNotification } from './push';
 import cron from 'node-cron';
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
@@ -189,7 +190,7 @@ export async function sendDigestToUser(userId: string): Promise<boolean> {
   try {
     // Get user's digest settings
     const settingsResult = await query(
-      `SELECT ns.tg_digest_enabled, ns.digest_frequency, ns.quiet_hours_enabled,
+      `SELECT ns.tg_digest_enabled, ns.push_enabled, ns.digest_frequency, ns.quiet_hours_enabled,
               ns.quiet_hours_start, ns.quiet_hours_end, ns.last_digest_sent
        FROM notification_settings ns
        WHERE ns.user_id = $1`,
@@ -247,6 +248,19 @@ export async function sendDigestToUser(userId: string): Promise<boolean> {
         [userId]
       );
       console.log(`[Digest] Sent ${articles.length} articles to user ${userId} (${premium ? 'premium' : 'free'}, ${maxTags} tag${maxTags > 1 ? 's' : ''})`);
+
+      // Also send push notification if enabled
+      if (settings.push_enabled) {
+        const pushBody = articles.length === 1
+          ? '1 новая статья по вашим тегам'
+          : `${articles.length} новых статьи по вашим тегам`;
+        await sendPushNotification(
+          userId,
+          'PULSE — непрочитанные новости',
+          pushBody,
+          { type: 'digest', count: articles.length.toString() }
+        );
+      }
     }
 
     return ok;
