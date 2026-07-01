@@ -27,6 +27,7 @@ import translateRoutes from './routes/translate';
 import webhookRoutes from './routes/webhook';
 import adminRoutes from './routes/admin';
 import sentimentRoutes from './routes/sentiment';
+import appRoutes from './routes/app';
 import { authMiddleware, AuthRequest } from './middleware/auth';
 import { apiLimiter, authLimiter, webhookLimiter } from './middleware/rateLimit';
 import { startCron } from './services/cron';   // RSS cron отключен (TZ_REMOVE_DUPLICATE_RSS_CRON) — модуль оставлен для отката
@@ -3497,6 +3498,7 @@ app.use('/api/translate', translateRoutes);
 app.use('/api/webhook', webhookLimiter, webhookRoutes); // Высокий лимит для YuKassa
 app.use('/api/admin', adminRoutes);     // GET /api/admin/users, /stats
 app.use('/api/sentiment', sentimentRoutes); // Sentiment Index
+app.use('/api/app', appRoutes);            // App version / update info
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Telegram Bot — generate secure link for connecting account
