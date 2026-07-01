@@ -112,3 +112,62 @@ export async function sendPushNotification(
     return false;
   }
 }
+
+/**
+ * Send an immediate push notification to users who track any of the given tags
+ * and haven't already received a push for this article.
+ */
+export async function sendNewArticlePush(
+  newsId: string,
+  title: string,
+  source: string,
+  matchedTags: string[]
+): Promise<void> {
+  if (!messaging || matchedTags.length === 0) return;
+
+  try {
+    const result = await query(
+      `SELECT DISTINCT p.user_id
+       FROM portfolios p
+       JOIN notification_settings ns ON ns.user_id = p.user_id AND ns.push_enabled = TRUE
+       JOIN user_channels uc ON uc.user_id = p.user_id AND uc.channel = 'push' AND uc.is_active = TRUE
+       LEFT JOIN user_news_reads r ON r.user_id = p.user_id AND r.news_id = $2
+       LEFT JOIN push_notifications_sent ps ON ps.user_id = p.user_id AND ps.news_id = $2
+       WHERE p.tag_id = ANY($1::text[])
+         AND r.user_id IS NULL
+         AND ps.id IS NULL`,
+      [matchedTags, newsId]
+    );
+
+    const userIds: string[] = result.rows.map(r => r.user_id);
+    if (userIds.length === 0) return;
+
+    console.log(`[Push] Notifying ${userIds.length} users about article ${newsId}`);
+
+    const body = source || 'Новая новость';
+    const data: PushData = {
+      type: 'new_article',
+      news_id: newsId,
+      tag: matchedTags[0] || '',
+    };
+
+    for (const userId of userIds) {
+      try {
+        const insertResult = await query(
+          `INSERT INTO push_notifications_sent (user_id, news_id)
+           VALUES ($1, $2)
+           ON CONFLICT (user_id, news_id) DO NOTHING
+           RETURNING id`,
+          [userId, newsId]
+        );
+        if (insertResult.rows.length === 0) continue;
+
+        await sendPushNotification(userId, title, body, data);
+      } catch (err: any) {
+        console.error(`[Push] Failed to notify user ${userId} about article ${newsId}:`, err.message);
+      }
+    }
+  } catch (err: any) {
+    console.error('[Push] sendNewArticlePush failed:', err.message);
+  }
+}

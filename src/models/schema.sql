@@ -230,6 +230,20 @@ CREATE INDEX IF NOT EXISTS idx_user_news_reads_user_id ON user_news_reads (user_
 CREATE INDEX IF NOT EXISTS idx_user_news_reads_news_id ON user_news_reads (news_id);
 
 -- ============================================================
+-- 9b. push_notifications_sent (immediate push deduplication)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS push_notifications_sent (
+  id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  news_id    UUID NOT NULL REFERENCES news(id) ON DELETE CASCADE,
+  sent_at    TIMESTAMP DEFAULT NOW(),
+  UNIQUE(user_id, news_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_push_notifications_sent_user_id ON push_notifications_sent (user_id);
+CREATE INDEX IF NOT EXISTS idx_push_notifications_sent_news_id ON push_notifications_sent (news_id);
+
+-- ============================================================
 -- 10. rss_source_meta (SOURCE DEDUP: last fetch time per source)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS rss_source_meta (

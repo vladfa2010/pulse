@@ -16,6 +16,7 @@
 import { query } from '../config/db';
 import { translateBatch } from './translate';
 import { smartMatchTags, analyzeUnifiedBatch, UnifiedResult, matchTagsByKeywords } from './smartTagMatcher';
+import { sendNewArticlePush } from './push';
 
 const INSTANCE_ID = `${process.env.HOSTNAME || 'unknown'}-${Date.now()}`;
 const SQL_NOW = "NOW()";
@@ -439,6 +440,14 @@ async function saveProcessedArticles(
         !isTranslationSuccessful,
       ]);
       updated++;
+
+      // Immediate push for users subscribed to matched tags
+      if (matchedTagsList[i].length > 0) {
+        const pushTitle = (a as any).title_ru || a.title_original || 'PULSE — новая новость';
+        sendNewArticlePush(a.id, pushTitle, a.source, matchedTagsList[i]).catch(err => {
+          console.error(`[NewsProcessor] sendNewArticlePush failed for ${a.id}:`, err.message);
+        });
+      }
     } catch (err: any) {
       console.error(`[NewsProcessor] UPDATE failed for ${a.id}:`, err.message);
     }
