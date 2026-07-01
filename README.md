@@ -4,7 +4,7 @@
 
 **🌐 Production:** https://pulse-api-bsov.onrender.com  
 **🎨 Frontend:** https://pulse-frontend-jt53.onrender.com  
-**📄 Docs:** [DEPLOYMENT.md](./DEPLOYMENT.md) | [DESIGN_SPEC.md](./DESIGN_SPEC.md) | [PRODUCT_CONTEXT.md](./PRODUCT_CONTEXT.md)
+**📄 Docs:** [DEPLOYMENT.md](./DEPLOYMENT.md) | [DESIGN_SPEC.md](./DESIGN_SPEC.md) | [PRODUCT_CONTEXT.md](./PRODUCT_CONTEXT.md) | [PUSH_NOTIFICATIONS.md](./PUSH_NOTIFICATIONS.md)
 
 ---
 
@@ -81,6 +81,11 @@ docker-compose up
 ### Telegram (бот и уведомления)
 
 Подробная документация: [`TELEGRAM_NOTIFICATIONS.md`](./TELEGRAM_NOTIFICATIONS.md)
+
+### Push-уведомления
+
+Push реализованы через Firebase Cloud Messaging.  
+Подробная документация: [`PUSH_NOTIFICATIONS.md`](./PUSH_NOTIFICATIONS.md)
 
 | Method | Endpoint | Описание |
 |--------|----------|----------|
