@@ -15,7 +15,7 @@ interface CachedVersion {
 }
 
 let cached: CachedVersion | null = null;
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const CACHE_TTL_MS = parseInt(process.env.APP_VERSION_CACHE_TTL_MS || '30000', 10); // default 30s for quick testing
 
 /**
  * GET /api/app/version
@@ -26,6 +26,7 @@ const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
  *   - APP_GITHUB_REPO  (default: pulse-frontend)
  *   - APP_ASSET_NAME   (default: PULSE-debug.apk)
  *   - GITHUB_TOKEN     (optional, increases API rate limit)
+ *   - APP_VERSION_CACHE_TTL_MS (default: 30000)
  */
 router.get('/version', async (_req, res) => {
   if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
