@@ -7,6 +7,16 @@ interface GithubRelease {
   assets: Array<{ name: string; browser_download_url: string }>;
 }
 
+interface CachedVersion {
+  version: string;
+  apkUrl: string;
+  releaseUrl: string;
+  fetchedAt: number;
+}
+
+let cached: CachedVersion | null = null;
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
 /**
  * GET /api/app/version
  *
@@ -18,6 +28,14 @@ interface GithubRelease {
  *   - GITHUB_TOKEN     (optional, increases API rate limit)
  */
 router.get('/version', async (_req, res) => {
+  if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
+    return res.json({
+      version: cached.version,
+      apkUrl: cached.apkUrl,
+      releaseUrl: cached.releaseUrl,
+    });
+  }
+
   const owner = process.env.APP_GITHUB_OWNER || 'vladfa2010';
   const repo = process.env.APP_GITHUB_REPO || 'pulse-frontend';
   const assetName = process.env.APP_ASSET_NAME || 'PULSE-debug.apk';
@@ -27,6 +45,7 @@ router.get('/version', async (_req, res) => {
     const headers: Record<string, string> = {
       Accept: 'application/vnd.github+json',
       'X-GitHub-Api-Version': '2022-11-28',
+      'User-Agent': 'pulse-backend',
     };
     if (process.env.GITHUB_TOKEN) {
       headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
@@ -48,11 +67,14 @@ router.get('/version', async (_req, res) => {
       return res.status(404).json({ error: 'APK asset not found in release' });
     }
 
-    res.json({
+    const result = {
       version,
       apkUrl: asset.browser_download_url,
       releaseUrl: `https://github.com/${owner}/${repo}/releases/tag/${release.tag_name}`,
-    });
+    };
+
+    cached = { ...result, fetchedAt: Date.now() };
+    res.json(result);
   } catch (err: any) {
     console.error('[AppVersion] Error:', err.message);
     res.status(500).json({ error: 'Internal error' });
