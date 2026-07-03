@@ -42,8 +42,8 @@
 
 | Параметр | Значение |
 |----------|----------|
-| **Render API Token** | `rnd_qcUnW07jUo2ppdVPgqkEW2I3K1gY` |
-| **Файл с токеном** | `.render-token` в корне проекта |
+| **Render API Token** | `<REDACTED>` |
+| **Файл с токеном** | `.render-token` в корне проекта (не коммитить) |
 | **Owner ID** | `tea-d8a2e528qa3s73efm1g0` |
 
 ### Service IDs

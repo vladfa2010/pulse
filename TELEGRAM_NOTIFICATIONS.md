@@ -1601,7 +1601,7 @@ setupWebhook();
 
 ```env
 # Telegram
-TELEGRAM_BOT_TOKEN=8226463754:AAHmgNwdTsiMZkbSNwlJjmSRlVZifZ6HeZo
+TELEGRAM_BOT_TOKEN=your_telegram_bot_token
 TELEGRAM_WEBHOOK_URL=https://api.pulse.com/webhook/telegram
 
 # Database

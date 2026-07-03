@@ -8,6 +8,9 @@ build/
 # Environment
 .env
 .env.local
+.render-token
+firebase-adminsdk-*.json
+google-services.json
 
 # Logs
 logs/
