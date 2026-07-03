@@ -4,7 +4,7 @@
 
 **🌐 Production:** https://pulse-api-bsov.onrender.com  
 **🎨 Frontend:** https://pulse-frontend-jt53.onrender.com  
-**📄 Docs:** [DEPLOYMENT.md](./DEPLOYMENT.md) | [DESIGN_SPEC.md](./DESIGN_SPEC.md) | [PRODUCT_CONTEXT.md](./PRODUCT_CONTEXT.md) | [PUSH_NOTIFICATIONS.md](./PUSH_NOTIFICATIONS.md)
+**📄 Docs:** [DEPLOYMENT.md](./DEPLOYMENT.md) | [DESIGN_SPEC.md](./DESIGN_SPEC.md) | [PRODUCT_CONTEXT.md](./PRODUCT_CONTEXT.md) | [PUSH_NOTIFICATIONS.md](./PUSH_NOTIFICATIONS.md) | [SECURITY.md](./SECURITY.md)
 
 ---
 
