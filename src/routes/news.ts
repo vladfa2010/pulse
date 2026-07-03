@@ -285,6 +285,64 @@ router.post('/:id/read', authMiddleware, async (req: AuthRequest, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// GET /api/news/tags/popular — ПУБЛИЧНЫЕ популярные теги с агрегатами
+// ═══════════════════════════════════════════════════════════════════════════
+router.get('/tags/popular', async (req, res) => {
+  try {
+    const rawPeriod = (req.query.period as string) || '24h';
+    const period = ['24h', '7d', '30d'].includes(rawPeriod) ? rawPeriod : '24h';
+    const limit = Math.min(parseInt(req.query.limit as string) || 15, 30);
+
+    const cached = getCachedPopularTags(period, limit);
+    if (cached) {
+      return res.json({ tags: cached });
+    }
+
+    const periodCfg: Record<string, { orderCol: string; interval: string }> = {
+      '24h': { orderCol: 'articles_24h', interval: '24 hours' },
+      '7d': { orderCol: 'articles_7d', interval: '7 days' },
+      '30d': { orderCol: 'articles_30d', interval: '30 days' },
+    };
+    const { orderCol, interval } = periodCfg[period];
+
+    const result = await query(
+      `
+      SELECT
+        t.tag_id,
+        t.tag_name,
+        t.tag_type,
+        COUNT(DISTINCT n.id) FILTER (WHERE n.published_at > NOW() - INTERVAL '24 hours') as articles_24h,
+        COUNT(DISTINCT n.id) FILTER (WHERE n.published_at > NOW() - INTERVAL '7 days')  as articles_7d,
+        COUNT(DISTINCT n.id) FILTER (WHERE n.published_at > NOW() - INTERVAL '30 days') as articles_30d
+      FROM user_defined_tags t
+      LEFT JOIN news n ON t.tag_id = ANY(n.matched_tags) AND n.published_at > NOW() - INTERVAL '30 days'
+      GROUP BY t.tag_id, t.tag_name, t.tag_type
+      HAVING COUNT(DISTINCT n.id) FILTER (WHERE n.published_at > NOW() - INTERVAL '${interval}') > 0
+      ORDER BY ${orderCol} DESC
+      LIMIT $1
+      `,
+      [limit]
+    );
+
+    const tags = result.rows.map((row: any) => ({
+      tag_id: row.tag_id,
+      tag_name: row.tag_name,
+      tag_type: row.tag_type,
+      news_count: parseInt(row[orderCol]) || 0,
+      articles_24h: parseInt(row.articles_24h) || 0,
+      articles_7d: parseInt(row.articles_7d) || 0,
+      articles_30d: parseInt(row.articles_30d) || 0,
+    }));
+
+    setCachedPopularTags(period, limit, tags);
+    res.json({ tags });
+  } catch (err: any) {
+    console.error('[News] Popular tags error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch popular tags' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // GET /api/news/tags/:tagId — Новости по конкретному тегу (без auth)
 // ═══════════════════════════════════════════════════════════════════════════
 // Публичный endpoint — показывает последние 50 новостей по тегу.
@@ -518,64 +576,6 @@ router.get('/:id', async (req: AuthRequest, res) => {
   } catch (err: any) {
     console.error('[News] Get by ID error:', err.message);
     res.status(500).json({ error: 'Failed to fetch news' });
-  }
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
-// GET /api/news/tags/popular — ПУБЛИЧНЫЕ популярные теги с агрегатами
-// ═══════════════════════════════════════════════════════════════════════════
-router.get('/tags/popular', async (req, res) => {
-  try {
-    const rawPeriod = (req.query.period as string) || '24h';
-    const period = ['24h', '7d', '30d'].includes(rawPeriod) ? rawPeriod : '24h';
-    const limit = Math.min(parseInt(req.query.limit as string) || 15, 30);
-
-    const cached = getCachedPopularTags(period, limit);
-    if (cached) {
-      return res.json({ tags: cached });
-    }
-
-    const periodCfg: Record<string, { orderCol: string; interval: string }> = {
-      '24h': { orderCol: 'articles_24h', interval: '24 hours' },
-      '7d': { orderCol: 'articles_7d', interval: '7 days' },
-      '30d': { orderCol: 'articles_30d', interval: '30 days' },
-    };
-    const { orderCol, interval } = periodCfg[period];
-
-    const result = await query(
-      `
-      SELECT
-        t.tag_id,
-        t.tag_name,
-        t.tag_type,
-        COUNT(DISTINCT n.id) FILTER (WHERE n.published_at > NOW() - INTERVAL '24 hours') as articles_24h,
-        COUNT(DISTINCT n.id) FILTER (WHERE n.published_at > NOW() - INTERVAL '7 days')  as articles_7d,
-        COUNT(DISTINCT n.id) FILTER (WHERE n.published_at > NOW() - INTERVAL '30 days') as articles_30d
-      FROM user_defined_tags t
-      LEFT JOIN news n ON t.tag_id = ANY(n.matched_tags) AND n.published_at > NOW() - INTERVAL '30 days'
-      GROUP BY t.tag_id, t.tag_name, t.tag_type
-      HAVING COUNT(DISTINCT n.id) FILTER (WHERE n.published_at > NOW() - INTERVAL '${interval}') > 0
-      ORDER BY ${orderCol} DESC
-      LIMIT $1
-      `,
-      [limit]
-    );
-
-    const tags = result.rows.map((row: any) => ({
-      tag_id: row.tag_id,
-      tag_name: row.tag_name,
-      tag_type: row.tag_type,
-      news_count: parseInt(row[orderCol]) || 0,
-      articles_24h: parseInt(row.articles_24h) || 0,
-      articles_7d: parseInt(row.articles_7d) || 0,
-      articles_30d: parseInt(row.articles_30d) || 0,
-    }));
-
-    setCachedPopularTags(period, limit, tags);
-    res.json({ tags });
-  } catch (err: any) {
-    console.error('[News] Popular tags error:', err.message);
-    res.status(500).json({ error: 'Failed to fetch popular tags' });
   }
 });
 
