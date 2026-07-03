@@ -19,6 +19,7 @@ import dotenv from 'dotenv';
 import crypto from 'crypto';
 import axios from 'axios';
 import { query, pool } from './config/db';  // ← query + pool (for transactions)
+import { setCachedPopularTags } from './utils/tagCache';
 import authRoutes from './routes/auth';
 import newsRoutes from './routes/news';
 import paymentRoutes from './routes/payment';
@@ -1661,25 +1662,28 @@ app.get('/admin/tags', requireAdmin, async (req, res) => {
       ORDER BY articles_24h DESC, subscriber_count DESC
     `);
 
-    res.json({
-      hours,
-      total: tagsResult.rows.length,
-      tags: tagsResult.rows.map((row: any) => ({
-        tag_id: row.tag_id,
-        tag_name: row.tag_name,
-        tag_type: row.tag_type,
-        keywords: row.keywords || [],
-        created_at: row.created_at,
-        subscriber_count: parseInt(row.subscriber_count) || 0,
-        articles_24h: parseInt(row.articles_24h) || 0,
-        articles_7d: parseInt(row.articles_7d) || 0,
-        articles_30d: parseInt(row.articles_30d) || 0,
-        avg_sentiment: parseFloat(row.avg_sentiment) || 0,
-        llm_success: parseInt(row.llm_success) || 0,
-        llm_failed: parseInt(row.llm_failed) || 0,
-        last_article_at: row.last_article_at,
-      })),
-    });
+    const tags = tagsResult.rows.map((row: any) => ({
+      tag_id: row.tag_id,
+      tag_name: row.tag_name,
+      tag_type: row.tag_type,
+      keywords: row.keywords || [],
+      created_at: row.created_at,
+      subscriber_count: parseInt(row.subscriber_count) || 0,
+      articles_24h: parseInt(row.articles_24h) || 0,
+      articles_7d: parseInt(row.articles_7d) || 0,
+      articles_30d: parseInt(row.articles_30d) || 0,
+      avg_sentiment: parseFloat(row.avg_sentiment) || 0,
+      llm_success: parseInt(row.llm_success) || 0,
+      llm_failed: parseInt(row.llm_failed) || 0,
+      last_article_at: row.last_article_at,
+    }));
+
+    // Warm shared cache for public /news/tags/popular endpoint
+    setCachedPopularTags('24h', 15, tags);
+    setCachedPopularTags('7d', 15, tags);
+    setCachedPopularTags('30d', 15, tags);
+
+    res.json({ hours, total: tags.length, tags });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
