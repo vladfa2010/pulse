@@ -1679,9 +1679,25 @@ app.get('/admin/tags', requireAdmin, async (req, res) => {
     }));
 
     // Warm shared cache for public /news/tags/popular endpoint
-    setCachedPopularTags('24h', 15, tags);
-    setCachedPopularTags('7d', 15, tags);
-    setCachedPopularTags('30d', 15, tags);
+    // Each period cache must keep its own ordering/news_count, otherwise 7d/30d
+    // responses can be served in 24h order.
+    const buildPopularTags = (orderField: 'articles_24h' | 'articles_7d' | 'articles_30d') =>
+      tags
+        .map((t: any) => ({
+          tag_id: t.tag_id,
+          tag_name: t.tag_name,
+          tag_type: t.tag_type,
+          news_count: t[orderField] || 0,
+          articles_24h: t.articles_24h || 0,
+          articles_7d: t.articles_7d || 0,
+          articles_30d: t.articles_30d || 0,
+        }))
+        .sort((a: any, b: any) => b[orderField] - a[orderField])
+        .slice(0, 15);
+
+    setCachedPopularTags('24h', 15, buildPopularTags('articles_24h'));
+    setCachedPopularTags('7d', 15, buildPopularTags('articles_7d'));
+    setCachedPopularTags('30d', 15, buildPopularTags('articles_30d'));
 
     res.json({ hours, total: tags.length, tags });
   } catch (err: any) {

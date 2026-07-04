@@ -298,12 +298,12 @@ router.get('/tags/popular', async (req, res) => {
       return res.json({ tags: cached });
     }
 
-    const periodCfg: Record<string, { orderCol: string; interval: string }> = {
-      '24h': { orderCol: 'articles_24h', interval: '24 hours' },
-      '7d': { orderCol: 'articles_7d', interval: '7 days' },
-      '30d': { orderCol: 'articles_30d', interval: '30 days' },
+    const periodCfg: Record<string, { orderCol: string }> = {
+      '24h': { orderCol: 'articles_24h' },
+      '7d': { orderCol: 'articles_7d' },
+      '30d': { orderCol: 'articles_30d' },
     };
-    const { orderCol, interval } = periodCfg[period];
+    const { orderCol } = periodCfg[period];
 
     const result = await query(
       `
@@ -317,7 +317,7 @@ router.get('/tags/popular', async (req, res) => {
       FROM user_defined_tags t
       LEFT JOIN news n ON t.tag_id = ANY(n.matched_tags) AND n.published_at > NOW() - INTERVAL '30 days'
       GROUP BY t.tag_id, t.tag_name, t.tag_type
-      HAVING COUNT(DISTINCT n.id) FILTER (WHERE n.published_at > NOW() - INTERVAL '${interval}') > 0
+      HAVING COUNT(DISTINCT n.id) FILTER (WHERE n.published_at > NOW() - INTERVAL '24 hours') > 0
       ORDER BY ${orderCol} DESC
       LIMIT $1
       `,
