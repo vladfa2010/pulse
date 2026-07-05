@@ -363,16 +363,27 @@ export function heuristicTagType(tagName: string): TagType {
 // Создать пользовательский тег
 // Если tagType = 'auto' или пустой — определяем через LLM + enrichment
 // При добавлении существующего тега user_defined_tags НЕ модифицируется.
-export async function createUserTag(userId: string, tagId: string, tagName: string, tagType: string): Promise<{ success: boolean; detectedType?: TagType; enrichment?: TagEnrichment }> {
+export async function createUserTag(userId: string, tagId: string, tagName: string, tagType: string): Promise<{ success: boolean; finalTagId?: string; detectedType?: TagType; enrichment?: TagEnrichment }> {
   try {
-    // 1. Проверяем, существует ли тег (по tag_id или по названию)
-    const existingResult = await query(
+    // 1. Сначала ищем точное совпадение по tag_id, затем — по названию.
+    //    Это предотвращает подписку на дубль с другим ID при клике по конкретной карточке.
+    let existingResult = await query(
       `SELECT tag_id, tag_name, tag_type, enriched_data, keywords, created_by
        FROM user_defined_tags
-       WHERE tag_id = $1 OR LOWER(tag_name) = LOWER($2)
+       WHERE tag_id = $1
        LIMIT 1`,
-      [tagId, tagName]
+      [tagId]
     );
+
+    if (existingResult.rows.length === 0) {
+      existingResult = await query(
+        `SELECT tag_id, tag_name, tag_type, enriched_data, keywords, created_by
+         FROM user_defined_tags
+         WHERE LOWER(tag_name) = LOWER($1)
+         LIMIT 1`,
+        [tagName]
+      );
+    }
 
     let finalType: string;
     let finalTagId = tagId;
@@ -426,9 +437,18 @@ export async function createUserTag(userId: string, tagId: string, tagName: stri
         if (err.code === '23505') {
           // Race condition: другой пользователь создал тег между SELECT и INSERT
           const raceResult = await query(
-            `SELECT tag_id, tag_type FROM user_defined_tags WHERE tag_id = $1 OR LOWER(tag_name) = LOWER($2) LIMIT 1`,
-            [tagId, tagName]
+            `SELECT tag_id, tag_type FROM user_defined_tags WHERE tag_id = $1 LIMIT 1`,
+            [tagId]
           );
+          if (raceResult.rows.length === 0) {
+            const raceNameResult = await query(
+              `SELECT tag_id, tag_type FROM user_defined_tags WHERE LOWER(tag_name) = LOWER($1) LIMIT 1`,
+              [tagName]
+            );
+            if (raceNameResult.rows.length > 0) {
+              raceResult.rows = raceNameResult.rows;
+            }
+          }
           finalTagId = raceResult.rows[0]?.tag_id || tagId;
           finalType = raceResult.rows[0]?.tag_type || finalType;
           detectedType = finalType as TagType;
@@ -456,7 +476,7 @@ export async function createUserTag(userId: string, tagId: string, tagName: stri
       });
     }
 
-    return { success: true, detectedType, enrichment: enrichment || undefined };
+    return { success: true, finalTagId, detectedType, enrichment: enrichment || undefined };
   } catch (err: any) {
     console.error('[TagManager] Error creating tag:', err.message);
     return { success: false };

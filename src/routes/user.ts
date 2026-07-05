@@ -162,10 +162,11 @@ router.post('/tags', authMiddleware, validate(AddTagSchema), async (req: AuthReq
     }
 
     const finalType = result.detectedType || tagType;
+    const finalTagId = result.finalTagId || tagId;
 
     res.status(201).json({
       tag: {
-        tag_id: tagId,
+        tag_id: finalTagId,
         tag_name: tagName,
         tag_type: finalType,
         tag_type_label: TAG_TYPE_LABELS[finalType as TagType],
@@ -461,13 +462,15 @@ router.post('/tags/custom', authMiddleware, async (req: AuthRequest, res) => {
       return res.status(500).json({ error: 'Failed to create tag' });
     }
 
+    const finalTagId = result.finalTagId || tagId;
+
     // Use enriched keywords for backfill (LLM synonyms + products + related entities)
     const keywords = result.enrichment
       ? buildEnrichedKeywords(tagName, result.enrichment)
       : generateTagKeywords(tagName);
 
     // BACKFILL: Ищем по ВСЕЙ базе новостей и привязываем тег
-    console.log(`[TagBackfill] Starting backfill for "${tagId}" with ${keywords.length} keywords...`);
+    console.log(`[TagBackfill] Starting backfill for "${finalTagId}" with ${keywords.length} keywords...`);
     const allNews = await query(
       `SELECT id, title_ru, summary_ru, matched_tags FROM news ORDER BY published_at DESC`,
       []
@@ -481,21 +484,21 @@ router.post('/tags/custom', authMiddleware, async (req: AuthRequest, res) => {
       if (hasMatch) {
         // Добавляем тег в matched_tags (если ещё нет)
         const currentTags = row.matched_tags || [];
-        if (!currentTags.includes(tagId)) {
+        if (!currentTags.includes(finalTagId)) {
           await query(
             `UPDATE news SET matched_tags = array_append(matched_tags, $1) WHERE id = $2`,
-            [tagId, row.id]
+            [finalTagId, row.id]
           );
           matched++;
         }
       }
     }
-    console.log(`[TagBackfill] Matched ${matched} articles for "${tagId}"`);
+    console.log(`[TagBackfill] Matched ${matched} articles for "${finalTagId}"`);
 
     res.json({
       tag: {
-        id: tagId,
-        tag_id: tagId,
+        id: finalTagId,
+        tag_id: finalTagId,
         tag_name: tagName,
         tag_type: result.detectedType || tagType,
         tag_type_label: TAG_TYPE_LABELS[(result.detectedType || tagType) as TagType],
