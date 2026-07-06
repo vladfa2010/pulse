@@ -4207,6 +4207,10 @@ async function start() {
     { sql: `CREATE TABLE IF NOT EXISTS push_notifications_sent (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, news_id UUID NOT NULL REFERENCES news(id) ON DELETE CASCADE, sent_at TIMESTAMP DEFAULT ${_SQL_NOW}, UNIQUE(user_id, news_id))`, name: 'push_notifications_sent' },
     { sql: `CREATE INDEX IF NOT EXISTS idx_push_notifications_sent_user_id ON push_notifications_sent(user_id)`, name: 'idx_push_notifications_sent_user_id' },
     { sql: `CREATE INDEX IF NOT EXISTS idx_push_notifications_sent_news_id ON push_notifications_sent(news_id)`, name: 'idx_push_notifications_sent_news_id' },
+    // Sentiment vote push deduplication
+    { sql: `CREATE TABLE IF NOT EXISTS sentiment_vote_push_sent (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, sent_date DATE NOT NULL, created_at TIMESTAMP DEFAULT ${_SQL_NOW}, UNIQUE(user_id, sent_date))`, name: 'sentiment_vote_push_sent' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_sentiment_vote_push_sent_user_id ON sentiment_vote_push_sent(user_id)`, name: 'idx_sentiment_vote_push_sent_user_id' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_sentiment_vote_push_sent_date ON sentiment_vote_push_sent(sent_date)`, name: 'idx_sentiment_vote_push_sent_date' },
   ];
   for (const m of migrations) {
     try {
