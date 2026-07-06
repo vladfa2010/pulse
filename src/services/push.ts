@@ -37,6 +37,70 @@ export function isPushConfigured(): boolean {
   return messaging !== null;
 }
 
+/**
+ * Отправить data-only push с 3 кнопками голосования в Sentiment Index.
+ * Без notification-блока — Android рисует уведомление сам в PulseMessagingService.
+ */
+export async function sendSentimentVotePush(userId: string): Promise<boolean> {
+  console.log(`[Push] sendSentimentVotePush user=${userId}`);
+  if (!messaging) {
+    console.log('[Push] Not configured, skipping');
+    return false;
+  }
+
+  try {
+    const settingsResult = await query(
+      `SELECT push_enabled FROM notification_settings WHERE user_id = $1`,
+      [userId]
+    );
+    const settings = settingsResult.rows[0];
+    if (!settings || !settings.push_enabled) return false;
+
+    const channelResult = await query(
+      `SELECT target FROM user_channels
+       WHERE user_id = $1 AND channel = 'push' AND is_active = TRUE`,
+      [userId]
+    );
+    if (channelResult.rows.length === 0) return false;
+
+    const token = channelResult.rows[0].target;
+
+    await messaging.send({
+      token,
+      data: {
+        type: 'sentiment_vote',
+        title: 'Оцените рынок',
+        body: 'Ваш голос влияет на индекс сантимента. Как вы оцените рынок?',
+      },
+      android: { priority: 'high' },
+    });
+
+    console.log(`[Push] Sentiment vote push to user ${userId}`);
+    return true;
+  } catch (err: any) {
+    const code = err.code || err.errorInfo?.code;
+    if (
+      code === 'messaging/registration-token-not-registered' ||
+      code === 'messaging/invalid-registration-token' ||
+      code === 'messaging/invalid-argument'
+    ) {
+      console.warn(`[Push] Invalid token for user ${userId}, deactivating`);
+      try {
+        await query(
+          `UPDATE user_channels SET is_active = FALSE
+           WHERE user_id = $1 AND channel = 'push'`,
+          [userId]
+        );
+      } catch (dbErr: any) {
+        console.error('[Push] Failed to deactivate token:', dbErr.message);
+      }
+    } else {
+      console.error('[Push] sendSentimentVotePush failed:', err.message);
+    }
+    return false;
+  }
+}
+
 interface PushData {
   [key: string]: string;
 }

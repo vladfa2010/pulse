@@ -36,6 +36,7 @@ import { startReportCron, sendWeeklyReportForUser } from './services/reports'; /
 import { startDigestCron, sendAllDigests } from './services/digest'; // ← TG дайджест (каждый час)
 import cron from 'node-cron';
 import { resetDailyWindows, refreshImoexCache } from './services/sentimentIndex';
+import { sendSentimentVotePush } from './services/push';
 import { setupYookassaWebhook } from './routes/payment'; // ← Auto-setup YuKassa webhook
 import { addSubscriber, getSubscriberCount, addSentimentSubscriber } from './services/sse'; // ← Real-time news stream
 
@@ -4451,6 +4452,78 @@ async function start() {
     cron.schedule('*/5 7-20 * * 1-5', () => {
       refreshImoexCache().catch((e: any) => console.error('[IMOEX] cron refresh error:', e.message));
     });
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Cron: push-напоминание голосовать в Sentiment Index (1 раз в день)
+    // Чётный день → 10:30 МСК, нечётный → 15:00 МСК
+    // Выходные — не шлём
+    // ═══════════════════════════════════════════════════════════════════
+
+    function getTodayPushTimeMsk(): { hour: number; minute: number } | null {
+      const mskOffset = 3 * 60 * 60 * 1000;
+      const mskTime = new Date(Date.now() + mskOffset);
+      const dayOfWeek = mskTime.getUTCDay();  // 0=вс, 6=сб
+      const dayOfMonth = mskTime.getUTCDate();
+
+      if (dayOfWeek === 0 || dayOfWeek === 6) return null;
+
+      if (dayOfMonth % 2 === 0) {
+        return { hour: 10, minute: 30 };
+      }
+      return { hour: 15, minute: 0 };
+    }
+
+    setInterval(async () => {
+      try {
+        const pushTime = getTodayPushTimeMsk();
+        if (!pushTime) return;
+
+        const mskOffset = 3 * 60 * 60 * 1000;
+        const mskNow = new Date(Date.now() + mskOffset);
+        const currentHour = mskNow.getUTCHours();
+        const currentMinute = mskNow.getUTCMinutes();
+
+        const pushMinutes = pushTime.hour * 60 + pushTime.minute;
+        const nowMinutes = currentHour * 60 + currentMinute;
+        if (nowMinutes < pushMinutes || nowMinutes >= pushMinutes + 5) return;
+
+        const y = mskNow.getUTCFullYear();
+        const m = String(mskNow.getUTCMonth() + 1).padStart(2, '0');
+        const d = String(mskNow.getUTCDate()).padStart(2, '0');
+        const todayStr = `${y}-${m}-${d}`;
+
+        const result = await query(
+          `SELECT u.id as user_id
+           FROM users u
+           JOIN notification_settings ns ON ns.user_id = u.id AND ns.push_enabled = TRUE
+           JOIN user_channels uc ON uc.user_id = u.id AND uc.channel = 'push' AND uc.is_active = TRUE
+           WHERE NOT EXISTS (
+             SELECT 1 FROM sentiment_votes sv
+             WHERE sv.user_id = u.id
+               AND sv.created_at >= $1::timestamp AND sv.created_at < $1::timestamp + INTERVAL '1 day'
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM sentiment_vote_push_sent sp
+             WHERE sp.user_id = u.id AND sp.sent_date = $1
+           )`,
+          [`${todayStr} 00:00:00`]
+        );
+
+        console.log(`[SentimentVotePush] ${todayStr} ${pushTime.hour}:${String(pushTime.minute).padStart(2, '0')} — ${result.rows.length} eligible users`);
+
+        for (const row of result.rows) {
+          await sendSentimentVotePush(row.user_id);
+          await query(
+            `INSERT INTO sentiment_vote_push_sent (user_id, sent_date)
+             VALUES ($1, $2)
+             ON CONFLICT (user_id, sent_date) DO NOTHING`,
+            [row.user_id, `${todayStr} 00:00:00`]
+          );
+        }
+      } catch (err: any) {
+        console.error('[SentimentVotePush] Cron error:', err.message);
+      }
+    }, 5 * 60 * 1000);
 
     // NewsSourceManager — фоновый запуск каждые 5 мин
     // NOTE: /trigger/nsm endpoint зарегистрирован в основном потоке выше
