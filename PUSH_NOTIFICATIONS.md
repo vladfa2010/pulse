@@ -36,6 +36,7 @@ FIREBASE_SERVICE_ACCOUNT_BASE64=<base64-json-сервисного-аккаунт
   - берёт активный FCM-токен из `user_channels` (`channel = 'push'`),
   - деактивирует токен, если FCM вернул ошибку протухшего/невалидного токена.
 - `sendNewArticlePush(newsId, title, source, matchedTags)` — находит всех пользователей, подписанных на теги статьи, и отправляет им push.
+- `sendSentimentVotePush(userId)` — отправляет **data-only** push с тремя кнопками голосования в Sentiment Index. Не содержит `notification`-блока: уведомление рисуется нативным Android-сервисом (`PulseMessagingService`).
 
 ### Таблица `push_notifications_sent`
 
@@ -62,6 +63,7 @@ CREATE TABLE push_notifications_sent (
 | Новая статья в непрочитанном фиде | `services/newsProcessor.ts` | Название статьи | `{ type: 'new_article', news_id, tag }` |
 | Дайджест непрочитанных новостей | `services/digest.ts` | `PULSE — непрочитанные новости` | `{ type: 'digest', count }` |
 | Еженедельный отчёт | `services/reports.ts` | `PULSE — Еженедельный отчёт` | `{ type: 'report' }` |
+| Напоминание голосовать за Sentiment Index | `src/index.ts` (cron) | `Оцените рынок` | `{ type: 'sentiment_vote', title, body }` (data-only) |
 
 ### Новая статья
 
@@ -78,6 +80,55 @@ CREATE TABLE push_notifications_sent (
 ### Дайджест и отчёт
 
 Push отправляется после успешной отправки в Telegram. Если push не настроен или отключён, backend молча пропускает этот шаг.
+
+### Sentiment Index (push с кнопками)
+
+Запускается по cron каждые 5 минут (`src/index.ts`).
+
+**Расписание (по московскому времени):**
+
+- Выходные — не шлём.
+- Чётный день месяца — 10:30 МСК.
+- Нечётный день месяца — 15:00 МСК.
+
+**Условия для отправки одному пользователю:**
+
+- `push_enabled = TRUE`,
+- есть активный FCM-токен,
+- сегодня ещё не голосовал (`sentiment_votes`),
+- сегодня ещё не получал этот push (`sentiment_vote_push_sent`).
+
+**Формат FCM-сообщения:**
+
+```json
+{
+  "token": "<fcm-token>",
+  "data": {
+    "type": "sentiment_vote",
+    "title": "Оцените рынок",
+    "body": "Ваш голос влияет на индекс сантимента. Как вы оцените рынок?"
+  },
+  "android": { "priority": "high" }
+}
+```
+
+Уведомление без `notification`-блока — иначе Android сам обработает сообщение и кастомные кнопки не появятся.
+
+### Таблица `sentiment_vote_push_sent`
+
+Предотвращает повторную отправку push-напоминания одному пользователю в один день:
+
+```sql
+CREATE TABLE sentiment_vote_push_sent (
+  id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  sent_date  DATE NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW(),
+  UNIQUE(user_id, sent_date)
+);
+```
+
+Создаётся автоматически при старте сервера (см. `src/index.ts` → миграции).
 
 ---
 
