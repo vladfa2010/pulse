@@ -131,16 +131,16 @@ router.post('/create', authMiddleware, validate(CreatePaymentSchema), async (req
 
     if (finalAmount <= 0) {
       // Free switch (e.g., same price) — activate immediately
-      await activateSubscription(userId, planId, durationDays);
+      await activateSubscription(userId, planId, durationDays, undefined, isUpgrade);
       return res.json({ success: true, activated: true, planId, billingCycle });
     }
 
     const paymentId = uuidv4();
 
     await query(
-      `INSERT INTO payments (id, user_id, amount, base_amount, discount, method, status, plan_id, billing_cycle, duration_days)
-       VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9)`,
-      [paymentId, userId, finalAmount, fullPrice, plan.yearly_discount, method, planId, billingCycle, durationDays]
+      `INSERT INTO payments (id, user_id, amount, base_amount, discount, method, status, plan_id, billing_cycle, duration_days, is_upgrade)
+       VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9, $10)`,
+      [paymentId, userId, finalAmount, fullPrice, plan.yearly_discount, method, planId, billingCycle, durationDays, isUpgrade]
     );
 
     // DEMO режим
@@ -222,21 +222,21 @@ router.post('/confirm', authMiddleware, validate(ConfirmPaymentSchema), async (r
     const { paymentId } = req.body;
 
     const paymentResult = await query(
-      `SELECT plan_id, duration_days FROM payments WHERE id = $1 AND user_id = $2`,
+      `SELECT plan_id, duration_days, is_upgrade FROM payments WHERE id = $1 AND user_id = $2`,
       [paymentId, userId]
     );
     if (paymentResult.rows.length === 0) {
       return res.status(404).json({ error: 'Payment not found' });
     }
 
-    const { plan_id, duration_days } = paymentResult.rows[0];
+    const { plan_id, duration_days, is_upgrade } = paymentResult.rows[0];
 
     await query(
       `UPDATE payments SET status = 'completed', paid_at = ${nowSql()} WHERE id = $1`,
       [paymentId]
     );
 
-    await activateSubscription(userId, plan_id || 'premium', duration_days || 30, paymentId);
+    await activateSubscription(userId, plan_id || 'premium', duration_days || 30, paymentId, is_upgrade === true);
 
     const completedPayment = await query(
       `SELECT id, amount, plan_id, billing_cycle, duration_days, status FROM payments WHERE id = $1`,
@@ -263,7 +263,7 @@ router.get('/status/:id', authMiddleware, async (req: AuthRequest, res) => {
 
     const result = await query(
       `SELECT id, amount, base_amount, discount, method, status, provider_ref, plan_id, billing_cycle, duration_days,
-              paid_at, created_at FROM payments WHERE id = $1 AND user_id = $2`,
+              is_upgrade, paid_at, created_at FROM payments WHERE id = $1 AND user_id = $2`,
       [id, userId]
     );
     if (result.rows.length === 0) {
@@ -289,7 +289,8 @@ router.get('/status/:id', authMiddleware, async (req: AuthRequest, res) => {
             userId,
             payment.plan_id || 'premium',
             payment.duration_days || 30,
-            id
+            id,
+            payment.is_upgrade === true
           );
           payment.status = 'completed';
           payment.paid_at = new Date().toISOString();
@@ -337,7 +338,7 @@ router.post('/force-check', authMiddleware, async (req: AuthRequest, res) => {
     }
 
     const result = await query(
-      `SELECT id, status, provider_ref, plan_id, duration_days FROM payments WHERE id = $1 AND user_id = $2`,
+      `SELECT id, status, provider_ref, plan_id, duration_days, is_upgrade FROM payments WHERE id = $1 AND user_id = $2`,
       [paymentId, userId]
     );
     if (result.rows.length === 0) {
@@ -369,7 +370,8 @@ router.post('/force-check', authMiddleware, async (req: AuthRequest, res) => {
         userId,
         payment.plan_id || 'premium',
         payment.duration_days || 30,
-        paymentId
+        paymentId,
+        payment.is_upgrade === true
       );
       return res.json({ status: 'completed', message: 'Payment confirmed, subscription activated' });
     } else if (yookassaStatus === 'canceled') {

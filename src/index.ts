@@ -4222,6 +4222,7 @@ async function start() {
     { sql: `ALTER TABLE payments ADD COLUMN IF NOT EXISTS plan_id VARCHAR(20)`, name: 'payments_plan_id' },
     { sql: `ALTER TABLE payments ADD COLUMN IF NOT EXISTS billing_cycle VARCHAR(10) DEFAULT 'monthly'`, name: 'payments_billing_cycle' },
     { sql: `ALTER TABLE payments ADD COLUMN IF NOT EXISTS duration_days INTEGER DEFAULT 30`, name: 'payments_duration_days' },
+    { sql: `ALTER TABLE payments ADD COLUMN IF NOT EXISTS is_upgrade BOOLEAN DEFAULT FALSE`, name: 'payments_is_upgrade' },
     { sql: `ALTER TABLE portfolios ADD COLUMN IF NOT EXISTS is_frozen BOOLEAN DEFAULT FALSE`, name: 'portfolios_is_frozen' },
     { sql: `CREATE TABLE IF NOT EXISTS user_payment_methods (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, payment_method_id VARCHAR(255) NOT NULL, provider VARCHAR(20) DEFAULT 'yookassa', card_last4 VARCHAR(4), card_brand VARCHAR(20), card_expiry VARCHAR(5), is_active BOOLEAN DEFAULT TRUE, is_default BOOLEAN DEFAULT FALSE, created_at TIMESTAMP DEFAULT ${_SQL_NOW}, deactivated_at TIMESTAMP, UNIQUE(user_id, payment_method_id))`, name: 'user_payment_methods' },
     { sql: `CREATE INDEX IF NOT EXISTS idx_user_payment_methods_user_id ON user_payment_methods(user_id)`, name: 'idx_user_payment_methods_user_id' },

@@ -224,26 +224,35 @@ export async function activateSubscription(
   userId: string,
   planId: string,
   durationDays: number,
-  paymentId?: string
+  paymentId?: string,
+  isUpgrade?: boolean
 ): Promise<void> {
   const now = new Date();
 
-  // Portable expiry calculation: accumulate days on top of current/future expiry
-  const currentResult = await query(
-    `SELECT subscription_expires_at FROM users WHERE id = $1`,
-    [userId]
-  );
-  const currentExpires = currentResult.rows[0]?.subscription_expires_at
-    ? new Date(currentResult.rows[0].subscription_expires_at)
-    : null;
-  const base = currentExpires && currentExpires.getTime() > now.getTime() ? currentExpires : now;
-  const newExpires = new Date(base.getTime() + durationDays * 24 * 60 * 60 * 1000);
+  // Portable expiry calculation
+  let newExpires: Date;
+  if (isUpgrade) {
+    // Баг 1: при апгрейде обнуляем период (ТЗ раздел 4.5)
+    newExpires = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
+  } else {
+    // Обычное продление — накопление дней
+    const currentResult = await query(
+      `SELECT subscription_expires_at FROM users WHERE id = $1`,
+      [userId]
+    );
+    const currentExpires = currentResult.rows[0]?.subscription_expires_at
+      ? new Date(currentResult.rows[0].subscription_expires_at)
+      : null;
+    const base = currentExpires && currentExpires.getTime() > now.getTime() ? currentExpires : now;
+    newExpires = new Date(base.getTime() + durationDays * 24 * 60 * 60 * 1000);
+  }
 
   await query(
     `UPDATE users
      SET subscription_active = TRUE,
          subscription_plan = $1,
-         subscription_expires_at = $2
+         subscription_expires_at = $2,
+         scheduled_plan_downgrade = NULL
      WHERE id = $3`,
     [planId, newExpires.toISOString(), userId]
   );

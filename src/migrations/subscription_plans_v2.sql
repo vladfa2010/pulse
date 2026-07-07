@@ -102,10 +102,22 @@ CREATE TABLE IF NOT EXISTS subscription_renewals (
 CREATE INDEX IF NOT EXISTS idx_renewals_user_id ON subscription_renewals(user_id);
 CREATE INDEX IF NOT EXISTS idx_renewals_period_end ON subscription_renewals(period_end);
 
--- 5. Payments: plan + cycle + duration
+-- 5. Payments: plan + cycle + duration + upgrade flag
 ALTER TABLE payments ADD COLUMN IF NOT EXISTS plan_id VARCHAR(20) REFERENCES subscription_plans(id);
 ALTER TABLE payments ADD COLUMN IF NOT EXISTS billing_cycle VARCHAR(10) DEFAULT 'monthly';
 ALTER TABLE payments ADD COLUMN IF NOT EXISTS duration_days INTEGER DEFAULT 30;
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS is_upgrade BOOLEAN DEFAULT FALSE;
+
+-- 9. Subscription notification deduplication (cron reminders)
+CREATE TABLE IF NOT EXISTS subscription_notifications_sent (
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  type VARCHAR(50) NOT NULL,
+  sent_at TIMESTAMP DEFAULT NOW(),
+  PRIMARY KEY (user_id, type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sub_notif_sent_user_id ON subscription_notifications_sent(user_id);
+CREATE INDEX IF NOT EXISTS idx_sub_notif_sent_sent_at ON subscription_notifications_sent(sent_at);
 
 -- 6. Frozen tags (audit + optional source of truth)
 ALTER TABLE portfolios ADD COLUMN IF NOT EXISTS is_frozen BOOLEAN DEFAULT FALSE;

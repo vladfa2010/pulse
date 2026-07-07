@@ -93,7 +93,7 @@ router.post('/yookassa', async (req, res) => {
     }
 
     const paymentResult = await query(
-      `SELECT id, user_id, status, plan_id, duration_days, amount
+      `SELECT id, user_id, status, plan_id, duration_days, amount, is_upgrade
        FROM payments WHERE provider_ref = $1`,
       [object.id]
     );
@@ -170,7 +170,8 @@ router.post('/yookassa', async (req, res) => {
       payment.user_id,
       payment.plan_id || 'premium',
       payment.duration_days || 30,
-      payment.id
+      payment.id,
+      payment.is_upgrade === true
     );
 
     console.log(`[YooKassa] Subscription activated for user ${payment.user_id}, plan ${payment.plan_id}`);

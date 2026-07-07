@@ -97,6 +97,7 @@ CREATE TABLE IF NOT EXISTS payments (
   plan_id     VARCHAR(20) REFERENCES subscription_plans(id),
   billing_cycle VARCHAR(10) DEFAULT 'monthly',
   duration_days INTEGER DEFAULT 30,
+  is_upgrade  BOOLEAN DEFAULT FALSE,
   paid_at     TIMESTAMP,
   created_at  TIMESTAMP DEFAULT NOW()
 );
