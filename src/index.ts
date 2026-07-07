@@ -23,6 +23,7 @@ import { setCachedPopularTags } from './utils/tagCache';
 import authRoutes from './routes/auth';
 import newsRoutes from './routes/news';
 import paymentRoutes from './routes/payment';
+import plansRoutes from './routes/plans';
 import userRoutes from './routes/user';
 import translateRoutes from './routes/translate';
 import webhookRoutes from './routes/webhook';
@@ -37,6 +38,7 @@ import { startDigestCron, sendAllDigests } from './services/digest'; // ← TG �
 import cron from 'node-cron';
 import { resetDailyWindows, refreshImoexCache } from './services/sentimentIndex';
 import { sendSentimentVotePush } from './services/push';
+import { processScheduledDowngrades } from './services/subscription';
 import { setupYookassaWebhook } from './routes/payment'; // ← Auto-setup YuKassa webhook
 import { addSubscriber, getSubscriberCount, addSentimentSubscriber } from './services/sse'; // ← Real-time news stream
 
@@ -55,6 +57,7 @@ const _SQL_NOW = USE_SQLITE ? "datetime('now')" : 'NOW()';
 // ═══════════════════════════════════════════════════════════════════════════
 // Middleware — обработка входящих запросов
 // ═══════════════════════════════════════════════════════════════════════════
+app.set('trust proxy', true); // Required for X-Forwarded-For behind Render proxy
 app.use(cors());
 app.use(express.json());
 app.use(apiLimiter);  // ← Rate limiting для всех API запросов (Task 4)
@@ -3514,6 +3517,7 @@ app.get('/sentiment-stats', async (req, res) => {
 app.use('/api/auth', authLimiter, authRoutes);  // Строгий лимит (5/15min) — защита от брутфорса
 app.use('/api/news', newsRoutes);       // GET /api/news, /api/news/:tag
 app.use('/api/payment', paymentRoutes); // POST /api/payment/create, /confirm
+app.use('/api/plans', plansRoutes);     // GET /api/plans
 app.use('/api/user', userRoutes);       // GET/POST/DELETE /api/user/tags
 app.use('/api/translate', translateRoutes);
 app.use('/api/webhook', webhookLimiter, webhookRoutes); // Высокий лимит для YuKassa
@@ -4211,6 +4215,27 @@ async function start() {
     { sql: `CREATE TABLE IF NOT EXISTS sentiment_vote_push_sent (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, sent_date DATE NOT NULL, created_at TIMESTAMP DEFAULT ${_SQL_NOW}, UNIQUE(user_id, sent_date))`, name: 'sentiment_vote_push_sent' },
     { sql: `CREATE INDEX IF NOT EXISTS idx_sentiment_vote_push_sent_user_id ON sentiment_vote_push_sent(user_id)`, name: 'idx_sentiment_vote_push_sent_user_id' },
     { sql: `CREATE INDEX IF NOT EXISTS idx_sentiment_vote_push_sent_date ON sentiment_vote_push_sent(sent_date)`, name: 'idx_sentiment_vote_push_sent_date' },
+    // Subscription plans v2
+    { sql: `CREATE TABLE IF NOT EXISTS subscription_plans (id VARCHAR(20) PRIMARY KEY, name VARCHAR(50) NOT NULL, price_monthly DECIMAL(10,2) NOT NULL, price_yearly DECIMAL(10,2) NOT NULL, yearly_discount INTEGER DEFAULT 20, tag_limit INTEGER NOT NULL, features JSONB NOT NULL DEFAULT '{}', display_order INTEGER NOT NULL DEFAULT 0, is_active BOOLEAN DEFAULT TRUE, coming_soon_label VARCHAR(50) DEFAULT NULL, created_at TIMESTAMP DEFAULT ${_SQL_NOW})`, name: 'subscription_plans' },
+    { sql: `ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_plan VARCHAR(20) DEFAULT 'free'`, name: 'users_subscription_plan' },
+    { sql: `ALTER TABLE users ADD COLUMN IF NOT EXISTS scheduled_plan_downgrade VARCHAR(20)`, name: 'users_scheduled_downgrade' },
+    { sql: `ALTER TABLE payments ADD COLUMN IF NOT EXISTS plan_id VARCHAR(20)`, name: 'payments_plan_id' },
+    { sql: `ALTER TABLE payments ADD COLUMN IF NOT EXISTS billing_cycle VARCHAR(10) DEFAULT 'monthly'`, name: 'payments_billing_cycle' },
+    { sql: `ALTER TABLE payments ADD COLUMN IF NOT EXISTS duration_days INTEGER DEFAULT 30`, name: 'payments_duration_days' },
+    { sql: `ALTER TABLE portfolios ADD COLUMN IF NOT EXISTS is_frozen BOOLEAN DEFAULT FALSE`, name: 'portfolios_is_frozen' },
+    { sql: `CREATE TABLE IF NOT EXISTS user_payment_methods (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, payment_method_id VARCHAR(255) NOT NULL, provider VARCHAR(20) DEFAULT 'yookassa', card_last4 VARCHAR(4), card_brand VARCHAR(20), card_expiry VARCHAR(5), is_active BOOLEAN DEFAULT TRUE, is_default BOOLEAN DEFAULT FALSE, created_at TIMESTAMP DEFAULT ${_SQL_NOW}, deactivated_at TIMESTAMP, UNIQUE(user_id, payment_method_id))`, name: 'user_payment_methods' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_user_payment_methods_user_id ON user_payment_methods(user_id)`, name: 'idx_user_payment_methods_user_id' },
+    { sql: `CREATE TABLE IF NOT EXISTS subscription_renewals (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, plan_id VARCHAR(20) NOT NULL REFERENCES subscription_plans(id), billing_cycle VARCHAR(10) NOT NULL, payment_id UUID REFERENCES payments(id), status VARCHAR(20) NOT NULL, period_start TIMESTAMP NOT NULL, period_end TIMESTAMP NOT NULL, created_at TIMESTAMP DEFAULT ${_SQL_NOW})`, name: 'subscription_renewals' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_renewals_user_id ON subscription_renewals(user_id)`, name: 'idx_renewals_user_id' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_renewals_period_end ON subscription_renewals(period_end)`, name: 'idx_renewals_period_end' },
+    { sql: `CREATE TABLE IF NOT EXISTS frozen_tags (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, tag_id VARCHAR(50) NOT NULL, tag_name VARCHAR(100) NOT NULL, tag_type VARCHAR(20) NOT NULL, frozen_at TIMESTAMP DEFAULT ${_SQL_NOW}, unfrozen_at TIMESTAMP, UNIQUE(user_id, tag_id))`, name: 'frozen_tags' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_frozen_tags_user_id ON frozen_tags(user_id)`, name: 'idx_frozen_tags_user_id' },
+    { sql: `CREATE TABLE IF NOT EXISTS push_subscriptions (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, endpoint TEXT NOT NULL, p256dh TEXT NOT NULL, auth TEXT NOT NULL, is_active BOOLEAN DEFAULT TRUE, created_at TIMESTAMP DEFAULT ${_SQL_NOW}, UNIQUE(user_id, endpoint))`, name: 'push_subscriptions' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user_id ON push_subscriptions(user_id)`, name: 'idx_push_subscriptions_user_id' },
+    { sql: `CREATE TABLE IF NOT EXISTS webhook_events (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), provider VARCHAR(20) NOT NULL, event_type VARCHAR(50) NOT NULL, payload JSONB DEFAULT '{}', processed BOOLEAN DEFAULT FALSE, error TEXT, created_at TIMESTAMP DEFAULT ${_SQL_NOW})`, name: 'webhook_events' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_webhook_events_created_at ON webhook_events(created_at DESC)`, name: 'idx_webhook_events_created_at' },
+    { sql: `CREATE TABLE IF NOT EXISTS subscription_notifications_sent (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, type VARCHAR(30) NOT NULL, sent_at TIMESTAMP DEFAULT ${_SQL_NOW}, UNIQUE(user_id, type))`, name: 'subscription_notifications_sent' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_sub_notif_user_type ON subscription_notifications_sent(user_id, type)`, name: 'idx_sub_notif_user_type' },
   ];
   for (const m of migrations) {
     try {
@@ -4220,6 +4245,60 @@ async function start() {
       console.log(`[DB] Migration warning for ${m.name}:`, e.message);
     }
   }
+
+  // Seed subscription plans
+  try {
+    await query(`
+      INSERT INTO subscription_plans
+        (id, name, price_monthly, price_yearly, tag_limit, features, display_order, is_active, coming_soon_label)
+      VALUES
+        ('free',    'Free',    0,     0,      3,
+         '{"telegram":false,"push":false,"ai_summary":false,"alerts":false,"priority":"normal"}',
+         1, TRUE, NULL),
+        ('base',    'Base',    450,   4320,   10,
+         '{"telegram":true,"push":true,"ai_summary":false,"alerts":false,"priority":"normal"}',
+         2, TRUE, NULL),
+        ('premium', 'Premium', 990,   9504,   25,
+         '{"telegram":true,"push":true,"ai_summary":true,"alerts":true,"priority":"high"}',
+         3, TRUE, NULL),
+        ('club',    'Club',    2500,  24000,  -1,
+         '{"telegram":true,"push":true,"ai_summary":true,"alerts":true,"priority":"max","early_delivery":true,"custom_thresholds":true,"club_access":true}',
+         4, FALSE, 'Скоро'),
+        ('pro',     'Pro',     2500,  24000,  -1,
+         '{"telegram":true,"push":true,"ai_summary":true,"alerts":true,"priority":"max","early_delivery":true,"custom_thresholds":true,"api_access":true}',
+         5, FALSE, 'Скоро')
+      ON CONFLICT (id) DO UPDATE SET
+        name = EXCLUDED.name,
+        price_monthly = EXCLUDED.price_monthly,
+        price_yearly = EXCLUDED.price_yearly,
+        tag_limit = EXCLUDED.tag_limit,
+        features = EXCLUDED.features,
+        display_order = EXCLUDED.display_order,
+        is_active = EXCLUDED.is_active,
+        coming_soon_label = EXCLUDED.coming_soon_label
+    `);
+    console.log('[DB] Migration: subscription_plans seeded');
+  } catch (e: any) {
+    console.log('[DB] Migration subscription_plans seed warning:', e.message);
+  }
+
+  // Migrate existing users to subscription_plan
+  try {
+    await query(`
+      UPDATE users SET subscription_plan = 'premium'
+      WHERE subscription_active = TRUE
+        AND (subscription_plan IS NULL OR subscription_plan = '' OR subscription_plan = 'free')
+    `);
+    await query(`
+      UPDATE users SET subscription_plan = 'free'
+      WHERE (subscription_active = FALSE OR subscription_active IS NULL)
+        AND (subscription_plan IS NULL OR subscription_plan = '')
+    `);
+    console.log('[DB] Migration: existing users migrated to subscription_plan');
+  } catch (e: any) {
+    console.log('[DB] Migration users subscription_plan warning:', e.message);
+  }
+
   // Backfill
   try {
     await query(`UPDATE news SET all_sources = ARRAY[source], source_count = 1 WHERE all_sources IS NULL OR array_length(all_sources, 1) IS NULL`);
@@ -4458,6 +4537,18 @@ async function start() {
     });
 
     // ═══════════════════════════════════════════════════════════════════
+    // Cron: scheduled downgrades
+    setInterval(async () => {
+      try {
+        const processed = await processScheduledDowngrades();
+        if (processed > 0) {
+          console.log(`[Downgrade] Processed ${processed} scheduled downgrades`);
+        }
+      } catch (err: any) {
+        console.error('[Downgrade] Cron error:', err.message);
+      }
+    }, 5 * 60 * 1000);
+
     // Cron: push-напоминание голосовать в Sentiment Index (1 раз в день)
     // Чётный день → 10:30 МСК, нечётный → 15:00 МСК
     // Выходные — не шлём

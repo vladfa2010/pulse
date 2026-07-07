@@ -6,6 +6,51 @@
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- ============================================================
+-- 0. subscription_plans (must exist before users/payments FK)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS subscription_plans (
+  id              VARCHAR(20) PRIMARY KEY,
+  name            VARCHAR(50) NOT NULL,
+  price_monthly   DECIMAL(10,2) NOT NULL,
+  price_yearly    DECIMAL(10,2) NOT NULL,
+  yearly_discount INTEGER DEFAULT 20,
+  tag_limit       INTEGER NOT NULL,
+  features        JSONB NOT NULL DEFAULT '{}',
+  display_order   INTEGER NOT NULL DEFAULT 0,
+  is_active       BOOLEAN DEFAULT TRUE,
+  coming_soon_label VARCHAR(50) DEFAULT NULL,
+  created_at      TIMESTAMP DEFAULT NOW()
+);
+
+INSERT INTO subscription_plans
+  (id, name, price_monthly, price_yearly, tag_limit, features, display_order, is_active, coming_soon_label)
+VALUES
+  ('free',    'Free',    0,     0,      3,
+   '{"telegram":false,"push":false,"ai_summary":false,"alerts":false,"priority":"normal"}',
+   1, TRUE, NULL),
+  ('base',    'Base',    450,   4320,   10,
+   '{"telegram":true,"push":true,"ai_summary":false,"alerts":false,"priority":"normal"}',
+   2, TRUE, NULL),
+  ('premium', 'Premium', 990,   9504,   25,
+   '{"telegram":true,"push":true,"ai_summary":true,"alerts":true,"priority":"high"}',
+   3, TRUE, NULL),
+  ('club',    'Club',    2500,  24000,  -1,
+   '{"telegram":true,"push":true,"ai_summary":true,"alerts":true,"priority":"max","early_delivery":true,"custom_thresholds":true,"club_access":true}',
+   4, FALSE, 'Скоро'),
+  ('pro',     'Pro',     2500,  24000,  -1,
+   '{"telegram":true,"push":true,"ai_summary":true,"alerts":true,"priority":"max","early_delivery":true,"custom_thresholds":true,"api_access":true}',
+   5, FALSE, 'Скоро')
+ON CONFLICT (id) DO UPDATE SET
+  name = EXCLUDED.name,
+  price_monthly = EXCLUDED.price_monthly,
+  price_yearly = EXCLUDED.price_yearly,
+  tag_limit = EXCLUDED.tag_limit,
+  features = EXCLUDED.features,
+  display_order = EXCLUDED.display_order,
+  is_active = EXCLUDED.is_active,
+  coming_soon_label = EXCLUDED.coming_soon_label;
+
+-- ============================================================
 -- 1. users
 -- ============================================================
 CREATE TABLE IF NOT EXISTS users (
@@ -15,8 +60,10 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash   VARCHAR(255) NOT NULL,
   is_verified     BOOLEAN DEFAULT FALSE,
   subscription_active    BOOLEAN DEFAULT FALSE,
+  subscription_plan      VARCHAR(20) DEFAULT 'free' REFERENCES subscription_plans(id),
   subscription_expires_at TIMESTAMP,
   subscription_auto_renew BOOLEAN DEFAULT TRUE,
+  scheduled_plan_downgrade VARCHAR(20),
   news_count      INTEGER DEFAULT 0,
   created_at      TIMESTAMP DEFAULT NOW()
 );
@@ -30,6 +77,7 @@ CREATE TABLE IF NOT EXISTS portfolios (
   tag_id     VARCHAR(50) NOT NULL,
   tag_name   VARCHAR(100) NOT NULL,
   tag_type   VARCHAR(20) NOT NULL,
+  is_frozen  BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMP DEFAULT NOW(),
   UNIQUE(user_id, tag_id)
 );
@@ -46,6 +94,9 @@ CREATE TABLE IF NOT EXISTS payments (
   method      VARCHAR(50) NOT NULL,
   status      VARCHAR(20) DEFAULT 'pending',
   provider_ref VARCHAR(255),
+  plan_id     VARCHAR(20) REFERENCES subscription_plans(id),
+  billing_cycle VARCHAR(10) DEFAULT 'monthly',
+  duration_days INTEGER DEFAULT 30,
   paid_at     TIMESTAMP,
   created_at  TIMESTAMP DEFAULT NOW()
 );
@@ -189,6 +240,104 @@ CREATE TABLE IF NOT EXISTS notification_settings (
   report_language      VARCHAR(10) DEFAULT 'ru',
   updated_at           TIMESTAMP DEFAULT NOW()
 );
+
+-- ============================================================
+-- 7c. user_payment_methods
+-- ============================================================
+CREATE TABLE IF NOT EXISTS user_payment_methods (
+  id                UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id           UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  payment_method_id VARCHAR(255) NOT NULL,
+  provider          VARCHAR(20) DEFAULT 'yookassa',
+  card_last4        VARCHAR(4),
+  card_brand        VARCHAR(20),
+  card_expiry       VARCHAR(5),
+  is_active         BOOLEAN DEFAULT TRUE,
+  is_default        BOOLEAN DEFAULT FALSE,
+  created_at        TIMESTAMP DEFAULT NOW(),
+  deactivated_at    TIMESTAMP,
+  UNIQUE(user_id, payment_method_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_payment_methods_user_id ON user_payment_methods(user_id);
+
+-- ============================================================
+-- 7d. subscription_renewals
+-- ============================================================
+CREATE TABLE IF NOT EXISTS subscription_renewals (
+  id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  plan_id         VARCHAR(20) NOT NULL REFERENCES subscription_plans(id),
+  billing_cycle   VARCHAR(10) NOT NULL,
+  payment_id      UUID REFERENCES payments(id),
+  status          VARCHAR(20) NOT NULL,
+  period_start    TIMESTAMP NOT NULL,
+  period_end      TIMESTAMP NOT NULL,
+  created_at      TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_renewals_user_id ON subscription_renewals(user_id);
+CREATE INDEX IF NOT EXISTS idx_renewals_period_end ON subscription_renewals(period_end);
+
+-- ============================================================
+-- 7e. frozen_tags (audit for downgrade)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS frozen_tags (
+  id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  tag_id      VARCHAR(50) NOT NULL,
+  tag_name    VARCHAR(100) NOT NULL,
+  tag_type    VARCHAR(20) NOT NULL,
+  frozen_at   TIMESTAMP DEFAULT NOW(),
+  unfrozen_at TIMESTAMP,
+  UNIQUE(user_id, tag_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_frozen_tags_user_id ON frozen_tags(user_id);
+
+-- ============================================================
+-- 7f. push_subscriptions (web push VAPID)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  endpoint   TEXT NOT NULL,
+  p256dh     TEXT NOT NULL,
+  auth       TEXT NOT NULL,
+  is_active  BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMP DEFAULT NOW(),
+  UNIQUE(user_id, endpoint)
+);
+
+CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user_id ON push_subscriptions(user_id);
+
+-- ============================================================
+-- 7g. webhook_events audit log
+-- ============================================================
+CREATE TABLE IF NOT EXISTS webhook_events (
+  id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  provider   VARCHAR(20) NOT NULL,
+  event_type VARCHAR(50) NOT NULL,
+  payload    JSONB DEFAULT '{}',
+  processed  BOOLEAN DEFAULT FALSE,
+  error      TEXT,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_webhook_events_created_at ON webhook_events(created_at DESC);
+
+-- ============================================================
+-- 7h. subscription notification log (dedup)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS subscription_notifications_sent (
+  id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  type       VARCHAR(30) NOT NULL,
+  sent_at    TIMESTAMP DEFAULT NOW(),
+  UNIQUE(user_id, type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sub_notif_user_type ON subscription_notifications_sent(user_id, type);
 
 -- ============================================================
 -- 8. translation_cache

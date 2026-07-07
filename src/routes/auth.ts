@@ -26,6 +26,7 @@ import jwt from 'jsonwebtoken';
 import { query } from '../config/db';
 import { validate } from '../middleware/validate';
 import { RegisterSchema, LoginSchema } from '../schemas/auth';
+import { buildSubscriptionStatus } from '../services/subscription';
 
 const router = Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
@@ -114,7 +115,9 @@ router.post('/login', validate(LoginSchema), async (req, res) => {
 
     // ─── Ищем пользователя по email (case-insensitive) ──────────────────
     const result = await query(
-      'SELECT id, email, username, password_hash, is_admin, subscription_active, subscription_expires_at FROM users WHERE LOWER(email) = LOWER($1)',
+      `SELECT id, email, username, password_hash, is_admin, subscription_active, subscription_plan,
+              subscription_expires_at, subscription_auto_renew, scheduled_plan_downgrade
+       FROM users WHERE LOWER(email) = LOWER($1)`,
       [email]
     );
     if (result.rows.length === 0) {
@@ -142,6 +145,14 @@ router.post('/login', validate(LoginSchema), async (req, res) => {
       expiresIn: '7d',
     });
 
+    const subStatus = buildSubscriptionStatus({
+      plan: user.subscription_plan || 'free',
+      active: !!user.subscription_active,
+      expiresAt: user.subscription_expires_at ? new Date(user.subscription_expires_at) : null,
+      autoRenew: !!user.subscription_auto_renew,
+      scheduledDowngrade: user.scheduled_plan_downgrade || null,
+    });
+
     res.json({
       token,
       user: {
@@ -149,8 +160,7 @@ router.post('/login', validate(LoginSchema), async (req, res) => {
         email: user.email,
         username: user.username,
         is_admin: user.is_admin === 1 || user.is_admin === true,
-        subscription_active: user.subscription_active,
-        subscription_expires_at: user.subscription_expires_at,
+        subscription: subStatus,
       },
     });
   } catch (err: any) {
@@ -180,8 +190,9 @@ router.get('/me', async (req, res) => {
 
     // Загружаем пользователя из БД
     const result = await query(
-      `SELECT id, email, username, subscription_active, subscription_expires_at,
-              news_count, is_admin FROM users WHERE id = $1`,
+      `SELECT id, email, username, subscription_active, subscription_plan, subscription_expires_at,
+              subscription_auto_renew, scheduled_plan_downgrade, news_count, is_admin
+       FROM users WHERE id = $1`,
       [decoded.userId]
     );
     if (result.rows.length === 0) {
@@ -189,10 +200,21 @@ router.get('/me', async (req, res) => {
     }
 
     const user = result.rows[0];
+    const subStatus = buildSubscriptionStatus({
+      plan: user.subscription_plan || 'free',
+      active: !!user.subscription_active,
+      expiresAt: user.subscription_expires_at ? new Date(user.subscription_expires_at) : null,
+      autoRenew: !!user.subscription_auto_renew,
+      scheduledDowngrade: user.scheduled_plan_downgrade || null,
+    });
+
     res.json({
       user: {
-        ...user,
+        id: user.id,
+        email: user.email,
+        username: user.username,
         is_admin: user.is_admin === 1 || user.is_admin === true,
+        subscription: subStatus,
       },
     });
   } catch (err) {

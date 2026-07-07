@@ -27,6 +27,7 @@ import crypto from 'crypto';
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
 import { populateNewsTagLinksBatch, EnrichmentTask } from './enrichment';
+import { sendSubscriptionReminders } from './subscription';
 import { broadcastNews } from './sse';
 import { analyzeUnifiedBatch, UnifiedResult } from './smartTagMatcher';
 
@@ -425,6 +426,17 @@ export async function processDeferredArticles(): Promise<void> {
 
 export function startCron() {
   console.log('[Cron] RSS aggregator scheduled every 5 minutes');
+
+  // Subscription reminders & scheduled downgrades — once a day at 10:00 UTC
+  cron.schedule('0 10 * * *', async () => {
+    try {
+      const stats = await sendSubscriptionReminders();
+      console.log('[Cron] Subscription reminders:', stats);
+    } catch (err: any) {
+      console.error('[Cron] Subscription reminders failed:', err.message);
+    }
+  });
+  console.log('[Cron] Subscription reminders scheduled daily at 10:00 UTC');
 
   cron.schedule('*/5 * * * *', async () => {
     try {

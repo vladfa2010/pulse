@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { query } from '../config/db';
 import axios from 'axios';
+import { isYookassaIp, getClientIp } from '../services/ipCheck';
+import { activateSubscription, savePaymentMethod } from '../services/subscription';
 
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
@@ -52,42 +54,131 @@ function nowPlusDaysSql(days: number): string {
 // YooKassa webhook — POST /api/webhook/yookassa
 // ═══════════════════════════════════════════════════════════════════════════
 router.post('/yookassa', async (req, res) => {
+  const clientIp = getClientIp(req.headers, req.ip);
+  const payload = req.body;
+
   try {
-    const { event, object } = req.body;
+    await query(
+      `INSERT INTO webhook_events (provider, event_type, payload, processed)
+       VALUES ('yookassa', $1, $2, FALSE)`,
+      [payload?.event || 'unknown', JSON.stringify(payload || {})]
+    );
+  } catch (e: any) {
+    console.error('[Webhook] Audit log failed:', e.message);
+  }
+
+  try {
+    // #Y1 IP validation (Render passes real client via X-Forwarded-For)
+    if (!clientIp || !isYookassaIp(clientIp)) {
+      console.warn(`[YooKassa Webhook] Rejected IP: ${clientIp}`);
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    // #Y4 payload validation
+    if (payload?.type !== 'notification') {
+      return res.status(400).json({ error: 'Invalid notification type' });
+    }
+
+    const event = payload.event;
+    const object = payload.object;
 
     if (!object || !object.id) {
       return res.status(400).json({ error: 'Invalid webhook payload' });
     }
 
-    console.log('[YooKassa Webhook]', event, object.id);
+    console.log('[YooKassa Webhook]', event, object.id, 'from', clientIp);
 
-    if (event === 'payment.succeeded' || event === 'payment.canceled') {
-      const status = event === 'payment.succeeded' ? 'completed' : 'failed';
+    if (event !== 'payment.succeeded' && event !== 'payment.canceled' && event !== 'payment.waiting_for_capture') {
+      return res.status(200).json({ received: true });
+    }
 
-      await query(
-        `UPDATE payments SET status = $1, paid_at = ${nowSql()} WHERE provider_ref = $2`,
-        [status, object.id]
-      );
+    const paymentResult = await query(
+      `SELECT id, user_id, status, plan_id, duration_days, amount
+       FROM payments WHERE provider_ref = $1`,
+      [object.id]
+    );
 
-      const paymentResult = await query(
-        'SELECT user_id FROM payments WHERE provider_ref = $1',
-        [object.id]
-      );
+    if (paymentResult.rows.length === 0) {
+      console.warn(`[YooKassa Webhook] Payment not found for provider_ref ${object.id}`);
+      return res.status(200).json({ received: true, error: 'Payment not found' });
+    }
 
-      if (paymentResult.rows.length > 0 && status === 'completed') {
-        const userId = paymentResult.rows[0].user_id;
-        await query(
-          `UPDATE users SET subscription_active = TRUE, subscription_expires_at = ${nowPlusDaysSql(30)} WHERE id = $1`,
-          [userId]
+    const payment = paymentResult.rows[0];
+
+    // #Y3 idempotency
+    if (payment.status === 'completed' && event === 'payment.succeeded') {
+      console.log(`[YooKassa Webhook] Payment ${payment.id} already completed`);
+      return res.status(200).json({ received: true, idempotent: true });
+    }
+
+    // #Y4 optional verification with YooKassa API
+    const isYookassaConfigured = process.env.YOOKASSA_SHOP_ID && process.env.YOOKASSA_SECRET_KEY;
+    if (isYookassaConfigured) {
+      try {
+        const auth = 'Basic ' + Buffer.from(`${process.env.YOOKASSA_SHOP_ID}:${process.env.YOOKASSA_SECRET_KEY}`).toString('base64');
+        const verifyRes = await axios.get(
+          `https://api.yookassa.ru/v3/payments/${object.id}`,
+          { headers: { Authorization: auth }, timeout: 15000 }
         );
-        console.log(`[YooKassa] Subscription activated for user ${userId}`);
+        const verified = verifyRes.data;
+        if (verified.status !== object.status) {
+          console.warn('[YooKassa Webhook] Status mismatch', verified.status, object.status);
+        }
+        const meta = verified.metadata || {};
+        if (meta.payment_id && meta.payment_id !== payment.id) {
+          console.warn('[YooKassa Webhook] Metadata payment_id mismatch');
+        }
+      } catch (verifyErr: any) {
+        console.error('[YooKassa Webhook] Verify failed:', verifyErr.response?.data || verifyErr.message);
       }
     }
 
-    res.status(200).json({ received: true });
-  } catch (err) {
+    // #Y6 waiting_for_capture → capture
+    if (event === 'payment.waiting_for_capture') {
+      if (isYookassaConfigured) {
+        try {
+          const auth = 'Basic ' + Buffer.from(`${process.env.YOOKASSA_SHOP_ID}:${process.env.YOOKASSA_SECRET_KEY}`).toString('base64');
+          await axios.post(
+            `https://api.yookassa.ru/v3/payments/${object.id}/capture`,
+            { amount: object.amount },
+            { headers: { Authorization: auth, 'Idempotence-Key': `capture-${object.id}` }, timeout: 15000 }
+          );
+        } catch (captureErr: any) {
+          console.error('[YooKassa Webhook] Capture failed:', captureErr.response?.data || captureErr.message);
+        }
+      }
+      return res.status(200).json({ received: true });
+    }
+
+    if (event === 'payment.canceled') {
+      await query(`UPDATE payments SET status = 'failed' WHERE id = $1`, [payment.id]);
+      return res.status(200).json({ received: true });
+    }
+
+    // payment.succeeded
+    await query(
+      `UPDATE payments SET status = 'completed', paid_at = ${nowSql()} WHERE id = $1`,
+      [payment.id]
+    );
+
+    // #Y7 save payment method for future auto-renew
+    if (object.payment_method?.saved && object.payment_method?.id) {
+      await savePaymentMethod(payment.user_id, object.payment_method);
+    }
+
+    await activateSubscription(
+      payment.user_id,
+      payment.plan_id || 'premium',
+      payment.duration_days || 30,
+      payment.id
+    );
+
+    console.log(`[YooKassa] Subscription activated for user ${payment.user_id}, plan ${payment.plan_id}`);
+
+    return res.status(200).json({ received: true });
+  } catch (err: any) {
     console.error('YooKassa webhook error:', err);
-    res.status(200).json({ received: true, error: 'Processing failed' });
+    return res.status(200).json({ received: true, error: 'Processing failed' });
   }
 });
 

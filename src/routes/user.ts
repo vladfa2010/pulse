@@ -5,8 +5,14 @@ import { validate } from '../middleware/validate';
 import { AddTagSchema } from '../schemas/user';
 import { getRelatedTags, matchTagsByKeywords } from '../services/smartTagMatcher';
 import { createUserTag, generateTagKeywords, getAllTagNames, detectTagTypeViaLLM, TAG_TYPE_LABELS, buildEnrichedKeywords } from '../services/tagManager';
+import {
+  getPlanById, getUserSubscription, buildSubscriptionStatus,
+  scheduleDowngrade, cancelScheduledDowngrade, requireMinPlan,
+  getExcessTagsForDowngrade,
+} from '../services/subscription';
 import type { TagType, TagEnrichment } from '../services/tagManager';
 import axios from 'axios';
+import { getVapidPublicKey } from '../services/webPush';
 
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
@@ -42,8 +48,9 @@ router.get('/profile', authMiddleware, async (req: AuthRequest, res) => {
     const userId = req.user!.userId;
 
     const userResult = await query(
-      `SELECT id, email, username, is_verified, subscription_active,
-              subscription_expires_at, subscription_auto_renew, news_count, created_at
+      `SELECT id, email, username, is_verified, subscription_active, subscription_plan,
+              subscription_expires_at, subscription_auto_renew, scheduled_plan_downgrade,
+              news_count, created_at
        FROM users WHERE id = $1`,
       [userId]
     );
@@ -53,10 +60,17 @@ router.get('/profile', authMiddleware, async (req: AuthRequest, res) => {
     }
 
     const user = userResult.rows[0];
+    const subStatus = buildSubscriptionStatus({
+      plan: user.subscription_plan || 'free',
+      active: !!user.subscription_active,
+      expiresAt: user.subscription_expires_at ? new Date(user.subscription_expires_at) : null,
+      autoRenew: !!user.subscription_auto_renew,
+      scheduledDowngrade: user.scheduled_plan_downgrade || null,
+    });
 
-    // Count portfolio tags
+    // Count active portfolio tags
     const portfolioResult = await query(
-      'SELECT COUNT(*) as count FROM portfolios WHERE user_id = $1',
+      'SELECT COUNT(*) as count FROM portfolios WHERE user_id = $1 AND is_frozen = FALSE',
       [userId]
     );
     const tagCount = parseInt(portfolioResult.rows[0].count);
@@ -66,11 +80,7 @@ router.get('/profile', authMiddleware, async (req: AuthRequest, res) => {
       email: user.email,
       username: user.username,
       isVerified: user.is_verified,
-      subscription: {
-        active: user.subscription_active,
-        expiresAt: user.subscription_expires_at,
-        autoRenew: user.subscription_auto_renew,
-      },
+      subscription: subStatus,
       stats: {
         newsCount: user.news_count,
         tagCount,
@@ -135,23 +145,24 @@ router.post('/tags', authMiddleware, validate(AddTagSchema), async (req: AuthReq
       return res.status(400).json({ error: 'tagId and tagName required' });
     }
 
-    // Check tag limit (10 for premium, 3 for free)
+    // Check tag limit based on subscription plan
+    const subResult = await query(
+      `SELECT subscription_plan FROM users WHERE id = $1`,
+      [userId]
+    );
+    const planId = subResult.rows[0]?.subscription_plan || 'free';
+    const plan = await getPlanById(planId);
+    const maxTags = plan?.tag_limit ?? 3;
+
     const countResult = await query(
-      'SELECT COUNT(*) as count FROM portfolios WHERE user_id = $1',
+      'SELECT COUNT(*) as count FROM portfolios WHERE user_id = $1 AND is_frozen = FALSE',
       [userId]
     );
     const tagCount = parseInt(countResult.rows[0].count);
 
-    const userResult = await query(
-      'SELECT subscription_active FROM users WHERE id = $1',
-      [userId]
-    );
-    const isPremium = userResult.rows[0]?.subscription_active || false;
-    const maxTags = isPremium ? 25 : 3;  // 3 tags for free users (sync with frontend)
-
-    if (tagCount >= maxTags) {
+    if (maxTags >= 0 && tagCount >= maxTags) {
       return res.status(403).json({
-        error: `Tag limit reached (${maxTags}). Upgrade to Premium for more.`,
+        error: `Tag limit reached (${maxTags}). Upgrade your plan for more.`,
       });
     }
 
@@ -879,6 +890,231 @@ router.get('/stats', authMiddleware, async (req: AuthRequest, res) => {
   } catch (err: any) {
     console.error('[Stats] Error:', err.message);
     res.status(500).json({ error: 'Failed to get stats' });
+  }
+});
+
+// ============================================================
+// Subscription / downgrade / auto-renew / push subscriptions
+// ============================================================
+
+// GET /api/user/tariff-status — полный статус тарифа для профиля
+router.get('/tariff-status', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.userId;
+    const sub = await getUserSubscription(userId);
+    const status = buildSubscriptionStatus(sub);
+    const plan = await getPlanById(sub.plan);
+
+    const tagsResult = await query(
+      `SELECT COUNT(*) FILTER (WHERE is_frozen = FALSE) as active,
+              COUNT(*) FILTER (WHERE is_frozen = TRUE) as frozen
+       FROM portfolios WHERE user_id = $1`,
+      [userId]
+    );
+    const tagUsage = {
+      active: parseInt(tagsResult.rows[0]?.active || '0'),
+      frozen: parseInt(tagsResult.rows[0]?.frozen || '0'),
+      limit: plan?.tag_limit ?? 3,
+    };
+
+    const methods = await query(
+      `SELECT id, payment_method_id, card_last4, card_brand, card_expiry, is_default
+       FROM user_payment_methods WHERE user_id = $1 AND is_active = TRUE
+       ORDER BY is_default DESC, created_at DESC`,
+      [userId]
+    );
+
+    const renewals = await query(
+      `SELECT r.id, r.plan_id, r.billing_cycle, r.status, r.period_start, r.period_end,
+              p.amount, p.paid_at
+       FROM subscription_renewals r
+       LEFT JOIN payments p ON p.id = r.payment_id
+       WHERE r.user_id = $1
+       ORDER BY r.period_start DESC
+       LIMIT 20`,
+      [userId]
+    );
+
+    res.json({
+      subscription: status,
+      plan: plan
+        ? {
+            id: plan.id,
+            name: plan.name,
+            tagLimit: plan.tag_limit,
+            features: plan.features,
+          }
+        : null,
+      tagUsage,
+      savedMethods: methods.rows,
+      renewals: renewals.rows,
+    });
+  } catch (err) {
+    console.error('[TariffStatus] Error:', err);
+    res.status(500).json({ error: 'Failed to fetch tariff status' });
+  }
+});
+
+// GET /api/user/downgrade-preview — какие теги заморозятся при даунгрейде
+router.get('/downgrade-preview', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.userId;
+    const { targetPlan } = req.query;
+    if (!targetPlan || typeof targetPlan !== 'string') {
+      return res.status(400).json({ error: 'targetPlan required' });
+    }
+    const tags = await getExcessTagsForDowngrade(userId, targetPlan);
+    res.json({ targetPlan, tags });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch downgrade preview' });
+  }
+});
+
+// GET /api/user/auto-renew — текущий статус автопродления
+router.get('/auto-renew', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.userId;
+    const result = await query(
+      `SELECT subscription_auto_renew FROM users WHERE id = $1`,
+      [userId]
+    );
+    const methods = await query(
+      `SELECT payment_method_id, card_last4, card_brand, card_expiry, is_default
+       FROM user_payment_methods WHERE user_id = $1 AND is_active = TRUE`,
+      [userId]
+    );
+    res.json({
+      enabled: result.rows[0]?.subscription_auto_renew ?? true,
+      savedMethods: methods.rows,
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch auto-renew status' });
+  }
+});
+
+// DELETE /api/user/payment-methods/:id — удалить сохранённую карту
+router.delete('/payment-methods/:id', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.userId;
+    const { id } = req.params;
+    await query(
+      `UPDATE user_payment_methods SET is_active = FALSE WHERE id = $1 AND user_id = $2`,
+      [id, userId]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to remove payment method' });
+  }
+});
+
+// POST /api/user/auto-renew — включить/выключить автопродление
+router.post('/auto-renew', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.userId;
+    const { enabled } = req.body;
+    await query(
+      `UPDATE users SET subscription_auto_renew = $1 WHERE id = $2`,
+      [enabled === true, userId]
+    );
+    res.json({ success: true, enabled: enabled === true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update auto-renew' });
+  }
+});
+
+// POST /api/user/downgrade — запланировать понижение тарифа
+router.post('/downgrade', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.userId;
+    const { targetPlan } = req.body;
+    if (!targetPlan) {
+      return res.status(400).json({ error: 'targetPlan required' });
+    }
+    await scheduleDowngrade(userId, targetPlan);
+    res.json({ success: true, scheduledPlan: targetPlan });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to schedule downgrade' });
+  }
+});
+
+// POST /api/user/downgrade/cancel — отменить запланированное понижение
+router.post('/downgrade/cancel', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.userId;
+    await cancelScheduledDowngrade(userId);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to cancel downgrade' });
+  }
+});
+
+// GET /api/user/frozen-tags — список замороженных тегов
+router.get('/frozen-tags', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.userId;
+    const result = await query(
+      `SELECT tag_id, tag_name, tag_type, frozen_at FROM frozen_tags
+       WHERE user_id = $1 AND unfrozen_at IS NULL
+       ORDER BY frozen_at DESC`,
+      [userId]
+    );
+    res.json({ tags: result.rows });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch frozen tags' });
+  }
+});
+
+// GET /api/user/vapid-public-key — VAPID public key for web push
+router.get('/vapid-public-key', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const key = getVapidPublicKey();
+    if (!key) {
+      return res.status(503).json({ error: 'VAPID not configured' });
+    }
+    res.json({ publicKey: key });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get VAPID key' });
+  }
+});
+
+// POST /api/user/push-subscribe — web push (VAPID)
+router.post('/push-subscribe', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.userId;
+    const { endpoint, p256dh, auth } = req.body;
+    if (!endpoint || !p256dh || !auth) {
+      return res.status(400).json({ error: 'endpoint, p256dh, auth required' });
+    }
+    await query(
+      `INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (user_id, endpoint) DO UPDATE SET
+         p256dh = EXCLUDED.p256dh,
+         auth = EXCLUDED.auth,
+         is_active = TRUE`,
+      [userId, endpoint, p256dh, auth]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to save push subscription' });
+  }
+});
+
+// POST /api/user/push-unsubscribe
+router.post('/push-unsubscribe', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.userId;
+    const { endpoint } = req.body;
+    if (!endpoint) {
+      return res.status(400).json({ error: 'endpoint required' });
+    }
+    await query(
+      `UPDATE push_subscriptions SET is_active = FALSE WHERE user_id = $1 AND endpoint = $2`,
+      [userId, endpoint]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to unsubscribe' });
   }
 });
 
