@@ -257,6 +257,13 @@ export async function activateSubscription(
     [planId, newExpires.toISOString(), userId]
   );
 
+  // Reset reminder notifications so they fire again before the next renewal
+  await query(
+    `DELETE FROM subscription_notifications_sent
+     WHERE user_id = $1 AND type IN ('reminder_3d', 'reminder_1d')`,
+    [userId]
+  );
+
   // Unfreeze tags that now fit into the new plan limit
   await unfreezeTagsUpToLimit(userId, planId);
 
