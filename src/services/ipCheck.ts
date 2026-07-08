@@ -85,10 +85,13 @@ export function isYookassaIp(ip: string): boolean {
 export function getClientIp(headers: IncomingHttpHeaders, reqIp?: string): string | undefined {
   const forwarded = headers['x-forwarded-for'];
   if (typeof forwarded === 'string') {
-    return forwarded.split(',')[0].trim();
+    // Use the last entry (added by the closest trusted proxy) to prevent spoofing.
+    const list = forwarded.split(',').map((s) => s.trim()).filter(Boolean);
+    return list[list.length - 1];
   }
   if (Array.isArray(forwarded)) {
-    return forwarded[0].split(',')[0].trim();
+    const list = forwarded[0].split(',').map((s) => s.trim()).filter(Boolean);
+    return list[list.length - 1];
   }
   return reqIp;
 }
