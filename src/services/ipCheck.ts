@@ -24,12 +24,18 @@ function ipToBigInt(ip: string): bigint {
     const emptyIndex = parts.findIndex((p) => p === '');
     let expanded: string[];
     if (emptyIndex !== -1) {
-      const missing = 8 - parts.filter((p) => p !== '').length;
+      const nonEmptyCount = parts.filter((p) => p !== '').length;
+      const missing = 8 - nonEmptyCount;
       const fill = Array(missing).fill('0000');
       expanded = [];
+      let replaced = false;
       for (const p of parts) {
         if (p === '') {
-          expanded.push(...fill);
+          if (!replaced) {
+            expanded.push(...fill);
+            replaced = true;
+          }
+          // skip other empty groups caused by leading/trailing ::
         } else {
           expanded.push(p);
         }

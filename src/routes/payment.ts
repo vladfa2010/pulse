@@ -389,16 +389,30 @@ router.post('/force-check', authMiddleware, async (req: AuthRequest, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 // Auto-setup YooKassa webhook on server start
 // ═══════════════════════════════════════════════════════════════════════════
+// Note: YooKassa webhook management endpoints (/v3/webhooks) are OAuth-only.
+// Without an OAuth token we cannot register webhooks via API, so we log the
+// manual setup URL and expect the merchant to configure it in the dashboard.
 export async function setupYookassaWebhook(): Promise<void> {
   if (!IS_YOOKASSA_CONFIGURED) {
     console.log('[YuKassa] Webhook auto-setup skipped (not configured)');
     return;
   }
 
+  const oauthToken = process.env.YOOKASSA_OAUTH_TOKEN;
+  if (!oauthToken) {
+    console.log('[YuKassa] Webhook auto-setup skipped: webhook management requires an OAuth token.');
+    console.log(`[YuKassa] Add the webhook manually in the YooKassa dashboard:`);
+    console.log(`          URL: ${WEBHOOK_URL}`);
+    console.log(`          Events: payment.succeeded, payment.canceled`);
+    return;
+  }
+
   try {
+    const authHeader = `Bearer ${oauthToken}`;
+
     const listRes = await axios.get(
       'https://api.yookassa.ru/v3/webhooks',
-      { headers: { Authorization: yookassaAuth() }, timeout: 15000 }
+      { headers: { Authorization: authHeader }, timeout: 15000 }
     );
 
     const webhooks = listRes.data.items || [];
@@ -414,7 +428,7 @@ export async function setupYookassaWebhook(): Promise<void> {
       if (wh.url?.includes('onrender.com') || wh.url?.includes('pulse')) {
         try {
           await axios.delete(`https://api.yookassa.ru/v3/webhooks/${wh.id}`, {
-            headers: { Authorization: yookassaAuth() }, timeout: 10000
+            headers: { Authorization: authHeader }, timeout: 10000
           });
           console.log('[YuKassa] Removed old webhook:', wh.url);
         } catch {
@@ -426,13 +440,13 @@ export async function setupYookassaWebhook(): Promise<void> {
     await axios.post(
       'https://api.yookassa.ru/v3/webhooks',
       { event: 'payment.succeeded', url: WEBHOOK_URL },
-      { headers: { Authorization: yookassaAuth() }, timeout: 15000 }
+      { headers: { Authorization: authHeader }, timeout: 15000 }
     );
 
     await axios.post(
       'https://api.yookassa.ru/v3/webhooks',
       { event: 'payment.canceled', url: WEBHOOK_URL },
-      { headers: { Authorization: yookassaAuth() }, timeout: 15000 }
+      { headers: { Authorization: authHeader }, timeout: 15000 }
     );
 
     console.log('[YuKassa] Webhooks configured:', WEBHOOK_URL);
