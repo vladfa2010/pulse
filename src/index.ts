@@ -104,7 +104,7 @@ app.get('/health', async (req, res) => {
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
-    version: '8.1.0-cronfreeze-fix',
+    version: '8.4.0',
     cron: cronStatus,
     sse_subscribers: getSubscriberCount(),
   });
