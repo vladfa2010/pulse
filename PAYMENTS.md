@@ -279,8 +279,10 @@ Response:
 После оплаты YuKassa редиректит на:
 
 ```
-https://pulse-frontend-jt53.onrender.com/#/payment/return?payment_id=...&return=1
+https://pulse.inside-trade.ru/#/payment/return?payment_id=...&return=1
 ```
+
+> URL берётся из переменной `FRONTEND_URL`. Убедитесь, что в Render она равна `https://pulse.inside-trade.ru`, иначе пользователь уйдёт на старый onrender-домен.
 
 Фронтенд начинает polling `GET /api/payment/status/:id` каждые 2 сек × 15 попыток.
 
@@ -648,18 +650,24 @@ GET /api/user/vapid-public-key
 
 ---
 
-## 12. Webhook auto-setup
+## 12. Webhook setup
 
-При старте сервера backend автоматически регистрирует webhooks в YuKassa:
+Управление webhooks в YuKassa (`/v3/webhooks`) работает **только через OAuth**. Basic Auth (Shop ID + Secret Key) подходит для создания платежей, но не для регистрации webhook через API.
 
-- `payment.succeeded`
-- `payment.canceled`
+Поэтому backend **не регистрирует webhook автоматически**. Нужно добавить его вручную в личном кабинете YuKassa:
 
-URL:
+| Параметр | Значение |
+|----------|----------|
+| URL | `https://pulse-api-bsov.onrender.com/api/webhook/yookassa` |
+| События | `payment.succeeded`, `payment.canceled` |
 
-```
-${BACKEND_URL}/api/webhook/yookassa
-```
+После этого входящие уведомления от YuKassa будут приходить на backend, где:
+
+- проверяется IP-адрес отправителя (только сети YuKassa);
+- событие логируется в `webhook_events`;
+- при `payment.succeeded` активируется подписка.
+
+Если в будущем появится `YOOKASSA_OAUTH_TOKEN`, backend сможет автоматически проверять и обновлять webhook при старте.
 
 ---
 
@@ -670,7 +678,8 @@ ${BACKEND_URL}/api/webhook/yookassa
 | Переменная | Описание |
 |------------|----------|
 | `YOOKASSA_SHOP_ID` | ID магазина |
-| `YOOKASSA_SECRET_KEY` | Секретный ключ |
+| `YOOKASSA_SECRET_KEY` | Секретный ключ для API платежей |
+| `YOOKASSA_OAUTH_TOKEN` | OAuth-токен для авто-настройки webhook (опционально) |
 
 ### URLs
 
@@ -690,10 +699,11 @@ ${BACKEND_URL}/api/webhook/yookassa
 ### Пример `.env`
 
 ```bash
-YOOKASSA_SHOP_ID=123456
-YOOKASSA_SECRET_KEY=test_xxx...
+YOOKASSA_SHOP_ID=1402795
+YOOKASSA_SECRET_KEY=live_xxx...
+# YOOKASSA_OAUTH_TOKEN=                      # опционально, для авто-настройки webhook
 
-FRONTEND_URL=https://pulse-frontend-jt53.onrender.com
+FRONTEND_URL=https://pulse.inside-trade.ru
 BACKEND_URL=https://pulse-api-bsov.onrender.com
 
 VAPID_PUBLIC_KEY=BK...
@@ -720,10 +730,20 @@ WHERE id = '...';
 
 ### Webhook не приходит
 
-```bash
-curl -u "SHOP_ID:SECRET_KEY" https://api.yookassa.ru/v3/webhooks
-curl -I https://pulse-api-bsov.onrender.com/api/webhook/yookassa
-```
+1. Проверьте, что webhook добавлен вручную в ЛК YuKassa:
+   - URL: `https://pulse-api-bsov.onrender.com/api/webhook/yookassa`
+   - События: `payment.succeeded`, `payment.canceled`
+2. Проверьте доступность endpoint:
+   ```bash
+   curl -I https://pulse-api-bsov.onrender.com/api/webhook/yookassa
+   ```
+3. Проверьте, что запрос снаружи отклоняется по IP (должен вернуть 403):
+   ```bash
+   curl -X POST https://pulse-api-bsov.onrender.com/api/webhook/yookassa \
+     -H "Content-Type: application/json" \
+     -d '{"type":"notification","event":"payment.succeeded","object":{"id":"test"}}'
+   ```
+4. Посмотрите логи Render на строки `[YooKassa Webhook]` и таблицу `webhook_events`.
 
 ### Повторный webhook не должен продлевать подписку
 
