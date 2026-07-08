@@ -34,17 +34,54 @@ function adminMiddleware(req: AuthRequest, res: any, next: any) {
   });
 }
 
-// GET /api/admin/users — list all users
+// GET /api/admin/users — list all users with payment totals
 router.get('/users', adminMiddleware, async (_req, res) => {
   try {
-    const result = await query(
-      `SELECT id, email, username, is_verified, is_admin, subscription_active,
-              subscription_expires_at, news_count, created_at
-       FROM users ORDER BY created_at DESC LIMIT 500`
-    );
+    const sql = USE_SQLITE
+      ? `SELECT 
+           u.id, u.email, u.username, u.is_verified, u.is_admin,
+           u.subscription_active, u.subscription_expires_at,
+           u.news_count, u.created_at,
+           COALESCE(p.total_payments, 0) as total_payments,
+           COALESCE(p.total_amount, 0) as total_amount
+         FROM users u
+         LEFT JOIN (
+           SELECT user_id,
+                  COUNT(*) as total_payments,
+                  COALESCE(SUM(amount), 0) as total_amount
+           FROM payments
+           WHERE status = 'completed'
+           GROUP BY user_id
+         ) p ON p.user_id = u.id
+         ORDER BY u.created_at DESC LIMIT 500`
+      : `SELECT 
+           u.id, u.email, u.username, u.is_verified, u.is_admin,
+           u.subscription_active, u.subscription_expires_at,
+           u.news_count, u.created_at,
+           COALESCE(p.total_payments, 0)::int as total_payments,
+           COALESCE(p.total_amount, 0)::float as total_amount
+         FROM users u
+         LEFT JOIN (
+           SELECT user_id,
+                  COUNT(*)::int as total_payments,
+                  COALESCE(SUM(amount), 0)::float as total_amount
+           FROM payments
+           WHERE status = 'completed'
+           GROUP BY user_id
+         ) p ON p.user_id = u.id
+         ORDER BY u.created_at DESC LIMIT 500`;
 
-    res.json({ users: result.rows });
+    const result = await query(sql);
+
+    const users = result.rows.map((row: any) => ({
+      ...row,
+      total_payments: Number(row.total_payments ?? 0),
+      total_amount: Number(row.total_amount ?? 0),
+    }));
+
+    res.json({ users });
   } catch (err) {
+    console.error('[Admin] Failed to fetch users:', err);
     res.status(500).json({ error: 'Failed to fetch users' });
   }
 });
