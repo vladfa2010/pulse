@@ -160,7 +160,7 @@ router.post('/create', authMiddleware, validate(CreatePaymentSchema), async (req
       confirmation: { type: 'redirect', return_url: buildReturnUrl(paymentId) },
       description: `PULSE ${plan.name} — ${userEmail}`.slice(0, 128),
       // save_payment_method: 'on', // TODO: включить после одобрения recurring-платежей ЮKassa
-      merchant_customer_id: userId,
+      // merchant_customer_id: userId, // TODO: вернуть вместе с save_payment_method
       metadata: {
         payment_id: paymentId,
         user_id: userId,
