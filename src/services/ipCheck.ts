@@ -83,6 +83,12 @@ export function isYookassaIp(ip: string): boolean {
 }
 
 export function getClientIp(headers: IncomingHttpHeaders, reqIp?: string): string | undefined {
+  // Cloudflare / Render expose the real client IP in these headers.
+  const cf = headers['cf-connecting-ip'] || headers['true-client-ip'];
+  if (typeof cf === 'string' && cf.trim()) {
+    return cf.trim();
+  }
+
   const forwarded = headers['x-forwarded-for'];
   if (typeof forwarded === 'string') {
     // Use the last entry (added by the closest trusted proxy) to prevent spoofing.
