@@ -23,7 +23,7 @@ VALUES
   ('free',    'Free',    0,     0,      3,
    '{"telegram":false,"push":false,"ai_summary":false,"alerts":false,"priority":"normal"}',
    1, TRUE, NULL),
-  ('base',    'Base',    450,   4320,   10,
+  ('base',    'Base',    100,   960,    10,
    '{"telegram":true,"push":true,"ai_summary":false,"alerts":false,"priority":"normal"}',
    2, TRUE, NULL),
   ('premium', 'Premium', 990,   9504,   25,
