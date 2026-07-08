@@ -70,8 +70,11 @@ docker-compose up
 | Method | Endpoint | Описание |
 |--------|----------|----------|
 | POST | `/api/payment/create` | Создание платежа |
-| POST | `/api/payment/confirm` | Подтверждение |
+| POST | `/api/payment/confirm` | Подтверждение (demo) |
 | GET | `/api/payment/history` | История |
+| POST | `/api/webhook/yookassa` | Webhook от YuKassa (вручную настроен в ЛК) |
+
+> Подробнее о платежах: [`PAYMENTS.md`](./PAYMENTS.md). Webhook URL в ЛК YuKassa: `https://pulse-api-bsov.onrender.com/api/webhook/yookassa`.
 
 ### Translate
 | Method | Endpoint | Описание |

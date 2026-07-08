@@ -654,14 +654,14 @@ GET /api/user/vapid-public-key
 
 Управление webhooks в YuKassa (`/v3/webhooks`) работает **только через OAuth**. Basic Auth (Shop ID + Secret Key) подходит для создания платежей, но не для регистрации webhook через API.
 
-Поэтому backend **не регистрирует webhook автоматически**. Нужно добавить его вручную в личном кабинете YuKassa:
+Поэтому backend **не регистрирует webhook автоматически** при старте. Webhook уже добавлен вручную в личном кабинете YuKassa:
 
 | Параметр | Значение |
 |----------|----------|
 | URL | `https://pulse-api-bsov.onrender.com/api/webhook/yookassa` |
 | События | `payment.succeeded`, `payment.canceled` |
 
-После этого входящие уведомления от YuKassa будут приходить на backend, где:
+Входящие уведомления от YuKassa приходят на backend, где:
 
 - проверяется IP-адрес отправителя (только сети YuKassa);
 - событие логируется в `webhook_events`;
@@ -730,7 +730,7 @@ WHERE id = '...';
 
 ### Webhook не приходит
 
-1. Проверьте, что webhook добавлен вручную в ЛК YuKassa:
+1. Убедитесь, что webhook в ЛК YuKassa всё ещё активен:
    - URL: `https://pulse-api-bsov.onrender.com/api/webhook/yookassa`
    - События: `payment.succeeded`, `payment.canceled`
 2. Проверьте доступность endpoint:
