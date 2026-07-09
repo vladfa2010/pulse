@@ -18,8 +18,8 @@
               ▼                               ▼
 ┌──────────────────────────┐    ┌──────────────────────────────┐
 │   FRONTEND               │    │   BACKEND                    │
-│   pulse-frontend-jt53    │    │   pulse-api-bsov             │
-│   .onrender.com          │    │   .onrender.com              │
+│   pulse.inside-trade.ru  │    │   pulse-api-bsov             │
+│   (custom domain)        │    │   .onrender.com              │
 │                          │    │                              │
 │   Render Static Site     │◄──►│   Render Web Service         │
 │   - React SPA            │    │   - Node.js + Express        │
@@ -50,7 +50,7 @@
 
 | Сервис | Render ID | URL |
 |--------|-----------|-----|
-| pulse-frontend (Static Site) | `srv-d8ao626k1jcs73856fbg` | https://pulse-frontend-jt53.onrender.com |
+| pulse-frontend (Static Site) | `srv-d8ao626k1jcs73856fbg` | https://pulse-frontend-jt53.onrender.com (custom domain: https://pulse.inside-trade.ru) |
 | pulse-api (Web Service) | `srv-d8a2fum7r5hc73e11pbg` | https://pulse-api-bsov.onrender.com |
 | pulse-app (Static Site, legacy) | `srv-d8aafhrbc2fs73ak9790` | https://pulse-app-nfez.onrender.com |
 
@@ -78,7 +78,8 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 ## Frontend (Render Static Site)
 
 ### URL
-**https://pulse-frontend-jt53.onrender.com**
+**Production:** https://pulse.inside-trade.ru  
+**Render URL:** https://pulse-frontend-jt53.onrender.com
 
 ### Render Settings
 | Поле | Значение |
@@ -130,11 +131,16 @@ npm run build   # выход в dist/
 | `USE_SQLITE` | `false` | `false` = PostgreSQL (production), `true` = SQLite (local) |
 | `DATABASE_URL` | `(скрыт)` | PostgreSQL Internal Database URL от Render |
 | `JWT_SECRET` | `(скрыт)` | Секрет для JWT токенов |
+| `FRONTEND_URL` | `https://pulse.inside-trade.ru` | URL фронтенда для редиректов и ссылок в письмах |
 | `YOOKASSA_SHOP_ID` | `(скрыт)` | ЮKassa shop ID (demo: 54401) |
 | `YOOKASSA_SECRET_KEY` | `(скрыт)` | ЮKassa secret key |
 | `KIMI_API_KEY` | `(скрыт)` | Kimi API (api.moonshot.ai) для перевода EN→RU, sentiment analysis, tag matching |
 | `CRON_SECRET_KEY` | `(скрыт)` | Секрет для manual triggers (/trigger-rss, /backfill-tags, /backfill-translate) |
-| `SENDGRID_API_KEY` | `(скрыт)` | SendGrid API ключ |
+| `EMAIL_PROVIDER` | `(скрыт)` | `resend` / `yandex` / `none` |
+| `EMAIL_FROM` | `(скрыт)` | Адрес отправителя (`noreply@pulse.inside-trade.ru`) |
+| `RESEND_API_KEY` | `(скрыт)` | Resend API ключ |
+| `YANDEX_USER` | `(скрыт)` | Yandex SMTP логин |
+| `YANDEX_PASS` | `(скрыт)` | Yandex SMTP app-пароль |
 | `TELEGRAM_BOT_TOKEN` | `(скрыт)` | Telegram Bot токен |
 
 ### Git Repository
@@ -160,7 +166,7 @@ docker-compose up   # PostgreSQL 16 + Redis 7 + Backend
 
 - **Email:** `vladfa@ya.ru`
 - **Password:** `!1234567890`
-- **URL:** https://pulse-frontend-jt53.onrender.com
+- **URL:** https://pulse.inside-trade.ru
 
 ---
 
@@ -248,10 +254,16 @@ PORT=3000
 USE_SQLITE=true
 DATABASE_URL=postgresql://postgres:password@localhost:5432/pulse
 JWT_SECRET=your-secret-key
+FRONTEND_URL=https://pulse.inside-trade.ru
 YOOKASSA_SHOP_ID=54401
 YOOKASSA_SECRET_KEY=test_secret_key
 KIMI_API_KEY=your-kimi-api-key
 CRON_SECRET_KEY=your-cron-secret
 SENDGRID_API_KEY=your-sendgrid-key
 TELEGRAM_BOT_TOKEN=your-bot-token
+
+# Email
+EMAIL_PROVIDER=resend
+EMAIL_FROM=noreply@pulse.inside-trade.ru
+RESEND_API_KEY=re_xxxxxxxx
 ```

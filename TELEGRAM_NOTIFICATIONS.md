@@ -12,6 +12,7 @@
 | **Бот @Insidepulse_bot** | ✅ Работает | Отвечает на команды, webhook активен |
 | **Webhook auto-setup** | ✅ Реализовано | Автоматическая регистрация при старте сервера |
 | **HMAC-linking** | ✅ Реализовано | `/start <userId>:<token>` с verifyLinkToken |
+| **Fallback: код восстановления пароля** | ✅ Реализовано | Если email не дошёл, код отправляется в Telegram для пользователей с активным `user_channels.channel='telegram'` |
 | **OAuth Login Widget (banner)** | ✅ Реализовано | Кнопка «Подключить бота» на главной через `Telegram.Login.auth` |
 | **Профиль → Уведомления** | ✅ Реализовано | UI подключения/отключения бота |
 | **Desktop fallback** | ✅ Реализовано | Кнопка "Копировать" с `/start ...` для десктоп |
@@ -116,6 +117,9 @@
 ### Требования
 - **Premium подписка** — бот работает только для Premium пользователей ✅
 - **HMAC-подпись** — ссылка содержит защитный токен, предотвращает подмену user_id ✅
+
+### Telegram как fallback-канал для восстановления пароля
+Если пользователь запросил восстановление пароля, но email с кодом не удалось отправить (например, провайдер недоступен или адрес не принимает письма), backend ищет активный Telegram-канал (`user_channels.channel='telegram'`, `is_active=true`) и отправляет туда тот же 6-значный код. Email остаётся основным каналом; Telegram — резервный.
 
 ### Последовательность шагов
 
@@ -720,7 +724,7 @@ LIMIT 20;
    🏷 #crypto
 
 ━━━
-<a href="https://pulse-frontend-jt53.onrender.com">Открыть PULSE →</a>
+<a href="https://pulse.inside-trade.ru">Открыть PULSE →</a>
 <i>⏰ Следующая подборка через 1 час</i>
 ```
 
@@ -907,7 +911,7 @@ LIMIT 5;
    <i>РБК</i> · 17 янв
 
 ━━━
-<a href="https://pulse-frontend-jt53.onrender.com">Открыть PULSE →</a>
+<a href="https://pulse.inside-trade.ru">Открыть PULSE →</a>
 ```
 
 ### Период отчёта

@@ -3,7 +3,7 @@
 > Backend API для платформы PULSE — русскоязычный агрегатор инвестиционных новостей.
 
 **🌐 Production:** https://pulse-api-bsov.onrender.com  
-**🎨 Frontend:** https://pulse-frontend-jt53.onrender.com  
+**🎨 Frontend:** https://pulse.inside-trade.ru  
 **📄 Docs:** [DEPLOYMENT.md](./DEPLOYMENT.md) | [DESIGN_SPEC.md](./DESIGN_SPEC.md) | [PRODUCT_CONTEXT.md](./PRODUCT_CONTEXT.md) | [PUSH_NOTIFICATIONS.md](./PUSH_NOTIFICATIONS.md) | [SECURITY.md](./SECURITY.md)
 
 ---
@@ -45,8 +45,11 @@ docker-compose up
 ### Auth
 | Method | Endpoint | Описание |
 |--------|----------|----------|
-| POST | `/api/auth/register` | Регистрация |
+| POST | `/api/auth/register` | Регистрация (welcome-письмо) |
 | POST | `/api/auth/login` | Вход |
+| POST | `/api/auth/forgot-password` | Запрос кода восстановления пароля |
+| POST | `/api/auth/verify-code` | Проверка кода и выдача reset-токена |
+| POST | `/api/auth/reset-password` | Установка нового пароля |
 | POST | `/api/auth/logout` | Выход |
 | GET | `/api/auth/me` | Текущий пользователь |
 
@@ -121,10 +124,15 @@ Push реализованы через Firebase Cloud Messaging.
 | `USE_SQLITE` | `true` — SQLite, иначе PostgreSQL |
 | `JWT_SECRET` | Секрет для JWT |
 | `DATABASE_URL` | PostgreSQL connection string |
+| `FRONTEND_URL` | URL фронтенда (`https://pulse.inside-trade.ru`) |
 | `YOOKASSA_SHOP_ID` | ЮKassa shop ID |
 | `YOOKASSA_SECRET_KEY` | ЮKassa secret |
 | `KIMI_API_KEY` | Kimi Translate API |
-| `SENDGRID_API_KEY` | SendGrid API |
+| `EMAIL_PROVIDER` | Email-провайдер: `resend`, `yandex` или `none` |
+| `EMAIL_FROM` | Адрес отправителя (например `noreply@pulse.inside-trade.ru`) |
+| `RESEND_API_KEY` | Resend API ключ |
+| `YANDEX_USER` | Yandex SMTP логин |
+| `YANDEX_PASS` | Yandex SMTP app-пароль |
 | `TELEGRAM_BOT_TOKEN` | Telegram Bot token |
 
 ---

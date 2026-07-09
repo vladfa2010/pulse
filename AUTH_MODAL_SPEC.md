@@ -1,13 +1,13 @@
 # AuthModal — Полная спецификация
 
 > Этот документ — чертеж для 100% репликации логики. Можно передать новой команде/AI как ТЗ.
-> Версия: 2026-05-26
+> Версия: 2026-06-18
 
 ---
 
 ## 1. Общая концепция
 
-AuthModal — единый модальный компонент для аутентификации. Объединяет **Вход** и **Регистрацию** в одном окне с таб-переключением. После успешной регистрации показывает **Success-экран**.
+AuthModal — единый модальный компонент для аутентификации. Объединяет **Вход**, **Регистрацию** и **Восстановление пароля** в одном окне. После успешной регистрации или сброса пароля показывает **Success-экран**.
 
 ---
 
@@ -102,8 +102,9 @@ AuthModal — единый модальный компонент для ауте
 | State | Тип | Описание |
 |-------|-----|----------|
 | `isOpen` | boolean | Модал открыт/закрыт |
-| `mode` | `'login' \| 'register'` | Активная вкладка |
-| `step` | `'form' \| 'success'` | Форма или success-экран |
+| `mode` | `'login' \| 'register' \| 'forgot'` | Активная вкладка / режим |
+| `step` | `'form' \| 'success'` | Форма или success-экран (регистрация) |
+| `forgotStep` | `'email' \| 'code' \| 'password' \| 'success'` | Текущий шаг восстановления пароля |
 | `email` | string | Поле Email |
 | `password` | string | Поле Пароль |
 | `confirmPassword` | string | Поле Подтверждение пароля |
@@ -114,6 +115,13 @@ AuthModal — единый модальный компонент для ауте
 | `loading` | boolean | Идёт запрос |
 | `showPassword` | boolean | Показать пароль (глазок) |
 | `showConfirm` | boolean | Показать подтверждение |
+| `showNewPassword` | boolean | Показать новый пароль (сброс) |
+| `showNewConfirm` | boolean | Показать подтверждение нового пароля |
+| `newPassword` | string | Новый пароль |
+| `confirmNewPassword` | string | Подтверждение нового пароля |
+| `code` | string | 6-значный код из письма |
+| `resetToken` | string | JWT-токен для сброса пароля |
+| `resendTimer` | number | Таймер повторной отправки кода (сек) |
 
 ---
 
@@ -169,7 +177,7 @@ AuthModal — единый модальный компонент для ауте
 
 **Компонент:** `PasswordStrength.tsx`
 
-**Отображается:** Только в режиме `register`, под полем пароля
+**Отображается:** В режиме `register` и на шаге установки нового пароля (`forgot` → `password`), под полем пароля
 
 **4 сегмента индикатора:**
 
@@ -249,11 +257,58 @@ CheckCircle: scale 0→1, spring, delay 0.1s
 - Клик вне модала (backdrop)
 - Клик "Начать" на Success-экране
 - Успешный login
+- Успешный сброс пароля
 
 **Поведение:**
-1. `reset()` — **все поля очищаются**, `step = 'form'`, `mode = 'login'`
+1. `reset()` — **все поля очищаются**, `step = 'form'`, `mode = 'login'`, `forgotStep = 'email'`
 2. `onClose()` — `isOpen = false`
 3. Анимация: `opacity 1→0` (200ms)
+
+### US-9: Переход к восстановлению пароля
+
+**Триггер:** Клик "Забыли пароль?" в режиме `login`
+
+**Поведение:**
+1. `switchMode('forgot')`
+2. `forgotStep = 'email'`
+3. Показывается форма ввода email с кнопкой "Назад ко входу"
+
+### US-10: Отправка кода восстановления
+
+**Предусловия:**
+- `mode === 'forgot'`, `forgotStep === 'email'`
+- Поле email заполнено
+
+**Поток:**
+1. `handleForgotEmail()`
+2. `POST /api/auth/forgot-password` → `{ email }`
+3. **Успех:** `forgotStep = 'code'`, `resendTimer = 60`
+4. **Ошибка:** `error = result.error`
+
+### US-11: Проверка кода
+
+**Предусловия:**
+- `mode === 'forgot'`, `forgotStep === 'code'`
+- `code.length === 6`
+
+**Поток:**
+1. `handleForgotVerify()`
+2. `POST /api/auth/verify-code` → `{ email, code }`
+3. **Успех:** сохраняем `resetToken`, `forgotStep = 'password'`
+4. **Ошибка:** `error = 'Неверный или просроченный код'`
+
+### US-12: Установка нового пароля
+
+**Предусловия:**
+- `mode === 'forgot'`, `forgotStep === 'password'`
+- `newPassword.length >= 8`
+- `newPassword === confirmNewPassword`
+
+**Поток:**
+1. `handleForgotReset()`
+2. `POST /api/auth/reset-password` → `{ resetToken, password }`
+3. **Успех:** сохраняем JWT, обновляем пользователя, `forgotStep = 'success'`
+4. **Ошибка:** `error = result.error`
 
 ---
 
@@ -267,8 +322,10 @@ CheckCircle: scale 0→1, spring, delay 0.1s
 | **Подтвердите пароль** | `register` | Та же анимация |
 | **Запомнить меня** | `login` | — (статично) |
 | **Согласие с условиями** | `register` | Та же анимация |
-| **PasswordStrength** | `register` | — (условный рендер) |
+| **PasswordStrength** | `register`, `forgot` (password) | — (условный рендер) |
 | **Забыли пароль?** | `login` | — (статично) |
+| **Код из письма** | `forgot` (code) | — |
+| **Новый пароль / Подтверждение** | `forgot` (password) | — |
 
 ---
 
@@ -288,6 +345,11 @@ CheckCircle: scale 0→1, spring, delay 0.1s
 | "Необходимо согласиться с условиями" | `!agreed` при submit register |
 | "Неправильный логин или пароль" | Backend вернул ошибку login |
 | "Ошибка регистрации" | Backend вернул ошибку register |
+| "Введите email" | Пустой email в forgot |
+| "Введите 6 цифр кода" | Код неполный в verify-code |
+| "Не удалось отправить код" | Backend вернул ошибку forgot |
+| "Неверный или просроченный код" | Backend вернул ошибку verify-code |
+| "Не удалось сменить пароль" | Backend вернул ошибку reset |
 | "Сетевая ошибка" | Fetch throw (TypeError) |
 
 **При переключении таба:** `error = ''` (очищается)
@@ -372,11 +434,11 @@ Font (CTA):     14px, semibold
 - `AuthModalContext.tsx` — контекст управления состоянием
 
 ### Хуки
-- `useAuth()` — `login(email, password)` и `register(username, email, password)`
+- `useAuth()` — `login(email, password)`, `register(username, email, password)`, `forgotPassword(email)`, `verifyCode(email, code)`, `resetPassword(resetToken, password)`
 
 ### Иконки (Lucide)
 ```
-X, Mail, Lock, User, Eye, EyeOff, CheckCircle
+X, Mail, Lock, User, Eye, EyeOff, CheckCircle, ArrowLeft
 ```
 
 ### Библиотеки
@@ -401,6 +463,30 @@ POST /api/auth/register
 Body: { username: string, email: string, password: string }
 Response: { token: string, user: { id, username, email, ... } }
 Error: { error: string }
+```
+
+### Forgot password — request code
+```
+POST /api/auth/forgot-password
+Body: { email: string }
+Response: { success: true }
+Error: { error: string }
+```
+
+### Verify code
+```
+POST /api/auth/verify-code
+Body: { email: string, code: string }
+Response: { resetToken: string }
+Error: { error: string, code: 'CODE_INVALID_OR_EXPIRED' }
+```
+
+### Reset password
+```
+POST /api/auth/reset-password
+Body: { resetToken: string, password: string }
+Response: { token: string, user: { id, username, email, ... } }
+Error: { error: string, code: 'INVALID_RESET_TOKEN' }
 ```
 
 ### User mapping (frontend)
