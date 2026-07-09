@@ -25,8 +25,13 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { query } from '../config/db';
 import { validate } from '../middleware/validate';
-import { RegisterSchema, LoginSchema } from '../schemas/auth';
+import {
+  RegisterSchema, LoginSchema,
+  ForgotPasswordSchema, VerifyCodeSchema, ResetPasswordSchema,
+} from '../schemas/auth';
 import { buildSubscriptionStatus } from '../services/subscription';
+import { sendPasswordResetCodeEmail, sendWelcomeEmail } from '../services/email';
+import { sendTelegramMessage } from '../services/telegram';
 
 const router = Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
@@ -84,6 +89,11 @@ router.post('/register', validate(RegisterSchema), async (req, res) => {
       `INSERT INTO notification_settings (user_id) VALUES ($1)`,
       [userId]
     );
+
+    // ─── Отправляем welcome-письмо (не блокируем ответ) ─────────────────
+    sendWelcomeEmail(email, username).catch((err: any) => {
+      console.error('[Auth] Welcome email failed:', err.message);
+    });
 
     // ─── Генерируем JWT токен ───────────────────────────────────────────
     const token = jwt.sign({ userId, email, is_admin: false }, JWT_SECRET, { expiresIn: '7d' });
@@ -166,6 +176,187 @@ router.post('/login', validate(LoginSchema), async (req, res) => {
   } catch (err: any) {
     console.error('[Auth] Login error:', err.message);
     res.status(500).json({ error: 'Login failed', details: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// POST /api/auth/forgot-password — Запрос кода восстановления
+// ═══════════════════════════════════════════════════════════════════════════
+router.post('/forgot-password', validate(ForgotPasswordSchema), async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    const userResult = await query(
+      `SELECT id, email, username FROM users WHERE LOWER(email) = LOWER($1)`,
+      [email]
+    );
+
+    // Не раскрываем, существует ли email
+    if (userResult.rows.length === 0) {
+      return res.json({ success: true });
+    }
+
+    const user = userResult.rows[0];
+
+    // Удаляем старые коды пользователя
+    await query(
+      `DELETE FROM password_reset_codes WHERE user_id = $1`,
+      [user.id]
+    );
+
+    // Генерируем 6-значный код
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+
+    await query(
+      `INSERT INTO password_reset_codes (user_id, code, expires_at)
+       VALUES ($1, $2, $3)`,
+      [user.id, code, expiresAt]
+    );
+
+    // Отправляем email
+    let sent = await sendPasswordResetCodeEmail(email, code);
+
+    // Fallback в Telegram, если email не удался
+    if (!sent) {
+      const tgResult = await query(
+        `SELECT target FROM user_channels
+         WHERE user_id = $1 AND channel = 'telegram' AND is_active = ${USE_SQLITE ? '1' : 'TRUE'}
+         LIMIT 1`,
+        [user.id]
+      );
+      if (tgResult.rows.length > 0) {
+        const chatId = tgResult.rows[0].target;
+        const tgText = `Код для восстановления пароля PULSE: ${code}. Действителен 15 минут.`;
+        sent = await sendTelegramMessage(chatId, tgText);
+      }
+    }
+
+    if (!sent) {
+      console.error('[Auth] Failed to deliver reset code to', email);
+    }
+
+    res.json({ success: true });
+  } catch (err: any) {
+    console.error('[Auth] Forgot password error:', err.message);
+    res.status(500).json({ error: 'Failed to process request' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// POST /api/auth/verify-code — Проверка кода и выдача reset-токена
+// ═══════════════════════════════════════════════════════════════════════════
+router.post('/verify-code', validate(VerifyCodeSchema), async (req, res) => {
+  try {
+    const { email, code } = req.body;
+
+    const userResult = await query(
+      `SELECT id FROM users WHERE LOWER(email) = LOWER($1)`,
+      [email]
+    );
+    if (userResult.rows.length === 0) {
+      return res.status(400).json({ error: 'Неверный или просроченный код', code: 'CODE_INVALID_OR_EXPIRED' });
+    }
+    const userId = userResult.rows[0].id;
+
+    const codeResult = await query(
+      `SELECT id, code FROM password_reset_codes
+       WHERE user_id = $1 AND used = ${USE_SQLITE ? '0' : 'FALSE'} AND expires_at > NOW()
+       ORDER BY created_at DESC LIMIT 1`,
+      [userId]
+    );
+
+    if (codeResult.rows.length === 0 || codeResult.rows[0].code !== code) {
+      return res.status(400).json({ error: 'Неверный или просроченный код', code: 'CODE_INVALID_OR_EXPIRED' });
+    }
+
+    // Помечаем код использованным
+    await query(
+      `UPDATE password_reset_codes SET used = ${USE_SQLITE ? '1' : 'TRUE'}, used_at = NOW() WHERE id = $1`,
+      [codeResult.rows[0].id]
+    );
+
+    const resetToken = jwt.sign(
+      { userId, email, purpose: 'password_reset' },
+      JWT_SECRET,
+      { expiresIn: '15m' }
+    );
+
+    res.json({ resetToken });
+  } catch (err: any) {
+    console.error('[Auth] Verify code error:', err.message);
+    res.status(500).json({ error: 'Failed to verify code' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// POST /api/auth/reset-password — Сброс пароля
+// ═══════════════════════════════════════════════════════════════════════════
+router.post('/reset-password', validate(ResetPasswordSchema), async (req, res) => {
+  try {
+    const { resetToken, password } = req.body;
+
+    let decoded: { userId: string; email: string; purpose?: string };
+    try {
+      decoded = jwt.verify(resetToken, JWT_SECRET) as any;
+    } catch {
+      return res.status(401).json({ error: 'Недействительная или просроченная ссылка', code: 'INVALID_RESET_TOKEN' });
+    }
+
+    if (decoded.purpose !== 'password_reset') {
+      return res.status(401).json({ error: 'Недействительная или просроченная ссылка', code: 'INVALID_RESET_TOKEN' });
+    }
+
+    if (!password || password.length < 8) {
+      return res.status(400).json({ error: 'Пароль должен быть не менее 8 символов' });
+    }
+
+    const userResult = await query(
+      `SELECT id, email, username, password_hash, is_admin, subscription_active, subscription_plan,
+              subscription_expires_at, subscription_auto_renew, scheduled_plan_downgrade
+       FROM users WHERE id = $1`,
+      [decoded.userId]
+    );
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Пользователь не найден' });
+    }
+
+    const user = userResult.rows[0];
+    const passwordHash = await bcrypt.hash(password, 10);
+
+    await query(
+      `UPDATE users SET password_hash = $1 WHERE id = $2`,
+      [passwordHash, user.id]
+    );
+
+    const isAdmin = user.is_admin === 1 || user.is_admin === true;
+    const token = jwt.sign(
+      { userId: user.id, email: user.email, is_admin: isAdmin },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    const subStatus = buildSubscriptionStatus({
+      plan: user.subscription_plan || 'free',
+      active: !!user.subscription_active,
+      expiresAt: user.subscription_expires_at ? new Date(user.subscription_expires_at) : null,
+      autoRenew: !!user.subscription_auto_renew,
+      scheduledDowngrade: user.scheduled_plan_downgrade || null,
+    });
+
+    res.json({
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        username: user.username,
+        is_admin: isAdmin,
+        subscription: subStatus,
+      },
+    });
+  } catch (err: any) {
+    console.error('[Auth] Reset password error:', err.message);
+    res.status(500).json({ error: 'Failed to reset password' });
   }
 });
 

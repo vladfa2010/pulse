@@ -24,6 +24,40 @@ export const authLimiter = rateLimit({
   standardHeaders: true,   // X-RateLimit-*
   legacyHeaders: false,    // Отключаем X-Rate-Limit-*
   keyGenerator: (req) => req.ip || 'unknown',
+  validate: { trustProxy: false },
+  skip: (req) => {
+    // У этих путей свои лимитеры
+    const path = req.path || '';
+    return ['/forgot-password', '/verify-code', '/reset-password'].includes(path);
+  },
+});
+
+// ─── Forgot password — защита от спама по email ───────────────────────────
+export const forgotPasswordLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,  // 1 час
+  max: 3,                     // 3 запроса в час
+  message: {
+    error: 'Слишком много попыток восстановления. Попробуйте через час.',
+    retryAfter: '1 hour',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.body?.email || req.ip || 'unknown',
+  validate: { trustProxy: false },
+});
+
+// ─── Password reset flow (verify-code / reset-password) ───────────────────
+export const passwordResetFlowLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,  // 15 минут
+  max: 10,                    // 10 попыток — flow из 3-4 запросов
+  message: {
+    error: 'Слишком много попыток. Попробуйте через 15 минут.',
+    retryAfter: '15 minutes',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.ip || 'unknown',
+  validate: { trustProxy: false },
 });
 
 // ─── API endpoints — стандартный лимит ────────────────────────────────────
@@ -41,6 +75,7 @@ export const apiLimiter = rateLimit({
     // Пропускаем health check (Render мониторинг)
     return req.path === '/health';
   },
+  validate: { trustProxy: false },
 });
 
 // ─── Webhook endpoints — высокий лимит ────────────────────────────────────
@@ -53,4 +88,5 @@ export const webhookLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { trustProxy: false },
 });

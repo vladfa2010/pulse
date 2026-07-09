@@ -127,6 +127,77 @@ async function sendViaYandex(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Password Reset Code Email
+// ═══════════════════════════════════════════════════════════════════════════
+export async function sendPasswordResetCodeEmail(
+  to: string,
+  code: string
+): Promise<boolean> {
+  const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"></head>
+<body style="font-family: Arial, sans-serif; background: #0a0a0a; margin: 0; padding: 20px; color: #e5e5e5;">
+<div style="max-width: 480px; margin: 0 auto; background: #111111; border-radius: 16px; overflow: hidden; border: 1px solid #222222;">
+  <div style="background: linear-gradient(135deg, #00D4FF, #0099CC); padding: 28px; text-align: center;">
+    <h1 style="color: #060606; margin: 0; font-size: 22px; font-weight: 700;">PULSE</h1>
+    <p style="color: rgba(6,6,6,0.75); margin: 6px 0 0; font-size: 13px;">Восстановление пароля</p>
+  </div>
+  <div style="padding: 28px;">
+    <p style="font-size: 15px; line-height: 1.5; margin: 0 0 20px;">Вы запросили восстановление пароля. Используйте код ниже. Он действителен <strong>15 минут</strong>.</p>
+    <div style="text-align: center; margin: 24px 0;">
+      <span style="display: inline-block; letter-spacing: 8px; font-size: 32px; font-weight: 700; font-family: monospace; background: #161616; border: 1px solid #222222; border-radius: 10px; padding: 14px 24px; color: #00D4FF;">${code}</span>
+    </div>
+    <p style="font-size: 13px; color: #888; line-height: 1.5; margin: 0;">Если вы не запрашивали восстановление, просто проигнорируйте это письмо.</p>
+  </div>
+  <div style="text-align: center; padding: 18px; border-top: 1px solid #222222; font-size: 12px; color: #555;">
+    © PULSE
+  </div>
+</div>
+</body></html>`;
+
+  return sendEmail(to, 'PULSE — код для восстановления пароля', html);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Welcome Email
+// ═══════════════════════════════════════════════════════════════════════════
+export async function sendWelcomeEmail(
+  to: string,
+  username: string
+): Promise<boolean> {
+  const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"></head>
+<body style="font-family: Arial, sans-serif; background: #0a0a0a; margin: 0; padding: 20px; color: #e5e5e5;">
+<div style="max-width: 480px; margin: 0 auto; background: #111111; border-radius: 16px; overflow: hidden; border: 1px solid #222222;">
+  <div style="background: linear-gradient(135deg, #00D4FF, #0099CC); padding: 28px; text-align: center;">
+    <h1 style="color: #060606; margin: 0; font-size: 22px; font-weight: 700;">Добро пожаловать в PULSE</h1>
+  </div>
+  <div style="padding: 28px;">
+    <p style="font-size: 15px; line-height: 1.5; margin: 0 0 16px;">Привет, <strong>${escapeHtml(username)}</strong>!</p>
+    <p style="font-size: 15px; line-height: 1.5; margin: 0 0 20px;">Вы создали аккаунт в PULSE — сервисе персонализированных финансовых новостей. Добавляйте теги, отслеживайте рынок и получайте важные события первыми.</p>
+    <div style="text-align: center; margin: 24px 0;">
+      <a href="${process.env.FRONTEND_URL || 'https://pulse.inside-trade.ru'}" style="display: inline-block; background: linear-gradient(135deg, #00D4FF, #0099CC); color: #060606; text-decoration: none; padding: 12px 24px; border-radius: 8px; font-weight: 600;">Открыть PULSE</a>
+    </div>
+    <p style="font-size: 13px; color: #888; line-height: 1.5; margin: 0;">Если у вас есть вопросы, ответьте на это письмо.</p>
+  </div>
+  <div style="text-align: center; padding: 18px; border-top: 1px solid #222222; font-size: 12px; color: #555;">
+    © PULSE
+  </div>
+</div>
+</body></html>`;
+
+  return sendEmail(to, 'Добро пожаловать в PULSE', html);
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Weekly Report Email
 // ═══════════════════════════════════════════════════════════════════════════
 export async function sendWeeklyReportEmail(

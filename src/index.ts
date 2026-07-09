@@ -31,7 +31,7 @@ import adminRoutes from './routes/admin';
 import sentimentRoutes from './routes/sentiment';
 import appRoutes from './routes/app';
 import { authMiddleware, AuthRequest } from './middleware/auth';
-import { apiLimiter, authLimiter, webhookLimiter } from './middleware/rateLimit';
+import { apiLimiter, authLimiter, webhookLimiter, forgotPasswordLimiter, passwordResetFlowLimiter } from './middleware/rateLimit';
 import { startCron } from './services/cron';   // RSS cron отключен (TZ_REMOVE_DUPLICATE_RSS_CRON) — модуль оставлен для отката
 import { startReportCron, sendWeeklyReportForUser } from './services/reports'; // ← Еженедельные репорты
 import { startDigestCron, sendAllDigests } from './services/digest'; // ← TG дайджест (каждый час)
@@ -3514,6 +3514,10 @@ app.get('/sentiment-stats', async (req, res) => {
 
 // API Routes — все эндпоинты начинаются с /api/
 // ═══════════════════════════════════════════════════════════════════════════
+// Лимитеры для восстановления пароля (сначала — специфичные, потом общий authLimiter)
+app.use('/api/auth/forgot-password', forgotPasswordLimiter); // 3/час на email
+app.use('/api/auth/verify-code', passwordResetFlowLimiter);
+app.use('/api/auth/reset-password', passwordResetFlowLimiter);
 app.use('/api/auth', authLimiter, authRoutes);  // Строгий лимит (5/15min) — защита от брутфорса
 app.use('/api/news', newsRoutes);       // GET /api/news, /api/news/:tag
 app.use('/api/payment', paymentRoutes); // POST /api/payment/create, /confirm
@@ -4237,6 +4241,8 @@ async function start() {
     { sql: `CREATE INDEX IF NOT EXISTS idx_webhook_events_created_at ON webhook_events(created_at DESC)`, name: 'idx_webhook_events_created_at' },
     { sql: `CREATE TABLE IF NOT EXISTS subscription_notifications_sent (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, type VARCHAR(30) NOT NULL, sent_at TIMESTAMP DEFAULT ${_SQL_NOW}, UNIQUE(user_id, type))`, name: 'subscription_notifications_sent' },
     { sql: `CREATE INDEX IF NOT EXISTS idx_sub_notif_user_type ON subscription_notifications_sent(user_id, type)`, name: 'idx_sub_notif_user_type' },
+    { sql: `CREATE TABLE IF NOT EXISTS password_reset_codes (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, code VARCHAR(6) NOT NULL, created_at TIMESTAMPTZ DEFAULT ${_SQL_NOW}, expires_at TIMESTAMPTZ NOT NULL, used_at TIMESTAMPTZ, used BOOLEAN DEFAULT FALSE)`, name: 'password_reset_codes' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_password_reset_codes_user_expires ON password_reset_codes(user_id, expires_at DESC)`, name: 'idx_password_reset_codes_user_expires' },
   ];
   for (const m of migrations) {
     try {

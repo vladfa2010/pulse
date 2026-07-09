@@ -284,6 +284,19 @@ export async function initSQLiteSchema(): Promise<void> {
       imoex_updated_at TEXT,
       updated_at TEXT DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS password_reset_codes (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      code TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now')),
+      expires_at TEXT NOT NULL,
+      used_at TEXT,
+      used INTEGER DEFAULT 0
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_password_reset_codes_user_expires
+    ON password_reset_codes (user_id, expires_at DESC);
   `;
 
   const statements = schema.split(';').filter(s => s.trim());

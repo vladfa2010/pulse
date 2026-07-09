@@ -481,3 +481,19 @@ CREATE TABLE IF NOT EXISTS sentiment_index_cache (
   updated_at       TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- ============================================================
+-- 15. password_reset_codes (восстановление пароля)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS password_reset_codes (
+  id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  code        VARCHAR(6) NOT NULL,
+  created_at  TIMESTAMPTZ DEFAULT NOW(),
+  expires_at  TIMESTAMPTZ NOT NULL,
+  used_at     TIMESTAMPTZ,
+  used        BOOLEAN DEFAULT FALSE
+);
+
+CREATE INDEX IF NOT EXISTS idx_password_reset_codes_user_expires
+ON password_reset_codes (user_id, expires_at DESC);
+
