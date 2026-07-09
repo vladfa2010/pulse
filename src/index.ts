@@ -1260,7 +1260,7 @@ app.get('/admin/users', requireAdmin, async (req, res) => {
       LEFT JOIN (
         SELECT user_id, COUNT(*) as total_payments, SUM(amount) as total_amount
         FROM payments
-        WHERE status = 'succeeded'
+        WHERE status = 'completed'
         GROUP BY user_id
       ) p ON p.user_id = u.id
       ORDER BY u.created_at DESC
@@ -1378,7 +1378,7 @@ app.get('/admin/users/:id', requireAdmin, async (req, res) => {
         created_at: p.created_at,
       })),
       total_amount: paymentsResult.rows
-        .filter((p: any) => p.status === 'succeeded')
+        .filter((p: any) => p.status === 'completed')
         .reduce((sum: number, p: any) => sum + parseFloat(p.amount), 0),
       tags: tagsResult.rows,
       channels: channelsResult.rows,
