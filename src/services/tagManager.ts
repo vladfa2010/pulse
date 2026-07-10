@@ -436,9 +436,9 @@ export function heuristicTagType(tagName: string): TagType {
 }
 
 // Создать пользовательский тег
-// Если tagType = 'auto' или пустой — определяем через LLM + enrichment
+// Если tagType = 'auto' или пустой — тип определяется эвристически, обогащение идёт в фоне.
 // При добавлении существующего тега user_defined_tags НЕ модифицируется.
-export async function createUserTag(userId: string, tagId: string, tagName: string, tagType: string): Promise<{ success: boolean; finalTagId?: string; detectedType?: TagType; enrichment?: TagEnrichment }> {
+export async function createUserTag(userId: string, tagId: string, tagName: string, tagType: string): Promise<{ success: boolean; finalTagId?: string; detectedType?: TagType; enrichment?: TagEnrichment; enriched?: boolean; backgroundEnrichmentStarted?: boolean }> {
   try {
     // 1. Сначала ищем точное совпадение по tag_id, затем — по названию.
     //    Это предотвращает подписку на дубль с другим ID при клике по конкретной карточке.
@@ -464,6 +464,8 @@ export async function createUserTag(userId: string, tagId: string, tagName: stri
     let finalTagId = tagId;
     let detectedType: TagType | undefined;
     let enrichment: TagEnrichment | null = null;
+    let enriched = false;
+    let backgroundEnrichmentStarted = false;
     let isNewTag = false;
 
     if (existingResult.rows.length > 0) {
@@ -473,18 +475,13 @@ export async function createUserTag(userId: string, tagId: string, tagName: stri
       finalType = existing.tag_type;
       detectedType = existing.tag_type as TagType;
       enrichment = existing.enriched_data || null;
+      enriched = !!existing.enriched_data;
       console.log(`[TagManager] Tag already exists by name/id "${existing.tag_name}" (${finalTagId}), subscribing user ${userId}`);
     } else {
-      // --- Тега нет: создаём с LLM-обогащением ---
+      // --- Тега нет: создаём сразу, обогащаем в фоне ---
       if (!tagType || tagType === 'auto') {
-        enrichment = await enrichTagViaLLM(tagName);
-        if (enrichment) {
-          detectedType = enrichment.tag_type;
-          finalType = enrichment.tag_type;
-        } else {
-          detectedType = await detectTagTypeViaLLM(tagName);
-          finalType = detectedType;
-        }
+        finalType = heuristicTagType(tagName);
+        detectedType = finalType as TagType;
       } else {
         finalType = tagType;
       }
@@ -494,30 +491,34 @@ export async function createUserTag(userId: string, tagId: string, tagName: stri
         finalType = 'company';
       }
 
-      // Build enriched keywords (base + LLM synonyms + products)
-      const keywords = enrichment
-        ? buildEnrichedKeywords(tagName, enrichment)
-        : generateTagKeywords(tagName);
+      // Base keywords — синхронно, без LLM
+      const keywords = generateTagKeywords(tagName);
 
-      // Save tag with enrichment data (no ON CONFLICT UPDATE)
+      // Save tag with empty enrichment (no ON CONFLICT UPDATE)
       try {
         await query(
           `INSERT INTO user_defined_tags (tag_id, tag_name, tag_type, keywords, enriched_data, created_by)
            VALUES ($1, $2, $3, $4, $5, $6)`,
-          [tagId, tagName, finalType, keywords, enrichment ? JSON.stringify(enrichment) : null, userId]
+          [tagId, tagName, finalType, keywords, null, userId]
         );
         isNewTag = true;
-        console.log(`[TagManager] Created tag "${tagId}": type=${finalType}, keywords=${keywords.length}${enrichment ? ', enriched' : ''}`);
+        backgroundEnrichmentStarted = true;
+        console.log(`[TagManager] Created tag "${tagId}": type=${finalType}, keywords=${keywords.length}, background enrichment started`);
+
+        // Fire-and-forget background enrichment
+        backgroundEnrichTag(tagId, tagName).catch(err => {
+          console.error(`[TagEnrich] Background enrichment failed for "${tagName}":`, err.message);
+        });
       } catch (err: any) {
         if (err.code === '23505') {
           // Race condition: другой пользователь создал тег между SELECT и INSERT
           const raceResult = await query(
-            `SELECT tag_id, tag_type FROM user_defined_tags WHERE tag_id = $1 LIMIT 1`,
+            `SELECT tag_id, tag_type, enriched_data FROM user_defined_tags WHERE tag_id = $1 LIMIT 1`,
             [tagId]
           );
           if (raceResult.rows.length === 0) {
             const raceNameResult = await query(
-              `SELECT tag_id, tag_type FROM user_defined_tags WHERE LOWER(tag_name) = LOWER($1) LIMIT 1`,
+              `SELECT tag_id, tag_type, enriched_data FROM user_defined_tags WHERE LOWER(tag_name) = LOWER($1) LIMIT 1`,
               [tagName]
             );
             if (raceNameResult.rows.length > 0) {
@@ -527,7 +528,8 @@ export async function createUserTag(userId: string, tagId: string, tagName: stri
           finalTagId = raceResult.rows[0]?.tag_id || tagId;
           finalType = raceResult.rows[0]?.tag_type || finalType;
           detectedType = finalType as TagType;
-          enrichment = null;
+          enrichment = raceResult.rows[0]?.enriched_data || null;
+          enriched = !!raceResult.rows[0]?.enriched_data;
           console.log(`[TagManager] Tag "${tagId}" created by another user, using existing ${finalTagId} type=${finalType}`);
         } else {
           throw err;
@@ -551,10 +553,51 @@ export async function createUserTag(userId: string, tagId: string, tagName: stri
       });
     }
 
-    return { success: true, finalTagId, detectedType, enrichment: enrichment || undefined };
+    return { success: true, finalTagId, detectedType, enrichment: enrichment || undefined, enriched, backgroundEnrichmentStarted };
   } catch (err: any) {
     console.error('[TagManager] Error creating tag:', err.message);
     return { success: false };
+  }
+}
+
+// Асинхронное (фоновое) обогащение только что созданного тега.
+// Запускается fire-and-forget из createUserTag — НЕ блокирует HTTP-ответ.
+async function backgroundEnrichTag(tagId: string, tagName: string): Promise<void> {
+  console.log(`[TagEnrich] Background enrichment started for "${tagName}" (${tagId})`);
+
+  try {
+    const enrichment = await enrichTagViaLLM(tagName);
+    if (!enrichment) {
+      console.log(`[TagEnrich] No enrichment data from LLM for "${tagName}"`);
+      return;
+    }
+
+    const baseKeywords = generateTagKeywords(tagName);
+    const enhancedKeywords = buildEnrichedKeywords(tagName, enrichment);
+    const allKeywords = [...new Set([...baseKeywords, ...enhancedKeywords])]
+      .filter(k => k.length >= 2 && k.length <= 50);
+
+    const finalType = enrichment.tag_type || heuristicTagType(tagName);
+
+    await query(
+      `UPDATE user_defined_tags
+       SET enriched_data = $1,
+           keywords = $2,
+           tag_type = $3
+       WHERE tag_id = $4`,
+      [JSON.stringify(enrichment), allKeywords, finalType, tagId]
+    );
+
+    // Обновить кэш тегов и разбудить no-tags-новости для повторного матчинга с новыми keywords
+    invalidateUserTagsCache();
+    wakeUpNoTagsArticles().catch((err: any) => {
+      console.error('[TagManager] wakeUpNoTagsArticles error:', err.message);
+    });
+
+    console.log(`[TagEnrich] Background enrichment completed for "${tagName}" (${tagId}): type=${finalType}, keywords=${allKeywords.length}`);
+  } catch (err: any) {
+    console.error(`[TagEnrich] Background enrichment failed for "${tagName}" (${tagId}):`, err.message);
+    // Не бросаем ошибку — обогащение факультативно
   }
 }
 

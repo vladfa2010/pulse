@@ -125,8 +125,17 @@ router.get('/tags', authMiddleware, async (req: AuthRequest, res) => {
     const userId = req.user!.userId;
 
     const result = await query(
-      `SELECT id, tag_id, tag_name, tag_type, created_at
-       FROM portfolios WHERE user_id = $1 ORDER BY created_at DESC`,
+      `SELECT
+         p.id,
+         p.tag_id,
+         p.tag_name,
+         p.tag_type,
+         p.created_at,
+         CASE WHEN udt.enriched_data IS NOT NULL THEN TRUE ELSE FALSE END AS enriched
+       FROM portfolios p
+       LEFT JOIN user_defined_tags udt ON udt.tag_id = p.tag_id
+       WHERE p.user_id = $1
+       ORDER BY p.created_at DESC`,
       [userId]
     );
 
@@ -184,7 +193,9 @@ router.post('/tags', authMiddleware, validate(AddTagSchema), async (req: AuthReq
         tag_name: tagName,
         tag_type: finalType,
         tag_type_label: TAG_TYPE_LABELS[finalType as TagType],
+        enriched: result.enriched ?? false,
       },
+      backgroundEnrichmentStarted: result.backgroundEnrichmentStarted ?? false,
     });
   } catch (err) {
     console.error('Add tag error:', err);
