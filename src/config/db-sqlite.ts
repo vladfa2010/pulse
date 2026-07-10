@@ -298,6 +298,18 @@ export async function initSQLiteSchema(): Promise<void> {
 
     CREATE INDEX IF NOT EXISTS idx_password_reset_codes_user_expires
     ON password_reset_codes (user_id, expires_at DESC);
+
+    CREATE TABLE IF NOT EXISTS user_events (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      event_type TEXT NOT NULL,
+      event_data TEXT DEFAULT '{}',
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_user_events_user_id ON user_events(user_id);
+    CREATE INDEX IF NOT EXISTS idx_user_events_type ON user_events(event_type);
+    CREATE INDEX IF NOT EXISTS idx_user_events_created_at ON user_events(created_at DESC);
   `;
 
   const statements = schema.split(';').filter(s => s.trim());

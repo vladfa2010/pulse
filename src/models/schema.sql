@@ -500,3 +500,18 @@ CREATE TABLE IF NOT EXISTS password_reset_codes (
 CREATE INDEX IF NOT EXISTS idx_password_reset_codes_user_expires
 ON password_reset_codes (user_id, expires_at DESC);
 
+
+-- ============================================================
+-- 16. user_events — лог событий пользователей (Activities List)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS user_events (
+  id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  event_type  VARCHAR(50) NOT NULL,
+  event_data  JSONB DEFAULT '{}',
+  created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_events_user_id ON user_events(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_events_type ON user_events(event_type);
+CREATE INDEX IF NOT EXISTS idx_user_events_created_at ON user_events(created_at DESC);

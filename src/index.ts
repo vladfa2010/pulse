@@ -39,6 +39,7 @@ import cron from 'node-cron';
 import { resetDailyWindows, refreshImoexCache } from './services/sentimentIndex';
 import { sendSentimentVotePush } from './services/push';
 import { processScheduledDowngrades, processAutoRenewals } from './services/subscription';
+import { isUserEventType } from './services/activityLog';
 import { setupYookassaWebhook } from './routes/payment'; // ← Auto-setup YuKassa webhook
 import { addSubscriber, getSubscriberCount, addSentimentSubscriber } from './services/sse'; // ← Real-time news stream
 
@@ -1288,6 +1289,117 @@ app.get('/admin/users', requireAdmin, async (req, res) => {
       })),
     });
   } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /admin/events — лента событий пользователей (Activities List)
+app.get('/admin/events', requireAdmin, async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
+    const eventType = req.query.type as string;
+    const hours = Math.min(Math.max(parseInt(req.query.hours as string) || 24, 1), 720);
+
+    if (eventType && !isUserEventType(eventType)) {
+      return res.status(400).json({ error: 'Invalid event type' });
+    }
+
+    const conditions: string[] = [];
+    const params: any[] = [];
+
+    if (USE_SQLITE) {
+      conditions.push(`e.created_at > datetime('now', '-${hours} hours')`);
+    } else {
+      conditions.push(`e.created_at > NOW() - INTERVAL '${hours} hours'`);
+    }
+
+    if (eventType) {
+      conditions.push(`e.event_type = $1`);
+      params.push(eventType);
+    }
+    params.push(limit);
+
+    const result = await query(
+      `SELECT
+         e.id, e.user_id, e.event_type, e.event_data, e.created_at,
+         u.username, u.email
+       FROM user_events e
+       JOIN users u ON u.id = e.user_id
+       WHERE ${conditions.join(' AND ')}
+       ORDER BY e.created_at DESC
+       LIMIT $${params.length}`,
+      params
+    );
+
+    res.json({
+      events: result.rows.map((row: any) => {
+        let eventData = row.event_data;
+        if (typeof eventData === 'string') {
+          try { eventData = JSON.parse(eventData); } catch { eventData = {}; }
+        }
+        return {
+          id: row.id,
+          user_id: row.user_id,
+          username: row.username,
+          email: row.email,
+          event_type: row.event_type,
+          event_data: eventData || {},
+          created_at: row.created_at,
+        };
+      }),
+      total: result.rows.length,
+      hours,
+      filter: eventType || null,
+    });
+  } catch (err: any) {
+    console.error('[Admin] Failed to fetch events:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /admin/events/stats — статистика событий для дашборда
+app.get('/admin/events/stats', requireAdmin, async (req, res) => {
+  try {
+    const hours = Math.min(Math.max(parseInt(req.query.hours as string) || 24, 1), 720);
+    const timeFilter = USE_SQLITE
+      ? `e.created_at > datetime('now', '-${hours} hours')`
+      : `e.created_at > NOW() - INTERVAL '${hours} hours'`;
+
+    const byTypeResult = await query(
+      `SELECT e.event_type, COUNT(*)::int as count
+       FROM user_events e
+       WHERE ${timeFilter}
+       GROUP BY e.event_type
+       ORDER BY count DESC`,
+      []
+    );
+
+    const hourExpr = USE_SQLITE
+      ? "strftime('%Y-%m-%d %H:00', e.created_at)"
+      : "date_trunc('hour', e.created_at)::text";
+
+    const hourlyResult = await query(
+      `SELECT ${hourExpr} as hour, COUNT(*)::int as count
+       FROM user_events e
+       WHERE ${timeFilter}
+       GROUP BY hour
+       ORDER BY hour ASC`,
+      []
+    );
+
+    res.json({
+      hours,
+      by_type: byTypeResult.rows.map((row: any) => ({
+        event_type: row.event_type,
+        count: parseInt(row.count) || 0,
+      })),
+      hourly: hourlyResult.rows.map((row: any) => ({
+        hour: row.hour,
+        count: parseInt(row.count) || 0,
+      })),
+    });
+  } catch (err: any) {
+    console.error('[Admin] Failed to fetch event stats:', err);
     res.status(500).json({ error: err.message });
   }
 });

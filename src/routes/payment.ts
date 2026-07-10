@@ -33,6 +33,7 @@ import {
   PLAN_BILLING_DAYS,
   planLevel,
 } from '../services/subscription';
+import { logPaymentCompleted } from '../services/activityLog';
 
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
@@ -239,9 +240,14 @@ router.post('/confirm', authMiddleware, validate(ConfirmPaymentSchema), async (r
     await activateSubscription(userId, plan_id || 'premium', duration_days || 30, paymentId, is_upgrade === true);
 
     const completedPayment = await query(
-      `SELECT id, amount, plan_id, billing_cycle, duration_days, status FROM payments WHERE id = $1`,
+      `SELECT id, amount, plan_id, billing_cycle, duration_days, status, method FROM payments WHERE id = $1`,
       [paymentId]
     );
+
+    const p = completedPayment.rows[0];
+    if (p) {
+      logPaymentCompleted(userId, Number(p.amount), p.plan_id || 'premium', p.method || 'demo').catch(() => {});
+    }
 
     res.json({
       success: true,

@@ -13,6 +13,7 @@ import {
 import type { TagType, TagEnrichment } from '../services/tagManager';
 import axios from 'axios';
 import { getVapidPublicKey } from '../services/webPush';
+import { logTagAdded, logTagRemoved } from '../services/activityLog';
 
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
@@ -175,6 +176,8 @@ router.post('/tags', authMiddleware, validate(AddTagSchema), async (req: AuthReq
     const finalType = result.detectedType || tagType;
     const finalTagId = result.finalTagId || tagId;
 
+    logTagAdded(userId, finalTagId, tagName, finalType).catch(() => {});
+
     res.status(201).json({
       tag: {
         tag_id: finalTagId,
@@ -195,10 +198,18 @@ router.delete('/tags/:tagId', authMiddleware, async (req: AuthRequest, res) => {
     const userId = req.user!.userId;
     const { tagId } = req.params;
 
+    const tagInfo = await query(
+      'SELECT tag_name FROM portfolios WHERE user_id = $1 AND tag_id = $2',
+      [userId, tagId]
+    );
+    const removedTagName = tagInfo.rows[0]?.tag_name || tagId;
+
     await query(
       'DELETE FROM portfolios WHERE user_id = $1 AND tag_id = $2',
       [userId, tagId]
     );
+
+    logTagRemoved(userId, tagId, removedTagName).catch(() => {});
 
     res.json({ success: true });
   } catch (err) {

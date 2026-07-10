@@ -3,6 +3,12 @@ import { query } from '../config/db';
 import axios from 'axios';
 import { isYookassaIp, getClientIp } from '../services/ipCheck';
 import { activateSubscription, savePaymentMethod } from '../services/subscription';
+import {
+  logPaymentCompleted,
+  logSubscriptionCancelled,
+  logChannelConnected,
+  logChannelDisconnected,
+} from '../services/activityLog';
 
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
@@ -153,6 +159,8 @@ router.post('/yookassa', async (req, res) => {
     if (event === 'payment.canceled') {
       await query(`UPDATE payments SET status = 'failed' WHERE id = $1`, [payment.id]);
 
+      logSubscriptionCancelled(payment.user_id, payment.plan_id || 'premium').catch(() => {});
+
       if (object.metadata?.auto_renew === 'true') {
         const failRes = await query(
           `UPDATE users
@@ -195,6 +203,13 @@ router.post('/yookassa', async (req, res) => {
       await query(`UPDATE users SET auto_renew_failures = 0 WHERE id = $1`, [payment.user_id]);
     }
 
+    logPaymentCompleted(
+      payment.user_id,
+      Number(payment.amount),
+      payment.plan_id || 'premium',
+      'yookassa'
+    ).catch(() => {});
+
     console.log(`[YooKassa] Subscription activated for user ${payment.user_id}, plan ${payment.plan_id}`);
 
     return res.status(200).json({ received: true });
@@ -234,6 +249,7 @@ router.post('/telegram', async (req, res) => {
               `UPDATE notification_settings SET tg_digest_enabled = FALSE WHERE user_id = $1`,
               [userId]
             );
+            logChannelDisconnected(userId, 'telegram', chatId).catch(() => {});
             console.log(`[Webhook] Deactivated telegram channel for user ${userId}, chat ${chatId}`);
           } else {
             console.log(`[Webhook] No channel found for chat ${chatId}`);
@@ -297,6 +313,9 @@ router.post('/telegram', async (req, res) => {
             `UPDATE notification_settings SET tg_digest_enabled = TRUE WHERE user_id = $1`,
             [userId]
           );
+
+          logChannelConnected(userId, 'telegram', chatId).catch(() => {});
+
           await sendMessage(chatId,
             '✅ PULSE подключен!\n\nДайджесты будут приходить по расписанию.\n\nКоманды:\n/now — дайджест сейчас\n/stop — отключить'
           );

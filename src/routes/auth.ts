@@ -32,6 +32,12 @@ import {
 import { buildSubscriptionStatus } from '../services/subscription';
 import { sendPasswordResetCodeEmail, sendWelcomeEmail } from '../services/email';
 import { sendTelegramMessage } from '../services/telegram';
+import {
+  logRegister,
+  logLogin,
+  logForgotPassword,
+  logPasswordReset,
+} from '../services/activityLog';
 
 const router = Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
@@ -98,6 +104,8 @@ router.post('/register', validate(RegisterSchema), async (req, res) => {
     // ─── Генерируем JWT токен ───────────────────────────────────────────
     const token = jwt.sign({ userId, email, is_admin: false }, JWT_SECRET, { expiresIn: '7d' });
 
+    logRegister(userId, email, username).catch(() => {});
+
     res.status(201).json({
       token,
       user: { id: userId, email, username, is_admin: false },
@@ -148,6 +156,8 @@ router.post('/login', validate(LoginSchema), async (req, res) => {
         code: 'INVALID_PASSWORD'
       });
     }
+
+    logLogin(user.id, user.email).catch(() => {});
 
     // ─── Генерируем JWT токен ───────────────────────────────────────────
     const isAdmin = user.is_admin === 1 || user.is_admin === true;
@@ -213,6 +223,8 @@ router.post('/forgot-password', validate(ForgotPasswordSchema), async (req, res)
        VALUES ($1, $2, $3)`,
       [user.id, code, expiresAt]
     );
+
+    logForgotPassword(user.id, user.email).catch(() => {});
 
     // Отправляем email
     let sent = await sendPasswordResetCodeEmail(email, code);
@@ -328,6 +340,8 @@ router.post('/reset-password', validate(ResetPasswordSchema), async (req, res) =
       `UPDATE users SET password_hash = $1 WHERE id = $2`,
       [passwordHash, user.id]
     );
+
+    logPasswordReset(user.id, user.email).catch(() => {});
 
     const isAdmin = user.is_admin === 1 || user.is_admin === true;
     const token = jwt.sign(

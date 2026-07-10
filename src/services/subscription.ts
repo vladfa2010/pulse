@@ -16,6 +16,7 @@ import { sendTelegramMessage } from './telegram';
 import { sendPushNotification } from './push';
 import { sendWebPushToUser } from './webPush';
 import axios from 'axios';
+import { logSubscriptionActivated } from './activityLog';
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
@@ -273,6 +274,8 @@ export async function activateSubscription(
      WHERE id = $3`,
     [planId, newExpires.toISOString(), userId]
   );
+
+  logSubscriptionActivated(userId, planId, newExpires.toISOString()).catch(() => {});
 
   // Reset reminder notifications so they fire again before the next renewal
   await query(
