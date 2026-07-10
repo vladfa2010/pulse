@@ -3647,7 +3647,7 @@ app.get('/sentiment-stats', async (req, res) => {
 app.use('/api/auth/forgot-password', forgotPasswordLimiter); // 3/час на email
 app.use('/api/auth/verify-code', passwordResetFlowLimiter);
 app.use('/api/auth/reset-password', passwordResetFlowLimiter);
-app.use('/api/auth', authLimiter, authRoutes);  // Строгий лимит (5/15min) — защита от брутфорса
+app.use('/api/auth', authLimiter, authRoutes);  // Строгий лимит (15/15min) — защита от брутфорса
 app.use('/api/news', newsRoutes);       // GET /api/news, /api/news/:tag
 app.use('/api/payment', paymentRoutes); // POST /api/payment/create, /confirm
 app.use('/api/plans', plansRoutes);     // GET /api/plans

@@ -13,10 +13,10 @@
 import rateLimit from 'express-rate-limit';
 
 // ─── Auth endpoints — защита от брутфорса ─────────────────────────────────
-// 5 попыток за 15 минут на IP
+// 15 попыток за 15 минут на IP
 export const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,  // 15 минут
-  max: 5,                       // 5 попыток
+  max: 15,                      // 15 попыток
   message: {
     error: 'Слишком много попыток. Попробуйте через 15 минут.',
     retryAfter: '15 minutes',
@@ -26,13 +26,14 @@ export const authLimiter = rateLimit({
   keyGenerator: (req) => req.ip || 'unknown',
   validate: { trustProxy: false },
   skip: (req) => {
-    // У этих путей свои лимитеры
+    // У этих путей свои лимитеры, /me — обычный авторизованный GET
     const path = req.path || '';
-    return ['/forgot-password', '/verify-code', '/reset-password'].includes(path);
+    return ['/forgot-password', '/verify-code', '/reset-password', '/me'].includes(path);
   },
 });
 
 // ─── Forgot password — защита от спама по email ───────────────────────────
+// 3 запроса в час на email
 export const forgotPasswordLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,  // 1 час
   max: 3,                     // 3 запроса в час
@@ -47,6 +48,7 @@ export const forgotPasswordLimiter = rateLimit({
 });
 
 // ─── Password reset flow (verify-code / reset-password) ───────────────────
+// 10 попыток за 15 минут на IP
 export const passwordResetFlowLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,  // 15 минут
   max: 10,                    // 10 попыток — flow из 3-4 запросов
@@ -61,10 +63,10 @@ export const passwordResetFlowLimiter = rateLimit({
 });
 
 // ─── API endpoints — стандартный лимит ────────────────────────────────────
-// 100 запросов за 15 минут на IP
+// 300 запросов за 15 минут на IP
 export const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,  // 15 минут
-  max: 100,                     // 100 запросов
+  max: 300,                     // 300 запросов
   message: {
     error: 'Слишком много запросов. Попробуйте позже.',
     retryAfter: '15 minutes',
@@ -72,8 +74,16 @@ export const apiLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skip: (req) => {
-    // Пропускаем health check (Render мониторинг)
-    return req.path === '/health';
+    const path = req.path || '';
+    // Health check для Render мониторинга
+    if (path === '/health') return true;
+    // SSE-потоки — у них долгоживущие соединения
+    if (path === '/api/news/stream' || path === '/api/sentiment/stream') return true;
+    // Webhook'и имеют свой собственный лимитер
+    if (path.startsWith('/api/webhook/')) return true;
+    // Статус-страница и debug
+    if (path === '/' || path === '/debug/version') return true;
+    return false;
   },
   validate: { trustProxy: false },
 });
@@ -82,7 +92,7 @@ export const apiLimiter = rateLimit({
 // YuKassa может слать много запросов
 export const webhookLimiter = rateLimit({
   windowMs: 1 * 60 * 1000,  // 1 минута
-  max: 60,                     // 60 запросов
+  max: 180,                    // 180 запросов
   message: {
     error: 'Webhook rate limit exceeded',
   },
