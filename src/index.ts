@@ -2256,28 +2256,21 @@ app.delete('/admin/tags/:tagId', requireAdmin, async (req, res) => {
     // ════════════════ TRANSACTION START ════════════════
     await client.query('BEGIN');
 
-    // 1. Delete news_tag_links (optional table)
-    let deletedLinks = 0;
-    try {
-      const r = await client.query(`DELETE FROM news_tag_links WHERE tag_id = $1`, [tagId]);
-      deletedLinks = r.rowCount || 0;
-    } catch (err: any) {
-      if (err.code === '42P01') { /* table does not exist, OK */ }
-      else throw err;
-    }
+    // Safety guard against runaway transactions on huge tags
+    await client.query("SET LOCAL statement_timeout = '30s'");
 
-    // 2. Delete from portfolios (subscriptions)
+    // 1. Delete from portfolios (subscriptions)
     const portfoliosResult = await client.query(`DELETE FROM portfolios WHERE tag_id = $1`, [tagId]);
     const deletedPortfolios = portfoliosResult.rowCount || 0;
 
-    // 3. Clean matched_tags (TEXT[])
+    // 2. Clean matched_tags (TEXT[])
     const matchedResult = await client.query(
       `UPDATE news SET matched_tags = array_remove(matched_tags, $1) WHERE $1 = ANY(matched_tags)`,
       [tagId]
     );
     const cleanedMatched = matchedResult.rowCount || 0;
 
-    // 4. Clean tag_impact (JSONB)
+    // 3. Clean tag_impact (JSONB)
     const llmResult = await client.query(
       `UPDATE news SET tag_impact = COALESCE(
         (SELECT jsonb_agg(elem) FROM jsonb_array_elements(tag_impact) elem WHERE elem->>'tag' != $1),
@@ -2287,7 +2280,7 @@ app.delete('/admin/tags/:tagId', requireAdmin, async (req, res) => {
     );
     const cleanedLlm = llmResult.rowCount || 0;
 
-    // 5. Clean smart_tag_cache (optional table)
+    // 4. Clean smart_tag_cache (optional table)
     let cleanedCache = 0;
     try {
       const r = await client.query(
@@ -2295,6 +2288,16 @@ app.delete('/admin/tags/:tagId', requireAdmin, async (req, res) => {
         [tagId]
       );
       cleanedCache = r.rowCount || 0;
+    } catch (err: any) {
+      if (err.code === '42P01') { /* table does not exist, OK */ }
+      else throw err;
+    }
+
+    // 5. Delete news_tag_links (optional table)
+    let deletedLinks = 0;
+    try {
+      const r = await client.query(`DELETE FROM news_tag_links WHERE tag_id = $1`, [tagId]);
+      deletedLinks = r.rowCount || 0;
     } catch (err: any) {
       if (err.code === '42P01') { /* table does not exist, OK */ }
       else throw err;
