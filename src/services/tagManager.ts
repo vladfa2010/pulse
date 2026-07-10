@@ -100,51 +100,126 @@ Rules:
 // User can override via KIMI_MODEL env var
 
   try {
-    const response = await axios.post(
-      'https://api.moonshot.ai/v1/chat/completions',
-      {
-        model: KIMI_MODEL,
-        messages: [{ role: 'user', content: prompt }],
-        temperature: KIMI_MODEL.startsWith('kimi-k') ? 0.6 : 0.1,
-        max_tokens: 1200,
-        thinking: KIMI_MODEL.startsWith('kimi-k') ? { type: 'disabled' } : undefined,
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${KIMI_API_KEY}`,
-          'Content-Type': 'application/json',
+    const response = await llmRequestWithRetry(
+      () => axios.post(
+        'https://api.moonshot.ai/v1/chat/completions',
+        {
+          model: KIMI_MODEL,
+          messages: [{ role: 'user', content: prompt }],
+          temperature: KIMI_MODEL.startsWith('kimi-k') ? 0.6 : 0.1,
+          max_tokens: 2000,
+          response_format: { type: 'json_object' },
+          thinking: KIMI_MODEL.startsWith('kimi-k') ? { type: 'disabled' } : undefined,
         },
-        timeout: 20000,
-      }
+        {
+          headers: {
+            'Authorization': `Bearer ${KIMI_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 20000,
+        }
+      ),
+      'TagEnrich'
     );
 
     const content = response.data?.choices?.[0]?.message?.content || '';
 
-    // Extract JSON object
-    const jsonMatch = content.match(/\{[\s\S]*?\}/);
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]);
-
-      // Validate and normalize
-      const enrichment: TagEnrichment = {
-        tag_type: TAG_TYPES.includes(parsed.tag_type) ? parsed.tag_type : 'company',
-        ticker: parsed.ticker || undefined,
-        website: parsed.website || undefined,
-        related_entities: Array.isArray(parsed.related_entities) ? parsed.related_entities : [],
-        synonyms_en: Array.isArray(parsed.synonyms_en) ? parsed.synonyms_en : [],
-        synonyms_ru: Array.isArray(parsed.synonyms_ru) ? parsed.synonyms_ru : [],
-        key_products: Array.isArray(parsed.key_products) ? parsed.key_products : [],
-        description_ru: parsed.description_ru || parsed.description || '',
-      };
-
-      console.log(`[TagEnrich] Enriched "${tagName}": type=${enrichment.tag_type}, ticker=${enrichment.ticker || 'none'}, synonyms=${enrichment.synonyms_en.length + enrichment.synonyms_ru.length}, products=${enrichment.key_products.length}`);
-      return enrichment;
+    const parsed = parseLlmJson(content);
+    if (!parsed) {
+      console.log(`[TagEnrich] Could not parse LLM response for "${tagName}" (length=${content.length})`);
+      return null;
     }
+
+    // Validate and normalize
+    const enrichment: TagEnrichment = {
+      tag_type: TAG_TYPES.includes(parsed.tag_type) ? parsed.tag_type : 'company',
+      ticker: parsed.ticker || undefined,
+      website: parsed.website || undefined,
+      related_entities: Array.isArray(parsed.related_entities) ? parsed.related_entities : [],
+      synonyms_en: Array.isArray(parsed.synonyms_en) ? parsed.synonyms_en : [],
+      synonyms_ru: Array.isArray(parsed.synonyms_ru) ? parsed.synonyms_ru : [],
+      key_products: Array.isArray(parsed.key_products) ? parsed.key_products : [],
+      description_ru: parsed.description_ru || parsed.description || '',
+    };
+
+    console.log(`[TagEnrich] Enriched "${tagName}": type=${enrichment.tag_type}, ticker=${enrichment.ticker || 'none'}, synonyms=${enrichment.synonyms_en.length + enrichment.synonyms_ru.length}, products=${enrichment.key_products.length}`);
+    return enrichment;
   } catch (err: any) {
     console.log(`[TagEnrich] LLM error for "${tagName}": ${err.message?.slice(0, 100)}`);
   }
 
   return null;
+}
+
+// ─── Robust LLM JSON parser ────────────────────────────────────────────────
+
+function parseLlmJson(content: string): any | null {
+  let raw = content.trim();
+
+  // Strip markdown code fences if present
+  raw = raw.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
+
+  // Try direct parse first (works when response_format is respected)
+  try {
+    return JSON.parse(raw);
+  } catch {
+    // fall through
+  }
+
+  // Fallback 1: extract the outermost JSON object greedily
+  const jsonMatch = raw.match(/\{[\s\S]*\}/);
+  if (jsonMatch) {
+    try {
+      return JSON.parse(jsonMatch[0]);
+    } catch {
+      // fall through
+    }
+  }
+
+  // Fallback 2: escape raw physical newlines/tabs that were not JSON-escaped
+  try {
+    let fixed = raw.replace(/\\\\/g, '__ESC__');
+    fixed = fixed.replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
+    fixed = fixed.replace(/__ESC__/g, '\\\\');
+    return JSON.parse(fixed);
+  } catch {
+    return null;
+  }
+}
+
+// ─── Retry helper for LLM requests ─────────────────────────────────────────
+
+const MAX_RETRIES = 3;
+const RETRY_DELAY_MS = 2000;
+
+async function llmRequestWithRetry<T>(
+  fn: () => Promise<T>,
+  label: string
+): Promise<T> {
+  let lastError: any;
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      lastError = err;
+      const status = err.response?.status;
+      const isRetryable = status === 429 || status === 502 || status === 503 || err.code === 'ECONNRESET' || err.code === 'ETIMEDOUT';
+
+      if (!isRetryable) {
+        throw err;
+      }
+
+      if (attempt < MAX_RETRIES) {
+        const delay = RETRY_DELAY_MS * Math.pow(2, attempt - 1);
+        console.log(`[${label}] Attempt ${attempt}/${MAX_RETRIES} failed (status=${status}). Retrying in ${delay}ms...`);
+        await new Promise(r => setTimeout(r, delay));
+      } else {
+        console.error(`[${label}] All ${MAX_RETRIES} attempts failed. Giving up.`);
+        throw err;
+      }
+    }
+  }
+  throw lastError;
 }
 
 /**
