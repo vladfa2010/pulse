@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS users (
   subscription_plan      VARCHAR(20) DEFAULT 'free' REFERENCES subscription_plans(id),
   subscription_expires_at TIMESTAMP,
   subscription_auto_renew BOOLEAN DEFAULT TRUE,
+  auto_renew_failures    INTEGER DEFAULT 0,
   scheduled_plan_downgrade VARCHAR(20),
   news_count      INTEGER DEFAULT 0,
   created_at      TIMESTAMP DEFAULT NOW()
@@ -324,6 +325,8 @@ CREATE TABLE IF NOT EXISTS webhook_events (
   error      TEXT,
   created_at TIMESTAMP DEFAULT NOW()
 );
+-- Migration: ensure auto_renew_failures column exists for existing databases
+ALTER TABLE users ADD COLUMN IF NOT EXISTS auto_renew_failures INTEGER DEFAULT 0;
 
 CREATE INDEX IF NOT EXISTS idx_webhook_events_created_at ON webhook_events(created_at DESC);
 

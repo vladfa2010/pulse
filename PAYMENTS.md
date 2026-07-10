@@ -609,11 +609,46 @@ Cron `sendSubscriptionReminders` запускается ежедневно в 10
 
 При REAL-оплате YuKassa возвращает `payment_method`. Если `saved === true`, backend сохраняет его в `user_payment_methods`.
 
+Создание платежа передаёт:
+
+```json
+{
+  "save_payment_method": "true",
+  "merchant_customer_id": "<user_id>"
+}
+```
+
 ### Автопродление
 
 Флаг `subscription_auto_renew` хранится в `users` и переключается через `POST /api/user/auto-renew`.
 
-> ⚠️ **Важно:** реальное автосписание (recurring payments) пока не реализовано. ЮKassa должна одобрить recurring-платежи, прежде чем включать автосписание. Флаг готов, cron-задача — заглушка.
+Логика автопродления (`processAutoRenewals`):
+
+- Запускается ежедневно в **09:00 UTC** через `node-cron` (inline в `src/index.ts`).
+- Выбирает пользователей:
+  - `subscription_auto_renew = TRUE`
+  - активный платный план (`base`, `premium`, `club`, `pro`)
+  - подписка истекает в ближайшие 3 дня или истекла не более 1 дня назад
+  - есть сохранённая активная карта в `user_payment_methods`
+  - счётчик неудач `auto_renew_failures < 3`
+- Для каждого пользователя создаёт платёж в `payments` со статусом `pending` и списывает деньги безакцептно через `payment_method_id` YuKassa.
+- Если YuKassa сразу возвращает `succeeded` — подписка продлевается на 30 дней, счётчик неудач сбрасывается.
+- Если платёж переходит в `pending` — финальную активацию выполняет webhook `payment.succeeded`.
+- При неудаче (`canceled` или ошибка) счётчик `auto_renew_failures` увеличивается. После **3 неудач** автопродление отключается (`subscription_auto_renew = FALSE`), чтобы не спамить пользователя и YuKassa.
+
+Ручной запуск (для отладки):
+
+```http
+GET /trigger/auto-renew
+x-trigger-secret: <CRON_SECRET_KEY>
+```
+
+### Webhook
+
+`POST /api/webhook/yookassa` обрабатывает `payment.succeeded` и `payment.canceled`. Для auto-renew платежей:
+
+- при успехе логирует `[AutoRenew] Webhook confirmed` и сбрасывает счётчик неудач;
+- при отмене увеличивает счётчик неудач и отключает auto-renew после 3 попыток.
 
 ---
 

@@ -31,7 +31,8 @@
 10. [API Design](#10-api-design)
 10a. [Daily Summary](#10a-daily-summary--ai-саммари-для-пользователя)
 11. [Cron Jobs](#11-cron-jobs)
-12. [Services Map](#12-services-map)
+12. [Push-уведомления (FCM)](#12-push-уведомления-fcm)
+13. [Services Map](#13-services-map)
 13. [Batch Processing & Job Lock](#13-batch-processing--job-lock)
 14. [Performance](#14-performance)
 
@@ -2466,6 +2467,59 @@ cron.schedule('0 13 * * 0', generateReport);
 | **RSS last_fetch_at fix** | Фикс регрессии B11 — теперь обновляется после каждого fetch | 2026-06-12 |
 | **Finnhub interval** | 5 мин → **60 мин** | 2026-06-12 |
 | **End-to-end** | NSM fetch → save → News Processor → теги → frontend ✅ | 2026-06-12 |
+
+---
+
+## 12. Push-уведомления (FCM)
+
+### Архитектура
+
+```
+Android device
+│
+├─ FCM generates token (cold start / app update / token rotation)
+│  └─ PulseMessagingService.onNewToken(token)
+│     ├─ save token → SharedPreferences("CapacitorStorage", "fcm_token")
+│     └─ PushNotificationsPlugin.onNewToken(token)  // warm-start fast path
+│
+├─ Capacitor bridge initialized
+│  └─ TokenFlushPlugin.load()
+│     └─ read saved token → PushNotificationsPlugin.onNewToken(token)
+│
+└─ JS (src/lib/push.ts)
+   └─ listener "registration" (retain=true)
+      └─ POST /api/user/channels { channel: "push", target: token }
+         └─ PostgreSQL: user_channels (channel='push', target=token, is_active=TRUE)
+```
+
+### Backend отправка
+
+- `services/push.ts` инициализирует `firebase-admin` из `FIREBASE_SERVICE_ACCOUNT_BASE64`.
+- `sendPushNotification(userId, title, body, data)`:
+  - проверяет `push_enabled` и тихий режим,
+  - берёт активный токен из `user_channels`,
+  - отправляет через FCM,
+  - деактивирует токен при ошибках `messaging/registration-token-not-registered`, `messaging/invalid-registration-token`, `messaging/invalid-argument`.
+
+### Типы push
+
+| Тип | Источник | Формат | Обработка на Android |
+|-----|----------|--------|----------------------|
+| `new_article` | `services/newsProcessor.ts` | data + notification | `PushNotificationsPlugin` |
+| `digest` | `services/digest.ts` | data + notification | `PushNotificationsPlugin` |
+| `report` | `services/reports.ts` | data + notification | `PushNotificationsPlugin` |
+| `sentiment_vote` | `src/index.ts` (cron) | **data-only** | `PulseMessagingService` рисует кастомное уведомление с 3 action-кнопками; `VoteReceiver` шлёт голос на backend |
+
+### Cold-start fix
+
+Проблема: при cold start `PushNotificationsPlugin` ещё не инициализирован, поэтому `onNewToken()` теряет токен.
+
+Решение:
+1. `PulseMessagingService` всегда сохраняет токен локально.
+2. `TokenFlushPlugin` (Android, Java) диспатчит сохранённый токен после загрузки bridge.
+3. Событие `registration` в `PushNotificationsPlugin` использует `retain = true`, поэтому JS-листенер получит токен даже при поздней подписке.
+
+Подробнее см. [`pulse-frontend/PUSH_SETUP.md`](../pulse-frontend/PUSH_SETUP.md) и [`PUSH_NOTIFICATIONS.md`](./PUSH_NOTIFICATIONS.md).
 
 ---
 

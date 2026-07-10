@@ -143,6 +143,7 @@ export async function initSQLiteSchema(): Promise<void> {
       subscription_active INTEGER DEFAULT 0,
       subscription_expires_at TEXT,
       subscription_auto_renew INTEGER DEFAULT 1,
+      auto_renew_failures INTEGER DEFAULT 0,
       is_admin INTEGER DEFAULT 0,
       news_count INTEGER DEFAULT 0,
       created_at TEXT DEFAULT (datetime('now'))
@@ -308,6 +309,14 @@ export async function initSQLiteSchema(): Promise<void> {
   try {
     db.run('ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0');
     console.log('[SQLite] Migration: added is_admin column');
+  } catch {
+    // Column already exists — ignore
+  }
+
+  // Migration: add auto_renew_failures if missing (old databases)
+  try {
+    db.run('ALTER TABLE users ADD COLUMN auto_renew_failures INTEGER DEFAULT 0');
+    console.log('[SQLite] Migration: added auto_renew_failures column');
   } catch {
     // Column already exists — ignore
   }

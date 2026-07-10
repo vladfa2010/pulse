@@ -38,7 +38,7 @@ import { startDigestCron, sendAllDigests } from './services/digest'; // ← TG �
 import cron from 'node-cron';
 import { resetDailyWindows, refreshImoexCache } from './services/sentimentIndex';
 import { sendSentimentVotePush } from './services/push';
-import { processScheduledDowngrades } from './services/subscription';
+import { processScheduledDowngrades, processAutoRenewals } from './services/subscription';
 import { setupYookassaWebhook } from './routes/payment'; // ← Auto-setup YuKassa webhook
 import { addSubscriber, getSubscriberCount, addSentimentSubscriber } from './services/sse'; // ← Real-time news stream
 
@@ -3130,6 +3130,23 @@ app.get('/trigger/process', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// TRIGGER: Run subscription auto-renewals manually (production: cron at 09:00 UTC)
+// ═══════════════════════════════════════════════════════════════════════════
+app.get('/trigger/auto-renew', async (req, res) => {
+  const secret = req.headers['x-trigger-secret'] || req.query.secret;
+  if (secret !== (process.env.CRON_SECRET_KEY || 'pulse-dev-key')) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  try {
+    const result = await processAutoRenewals();
+    res.json({ started: true, result });
+  } catch (err: any) {
+    console.error('[AutoRenew] trigger error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // TRIGGER: Wake up no-tags articles and re-run processor
 // ═══════════════════════════════════════════════════════════════════════════
 app.get('/trigger/wake-no-tags', async (req, res) => {
@@ -4542,6 +4559,14 @@ async function start() {
     cron.schedule('*/5 7-20 * * 1-5', () => {
       refreshImoexCache().catch((e: any) => console.error('[IMOEX] cron refresh error:', e.message));
     });
+
+    // Auto-renewal — daily at 09:00 UTC (process subscriptions expiring within 3 days)
+    cron.schedule('0 9 * * *', () => {
+      processAutoRenewals()
+        .then((result) => console.log('[Cron] Auto-renew:', result))
+        .catch((e: any) => console.error('[Cron] Auto-renew failed:', e.message));
+    });
+    console.log('[Cron] Auto-renew scheduled daily at 09:00 UTC');
 
     // ═══════════════════════════════════════════════════════════════════
     // Cron: scheduled downgrades

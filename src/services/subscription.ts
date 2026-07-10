@@ -15,6 +15,7 @@ import { query } from '../config/db';
 import { sendTelegramMessage } from './telegram';
 import { sendPushNotification } from './push';
 import { sendWebPushToUser } from './webPush';
+import axios from 'axios';
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
@@ -61,8 +62,24 @@ function nowSql(): string {
 
 function nowPlusDaysSql(days: number): string {
   return USE_SQLITE
-    ? `datetime('now', '+${days} days')`
+    ? `datetime('now', '${days >= 0 ? '+' : ''}${days} days')`
     : `NOW() + INTERVAL '${days} days'`;
+}
+
+const YOOKASSA_SHOP_ID = process.env.YOOKASSA_SHOP_ID || '';
+const YOOKASSA_SECRET_KEY = process.env.YOOKASSA_SECRET_KEY || '';
+const IS_YOOKASSA_CONFIGURED = YOOKASSA_SHOP_ID && YOOKASSA_SECRET_KEY;
+
+function yookassaAuth(): string {
+  return 'Basic ' + Buffer.from(`${YOOKASSA_SHOP_ID}:${YOOKASSA_SECRET_KEY}`).toString('base64');
+}
+
+function uuidv4(): string {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
 }
 
 // ─── Plan helpers ──────────────────────────────────────────────────────────
@@ -379,6 +396,169 @@ export async function savePaymentMethod(userId: string, pm: any): Promise<void> 
        is_active = TRUE`,
     [userId, pm.id, card.last4 || null, card.card_type || null, card.expiry_date || null]
   );
+}
+
+// ─── Auto-renewal ──────────────────────────────────────────────────────────
+export async function processAutoRenewals(): Promise<{
+  processed: number;
+  errors: number;
+  disabled: number;
+}> {
+  const result = { processed: 0, errors: 0, disabled: 0 };
+
+  if (!IS_YOOKASSA_CONFIGURED) {
+    console.log('[AutoRenew] YooKassa is not configured, skipping');
+    return result;
+  }
+
+  const windowStart = USE_SQLITE
+    ? "datetime('now', '-1 day')"
+    : "NOW() - INTERVAL '1 day'";
+  const windowEnd = USE_SQLITE
+    ? "datetime('now', '+3 days')"
+    : "NOW() + INTERVAL '3 days'";
+
+  const dueUsers = await query(
+    `SELECT u.id as user_id,
+            u.subscription_plan,
+            u.subscription_expires_at,
+            u.email,
+            u.auto_renew_failures
+     FROM users u
+     WHERE u.subscription_auto_renew = TRUE
+       AND u.subscription_plan IN ('base','premium','club','pro')
+       AND u.subscription_expires_at > ${windowStart}
+       AND u.subscription_expires_at < ${windowEnd}
+       AND COALESCE(u.auto_renew_failures, 0) < 3
+     ORDER BY u.subscription_expires_at ASC`,
+    []
+  );
+
+  for (const row of dueUsers.rows) {
+    try {
+      const plan = await getPlanById(row.subscription_plan);
+      if (!plan || !plan.is_active) {
+        console.warn(`[AutoRenew] Plan ${row.subscription_plan} not active for user ${row.user_id}`);
+        continue;
+      }
+
+      // Prefer default card, otherwise the most recently saved active card
+      const pmResult = await query(
+        `SELECT payment_method_id, card_last4
+         FROM user_payment_methods
+         WHERE user_id = $1 AND is_active = TRUE
+         ORDER BY is_default DESC, created_at DESC
+         LIMIT 1`,
+        [row.user_id]
+      );
+      if (pmResult.rows.length === 0) {
+        console.warn(`[AutoRenew] No active payment method for user ${row.user_id}`);
+        continue;
+      }
+      const paymentMethod = pmResult.rows[0];
+
+      const amount = Number(plan.price_monthly);
+      const paymentId = uuidv4();
+
+      await query(
+        `INSERT INTO payments
+           (id, user_id, amount, base_amount, discount, method, status, plan_id, billing_cycle, duration_days, is_upgrade)
+         VALUES ($1, $2, $3, $4, 0, 'bank_card', 'pending', $5, 'monthly', 30, FALSE)`,
+        [paymentId, row.user_id, amount, amount, row.subscription_plan]
+      );
+
+      const yookassaRes = await axios.post(
+        'https://api.yookassa.ru/v3/payments',
+        {
+          amount: { value: amount.toFixed(2), currency: 'RUB' },
+          payment_method_id: paymentMethod.payment_method_id,
+          capture: true,
+          description: `PULSE Auto-renew ${plan.name}`.slice(0, 128),
+          metadata: {
+            payment_id: paymentId,
+            user_id: row.user_id,
+            plan_id: row.subscription_plan,
+            billing_cycle: 'monthly',
+            duration_days: '30',
+            is_upgrade: 'false',
+            auto_renew: 'true',
+          },
+          receipt: {
+            customer: { email: row.email },
+            items: [{
+              description: `Подписка PULSE ${plan.name} (автопродление)`.slice(0, 128),
+              quantity: '1.00',
+              amount: { value: amount.toFixed(2), currency: 'RUB' },
+              vat_code: 1,
+              payment_subject: 'service',
+              payment_mode: 'full_payment',
+            }],
+          },
+        },
+        {
+          headers: {
+            Authorization: yookassaAuth(),
+            'Idempotence-Key': `auto-renew-${paymentId}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 15000,
+        }
+      );
+
+      await query(
+        `UPDATE payments SET provider_ref = $1 WHERE id = $2`,
+        [yookassaRes.data.id, paymentId]
+      );
+
+      if (yookassaRes.data.status === 'succeeded') {
+        await query(
+          `UPDATE payments SET status = 'completed', paid_at = ${nowSql()} WHERE id = $1`,
+          [paymentId]
+        );
+        await activateSubscription(row.user_id, row.subscription_plan, 30, paymentId, false);
+        await query(`UPDATE users SET auto_renew_failures = 0 WHERE id = $1`, [row.user_id]);
+        console.log(`[AutoRenew] Success: user ${row.user_id}, ${amount} RUB, card *${paymentMethod.card_last4 || '****'}`);
+        result.processed++;
+      } else if (yookassaRes.data.status === 'canceled') {
+        await query(`UPDATE payments SET status = 'failed' WHERE id = $1`, [paymentId]);
+        await handleAutoRenewFailure(row.user_id, result);
+        result.errors++;
+      }
+      // pending / waiting_for_capture → webhook will finish the job
+    } catch (err: any) {
+      console.error(`[AutoRenew] Failed for user ${row.user_id}:`, err.response?.data || err.message);
+      await handleAutoRenewFailure(row.user_id, result);
+      result.errors++;
+    }
+  }
+
+  return result;
+}
+
+async function handleAutoRenewFailure(
+  userId: string,
+  result: { processed: number; errors: number; disabled: number }
+): Promise<void> {
+  try {
+    const failRes = await query(
+      `UPDATE users
+       SET auto_renew_failures = COALESCE(auto_renew_failures, 0) + 1
+       WHERE id = $1
+       RETURNING auto_renew_failures`,
+      [userId]
+    );
+    const failures = Number(failRes.rows[0]?.auto_renew_failures || 0);
+    if (failures >= 3) {
+      await query(
+        `UPDATE users SET subscription_auto_renew = FALSE WHERE id = $1`,
+        [userId]
+      );
+      result.disabled++;
+      console.warn(`[AutoRenew] Disabled auto-renew for user ${userId} after ${failures} failures`);
+    }
+  } catch (e: any) {
+    console.error(`[AutoRenew] Failure tracking error for user ${userId}:`, e.message);
+  }
 }
 
 // ─── Downgrade preview ─────────────────────────────────────────────────────

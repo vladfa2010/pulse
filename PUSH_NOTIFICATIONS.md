@@ -152,6 +152,21 @@ is_active = TRUE
 
 ---
 
+## Надёжная доставка токена с устройства (cold start)
+
+Frontend (`pulse-frontend/src/lib/push.ts`) подписывается на событие `registration` от `@capacitor/push-notifications` и отправляет полученный токен на `POST /api/user/channels` с `channel: 'push'`.
+
+При cold start Android FCM может сгенерировать токен до инициализации Capacitor bridge. Чтобы токен не потерялся:
+
+1. Нативный `PulseMessagingService` сохраняет токен в `SharedPreferences("CapacitorStorage", "fcm_token")`.
+2. `TokenFlushPlugin` диспатчит сохранённый токен в JS сразу после старта bridge.
+3. JS-листенер получает токен (событие `registration` с `retain = true`) и вызывает `POST /api/user/channels`.
+4. Backend сохраняет/обновляет токен в `user_channels` через `INSERT ... ON CONFLICT`.
+
+Подробнее о нативной части см. [`pulse-frontend/PUSH_SETUP.md`](../pulse-frontend/PUSH_SETUP.md).
+
+---
+
 ## Локальная разработка
 
 Без `FIREBASE_SERVICE_ACCOUNT_BASE64` push-функционал отключён, но сервер продолжает работать.

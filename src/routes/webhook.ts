@@ -152,6 +152,22 @@ router.post('/yookassa', async (req, res) => {
 
     if (event === 'payment.canceled') {
       await query(`UPDATE payments SET status = 'failed' WHERE id = $1`, [payment.id]);
+
+      if (object.metadata?.auto_renew === 'true') {
+        const failRes = await query(
+          `UPDATE users
+           SET auto_renew_failures = COALESCE(auto_renew_failures, 0) + 1
+           WHERE id = $1
+           RETURNING auto_renew_failures`,
+          [payment.user_id]
+        );
+        const failures = Number(failRes.rows[0]?.auto_renew_failures || 0);
+        if (failures >= 3) {
+          await query(`UPDATE users SET subscription_auto_renew = FALSE WHERE id = $1`, [payment.user_id]);
+          console.warn(`[AutoRenew] Disabled auto-renew for user ${payment.user_id} after ${failures} failures`);
+        }
+      }
+
       return res.status(200).json({ received: true });
     }
 
@@ -173,6 +189,11 @@ router.post('/yookassa', async (req, res) => {
       payment.id,
       payment.is_upgrade === true
     );
+
+    if (object.metadata?.auto_renew === 'true') {
+      console.log(`[AutoRenew] Webhook confirmed for user ${payment.user_id}`);
+      await query(`UPDATE users SET auto_renew_failures = 0 WHERE id = $1`, [payment.user_id]);
+    }
 
     console.log(`[YooKassa] Subscription activated for user ${payment.user_id}, plan ${payment.plan_id}`);
 

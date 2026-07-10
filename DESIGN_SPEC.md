@@ -446,7 +446,8 @@ CREATE TABLE users (
   is_verified     BOOLEAN DEFAULT FALSE,
   subscription_active    BOOLEAN DEFAULT FALSE,
   subscription_expires_at TIMESTAMP,
-  subscription_auto_renew BOOLEAN DEFAULT FALSE,
+  subscription_auto_renew BOOLEAN DEFAULT TRUE,
+  auto_renew_failures    INTEGER DEFAULT 0,
   news_count      INTEGER DEFAULT 0,
   created_at      TIMESTAMP DEFAULT NOW()
 );
