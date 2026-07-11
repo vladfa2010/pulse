@@ -2020,6 +2020,7 @@ const TAG_UPDATE_RULES: Record<string, any> = {
   ticker: { type: 'string', min: 1, max: 20, pattern: /^[A-Z0-9\.\-]+$/, optional: true },
   website: { type: 'url', max: 500, optional: true },
   description_ru: { type: 'string', max: 5000, optional: true },
+  keywords: { type: 'array', maxItems: 50, items: { type: 'string', min: 1, max: 50 }, optional: true },
   key_products: { type: 'array', maxItems: 20, items: { type: 'string', max: 100 }, optional: true },
   related_tags: { type: 'array', maxItems: 20, items: { type: 'string' }, optional: true },
   synonyms_ru: { type: 'array', maxItems: 20, items: { type: 'string', max: 100 }, optional: true },
@@ -2138,6 +2139,12 @@ app.put('/admin/tags/:tagId', requireAdmin, async (req, res) => {
       params.push(updates.tag_type);
     }
 
+    // Direct keywords update (admin override)
+    if (updates.keywords !== undefined) {
+      setClauses.push(`keywords = $${paramIdx++}`);
+      params.push(updates.keywords);
+    }
+
     // Build enriched_data JSONB patch
     const jsonbFields = ['ticker', 'website', 'description_ru', 'key_products', 'related_tags', 'synonyms_ru', 'synonyms_en', 'exchange', 'trend', 'sector'];
     // Normalize empty strings to null (INC-004: empty string !== null in JSONB)
@@ -2181,11 +2188,13 @@ app.put('/admin/tags/:tagId', requireAdmin, async (req, res) => {
     }
     const ed = enrichedDataPut;
 
-    // Rebuild keywords from enriched_data after any update.
-    // enriched_data is the single source of truth for matching keywords.
-    const { rebuildKeywordsFromEnrichment } = await import('./services/tagManager');
-    const newKeywords = await rebuildKeywordsFromEnrichment(tagId);
-    updated.keywords = newKeywords;
+    // Rebuild keywords from enriched_data after any update, UNLESS admin explicitly updated keywords.
+    // enriched_data is the single source of truth for matching keywords, but manual override is allowed.
+    if (updates.keywords === undefined) {
+      const { rebuildKeywordsFromEnrichment } = await import('./services/tagManager');
+      const newKeywords = await rebuildKeywordsFromEnrichment(tagId);
+      updated.keywords = newKeywords;
+    }
 
     // Build tag response — always include ticker/exchange/trend/sector (frontend expects them)
     const tagResponse: any = {
