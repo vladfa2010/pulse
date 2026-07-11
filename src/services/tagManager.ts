@@ -166,7 +166,10 @@ DO NOT copy the example data.`;
               function: { name: '$web_search' },
             },
           ],
-          tool_choice: 'auto',
+          tool_choice: {
+            type: 'builtin_function',
+            function: { name: '$web_search' },
+          },
         },
         {
           headers: {
