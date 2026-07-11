@@ -525,7 +525,7 @@ export function getTranslitVariants(name: string): string[] {
 // Создать пользовательский тег
 // Если tagType = 'auto' или пустой — тип определяется эвристически, обогащение идёт в фоне.
 // При добавлении существующего тега user_defined_tags НЕ модифицируется.
-export async function createUserTag(userId: string, tagId: string, tagName: string, tagType: string): Promise<{ success: boolean; finalTagId?: string; detectedType?: TagType; enrichment?: TagEnrichment; enriched?: boolean; backgroundEnrichmentStarted?: boolean }> {
+export async function createUserTag(userId: string, tagId: string, tagName: string, tagType: string): Promise<{ success: boolean; finalTagId?: string; resolvedTagName?: string; detectedType?: TagType; enrichment?: TagEnrichment; enriched?: boolean; backgroundEnrichmentStarted?: boolean; alreadySubscribed?: boolean }> {
   try {
     // 1. Точное совпадение по tag_id (например, при клике по конкретной карточке)
     let existingResult = await query(
@@ -564,8 +564,20 @@ export async function createUserTag(userId: string, tagId: string, tagName: stri
       }
     }
 
+    // 4. Поиск по ticker в enriched_data (например, пользователь ввёл тикер, а в базе тег по имени)
+    if (existingResult.rows.length === 0) {
+      existingResult = await query(
+        `SELECT tag_id, tag_name, tag_type, enriched_data, keywords, created_by
+         FROM user_defined_tags
+         WHERE enriched_data->>'ticker' ILIKE $1
+         LIMIT 1`,
+        [tagName.trim()]
+      );
+    }
+
     let finalType: string;
     let finalTagId = tagId;
+    let resolvedTagName = tagName;
     let detectedType: TagType | undefined;
     let enrichment: TagEnrichment | null = null;
     let enriched = false;
@@ -576,6 +588,7 @@ export async function createUserTag(userId: string, tagId: string, tagName: stri
       // --- Тег уже есть: НЕ трогаем user_defined_tags ---
       const existing = existingResult.rows[0];
       finalTagId = existing.tag_id;
+      resolvedTagName = existing.tag_name;
       finalType = existing.tag_type;
       detectedType = existing.tag_type as TagType;
       enrichment = existing.enriched_data || null;
@@ -609,20 +622,20 @@ export async function createUserTag(userId: string, tagId: string, tagName: stri
         backgroundEnrichmentStarted = true;
         console.log(`[TagManager] Created tag "${tagId}": type=${finalType}, keywords=${keywords.length}, background enrichment started`);
 
-        // Fire-and-forget background enrichment
-        backgroundEnrichTag(tagId, tagName).catch(err => {
+        // Fire-and-forget background enrichment (use finalTagId in case it was resolved)
+        backgroundEnrichTag(finalTagId, tagName).catch(err => {
           console.error(`[TagEnrich] Background enrichment failed for "${tagName}":`, err.message);
         });
       } catch (err: any) {
         if (err.code === '23505') {
           // Race condition: другой пользователь создал тег между SELECT и INSERT
           const raceResult = await query(
-            `SELECT tag_id, tag_type, enriched_data FROM user_defined_tags WHERE tag_id = $1 LIMIT 1`,
+            `SELECT tag_id, tag_name, tag_type, enriched_data FROM user_defined_tags WHERE tag_id = $1 LIMIT 1`,
             [tagId]
           );
           if (raceResult.rows.length === 0) {
             const raceNameResult = await query(
-              `SELECT tag_id, tag_type, enriched_data FROM user_defined_tags WHERE LOWER(tag_name) = LOWER($1) LIMIT 1`,
+              `SELECT tag_id, tag_name, tag_type, enriched_data FROM user_defined_tags WHERE LOWER(tag_name) = LOWER($1) LIMIT 1`,
               [tagName]
             );
             if (raceNameResult.rows.length > 0) {
@@ -630,6 +643,7 @@ export async function createUserTag(userId: string, tagId: string, tagName: stri
             }
           }
           finalTagId = raceResult.rows[0]?.tag_id || tagId;
+          resolvedTagName = raceResult.rows[0]?.tag_name || tagName;
           finalType = raceResult.rows[0]?.tag_type || finalType;
           detectedType = finalType as TagType;
           enrichment = raceResult.rows[0]?.enriched_data || null;
@@ -641,15 +655,33 @@ export async function createUserTag(userId: string, tagId: string, tagName: stri
       }
     }
 
-    // 2. Подписка в портфель (всегда, независимо от создания/существования)
+    // 5. Проверяем, не подписан ли уже пользователь на этот тег
+    const alreadySubscribedResult = await query(
+      `SELECT tag_name FROM portfolios WHERE user_id = $1 AND tag_id = $2 LIMIT 1`,
+      [userId, finalTagId]
+    );
+    if (alreadySubscribedResult.rows.length > 0) {
+      return {
+        success: true,
+        finalTagId,
+        resolvedTagName,
+        detectedType,
+        enrichment: enrichment || undefined,
+        enriched,
+        backgroundEnrichmentStarted: false,
+        alreadySubscribed: true,
+      };
+    }
+
+    // 6. Подписка в портфель (используем каноническое resolvedTagName)
     await query(
       `INSERT INTO portfolios (user_id, tag_id, tag_name, tag_type)
        VALUES ($1, $2, $3, $4)
        ON CONFLICT (user_id, tag_id) DO NOTHING`,
-      [userId, finalTagId, tagName, finalType]
+      [userId, finalTagId, resolvedTagName, finalType]
     );
 
-    // 3. Wake up no-tags articles только если тег был действительно создан сейчас
+    // 7. Wake up no-tags articles только если тег был действительно создан сейчас
     if (isNewTag) {
       invalidateUserTagsCache();
       wakeUpNoTagsArticles().catch((err: any) => {
@@ -657,7 +689,16 @@ export async function createUserTag(userId: string, tagId: string, tagName: stri
       });
     }
 
-    return { success: true, finalTagId, detectedType, enrichment: enrichment || undefined, enriched, backgroundEnrichmentStarted };
+    return {
+      success: true,
+      finalTagId,
+      resolvedTagName,
+      detectedType,
+      enrichment: enrichment || undefined,
+      enriched,
+      backgroundEnrichmentStarted,
+      alreadySubscribed: false,
+    };
   } catch (err: any) {
     console.error('[TagManager] Error creating tag:', err.message);
     return { success: false };

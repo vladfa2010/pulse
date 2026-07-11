@@ -728,15 +728,16 @@ interface TagImpact {
 Dropdown: "Создать тег 'X'"
     │
     ▼
-POST /api/user/tags/custom
+POST /api/user/tags
     │
     ▼
 Backend:
-  1. Генерирует keywords (tagName + транслит + склонения)
-  2. Создаёт запись в user_defined_tags
-  3. BACKFILL: сканирует ВСЕ существующие новости,
-     ищет совпадения по keywords
-  4. Обновляет matched_tags для найденных статей
+  1. createUserTag:
+     - ищет тег по tag_id / LOWER(tag_name) / транслиту / ticker
+     - при отсутствии создаёт запись в user_defined_tags
+     - подписывает пользователя в portfolios (каноническое tag_name)
+     - возвращает alreadySubscribed при повторной подписке
+  2. wakeUpNoTagsArticles() пробуждает недавние статьи без тегов
     │
     ▼
 Frontend: tagVersion++ → invalidateQueries

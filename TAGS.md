@@ -41,31 +41,28 @@
 
 ### 2.1 Создание
 
-Два endpoint'а создания тега:
-
-**`POST /api/user/tags`** — обычное добавление в портфель (используется фронтендом):
+**`POST /api/user/tags`** — единственный endpoint добавления тега в портфель:
 ```
-Пользователь вводит "Лукойл"
+Пользователь вводит "sberbank"
   → createUserTag()
     → 1) SELECT user_defined_tags по tag_id
     → 2) SELECT по LOWER(tag_name)
     → 3) SELECT по транслит-вариантам (latin ↔ cyrillic): sberbank ↔ сбербанк
-    → если тег найден:
-      → подписываемся на существующий tag_id, user_defined_tags НЕ трогаем
+    → 4) SELECT по ticker в enriched_data
+    → если тег найден (например, "Сбербанк"):
+      → finalTagId = существующий tag_id
+      → resolvedTagName = каноническое tag_name из user_defined_tags
+      → user_defined_tags НЕ трогаем
     → если тега нет:
       → heuristicTagType() — мгновенное определение типа без LLM
       → generateTagKeywords() — базовые keywords
       → INSERT INTO user_defined_tags (enriched_data = null)
-      → backgroundEnrichTag() — fire-and-forget LLM-обогащение
-    → INSERT INTO portfolios ON CONFLICT DO NOTHING
+      → backgroundEnrichTag(finalTagId, tagName) — fire-and-forget LLM-обогащение
+    → проверка: уже подписан ли пользователь на finalTagId?
+      → да: return { alreadySubscribed: true }
+      → нет: INSERT INTO portfolios (user_id, finalTagId, resolvedTagName, finalType)
   → invalidateUserTagsCache()
   → wakeUpNoTagsArticles()
-```
-
-**`POST /api/user/tags/custom`** — добавление + ручной backfill по всей базе:
-```
-Тот же flow, что и /user/tags
-  + BACKFILL: сканирует ВСЕ новости и дописывает tag_id в matched_tags
 ```
 
 > При `tagType = 'auto'` (по умолчанию) ответ возвращается мгновенно (~100–300 мс), а LLM-обогащение выполняется в фоне. Frontend показывает тег сразу и индикатор «Обогащается…», затем опрашивает статус через 5/10/20 сек.
@@ -439,7 +436,7 @@ CREATE TABLE news (
 |-------|----------|----------|
 | `GET` | `/api/user/tags` | Список тегов текущего пользователя (из `portfolios`) |
 | `POST` | `/api/user/tags` | Добавить тег в портфель (c LLM-обогащением при `tagType='auto'`) |
-| `POST` | `/api/user/tags/custom` | Создать тег + backfill по всей базе новостей |
+
 | `DELETE` | `/api/user/tags/:tagId` | Удалить тег из портфеля пользователя |
 | `GET` | `/api/user/tags/detect-type?tagName={name}` | Preview типа тега через LLM |
 | `GET` | `/api/user/tags/related?tag={tagId}` | Связанные теги через LLM |
@@ -484,16 +481,17 @@ CREATE TABLE news (
 
 ## 14. Инвариант защиты тегов (v8.1+)
 
-- `POST /api/user/tags` и `POST /api/user/tags/custom` при повторном добавлении существующего тега **не обновляют** `user_defined_tags` (`enriched_data`, `keywords`, `tag_type`, `created_by`).
-- Перед созданием тег ищется по `tag_id` **или** `LOWER(tag_name)`. Если найден по названию — пользователь подписывается на существующий `tag_id`, дубль не создаётся.
-- Подписка в `portfolios` выполняется всегда через `INSERT ... ON CONFLICT DO NOTHING`.
+- `POST /api/user/tags` при повторном добавлении существующего тега **не обновляет** `user_defined_tags` (`enriched_data`, `keywords`, `tag_type`, `created_by`) и возвращает флаг `alreadySubscribed`.
+- Перед созданием тег ищется по `tag_id`, `LOWER(tag_name)`, транслит-вариантам и тикеру в `enriched_data`. Если найден — пользователь подписывается на существующий `tag_id`, дубль не создаётся.
+- В `portfolios` всегда записывается каноническое `tag_name` из `user_defined_tags`.
 - Ручное изменение enriched-полей возможно только через `PUT /admin/tags/:tagId`.
 - При admin-изменении `enriched_data` мержится через `COALESCE(enriched_data, '{}') || jsonb_build_object(...)`, а `keywords[]` пересчитываются через `rebuildKeywordsFromEnrichment()`.
 
 ## 15. Известные ограничения
 
 - **Race condition:** `SELECT` + `INSERT` в `createUserTag()` неатомарны. Текущая реализация ловит `23505` и использует существующий тег, но для 100% защиты в будущем стоит обернуть создание в транзакцию или advisory lock.
-- **Нормализация `tag_id`:** фронтенд (`Home.tsx`) и `/api/user/tags/custom` формируют `tag_id` по одной логике (lowercase + замена пробелов на `_`), но расхождения возможны, если другие клиенты шлют иной `tagId`.пользователя
+- **Нормализация `tag_id`:** фронтенд (`Home.tsx`) формирует `tag_id` из ввода пользователя (lowercase + замена пробелов на `_`), но `createUserTag` разрешает его в существующий `tag_id`, если тег уже есть в `user_defined_tags`.
+```sql
 SELECT tag_id, tag_name, tag_type FROM portfolios WHERE user_id = '...';
 ```
 
@@ -558,12 +556,12 @@ ALTER TABLE news ADD COLUMN sentiment_score INTEGER;
 
 ## 14. Инвариант защиты тегов (v8.1+)
 
-- `POST /api/user/tags` и `POST /api/user/tags/custom` при повторном добавлении существующего тега **не обновляют** `user_defined_tags` (`enriched_data`, `keywords`, `tag_type`, `created_by`).
-- Подписка в `portfolios` выполняется всегда через `INSERT ... ON CONFLICT DO NOTHING`.
+- `POST /api/user/tags` при повторном добавлении существующего тега **не обновляет** `user_defined_tags` (`enriched_data`, `keywords`, `tag_type`, `created_by`) и возвращает флаг `alreadySubscribed`.
+- В `portfolios` всегда записывается каноническое `tag_name` из `user_defined_tags`.
 - Ручное изменение enriched-полей возможно только через `PUT /admin/tags/:tagId`.
 - При admin-изменении `enriched_data` мержится через `COALESCE(enriched_data, '{}') || jsonb_build_object(...)`, а `keywords[]` пересчитываются через `rebuildKeywordsFromEnrichment()`.
 
 ## 15. Известные ограничения
 
 - **Race condition:** `SELECT` + `INSERT` в `createUserTag()` неатомарны. Текущая реализация ловит `23505` и использует существующий тег, но для 100% защиты в будущем стоит обернуть создание в транзакцию или advisory lock.
-- **Нормализация `tag_id`:** фронтенд (`Home.tsx`) и `/api/user/tags/custom` формируют `tag_id` по одной логике (lowercase + замена пробелов на `_`), но расхождения возможны, если другие клиенты шлют иной `tagId`.
+- **Нормализация `tag_id`:** фронтенд (`Home.tsx`) формирует `tag_id` из ввода пользователя, но `createUserTag` разрешает его в существующий `tag_id`, если тег уже есть в `user_defined_tags`.

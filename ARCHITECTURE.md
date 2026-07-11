@@ -1090,7 +1090,7 @@ export async function createUserTag(
 |     └── Опрос GET /api/user/tags через 5/10/20 сек
 |
 |---> Новые теги попадают в ленту через обычный RSS pipeline
-|     (backfill по всей базе — только в POST /api/user/tags/custom)
+|     (существующие статьи без тегов пробуждаются через wakeUpNoTagsArticles)
 ```
 
 ### LLM Enrichment — когда вызывается
@@ -2228,9 +2228,13 @@ LIMIT 50;
 ### User Tags
 
 ```
-POST /api/user/tags/custom
-Body: { "tagName": "лукойл", "tagType": "stock" }
-Response: { "tag": { "tag_id": "lukoil", ... }, "backfill": { "scanned": 1523, "matched": 47 } }
+POST /api/user/tags
+Body: { "tagId": "lukoil", "tagName": "лукойл", "tagType": "auto" }
+Response: {
+  "tag": { "tag_id": "lukoil", "tag_name": "Лукойл", "tag_type": "company", ... },
+  "alreadySubscribed": false,
+  "backgroundEnrichmentStarted": true
+}
 ```
 
 ### Debug Endpoints

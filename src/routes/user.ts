@@ -4,7 +4,7 @@ import { query } from '../config/db';
 import { validate } from '../middleware/validate';
 import { AddTagSchema } from '../schemas/user';
 import { getRelatedTags, matchTagsByKeywords } from '../services/smartTagMatcher';
-import { createUserTag, generateTagKeywords, getAllTagNames, detectTagTypeViaLLM, TAG_TYPE_LABELS, buildEnrichedKeywords, getTranslitVariants } from '../services/tagManager';
+import { createUserTag, getAllTagNames, detectTagTypeViaLLM, TAG_TYPE_LABELS } from '../services/tagManager';
 import {
   getPlanById, getUserSubscription, buildSubscriptionStatus,
   scheduleDowngrade, cancelScheduledDowngrade, requireMinPlan,
@@ -176,25 +176,6 @@ router.post('/tags', authMiddleware, validate(AddTagSchema), async (req: AuthReq
       });
     }
 
-    // Check if user already has a tag matching by transliteration
-    const variants = getTranslitVariants(tagName);
-    const namePlaceholders = variants.map((_, i) => `$${i + 2}`).join(',');
-    const idPlaceholders = variants.map((_, i) => `$${i + 2 + variants.length}`).join(',');
-    const existingPortfolio = await query(
-      `SELECT tag_id, tag_name FROM portfolios
-       WHERE user_id = $1 AND (LOWER(tag_name) IN (${namePlaceholders}) OR tag_id IN (${idPlaceholders}))
-       LIMIT 1`,
-      [userId, ...variants, ...variants]
-    );
-
-    if (existingPortfolio.rows.length > 0) {
-      return res.status(409).json({
-        error: 'Tag already exists',
-        existing_tag_id: existingPortfolio.rows[0].tag_id,
-        existing_tag_name: existingPortfolio.rows[0].tag_name,
-      });
-    }
-
     // Auto-detect type if 'auto' or not provided
     const result = await createUserTag(userId, tagId, tagName, tagType);
     if (!result.success) {
@@ -203,17 +184,21 @@ router.post('/tags', authMiddleware, validate(AddTagSchema), async (req: AuthReq
 
     const finalType = result.detectedType || tagType;
     const finalTagId = result.finalTagId || tagId;
+    const finalTagName = result.resolvedTagName || tagName;
 
-    logTagAdded(userId, finalTagId, tagName, finalType).catch(() => {});
+    if (!result.alreadySubscribed) {
+      logTagAdded(userId, finalTagId, finalTagName, finalType).catch(() => {});
+    }
 
     res.status(201).json({
       tag: {
         tag_id: finalTagId,
-        tag_name: tagName,
+        tag_name: finalTagName,
         tag_type: finalType,
         tag_type_label: TAG_TYPE_LABELS[finalType as TagType],
         enriched: result.enriched ?? false,
       },
+      alreadySubscribed: result.alreadySubscribed ?? false,
       backgroundEnrichmentStarted: result.backgroundEnrichmentStarted ?? false,
     });
   } catch (err) {
@@ -467,102 +452,6 @@ router.get('/tags/detect-type', async (req, res) => {
       tag_name: tagName,
       tag_type: detectedType,
       tag_type_label: TAG_TYPE_LABELS[detectedType],
-    });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// POST /api/user/tags/custom — создать пользовательский тег + backfill по всей базе
-router.post('/tags/custom', authMiddleware, async (req: AuthRequest, res) => {
-  try {
-    const userId = req.user!.userId;
-    const { tagName, tagType = 'auto' } = req.body;
-
-    if (!tagName || tagName.length < 2) {
-      return res.status(400).json({ error: 'Tag name must be at least 2 characters' });
-    }
-
-    // Генерируем tag_id из названия (транслит + lowercase)
-    const tagId = tagName.toLowerCase()
-      .replace(/[^a-zа-яё0-9\s]/g, '')
-      .replace(/\s+/g, '_')
-      .substring(0, 50);
-
-    if (!tagId) {
-      return res.status(400).json({ error: 'Invalid tag name' });
-    }
-
-    // Check if user already has a tag with the same name (case-insensitive)
-    const existingNameCheck = await query(
-      `SELECT tag_id, tag_name FROM portfolios 
-       WHERE user_id = $1 AND LOWER(tag_name) = LOWER($2)
-       LIMIT 1`,
-      [userId, tagName]
-    );
-    if (existingNameCheck.rows.length > 0) {
-      return res.status(409).json({
-        error: 'Tag already exists',
-        existing_tag_id: existingNameCheck.rows[0].tag_id,
-        existing_tag_name: existingNameCheck.rows[0].tag_name,
-      });
-    }
-
-    // Создаем тег (auto-detect type + LLM enrichment)
-    const result = await createUserTag(userId, tagId, tagName, tagType);
-    if (!result.success) {
-      return res.status(500).json({ error: 'Failed to create tag' });
-    }
-
-    const finalTagId = result.finalTagId || tagId;
-
-    // Use enriched keywords for backfill (LLM synonyms + products + related entities)
-    const keywords = result.enrichment
-      ? buildEnrichedKeywords(tagName, result.enrichment)
-      : generateTagKeywords(tagName);
-
-    // BACKFILL: Ищем по ВСЕЙ базе новостей и привязываем тег
-    console.log(`[TagBackfill] Starting backfill for "${finalTagId}" with ${keywords.length} keywords...`);
-    const allNews = await query(
-      `SELECT id, title_ru, summary_ru, matched_tags FROM news ORDER BY published_at DESC`,
-      []
-    );
-
-    let matched = 0;
-    for (const row of allNews.rows) {
-      const text = `${row.title_ru || ''} ${row.summary_ru || ''}`.toLowerCase();
-      const hasMatch = keywords.some(kw => text.includes(kw.toLowerCase()));
-
-      if (hasMatch) {
-        // Добавляем тег в matched_tags (если ещё нет)
-        const currentTags = row.matched_tags || [];
-        if (!currentTags.includes(finalTagId)) {
-          await query(
-            `UPDATE news SET matched_tags = array_append(matched_tags, $1) WHERE id = $2`,
-            [finalTagId, row.id]
-          );
-          matched++;
-        }
-      }
-    }
-    console.log(`[TagBackfill] Matched ${matched} articles for "${finalTagId}"`);
-
-    res.json({
-      tag: {
-        id: finalTagId,
-        tag_id: finalTagId,
-        tag_name: tagName,
-        tag_type: result.detectedType || tagType,
-        tag_type_label: TAG_TYPE_LABELS[(result.detectedType || tagType) as TagType],
-        keywords,
-        enriched: !!result.enrichment,
-      },
-      enrichment: result.enrichment || null,
-      backfill: {
-        scanned: allNews.rows.length,
-        matched,
-      },
-      message: 'Tag created and backfilled successfully',
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
