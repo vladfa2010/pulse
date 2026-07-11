@@ -455,7 +455,7 @@ CREATE TABLE news (
 | `GET` | `/admin/tags` | Все теги с агрегатами (подписчики, статьи за 24ч/7д/30д) |
 | `GET` | `/admin/tags/:tagId` | Детали тега |
 | `POST` | `/admin/tags/:tagId/enrich` | Принудительное LLM-обогащение тега из админки |
-| `PUT` | `/admin/tags/:tagId` | Ручное редактирование enriched-полей и `tag_type` |
+| `PUT` | `/admin/tags/:tagId` | Ручное редактирование enriched-полей, `tag_type` и flat-колонки `keywords` |
 | `DELETE` | `/admin/tags/:tagId` | Каскадное удаление тега (PostgreSQL ONLY) |
 | `GET` | `/admin/tags/:tagId/delete-preview` | Статистика для модалки подтверждения удаления |
 
