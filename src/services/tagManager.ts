@@ -68,7 +68,9 @@ export async function enrichTagViaLLM(tagName: string): Promise<TagEnrichment | 
     return null;
   }
 
-  const prompt = `You are a financial data enrichment system covering BOTH global and Russian markets.
+  const systemPrompt = `You are a financial data enrichment system covering BOTH global and Russian markets.
+
+You MUST use $web_search to find current information about the tag before responding. Do not rely on your training data.
 
 Markets to consider:
 - US: NASDAQ, NYSE (AAPL, TSLA, NVDA)
@@ -76,29 +78,22 @@ Markets to consider:
 - If a company trades on multiple exchanges, include the primary ticker and note Russian listing.
 - Currency context: companies may report in RUB, USD, or EUR — use the appropriate currency.
 
-Tag name: "${tagName}"
-
-CRITICAL: The examples below are for ILLUSTRATION ONLY.
-For tag "${tagName}" you must research and return the REAL data for that entity.
-If you don't know the entity, return null for optional fields and a generic description.
-NEVER return Apple/Microsoft/Google data for an unrelated tag.
-DO NOT copy the example data. Use the actual tag name provided above.
-
 Rules:
-1. Return ONLY valid JSON, no markdown, no extra text
-2. description_ru: Write 2 paragraphs in RUSSIAN. Paragraph 1 = what the company/person/sector is (origin, founding). Paragraph 2 = current status, main activities, stock exchange if applicable. Use \\n\\n between paragraphs.
-3. website: Official company/person website URL starting with https://. null if unknown or not a company/person.
-4. If tag is a person: ticker=null, website=personal site or Wikipedia link, related_entities=their companies, key_products=their initiatives
-5. If tag is a sector/index/trend: ticker=null, website=null, related_entities=major constituents
-6. synonyms_ru must include common Russian transliterations, nicknames, and short forms
-7. All arrays must have at least 3 items, at most 15 items
-8. tag_type MUST be one of: company, ticker, sector, trend, person, commodity, index, currency
-9. description_ru must be written in natural, fluent Russian (not translated from English)
-10. Use CURRENT data as of 2026 — stock exchange listings, company status, ownership should reflect 2026 reality
-11. For Russian companies: always include MOEX ticker, Russian website (.ru domain), and Russian competitors in related_entities
-12. If the tag is a Russian company or person, ensure description_ru references Russian context (founded in Russia, Moscow Exchange listing, ruble reporting)
-13. synonyms_ru MUST include common Russian short names, diminutives, and transliterations (e.g., "Сбер", "Газпром", "Яндекс", "Тинькофф" → "Т-Банк")
-14. For Russian banks/fintech: key_products should include Russian product names (e.g., "СберБанк Онлайн", "Тинькофф Инвестиции", "Яндекс.Плюс")
+1. ALWAYS search the web first using $web_search
+2. Return ONLY valid JSON, no markdown, no extra text
+3. description_ru: Write 2 paragraphs in RUSSIAN. Paragraph 1 = what the company/person/sector is (origin, founding). Paragraph 2 = current status, main activities, stock exchange if applicable. Use \\n\\n between paragraphs.
+4. website: Official company/person website URL starting with https://. null if unknown or not a company/person.
+5. If tag is a person: ticker=null, website=personal site or Wikipedia link, related_entities=their companies, key_products=their initiatives
+6. If tag is a sector/index/trend: ticker=null, website=null, related_entities=major constituents
+7. synonyms_ru must include common Russian transliterations, nicknames, and short forms
+8. All arrays must have at least 3 items, at most 15 items
+9. tag_type MUST be one of: company, ticker, sector, trend, person, commodity, index, currency
+10. description_ru must be written in natural, fluent Russian (not translated from English)
+11. Use CURRENT data as of 2026 — stock exchange listings, company status, ownership should reflect 2026 reality
+12. For Russian companies: always include MOEX ticker, Russian website (.ru domain), and Russian competitors in related_entities
+13. If the tag is a Russian company or person, ensure description_ru references Russian context (founded in Russia, Moscow Exchange listing, ruble reporting)
+14. synonyms_ru MUST include common Russian short names, diminutives, and transliterations (e.g., "Сбер", "Газпром", "Яндекс", "Тинькофф" → "Т-Банк")
+15. For Russian banks/fintech: key_products should include Russian product names (e.g., "СберБанк Онлайн", "Тинькофф Инвестиции", "Яндекс.Плюс")
 
 Return ONLY a JSON object with this exact structure (placeholders only, do not fill with example data):
 {
@@ -134,39 +129,127 @@ Example 2 — Russian company "Сбербанк" (ILLUSTRATION ONLY):
   "synonyms_ru": ["Сбер", "Сбербанк России", "ПАО Сбербанк", "сбер"],
   "key_products": ["СберБанк Онлайн", "СберПрайм", "СберСтрахование", "ипотека", "кредитные карты", "вклады"],
   "description_ru": "Сбербанк — крупнейший банк России и один из ведущих финансовых институтов Восточной Европы. Контролируется Центральным банком РФ (около 50% акций). Основан в 1841 году как Сберегательная казна.\\n\\nСегодня Сбербанк обслуживает более 100 млн клиентов в России и СНГ. Основные направления: розничный банкинг, корпоративный бизнес, страхование, инвестиции, экосистема цифровых сервисов (СберБанк Онлайн, СберМаркет, Самокат). Акции торгуются на Московской бирже под тикером SBER, также GDR на Лондонской бирже (временно приостановлены)."
-}`;
+}
 
-// Reset to v1-32k (kimi-k2 may not be available on current plan)
-// User can override via KIMI_MODEL env var
+CRITICAL: The examples above are for ILLUSTRATION ONLY.
+For the requested tag you must research and return the REAL data using $web_search.
+If you don't know the entity, return null for optional fields and a generic description.
+NEVER return Apple/Microsoft/Google data for an unrelated tag.
+DO NOT copy the example data.`;
+
+  const userPrompt = `Enrich tag: "${tagName}". Use $web_search to find current info (official website, stock ticker, exchange, key products, Russian description) and return ONLY JSON.`;
+
+  const messages: any[] = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: userPrompt },
+  ];
+
+  const isKimiK = KIMI_MODEL.startsWith('kimi-k');
 
   try {
-    const response = await llmRequestWithRetry(
+    // --- Round 1: force web search ---
+    console.log(`[TagEnrichSearch] Starting web search for "${tagName}"...`);
+
+    let response = await llmRequestWithRetry(
       () => axios.post(
         'https://api.moonshot.ai/v1/chat/completions',
         {
           model: KIMI_MODEL,
-          messages: [{ role: 'user', content: prompt }],
-          temperature: KIMI_MODEL.startsWith('kimi-k') ? 0.6 : 0.1,
+          messages,
+          temperature: 0.1,
           max_tokens: 2000,
           response_format: { type: 'json_object' },
-          thinking: KIMI_MODEL.startsWith('kimi-k') ? { type: 'disabled' } : undefined,
+          thinking: isKimiK ? { type: 'disabled' } : undefined,
+          tools: [
+            {
+              type: 'builtin_function',
+              function: { name: '$web_search' },
+            },
+          ],
+          tool_choice: 'auto',
         },
         {
           headers: {
             'Authorization': `Bearer ${KIMI_API_KEY}`,
             'Content-Type': 'application/json',
           },
-          timeout: 20000,
+          timeout: 30000,
         }
       ),
-      'TagEnrich'
+      'TagEnrichSearch'
     );
+
+    // --- Round 2: if search was called, feed results back ---
+    const choice = response.data?.choices?.[0];
+    const toolCalls = choice?.message?.tool_calls || [];
+
+    if (toolCalls.length > 0) {
+      messages.push({
+        role: 'assistant',
+        content: choice.message.content || '',
+        tool_calls: toolCalls,
+      });
+
+      for (const toolCall of toolCalls) {
+        if (toolCall.function?.name === '$web_search') {
+          messages.push({
+            role: 'tool',
+            tool_call_id: toolCall.id,
+            content: JSON.stringify(toolCall.function.arguments),
+          });
+        }
+      }
+
+      console.log(`[TagEnrichFinal] Processing search results for "${tagName}"...`);
+
+      response = await llmRequestWithRetry(
+        () => axios.post(
+          'https://api.moonshot.ai/v1/chat/completions',
+          {
+            model: KIMI_MODEL,
+            messages,
+            temperature: 0.1,
+            max_tokens: 2000,
+            response_format: { type: 'json_object' },
+            thinking: isKimiK ? { type: 'disabled' } : undefined,
+          },
+          {
+            headers: {
+              'Authorization': `Bearer ${KIMI_API_KEY}`,
+              'Content-Type': 'application/json',
+            },
+            timeout: 30000,
+          }
+        ),
+        'TagEnrichFinal'
+      );
+    }
 
     const content = response.data?.choices?.[0]?.message?.content || '';
 
     const parsed = parseLlmJson(content);
     if (!parsed) {
       console.log(`[TagEnrich] Could not parse LLM response for "${tagName}" (length=${content.length})`);
+      return null;
+    }
+
+    // Validate that the response is actually about the requested entity
+    const nameVariants = getTranslitVariants(tagName).map(v => v.toLowerCase());
+    const descLower = (parsed.description_ru || parsed.description || '').toLowerCase();
+    const tickerLower = (parsed.ticker || '').toLowerCase();
+    const allSynonyms = [
+      ...(Array.isArray(parsed.synonyms_ru) ? parsed.synonyms_ru : []),
+      ...(Array.isArray(parsed.synonyms_en) ? parsed.synonyms_en : []),
+    ].map((s: string) => s.toLowerCase());
+
+    const hasNameMatch = nameVariants.some(name =>
+      descLower.includes(name) ||
+      tickerLower === name ||
+      allSynonyms.some((s: string) => s.includes(name) || name.includes(s))
+    );
+
+    if (descLower && !hasNameMatch) {
+      console.log(`[TagEnrich] Mismatch for "${tagName}" — got data for unrelated entity`);
       return null;
     }
 
