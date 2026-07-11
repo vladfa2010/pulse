@@ -68,7 +68,13 @@ export async function enrichTagViaLLM(tagName: string): Promise<TagEnrichment | 
     return null;
   }
 
-  const prompt = `You are a financial data enrichment system. Analyze this tag and return structured data.
+  const prompt = `You are a financial data enrichment system covering BOTH global and Russian markets.
+
+Markets to consider:
+- US: NASDAQ, NYSE (AAPL, TSLA, NVDA)
+- Russia: Moscow Exchange (MOEX), SPB Exchange (SBER, GAZP, YDEX, TCSG)
+- If a company trades on multiple exchanges, include the primary ticker and note Russian listing.
+- Currency context: companies may report in RUB, USD, or EUR — use the appropriate currency.
 
 Tag name: "${tagName}"
 
@@ -84,17 +90,33 @@ Return ONLY a JSON object with this exact structure:
   "description_ru": "Apple — американская технологическая корпорация, специализирующаяся на производстве потребительской электроники, программного обеспечения и онлайн-сервисов. Компания была основана Стивом Джобсом, Стивом Возняком и Рональдом Уэйном в 1976 году в Калифорнии.\\n\\nСегодня Apple является одной из крупнейших компаний мира по рыночной капитализации. Её основные продукты включают смартфоны iPhone, компьютеры Mac, планшеты iPad, а также сервисы App Store, Apple Music и iCloud. Акции компании торгуются на NASDAQ под тикером AAPL."
 }
 
+Example for a Russian company (Sberbank):
+{
+  "tag_type": "company",
+  "ticker": "SBER",
+  "website": "https://www.sberbank.ru",
+  "related_entities": ["Центральный банк РФ", "Т-Банк", "ВТБ", "Альфа-Банк", "Московская биржа", "Российский фондовый рынок"],
+  "synonyms_en": ["Sberbank", "Sber", "Sberbank of Russia"],
+  "synonyms_ru": ["Сбер", "Сбербанк России", "ПАО Сбербанк", "сбер"],
+  "key_products": ["СберБанк Онлайн", "СберПрайм", "СберСтрахование", "ипотека", "кредитные карты", "вклады"],
+  "description_ru": "Сбербанк — крупнейший банк России и один из ведущих финансовых институтов Восточной Европы. Контролируется Центральным банком РФ (около 50% акций). Основан в 1841 году как Сберегательная казна.\\n\\nСегодня Сбербанк обслуживает более 100 млн клиентов в России и СНГ. Основные направления: розничный банкинг, корпоративный бизнес, страхование, инвестиции, экосистема цифровых сервисов (СберБанк Онлайн, СберМаркет, Самокат). Акции торгуются на Московской бирже под тикером SBER, также GDR на Лондонской бирже (временно приостановлены)."
+}
+
 Rules:
 1. Return ONLY valid JSON, no markdown, no extra text
 2. description_ru: Write 2 paragraphs in RUSSIAN. Paragraph 1 = what the company/person/sector is (origin, founding). Paragraph 2 = current status, main activities, stock exchange if applicable. Use \\n\\n between paragraphs.
 3. website: Official company/person website URL starting with https://. null if unknown or not a company/person.
 4. If tag is a person: ticker=null, website=personal site or Wikipedia link, related_entities=their companies, key_products=their initiatives
 5. If tag is a sector/index/trend: ticker=null, website=null, related_entities=major constituents
-6. synonyms_ru must include common Russian transliterations and nicknames
+6. synonyms_ru must include common Russian transliterations, nicknames, and short forms
 7. All arrays must have at least 3 items, at most 15 items
 8. tag_type MUST be one of: company, ticker, sector, trend, person, commodity, index, currency
 9. description_ru must be written in natural, fluent Russian (not translated from English)
-10. Use CURRENT data as of 2026 — stock exchange listings, company status, ownership should reflect 2026 reality`;
+10. Use CURRENT data as of 2026 — stock exchange listings, company status, ownership should reflect 2026 reality
+11. For Russian companies: always include MOEX ticker, Russian website (.ru domain), and Russian competitors in related_entities
+12. If the tag is a Russian company or person, ensure description_ru references Russian context (founded in Russia, Moscow Exchange listing, ruble reporting)
+13. synonyms_ru MUST include common Russian short names, diminutives, and transliterations (e.g., "Сбер", "Газпром", "Яндекс", "Тинькофф" → "Т-Банк")
+14. For Russian banks/fintech: key_products should include Russian product names (e.g., "СберБанк Онлайн", "Тинькофф Инвестиции", "Яндекс.Плюс")`;
 
 // Reset to v1-32k (kimi-k2 may not be available on current plan)
 // User can override via KIMI_MODEL env var
