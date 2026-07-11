@@ -2226,6 +2226,75 @@ app.put('/admin/tags/:tagId', requireAdmin, async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// POST /admin/tags/:tagId/enrich — run LLM enrichment manually from admin UI
+// ═══════════════════════════════════════════════════════════════════════════
+app.post('/admin/tags/:tagId/enrich', requireAdmin, async (req, res) => {
+  const tagId = req.params.tagId.toLowerCase();
+
+  try {
+    const tagResult = await query(
+      `SELECT tag_id, tag_name, tag_type, enriched_data FROM user_defined_tags WHERE tag_id = $1`,
+      [tagId]
+    );
+    if (tagResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Tag not found' });
+    }
+    const tag = tagResult.rows[0];
+
+    console.log(`[AdminEnrich] Starting enrichment for "${tag.tag_name}" (${tagId})`);
+
+    const { enrichTagViaLLM, generateTagKeywords, buildEnrichedKeywords, wakeUpNoTagsArticles, TAG_TYPES } = await import('./services/tagManager');
+    const { invalidateUserTagsCache } = await import('./services/smartTagMatcher');
+
+    const enrichment = await enrichTagViaLLM(tag.tag_name);
+    if (!enrichment) {
+      return res.status(502).json({ error: 'Enrichment failed — LLM returned no data' });
+    }
+
+    const baseKeywords = generateTagKeywords(tag.tag_name);
+    const enhancedKeywords = buildEnrichedKeywords(tag.tag_name, enrichment);
+    const allKeywords = [...new Set([...baseKeywords, ...enhancedKeywords])]
+      .filter(k => k.length >= 2 && k.length <= 50);
+
+    const finalType = TAG_TYPES.includes(enrichment.tag_type) ? enrichment.tag_type : tag.tag_type;
+
+    await query(
+      `UPDATE user_defined_tags
+       SET enriched_data = $1,
+           keywords = $2,
+           tag_type = $3
+       WHERE tag_id = $4`,
+      [JSON.stringify(enrichment), allKeywords, finalType, tagId]
+    );
+
+    invalidateUserTagsCache();
+    wakeUpNoTagsArticles().catch((err: any) => {
+      console.error('[AdminEnrich] wakeUpNoTagsArticles error:', err.message);
+    });
+
+    console.log(`[AdminEnrich] Enriched "${tag.tag_name}": type=${enrichment.tag_type}, ticker=${enrichment.ticker || 'none'}, keywords=${allKeywords.length}`);
+
+    res.json({
+      success: true,
+      enriched: true,
+      enrichment: {
+        tag_type: enrichment.tag_type,
+        ticker: enrichment.ticker,
+        website: enrichment.website,
+        description_ru: enrichment.description_ru,
+        key_products: enrichment.key_products,
+        synonyms_ru: enrichment.synonyms_ru,
+        synonyms_en: enrichment.synonyms_en,
+        related_entities: enrichment.related_entities,
+      },
+    });
+  } catch (err: any) {
+    console.error(`[AdminEnrich] Error for ${tagId}:`, err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // DELETE /admin/tags/:tagId — atomic cascade delete (PostgreSQL ONLY)
 app.delete('/admin/tags/:tagId', requireAdmin, async (req, res) => {
   // SQLite mode — transactions not supported via pool.connect()

@@ -454,6 +454,7 @@ CREATE TABLE news (
 |-------|----------|----------|
 | `GET` | `/admin/tags` | Все теги с агрегатами (подписчики, статьи за 24ч/7д/30д) |
 | `GET` | `/admin/tags/:tagId` | Детали тега |
+| `POST` | `/admin/tags/:tagId/enrich` | Принудительное LLM-обогащение тега из админки |
 | `PUT` | `/admin/tags/:tagId` | Ручное редактирование enriched-полей и `tag_type` |
 | `DELETE` | `/admin/tags/:tagId` | Каскадное удаление тега (PostgreSQL ONLY) |
 | `GET` | `/admin/tags/:tagId/delete-preview` | Статистика для модалки подтверждения удаления |
@@ -489,7 +490,8 @@ CREATE TABLE news (
 - `POST /api/user/tags` при повторном добавлении существующего тега **не обновляет** `user_defined_tags` (`enriched_data`, `keywords`, `tag_type`, `created_by`) и возвращает флаг `alreadySubscribed`.
 - Перед созданием тег ищется по `tag_id`, `LOWER(tag_name)`, транслит-вариантам и тикеру в `enriched_data`. Если найден — пользователь подписывается на существующий `tag_id`, дубль не создаётся.
 - В `portfolios` всегда записывается каноническое `tag_name` из `user_defined_tags`.
-- Ручное изменение enriched-полей возможно только через `PUT /admin/tags/:tagId`.
+- Ручное изменение enriched-полей возможно через `PUT /admin/tags/:tagId`.
+- Принудительное обогащение запускается через `POST /admin/tags/:tagId/enrich` — endpoint вызывает `enrichTagViaLLM`, перезаписывает `enriched_data`, обновляет `keywords[]` и `tag_type`, затем инвалидирует кэш и будит no-tags статьи.
 - При admin-изменении `enriched_data` мержится через `COALESCE(enriched_data, '{}') || jsonb_build_object(...)`, а `keywords[]` пересчитываются через `rebuildKeywordsFromEnrichment()`.
 
 ## 15. Известные ограничения
@@ -563,7 +565,8 @@ ALTER TABLE news ADD COLUMN sentiment_score INTEGER;
 
 - `POST /api/user/tags` при повторном добавлении существующего тега **не обновляет** `user_defined_tags` (`enriched_data`, `keywords`, `tag_type`, `created_by`) и возвращает флаг `alreadySubscribed`.
 - В `portfolios` всегда записывается каноническое `tag_name` из `user_defined_tags`.
-- Ручное изменение enriched-полей возможно только через `PUT /admin/tags/:tagId`.
+- Ручное изменение enriched-полей возможно через `PUT /admin/tags/:tagId`.
+- Принудительное обогащение запускается через `POST /admin/tags/:tagId/enrich` — endpoint вызывает `enrichTagViaLLM`, перезаписывает `enriched_data`, обновляет `keywords[]` и `tag_type`, затем инвалидирует кэш и будит no-tags статьи.
 - При admin-изменении `enriched_data` мержится через `COALESCE(enriched_data, '{}') || jsonb_build_object(...)`, а `keywords[]` пересчитываются через `rebuildKeywordsFromEnrichment()`.
 
 ## 15. Известные ограничения
