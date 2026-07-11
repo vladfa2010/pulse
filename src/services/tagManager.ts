@@ -533,12 +533,13 @@ export async function createUserTag(userId: string, tagId: string, tagName: stri
     if (existingResult.rows.length === 0) {
       const variants = getTranslitVariants(tagName);
       if (variants.length > 1) {
-        const placeholders = variants.map((_, i) => `$${i + 1}`).join(',');
+        const namePlaceholders = variants.map((_, i) => `$${i + 1}`).join(',');
+        const idPlaceholders = variants.map((_, i) => `$${i + 1 + variants.length}`).join(',');
         existingResult = await query(
           `SELECT tag_id, tag_name, tag_type, enriched_data, keywords, created_by
            FROM user_defined_tags
-           WHERE LOWER(tag_name) IN (${placeholders})
-              OR tag_id IN (${placeholders})
+           WHERE LOWER(tag_name) IN (${namePlaceholders})
+              OR tag_id IN (${idPlaceholders})
            LIMIT 1`,
           [...variants, ...variants]
         );

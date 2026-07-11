@@ -178,10 +178,11 @@ router.post('/tags', authMiddleware, validate(AddTagSchema), async (req: AuthReq
 
     // Check if user already has a tag matching by transliteration
     const variants = getTranslitVariants(tagName);
-    const placeholders = variants.map((_, i) => `$${i + 2}`).join(',');
+    const namePlaceholders = variants.map((_, i) => `$${i + 2}`).join(',');
+    const idPlaceholders = variants.map((_, i) => `$${i + 2 + variants.length}`).join(',');
     const existingPortfolio = await query(
       `SELECT tag_id, tag_name FROM portfolios
-       WHERE user_id = $1 AND (LOWER(tag_name) IN (${placeholders}) OR tag_id IN (${placeholders}))
+       WHERE user_id = $1 AND (LOWER(tag_name) IN (${namePlaceholders}) OR tag_id IN (${idPlaceholders}))
        LIMIT 1`,
       [userId, ...variants, ...variants]
     );
