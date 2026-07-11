@@ -68,9 +68,22 @@ export async function enrichTagViaLLM(tagName: string): Promise<TagEnrichment | 
     return null;
   }
 
-  const systemPrompt = `You are a financial data enrichment system covering BOTH global and Russian markets.
+  const systemPrompt = `You are a financial data enrichment system. Your task is to research entities using web search and return structured data.
 
 You MUST use $web_search to find current information about the tag before responding. Do not rely on your training data.
+
+When you receive a tag name, you MUST:
+1. Use $web_search to search the web
+2. LANGUAGE RULE: If the tag contains Cyrillic letters (а-я, ё) — search query MUST be in Russian
+3. If the tag is in Russian, use query format: "{tagName} компания тикер биржа сайт описание"
+4. If the tag is in English, use query format: "{tagName} company stock ticker exchange website description"
+5. Search for: official website, stock ticker, stock exchange, description, key products
+6. Return ONLY valid JSON
+
+CRITICAL: Russian tags → Russian search queries. English tags → English search queries.
+
+If the entity is not found, return null for optional fields.
+NEVER guess or use your training data. ALWAYS search first.
 
 Markets to consider:
 - US: NASDAQ, NYSE (AAPL, TSLA, NVDA)
@@ -137,7 +150,42 @@ If you don't know the entity, return null for optional fields and a generic desc
 NEVER return Apple/Microsoft/Google data for an unrelated tag.
 DO NOT copy the example data.`;
 
-  const userPrompt = `Enrich tag: "${tagName}". Use $web_search to find current info (official website, stock ticker, exchange, key products, Russian description) and return ONLY JSON.`;
+  const isRussian = /[а-яё]/i.test(tagName);
+  const searchQuery = isRussian
+    ? `${tagName} компания тикер биржа сайт описание`
+    : `${tagName} company stock ticker exchange website description`;
+
+  const userPrompt = isRussian
+    ? `Исследуй сущность: "${tagName}"
+
+Выполни $web_search с запросом (обязательно на русском языке): "${searchQuery}"
+
+Верни JSON:
+- tag_type: company | ticker | person | sector | trend | commodity | index | currency
+- ticker: биржевой тикер или null
+- website: официальный сайт или null
+- related_entities: 3-10 связанных компаний/персон
+- synonyms_en: английские синонимы
+- synonyms_ru: русские синонимы и сокращения
+- key_products: ключевые продукты/услуги
+- description_ru: 2 абзаца на русском (история + текущий статус)
+
+Только JSON. Если не найдено — null для опциональных полей.`
+    : `Research entity: "${tagName}"
+
+Use $web_search with query: "${searchQuery}"
+
+Return JSON:
+- tag_type: company | ticker | person | sector | trend | commodity | index | currency
+- ticker: stock symbol or null
+- website: official URL or null
+- related_entities: 3-10 related entities
+- synonyms_en: English aliases
+- synonyms_ru: Russian aliases
+- key_products: main products/services
+- description_ru: 2 paragraphs in Russian (origin + current status)
+
+Return ONLY JSON. If not found, use null for optional fields.`;
 
   const messages: any[] = [
     { role: 'system', content: systemPrompt },
