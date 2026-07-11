@@ -2,8 +2,8 @@
 
 > Дата: 2026-06-18
 > Файлы: `smartTagMatcher.ts`, `tagManager.ts`, `routes/user.ts`, `index.ts`
-> Статус: ✅ Только пользовательские теги + LLM + защита от перезаписи
-> Последнее обновление: v8.1+ — tag protection (`createUserTag` SELECT-first, forceLLM pipeline)
+> Статус: ✅ Пользовательские теги + асинхронное LLM-обогащение + дедупликация по транслиту + поддержка российских компаний
+> Последнее обновление: v8.6.7+ — async enrichment, translit dedup, Russian companies prompt
 
 ---
 
@@ -47,13 +47,19 @@
 ```
 Пользователь вводит "Лукойл"
   → createUserTag()
-    → SELECT user_defined_tags по tag_id
+    → 1) SELECT user_defined_tags по tag_id
+    → 2) SELECT по LOWER(tag_name)
+    → 3) SELECT по транслит-вариантам (latin ↔ cyrillic): sberbank ↔ сбербанк
+    → если тег найден:
+      → подписываемся на существующий tag_id, user_defined_tags НЕ трогаем
     → если тега нет:
-      → enrichTagViaLLM() / detectTagTypeViaLLM()
-      → buildEnrichedKeywords() / generateTagKeywords()
-      → INSERT INTO user_defined_tags (без ON CONFLICT UPDATE)
+      → heuristicTagType() — мгновенное определение типа без LLM
+      → generateTagKeywords() — базовые keywords
+      → INSERT INTO user_defined_tags (enriched_data = null)
+      → backgroundEnrichTag() — fire-and-forget LLM-обогащение
     → INSERT INTO portfolios ON CONFLICT DO NOTHING
   → invalidateUserTagsCache()
+  → wakeUpNoTagsArticles()
 ```
 
 **`POST /api/user/tags/custom`** — добавление + ручной backfill по всей базе:
@@ -62,7 +68,11 @@
   + BACKFILL: сканирует ВСЕ новости и дописывает tag_id в matched_tags
 ```
 
+> При `tagType = 'auto'` (по умолчанию) ответ возвращается мгновенно (~100–300 мс), а LLM-обогащение выполняется в фоне. Frontend показывает тег сразу и индикатор «Обогащается…», затем опрашивает статус через 5/10/20 сек.
+>
 > Если в запросе передан конкретный `tagType` (не `'auto'`), LLM-обогащение **не вызывается** — используется переданный тип и базовые keywords.
+>
+> Промпт `enrichTagViaLLM` включает контекст глобальных и российских рынков (NASDAQ/NYSE + MOEX/SPB), примеры Apple и Сбербанка, и правила для русских компаний (MOEX-тикер, `.ru` сайт, русские синонимы и продукты).
 
 ### 2.2 Генерация keywords
 
@@ -81,6 +91,7 @@ function generateTagKeywords(tagName: string): string[]
 - **Портфель:** `portfolios` (user_id, tag_id, tag_name, tag_type)
 - **Кэш:** in-memory, TTL 1 минута
 - **Инвариант:** повторное добавление существующего тега в портфель не изменяет `user_defined_tags` (не перезаписывает `enriched_data`, `keywords`, `tag_type`, `created_by`). Создание ищет тег как по `tag_id`, так и по `LOWER(tag_name)`; при совпадении по названию пользователь подписывается на существующий `tag_id`.
+- **Дедупликация по транслиту:** третий уровень поиска проверяет варианты названия в латинице и кириллице (`getTranslitVariants`). Это предотвращает дубли `sberbank` / `сбербанк`, `gazprom` / `газпром`, `yandex` / `яндекс`. Фонетические варианты (`apple` / `эппл`) не покрываются — известное ограничение.
 
 ### 2.4 Почему нет хардкод тегов
 

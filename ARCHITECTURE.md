@@ -942,28 +942,55 @@ which the market typically rewards with multiple expansion.
 ### tagManager.ts
 
 ```typescript
-// === createUserTag ===
-// Создание тега с защитой от дублей по названию
+// === createUserTag (v8.6.7+) ===
+// Создание тега с защитой от дублей по названию и транслиту
 export async function createUserTag(
   userId: string,
   tagId: string,
   tagName: string,
   tagType: string
-): Promise<{ success: boolean; detectedType?: TagType; enrichment?: TagEnrichment }> {
+): Promise<{ success: boolean; finalTagId?: string; detectedType?: TagType; enrichment?: TagEnrichment; enriched?: boolean; backgroundEnrichmentStarted?: boolean }> {
 
-  // 1. Проверяем, существует ли тег (по tag_id или по названию)
-  const existingResult = await query(
+  // 1. Проверяем, существует ли тег (tag_id → LOWER(tag_name) → транслит)
+  let existingResult = await query(
     `SELECT tag_id, tag_name, tag_type, enriched_data, keywords, created_by
      FROM user_defined_tags
-     WHERE tag_id = $1 OR LOWER(tag_name) = LOWER($2)
+     WHERE tag_id = $1
      LIMIT 1`,
-    [tagId, tagName]
+    [tagId]
   );
+
+  if (existingResult.rows.length === 0) {
+    existingResult = await query(
+      `SELECT tag_id, tag_name, tag_type, enriched_data, keywords, created_by
+       FROM user_defined_tags
+       WHERE LOWER(tag_name) = LOWER($1)
+       LIMIT 1`,
+      [tagName]
+    );
+  }
+
+  // Дедупликация по транслиту: sberbank ↔ сбербанк
+  if (existingResult.rows.length === 0) {
+    const variants = getTranslitVariants(tagName);
+    if (variants.length > 1) {
+      const placeholders = variants.map((_, i) => `$${i + 1}`).join(',');
+      existingResult = await query(
+        `SELECT tag_id, tag_name, tag_type, enriched_data, keywords, created_by
+         FROM user_defined_tags
+         WHERE LOWER(tag_name) IN (${placeholders}) OR tag_id IN (${placeholders})
+         LIMIT 1`,
+        [...variants, ...variants]
+      );
+    }
+  }
 
   let finalTagId = tagId;
   let finalType: string;
   let detectedType: TagType | undefined;
   let enrichment: TagEnrichment | null = null;
+  let enriched = false;
+  let backgroundEnrichmentStarted = false;
 
   if (existingResult.rows.length > 0) {
     // --- Тег уже есть: подписываемся на существующий ---
@@ -972,11 +999,12 @@ export async function createUserTag(
     finalType = existing.tag_type;
     detectedType = existing.tag_type as TagType;
     enrichment = existing.enriched_data || null;
+    enriched = !!existing.enriched_data;
   } else {
-    // --- Тега нет: создаём с LLM-обогащением ---
+    // --- Тега нет: создаём мгновенно, обогащаем в фоне ---
     if (!tagType || tagType === 'auto') {
-      enrichment = await enrichTagViaLLM(tagName);
-      finalType = enrichment?.tag_type || await detectTagTypeViaLLM(tagName);
+      finalType = heuristicTagType(tagName);
+      detectedType = finalType as TagType;
     } else {
       finalType = tagType;
     }
@@ -985,30 +1013,30 @@ export async function createUserTag(
       finalType = 'company';
     }
 
-    const keywords = enrichment
-      ? buildEnrichedKeywords(tagName, enrichment)
-      : generateTagKeywords(tagName);
+    const keywords = generateTagKeywords(tagName);
 
     try {
       await query(
         `INSERT INTO user_defined_tags
            (tag_id, tag_name, tag_type, keywords, enriched_data, created_by)
          VALUES ($1, $2, $3, $4, $5, $6)`,
-        [tagId, tagName, finalType, keywords,
-         enrichment ? JSON.stringify(enrichment) : null, userId]
+        [tagId, tagName, finalType, keywords, null, userId]
       );
+      backgroundEnrichmentStarted = true;
+      backgroundEnrichTag(tagId, tagName).catch(() => {});  // fire-and-forget
     } catch (err: any) {
       if (err.code === '23505') {
-        // Race condition: другой пользователь создал тег между SELECT и INSERT
+        // Race condition
         const raceResult = await query(
-          `SELECT tag_id, tag_type FROM user_defined_tags
+          `SELECT tag_id, tag_type, enriched_data FROM user_defined_tags
            WHERE tag_id = $1 OR LOWER(tag_name) = LOWER($2) LIMIT 1`,
           [tagId, tagName]
         );
         finalTagId = raceResult.rows[0]?.tag_id || tagId;
         finalType = raceResult.rows[0]?.tag_type || finalType;
         detectedType = finalType as TagType;
-        enrichment = null;
+        enrichment = raceResult.rows[0]?.enriched_data || null;
+        enriched = !!raceResult.rows[0]?.enriched_data;
       } else {
         throw err;
       }
@@ -1023,11 +1051,11 @@ export async function createUserTag(
     [userId, finalTagId, tagName, finalType]
   );
 
-  return { success: true, detectedType, enrichment: enrichment || undefined };
+  return { success: true, finalTagId, detectedType, enrichment: enrichment || undefined, enriched, backgroundEnrichmentStarted };
 }
 ```
 
-### User-Defined Tags Flow
+### User-Defined Tags Flow (v8.6.7+)
 
 ```
 Пользователь вводит "Лукойл"
@@ -1037,21 +1065,29 @@ export async function createUserTag(
 |
 |---> Иначе: POST /api/user/tags { tagId, tagName, tagType: 'auto' }
 |     |
+|     |---> Backend: проверка портфеля по транслиту (sberbank ↔ сбербанк)
+|     |     └── Если уже есть → 409 Tag already exists
+|     |
 |     |---> Backend createUserTag()
 |           |
-|           |---> SELECT FROM user_defined_tags
-|           |     WHERE tag_id = $1 OR LOWER(tag_name) = LOWER($2)
+|           |---> 1) SELECT FROM user_defined_tags WHERE tag_id = $1
+|           |---> 2) SELECT ... WHERE LOWER(tag_name) = LOWER($1)
+|           |---> 3) SELECT ... WHERE tag_id/LOWER(tag_name) IN транслит-вариантах
 |           |
 |           |---> Тег уже есть?
 |           |     └── Подписываемся на существующий tag_id (без LLM, без INSERT)
 |           |
 |           |---> Тега нет?
-|                 ├── enrichTagViaLLM() / detectTagTypeViaLLM()
-|                 ├── buildEnrichedKeywords() / generateTagKeywords()
-|                 └── INSERT INTO user_defined_tags
-|                       (tag_id, tag_name, tag_type, keywords, enriched_data, created_by)
+|                 ├── heuristicTagType() — мгновенно
+|                 ├── generateTagKeywords() — базовые keywords
+|                 ├── INSERT INTO user_defined_tags (enriched_data = null)
+|                 └── backgroundEnrichTag() — fire-and-forget LLM-обогащение
 |
 |---> INSERT INTO portfolios ON CONFLICT DO NOTHING
+|---> invalidateUserTagsCache() + wakeUpNoTagsArticles()
+|
+|---> Frontend: показывает тег сразу + индикатор "Обогащается..."
+|     └── Опрос GET /api/user/tags через 5/10/20 сек
 |
 |---> Новые теги попадают в ленту через обычный RSS pipeline
 |     (backfill по всей базе — только в POST /api/user/tags/custom)
@@ -1414,13 +1450,21 @@ const [articleData, enrichData] = await Promise.all([
 ### Когда вызывается LLM
 
 ```typescript
-// tagManager.ts:createUserTag()
-if (!tagType || tagType === 'auto') {
-  enrichment = await enrichTagViaLLM(tagName);   // ← ВЫЗЫВАЕТСЯ
+// tagManager.ts:backgroundEnrichTag() — вызывается fire-and-forget из createUserTag
+async function backgroundEnrichTag(tagId: string, tagName: string) {
+  const enrichment = await enrichTagViaLLM(tagName);  // ← ВЫЗЫВАЕТСЯ В ФОНЕ
+  if (!enrichment) return;
+  const keywords = buildEnrichedKeywords(tagName, enrichment);
+  await query(
+    `UPDATE user_defined_tags SET enriched_data = $1, keywords = $2, tag_type = $3 WHERE tag_id = $4`,
+    [JSON.stringify(enrichment), keywords, enrichment.tag_type, tagId]
+  );
 }
 ```
 
 **Только** при `tagType = 'auto'` или пустом. При конкретном типе (`'company'`, `'sector'`) — LLM **не** вызывается.
+
+> **Важно:** `enrichTagViaLLM` больше не блокирует HTTP-ответ. Ответ возвращается сразу (`backgroundEnrichmentStarted: true`), а обогащение завершается через 5–30 секунд.
 
 ### Frontend всегда шлёт `'auto'`
 
@@ -1439,9 +1483,15 @@ addTag({ tagId: s.id, tagName: s.label, tagType: s.type })  // ← из suggesti
   ↓
 Frontend: addTag({ tagId: "spacex", tagName: "SpaceX", tagType: "auto" })
   ↓
-Backend: POST /user/tags → createUserTag()
+Backend: POST /user/tags → проверка портфеля по транслиту → createUserTag()
   ↓
-  if (tagType === 'auto') → enrichTagViaLLM("SpaceX")
+  if (tagType === 'auto'):
+    ├──→ heuristicTagType("SpaceX") → "company"
+    ├──→ generateTagKeywords("SpaceX") → базовые keywords
+    └──→ INSERT INTO user_defined_tags (..., enriched_data = null)
+  ↓
+  backgroundEnrichTag("spacex", "SpaceX")  // fire-and-forget
+    ├──→ enrichTagViaLLM("SpaceX")
     ├──→ tag_type: "company"
     ├──→ ticker: null
     ├──→ website: "https://www.spacex.com"
@@ -1451,10 +1501,11 @@ Backend: POST /user/tags → createUserTag()
     ├──→ key_products: ["Falcon 9", "Starship", "Dragon", "Starlink"]
     └──→ description_ru: "2 параграфа на русском"
   ↓
-  INSERT INTO user_defined_tags (tag_id, tag_name, ..., enriched_data)
+  UPDATE user_defined_tags SET enriched_data = ..., keywords = ..., tag_type = ...
   INSERT INTO portfolios (user_id, tag_id)  -- подписка пользователя
   ↓
-Frontend: setLastAddedTagId("spacex") → зелёная подсветка (1500ms)
+Frontend: setPortfolio([...prev, data.tag]) → индикатор "Обогащается..."
+  └──→ polling 5/10/20 сек → обновление enriched-статуса
 ```
 
 ### Loading state (f7f4be8)

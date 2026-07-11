@@ -213,14 +213,25 @@ LLM оценивает новость как опытный инвестицио
 
 Flow создания:
 1. Пользователь вводит название в поиск → "Создать тег 'X'"
-2. `POST /api/user/tags` или `POST /api/user/tags/custom` → backend:
-   - `createUserTag()` проверяет существование тега в `user_defined_tags` по `tag_id` **или** `LOWER(tag_name)`.
-   - Если тег уже есть — **не модифицирует** `user_defined_tags` и подписывает на существующий `tag_id` (защита от дублей + сохранение enriched_data/keywords/created_by).
-   - Если тега нет — вызывает LLM `enrichTagViaLLM(tagName)`, строит keywords и делает `INSERT`.
+2. `POST /api/user/tags` → backend:
+   - Проверяем, нет ли у пользователя в `portfolios` тега, совпадающего по транслиту (`sberbank` ↔ `сбербанк`). Если есть — возвращаем `409`.
+   - `createUserTag()` ищет тег в `user_defined_tags` в три этапа:
+     1. точное совпадение по `tag_id`;
+     2. точное совпадение по `LOWER(tag_name)`;
+     3. совпадение по транслит-вариантам (`getTranslitVariants`).
+   - Если тег найден — **не модифицирует** `user_defined_tags` и подписывает на существующий `tag_id`.
+   - Если тега нет:
+     - `heuristicTagType()` — мгновенный тип без LLM.
+     - `generateTagKeywords()` — базовые keywords.
+     - `INSERT INTO user_defined_tags` с `enriched_data = null`.
+     - `backgroundEnrichTag()` — fire-and-forget LLM-обогащение (обновляет `enriched_data`, `keywords`, `tag_type`).
    - INSERT/IGNORE в `portfolios` (подписка).
-   - `POST /api/user/tags/custom` дополнительно делает **BACKFILL** по всем новостям.
-3. `tagVersion++` → `invalidateQueries(['unreadNews', 'historyNews'])`
-4. Карусели автоматически перезагружаются
+   - `invalidateUserTagsCache()` + `wakeUpNoTagsArticles()`.
+3. Frontend показывает тег сразу и индикатор «Обогащается…», затем опрашивает `GET /api/user/tags` через 5/10/20 сек.
+4. `tagVersion++` → `invalidateQueries(['unreadNews', 'historyNews'])`
+5. Карусели автоматически перезагружаются
+
+**Промпт обогащения (`enrichTagViaLLM`):** включает контекст глобальных и российских рынков, примеры Apple и Сбербанка, и правила для русских компаний (MOEX-тикер, `.ru` сайт, русские синонимы/продукты).
 
 **Инвариант защиты тегов:**
 - Повторное добавление существующего тега в портфель никогда не обновляет `user_defined_tags`.
@@ -232,7 +243,8 @@ Flow создания:
 - `enriched_data` JSONB — единственный источник правды для matching keywords.
 - `keywords[]` — производный плоский массив, который пересчитывается из `enriched_data`.
 - `buildEnrichedKeywords(tagName, enrichment)` строит effective keywords из base keywords + ticker + synonyms + key_products.
-- При создании тега и при любом admin-изменении `keywords` пересчитываются через `rebuildKeywordsFromEnrichment`.
+- При создании тега сначала сохраняются базовые keywords, а после фонового LLM-обогащения `keywords` пересчитываются через `buildEnrichedKeywords`.
+- При любом admin-изменении `keywords` пересчитываются через `rebuildKeywordsFromEnrichment`.
 - `getAllUserDefinedTags` предпочитает `buildEnrichedKeywords(enriched_data)`; если enriched_data отсутствует или не парсится — fallback на сохранённые `keywords[]` (или `[tag_id]`).
 - `related_entities` используются только в UI, НЕ участвуют в matching (чтобы избежать false positives).
 
