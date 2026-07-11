@@ -4,7 +4,7 @@ import { query } from '../config/db';
 import { validate } from '../middleware/validate';
 import { AddTagSchema } from '../schemas/user';
 import { getRelatedTags, matchTagsByKeywords } from '../services/smartTagMatcher';
-import { createUserTag, generateTagKeywords, getAllTagNames, detectTagTypeViaLLM, TAG_TYPE_LABELS, buildEnrichedKeywords } from '../services/tagManager';
+import { createUserTag, generateTagKeywords, getAllTagNames, detectTagTypeViaLLM, TAG_TYPE_LABELS, buildEnrichedKeywords, getTranslitVariants } from '../services/tagManager';
 import {
   getPlanById, getUserSubscription, buildSubscriptionStatus,
   scheduleDowngrade, cancelScheduledDowngrade, requireMinPlan,
@@ -173,6 +173,24 @@ router.post('/tags', authMiddleware, validate(AddTagSchema), async (req: AuthReq
     if (maxTags >= 0 && tagCount >= maxTags) {
       return res.status(403).json({
         error: `Tag limit reached (${maxTags}). Upgrade your plan for more.`,
+      });
+    }
+
+    // Check if user already has a tag matching by transliteration
+    const variants = getTranslitVariants(tagName);
+    const placeholders = variants.map((_, i) => `$${i + 2}`).join(',');
+    const existingPortfolio = await query(
+      `SELECT tag_id, tag_name FROM portfolios
+       WHERE user_id = $1 AND (LOWER(tag_name) IN (${placeholders}) OR tag_id IN (${placeholders}))
+       LIMIT 1`,
+      [userId, ...variants, ...variants]
+    );
+
+    if (existingPortfolio.rows.length > 0) {
+      return res.status(409).json({
+        error: 'Tag already exists',
+        existing_tag_id: existingPortfolio.rows[0].tag_id,
+        existing_tag_name: existingPortfolio.rows[0].tag_name,
       });
     }
 

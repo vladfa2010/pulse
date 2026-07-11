@@ -457,13 +457,59 @@ export function heuristicTagType(tagName: string): TagType {
   return 'company';
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Transliteration helpers for tag deduplication (latin ↔ cyrillic)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const TRANSLIT_MAP: Record<string, string> = {
+  'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'ё': 'yo',
+  'ж': 'zh', 'з': 'z', 'и': 'i', 'й': 'j', 'к': 'k', 'л': 'l', 'м': 'm',
+  'н': 'n', 'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't', 'у': 'u',
+  'ф': 'f', 'х': 'h', 'ц': 'c', 'ч': 'ch', 'ш': 'sh', 'щ': 'sch', 'ъ': '',
+  'ы': 'y', 'ь': '', 'э': 'e', 'ю': 'yu', 'я': 'ya',
+};
+
+const REVERSE_MAP: Record<string, string> = Object.fromEntries(
+  Object.entries(TRANSLIT_MAP).map(([k, v]) => [v, k])
+);
+
+function toLatin(str: string): string {
+  return str.toLowerCase().split('').map(c => TRANSLIT_MAP[c] || c).join('');
+}
+
+function toCyrillic(str: string): string {
+  let result = str.toLowerCase();
+  const multi: [string, string][] = [['sch', 'щ'], ['zh', 'ж'], ['ch', 'ч'], ['sh', 'ш'], ['yo', 'ё'], ['yu', 'ю'], ['ya', 'я']];
+  for (const [lat, cyr] of multi) {
+    result = result.split(lat).join(cyr);
+  }
+  return result.split('').map(c => REVERSE_MAP[c] || c).join('');
+}
+
+export function getTranslitVariants(name: string): string[] {
+  const lower = name.toLowerCase().trim();
+  const hasCyrillic = /[а-яё]/.test(lower);
+  const hasLatin = /[a-z]/.test(lower);
+
+  const variants = new Set<string>();
+  variants.add(lower);
+
+  if (hasCyrillic) {
+    variants.add(toLatin(lower));
+  }
+  if (hasLatin) {
+    variants.add(toCyrillic(lower));
+  }
+
+  return [...variants];
+}
+
 // Создать пользовательский тег
 // Если tagType = 'auto' или пустой — тип определяется эвристически, обогащение идёт в фоне.
 // При добавлении существующего тега user_defined_tags НЕ модифицируется.
 export async function createUserTag(userId: string, tagId: string, tagName: string, tagType: string): Promise<{ success: boolean; finalTagId?: string; detectedType?: TagType; enrichment?: TagEnrichment; enriched?: boolean; backgroundEnrichmentStarted?: boolean }> {
   try {
-    // 1. Сначала ищем точное совпадение по tag_id, затем — по названию.
-    //    Это предотвращает подписку на дубль с другим ID при клике по конкретной карточке.
+    // 1. Точное совпадение по tag_id (например, при клике по конкретной карточке)
     let existingResult = await query(
       `SELECT tag_id, tag_name, tag_type, enriched_data, keywords, created_by
        FROM user_defined_tags
@@ -472,6 +518,7 @@ export async function createUserTag(userId: string, tagId: string, tagName: stri
       [tagId]
     );
 
+    // 2. Точное совпадение по LOWER(tag_name)
     if (existingResult.rows.length === 0) {
       existingResult = await query(
         `SELECT tag_id, tag_name, tag_type, enriched_data, keywords, created_by
@@ -480,6 +527,22 @@ export async function createUserTag(userId: string, tagId: string, tagName: stri
          LIMIT 1`,
         [tagName]
       );
+    }
+
+    // 3. Транслит-варианты (latin ↔ cyrillic): sberbank ↔ сбербанк
+    if (existingResult.rows.length === 0) {
+      const variants = getTranslitVariants(tagName);
+      if (variants.length > 1) {
+        const placeholders = variants.map((_, i) => `$${i + 1}`).join(',');
+        existingResult = await query(
+          `SELECT tag_id, tag_name, tag_type, enriched_data, keywords, created_by
+           FROM user_defined_tags
+           WHERE LOWER(tag_name) IN (${placeholders})
+              OR tag_id IN (${placeholders})
+           LIMIT 1`,
+          [...variants, ...variants]
+        );
+      }
     }
 
     let finalType: string;
