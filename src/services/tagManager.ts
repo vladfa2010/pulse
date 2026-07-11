@@ -78,29 +78,11 @@ Markets to consider:
 
 Tag name: "${tagName}"
 
-Return ONLY a JSON object with this exact structure:
-{
-  "tag_type": "company",        // One of: company, ticker, sector, trend, person, commodity, index, currency
-  "ticker": "AAPL",             // Stock ticker if applicable, else null
-  "website": "https://www.apple.com",  // Official company website. null if not a company/person, or unknown
-  "related_entities": ["Microsoft", "Google"],  // Related companies, sectors, or people (5-10 items)
-  "synonyms_en": ["Apple Inc", "iPhone maker", "Cupertino"],  // English synonyms/aliases (5-10 items)
-  "synonyms_ru": ["Эпл", "эппл", "яблочная компания"],       // Russian synonyms/aliases (5-10 items)
-  "key_products": ["iPhone", "iPad", "Mac", "App Store", "Apple Watch"],  // Key products/services (5-10 items)
-  "description_ru": "Apple — американская технологическая корпорация, специализирующаяся на производстве потребительской электроники, программного обеспечения и онлайн-сервисов. Компания была основана Стивом Джобсом, Стивом Возняком и Рональдом Уэйном в 1976 году в Калифорнии.\\n\\nСегодня Apple является одной из крупнейших компаний мира по рыночной капитализации. Её основные продукты включают смартфоны iPhone, компьютеры Mac, планшеты iPad, а также сервисы App Store, Apple Music и iCloud. Акции компании торгуются на NASDAQ под тикером AAPL."
-}
-
-Example for a Russian company (Sberbank):
-{
-  "tag_type": "company",
-  "ticker": "SBER",
-  "website": "https://www.sberbank.ru",
-  "related_entities": ["Центральный банк РФ", "Т-Банк", "ВТБ", "Альфа-Банк", "Московская биржа", "Российский фондовый рынок"],
-  "synonyms_en": ["Sberbank", "Sber", "Sberbank of Russia"],
-  "synonyms_ru": ["Сбер", "Сбербанк России", "ПАО Сбербанк", "сбер"],
-  "key_products": ["СберБанк Онлайн", "СберПрайм", "СберСтрахование", "ипотека", "кредитные карты", "вклады"],
-  "description_ru": "Сбербанк — крупнейший банк России и один из ведущих финансовых институтов Восточной Европы. Контролируется Центральным банком РФ (около 50% акций). Основан в 1841 году как Сберегательная казна.\\n\\nСегодня Сбербанк обслуживает более 100 млн клиентов в России и СНГ. Основные направления: розничный банкинг, корпоративный бизнес, страхование, инвестиции, экосистема цифровых сервисов (СберБанк Онлайн, СберМаркет, Самокат). Акции торгуются на Московской бирже под тикером SBER, также GDR на Лондонской бирже (временно приостановлены)."
-}
+CRITICAL: The examples below are for ILLUSTRATION ONLY.
+For tag "${tagName}" you must research and return the REAL data for that entity.
+If you don't know the entity, return null for optional fields and a generic description.
+NEVER return Apple/Microsoft/Google data for an unrelated tag.
+DO NOT copy the example data. Use the actual tag name provided above.
 
 Rules:
 1. Return ONLY valid JSON, no markdown, no extra text
@@ -116,7 +98,43 @@ Rules:
 11. For Russian companies: always include MOEX ticker, Russian website (.ru domain), and Russian competitors in related_entities
 12. If the tag is a Russian company or person, ensure description_ru references Russian context (founded in Russia, Moscow Exchange listing, ruble reporting)
 13. synonyms_ru MUST include common Russian short names, diminutives, and transliterations (e.g., "Сбер", "Газпром", "Яндекс", "Тинькофф" → "Т-Банк")
-14. For Russian banks/fintech: key_products should include Russian product names (e.g., "СберБанк Онлайн", "Тинькофф Инвестиции", "Яндекс.Плюс")`;
+14. For Russian banks/fintech: key_products should include Russian product names (e.g., "СберБанк Онлайн", "Тинькофф Инвестиции", "Яндекс.Плюс")
+
+Return ONLY a JSON object with this exact structure (placeholders only, do not fill with example data):
+{
+  "tag_type": "<type>",        // One of: company, ticker, sector, trend, person, commodity, index, currency
+  "ticker": "<ticker or null>",             // Stock ticker if applicable, else null
+  "website": "<url or null>",  // Official company website. null if not a company/person, or unknown
+  "related_entities": ["<entity1>", "<entity2>"],  // Related companies, sectors, or people (5-10 items)
+  "synonyms_en": ["<syn1>", "<syn2>"],  // English synonyms/aliases (5-10 items)
+  "synonyms_ru": ["<син1>", "<син2>"],       // Russian synonyms/aliases (5-10 items)
+  "key_products": ["<product1>", "<product2>"],  // Key products/services (5-10 items)
+  "description_ru": "<2 paragraphs in Russian>"
+}
+
+Example 1 — US company "Apple" (ILLUSTRATION ONLY):
+{
+  "tag_type": "company",
+  "ticker": "AAPL",
+  "website": "https://www.apple.com",
+  "related_entities": ["Microsoft", "Google", "Samsung", "Amazon", "TSMC"],
+  "synonyms_en": ["Apple Inc", "iPhone maker", "Cupertino"],
+  "synonyms_ru": ["Эпл", "эппл", "яблочная компания"],
+  "key_products": ["iPhone", "iPad", "Mac", "App Store", "Apple Watch"],
+  "description_ru": "Apple — американская технологическая корпорация, специализирующаяся на производстве потребительской электроники, программного обеспечения и онлайн-сервисов. Компания была основана Стивом Джобсом, Стивом Возняком и Рональдом Уэйном в 1976 году в Калифорнии.\\n\\nСегодня Apple является одной из крупнейших компаний мира по рыночной капитализации. Её основные продукты включают смартфоны iPhone, компьютеры Mac, планшеты iPad, а также сервисы App Store, Apple Music и iCloud. Акции компании торгуются на NASDAQ под тикером AAPL."
+}
+
+Example 2 — Russian company "Сбербанк" (ILLUSTRATION ONLY):
+{
+  "tag_type": "company",
+  "ticker": "SBER",
+  "website": "https://www.sberbank.ru",
+  "related_entities": ["Центральный банк РФ", "Т-Банк", "ВТБ", "Альфа-Банк", "Московская биржа", "Российский фондовый рынок"],
+  "synonyms_en": ["Sberbank", "Sber", "Sberbank of Russia"],
+  "synonyms_ru": ["Сбер", "Сбербанк России", "ПАО Сбербанк", "сбер"],
+  "key_products": ["СберБанк Онлайн", "СберПрайм", "СберСтрахование", "ипотека", "кредитные карты", "вклады"],
+  "description_ru": "Сбербанк — крупнейший банк России и один из ведущих финансовых институтов Восточной Европы. Контролируется Центральным банком РФ (около 50% акций). Основан в 1841 году как Сберегательная казна.\\n\\nСегодня Сбербанк обслуживает более 100 млн клиентов в России и СНГ. Основные направления: розничный банкинг, корпоративный бизнес, страхование, инвестиции, экосистема цифровых сервисов (СберБанк Онлайн, СберМаркет, Самокат). Акции торгуются на Московской бирже под тикером SBER, также GDR на Лондонской бирже (временно приостановлены)."
+}`;
 
 // Reset to v1-32k (kimi-k2 may not be available on current plan)
 // User can override via KIMI_MODEL env var
