@@ -186,8 +186,30 @@ export async function initSQLiteSchema(): Promise<void> {
       sentiment TEXT,
       sentiment_score INTEGER,
       matched_tags TEXT,
+      fact_check_status TEXT NOT NULL DEFAULT 'not_checked',
+      fact_check_result TEXT DEFAULT NULL,
       created_at TEXT DEFAULT (datetime('now'))
     );
+
+    CREATE INDEX IF NOT EXISTS idx_news_fact_check_status ON news(fact_check_status);
+
+    CREATE TABLE IF NOT EXISTS fact_check_jobs (
+      id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+      news_id TEXT NOT NULL REFERENCES news(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      status TEXT NOT NULL DEFAULT 'queued',
+      error_message TEXT,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      max_attempts INTEGER NOT NULL DEFAULT 3,
+      next_retry_at TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(news_id, user_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_fact_check_jobs_status ON fact_check_jobs(status);
+    CREATE INDEX IF NOT EXISTS idx_fact_check_jobs_news_id ON fact_check_jobs(news_id);
+    CREATE INDEX IF NOT EXISTS idx_fact_check_jobs_user_id ON fact_check_jobs(user_id);
 
     CREATE TABLE IF NOT EXISTS user_sessions (
       id TEXT PRIMARY KEY,

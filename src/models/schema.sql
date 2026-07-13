@@ -127,6 +127,9 @@ CREATE TABLE IF NOT EXISTS news (
   sentiment_source VARCHAR(20) DEFAULT 'keyword', -- keyword | llm
   matched_tags    TEXT[],
   tag_impact      JSONB DEFAULT '[]',  -- [{"tag":"tesla","impact":"negative","reasoning":"Stock dropped"}]
+  fact_check_status TEXT NOT NULL DEFAULT 'not_checked'
+    CHECK(fact_check_status IN ('not_checked', 'in_progress', 'checked')),
+  fact_check_result JSONB DEFAULT NULL,
   created_at      TIMESTAMP DEFAULT NOW(),
   UNIQUE(url),              -- Защита по оригинальному URL (один URL = одна запись)
   -- UNIQUE(url_normalized) УБРАНО: normalizeUrl() даёт одинаковый результат
@@ -360,6 +363,7 @@ CREATE TABLE IF NOT EXISTS translation_cache (
 CREATE INDEX IF NOT EXISTS idx_news_matched_tags ON news USING GIN (matched_tags);
 CREATE INDEX IF NOT EXISTS idx_news_published_at ON news (published_at);
 CREATE INDEX IF NOT EXISTS idx_news_source_id ON news (source_id);
+CREATE INDEX IF NOT EXISTS idx_news_fact_check_status ON news(fact_check_status);
 CREATE INDEX IF NOT EXISTS idx_portfolios_user_id ON portfolios (user_id);
 CREATE INDEX IF NOT EXISTS idx_payments_user_id ON payments (user_id);
 CREATE INDEX IF NOT EXISTS idx_user_channels_user_id ON user_channels (user_id);
@@ -532,3 +536,26 @@ CREATE TABLE IF NOT EXISTS admin_tg_settings (
 );
 
 CREATE INDEX IF NOT EXISTS idx_admin_tg_settings_active ON admin_tg_settings(is_active);
+
+
+-- ============================================================
+-- 18. fact_check_jobs — очередь on-demand факт-чекинга новостей
+-- ============================================================
+CREATE TABLE IF NOT EXISTS fact_check_jobs (
+  id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  news_id       UUID NOT NULL REFERENCES news(id) ON DELETE CASCADE,
+  user_id       UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  status        TEXT NOT NULL DEFAULT 'queued'
+    CHECK(status IN ('queued', 'extracting_claims', 'searching', 'verifying', 'done', 'failed')),
+  error_message TEXT,
+  attempts      INTEGER NOT NULL DEFAULT 0,
+  max_attempts  INTEGER NOT NULL DEFAULT 3,
+  next_retry_at TIMESTAMPTZ,
+  created_at    TIMESTAMPTZ DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(news_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_fact_check_jobs_status ON fact_check_jobs(status);
+CREATE INDEX IF NOT EXISTS idx_fact_check_jobs_news_id ON fact_check_jobs(news_id);
+CREATE INDEX IF NOT EXISTS idx_fact_check_jobs_user_id ON fact_check_jobs(user_id);

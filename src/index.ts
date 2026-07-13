@@ -22,6 +22,8 @@ import { query, pool } from './config/db';  // ← query + pool (for transaction
 import { setCachedPopularTags } from './utils/tagCache';
 import authRoutes from './routes/auth';
 import newsRoutes from './routes/news';
+import factCheckRoutes from './routes/factCheck';
+import { startFactCheckCron } from './services/factCheck';
 import paymentRoutes from './routes/payment';
 import plansRoutes from './routes/plans';
 import userRoutes from './routes/user';
@@ -3797,6 +3799,7 @@ app.use('/api/auth/forgot-password', forgotPasswordLimiter); // 3/час на em
 app.use('/api/auth/verify-code', passwordResetFlowLimiter);
 app.use('/api/auth/reset-password', passwordResetFlowLimiter);
 app.use('/api/auth', authLimiter, authRoutes);  // Строгий лимит (15/15min) — защита от брутфорса
+app.use('/api/news', factCheckRoutes);  // POST/GET /api/news/:id/fact-check
 app.use('/api/news', newsRoutes);       // GET /api/news, /api/news/:tag
 app.use('/api/payment', paymentRoutes); // POST /api/payment/create, /confirm
 app.use('/api/plans', plansRoutes);     // GET /api/plans
@@ -4529,6 +4532,14 @@ async function start() {
     // Admin TG alerts
     { sql: `CREATE TABLE IF NOT EXISTS admin_tg_settings (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), admin_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, tg_chat_id VARCHAR(50) NOT NULL, event_types TEXT[] DEFAULT '{}', is_active BOOLEAN DEFAULT TRUE, created_at TIMESTAMP DEFAULT ${_SQL_NOW}, updated_at TIMESTAMP DEFAULT ${_SQL_NOW}, UNIQUE(admin_user_id))`, name: 'admin_tg_settings' },
     { sql: `CREATE INDEX IF NOT EXISTS idx_admin_tg_settings_active ON admin_tg_settings(is_active)`, name: 'idx_admin_tg_settings_active' },
+    // Fact-checking
+    { sql: `ALTER TABLE news ADD COLUMN IF NOT EXISTS fact_check_status TEXT NOT NULL DEFAULT 'not_checked'`, name: 'news_fact_check_status' },
+    { sql: `ALTER TABLE news ADD COLUMN IF NOT EXISTS fact_check_result JSONB DEFAULT NULL`, name: 'news_fact_check_result' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_news_fact_check_status ON news(fact_check_status)`, name: 'idx_news_fact_check_status' },
+    { sql: `CREATE TABLE IF NOT EXISTS fact_check_jobs (id ${USE_SQLITE ? 'TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16))))' : 'UUID PRIMARY KEY DEFAULT uuid_generate_v4()'}, news_id ${USE_SQLITE ? 'TEXT' : 'UUID'} NOT NULL REFERENCES news(id) ON DELETE CASCADE, user_id ${USE_SQLITE ? 'TEXT' : 'UUID'} NOT NULL REFERENCES users(id) ON DELETE CASCADE, status TEXT NOT NULL DEFAULT 'queued', error_message TEXT, attempts INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL DEFAULT 3, next_retry_at TIMESTAMP, created_at TIMESTAMP DEFAULT ${_SQL_NOW}, updated_at TIMESTAMP DEFAULT ${_SQL_NOW}, UNIQUE(news_id, user_id))`, name: 'fact_check_jobs' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_fact_check_jobs_status ON fact_check_jobs(status)`, name: 'idx_fact_check_jobs_status' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_fact_check_jobs_news_id ON fact_check_jobs(news_id)`, name: 'idx_fact_check_jobs_news_id' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_fact_check_jobs_user_id ON fact_check_jobs(user_id)`, name: 'idx_fact_check_jobs_user_id' },
   ];
   for (const m of migrations) {
     try {
@@ -4818,6 +4829,7 @@ async function start() {
     }, 8000);
 
     startDigestCron(); // TG digest cron (every hour)
+    startFactCheckCron(); // Fact-check worker (every 10s)
 
     // Sentiment Index — daily reset of vote_count_today / streak at 00:00 MSK (21:00 UTC)
     cron.schedule('0 21 * * *', () => {

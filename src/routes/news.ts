@@ -56,7 +56,7 @@ router.get('/global', async (req, res) => {
 
     const result = await query(
       `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags,
-              tag_impact, source_count, all_sources
+              tag_impact, source_count, all_sources, fact_check_status, fact_check_result
        FROM news
        WHERE ${timeFilter}
        ORDER BY published_at DESC
@@ -106,7 +106,7 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
     if (global) {
       const result = await query(
         `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags,
-                tag_impact, source_count, all_sources
+                tag_impact, source_count, all_sources, fact_check_status, fact_check_result
          FROM news
          WHERE ${timeFilter}
          ORDER BY published_at DESC
@@ -167,7 +167,7 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
       const orderDir = 'DESC'; // всегда новые сверху
       const result = await query(
         `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags,
-                tag_impact, source_count, all_sources
+                tag_impact, source_count, all_sources, fact_check_status, fact_check_result
          FROM news
          WHERE (${conditions})${readFilter}
          AND ${timeFilter}
@@ -208,7 +208,7 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
       const pgOrder = 'DESC'; // всегда новые сверху
       const result = await query(
         `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags,
-                tag_impact, source_count, all_sources
+                tag_impact, source_count, all_sources, fact_check_status, fact_check_result
          FROM news
          WHERE matched_tags && $1::text[]${pgReadFilter}
          AND ${timeFilter}
@@ -356,7 +356,7 @@ router.get('/tags/:tagId', async (req, res) => {
     if (USE_SQLITE) {
       result = await query(
         `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags,
-                tag_impact, source_count, all_sources
+                tag_impact, source_count, all_sources, fact_check_status, fact_check_result
          FROM news
          WHERE matched_tags LIKE $1 AND ${timeFilter}
          ORDER BY published_at DESC
@@ -366,7 +366,7 @@ router.get('/tags/:tagId', async (req, res) => {
     } else {
       result = await query(
         `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags,
-                tag_impact, source_count, all_sources
+                tag_impact, source_count, all_sources, fact_check_status, fact_check_result
          FROM news
          WHERE $1 = ANY(matched_tags)
          AND ${timeFilter}
@@ -423,7 +423,7 @@ router.get('/search', authMiddleware, async (req: AuthRequest, res) => {
       total = parseInt(countResult.rows[0]?.count || '0');
 
       const result = await query(
-        `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags, tag_impact, source_count, all_sources
+        `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags, tag_impact, source_count, all_sources, fact_check_status, fact_check_result
          FROM news
          WHERE ${where}
          ORDER BY published_at DESC
@@ -449,7 +449,7 @@ router.get('/search', authMiddleware, async (req: AuthRequest, res) => {
       total = parseInt(countResult.rows[0]?.count || '0');
 
       const result = await query(
-        `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags, tag_impact, source_count, all_sources
+        `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags, tag_impact, source_count, all_sources, fact_check_status, fact_check_result
          FROM news
          WHERE ${where}
          ORDER BY published_at DESC
@@ -562,7 +562,7 @@ router.get('/:id', async (req: AuthRequest, res) => {
         source, source_id, url, published_at, fetched_at,
         sentiment, sentiment_score, sentiment_reasoning, sentiment_source,
         matched_tags, tag_impact, is_political, article_type,
-        source_count, all_sources
+        source_count, all_sources, fact_check_status, fact_check_result
       FROM news
       WHERE id = $1`,
       [newsId]
