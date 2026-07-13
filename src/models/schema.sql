@@ -515,3 +515,20 @@ CREATE TABLE IF NOT EXISTS user_events (
 CREATE INDEX IF NOT EXISTS idx_user_events_user_id ON user_events(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_events_type ON user_events(event_type);
 CREATE INDEX IF NOT EXISTS idx_user_events_created_at ON user_events(created_at DESC);
+
+
+-- ============================================================
+-- 17. admin_tg_settings — настройки TG-уведомлений админов
+-- ============================================================
+CREATE TABLE IF NOT EXISTS admin_tg_settings (
+  id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  admin_user_id   UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  tg_chat_id      VARCHAR(50) NOT NULL,
+  event_types     TEXT[] DEFAULT '{}',
+  is_active       BOOLEAN DEFAULT TRUE,
+  created_at      TIMESTAMP DEFAULT NOW(),
+  updated_at      TIMESTAMP DEFAULT NOW(),
+  UNIQUE(admin_user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_admin_tg_settings_active ON admin_tg_settings(is_active);

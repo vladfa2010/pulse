@@ -11,6 +11,7 @@
 
 import { query } from '../config/db';
 import { getImoex5minForDay, ImoexCandle, extendWithFlatLine } from './imoexAdapter';
+import { logSentimentVote } from './activityLog';
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 const VOTE_COOLDOWN_MINUTES = 30;
@@ -164,6 +165,8 @@ export async function recordVote(userId: string, value: number): Promise<{
      VALUES ($1, $2, $3, $4, $5)`,
     [userId, value, formatPg(now), JSON.stringify(tickers), beforeIndex]
   );
+
+  logSentimentVote(userId, value, beforeIndex).catch(() => {});
 
   const nextVoteAt = new Date(now.getTime() + VOTE_COOLDOWN_MINUTES * 60 * 1000);
   const sync = Math.sign(value) === Math.sign(afterIndex);

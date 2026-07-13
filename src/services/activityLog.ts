@@ -8,6 +8,7 @@
  */
 
 import { query } from '../config/db';
+import { notifyAdmins } from './adminAlerts';
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
@@ -23,6 +24,7 @@ export const USER_EVENT_TYPES = [
   'subscription_cancelled',
   'channel_connected',
   'channel_disconnected',
+  'sentiment_vote',
 ] as const;
 
 export type UserEventType = typeof USER_EVENT_TYPES[number];
@@ -47,6 +49,9 @@ export async function logUserEvent(
        VALUES ($1, $2, $3)`,
       [userId, eventType, dataJson]
     );
+
+    // Отправляем TG-алерты админам асинхронно (не ждём)
+    notifyAdmins(eventType, eventData, userId).catch(() => {});
   } catch (err) {
     console.error('[ActivityLog] Failed to log event:', eventType, 'for user', userId, err);
   }
@@ -106,4 +111,12 @@ export async function logChannelConnected(userId: string, channel: string, targe
 
 export async function logChannelDisconnected(userId: string, channel: string, target: string): Promise<void> {
   return logUserEvent(userId, 'channel_disconnected', { channel, target });
+}
+
+export async function logSentimentVote(
+  userId: string,
+  voteValue: number,
+  indexAtVote: number
+): Promise<void> {
+  return logUserEvent(userId, 'sentiment_vote', { vote_value: voteValue, index_at_vote: indexAtVote });
 }

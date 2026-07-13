@@ -40,6 +40,7 @@ import { resetDailyWindows, refreshImoexCache } from './services/sentimentIndex'
 import { sendSentimentVotePush } from './services/push';
 import { processScheduledDowngrades, processAutoRenewals } from './services/subscription';
 import { isUserEventType } from './services/activityLog';
+import { getAdminTgSettings, saveAdminTgSettings, sendTestAlert, ALERT_EVENT_TYPES } from './services/adminAlerts';
 import { setupYookassaWebhook } from './routes/payment'; // ← Auto-setup YuKassa webhook
 import { addSubscriber, getSubscriberCount, addSentimentSubscriber } from './services/sse'; // ← Real-time news stream
 
@@ -2534,6 +2535,73 @@ app.put('/admin/news-sources/:id/toggle', requireAdmin, async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ADMIN — TG Alerts (настройки уведомлений админов)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// GET /admin/tg-alerts/settings — получить свои настройки
+app.get('/admin/tg-alerts/settings', requireAdmin, async (req: any, res) => {
+  try {
+    const adminUserId = req.user?.userId;
+    if (!adminUserId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    const settings = await getAdminTgSettings(adminUserId);
+    res.json({
+      settings: settings || null,
+      event_types: ALERT_EVENT_TYPES,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /admin/tg-alerts/settings — сохранить настройки
+app.put('/admin/tg-alerts/settings', requireAdmin, async (req: any, res) => {
+  try {
+    const adminUserId = req.user?.userId;
+    if (!adminUserId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    const { tg_chat_id, event_types, is_active } = req.body;
+    if (!tg_chat_id || typeof tg_chat_id !== 'string' || !tg_chat_id.trim()) {
+      return res.status(400).json({ error: 'tg_chat_id is required' });
+    }
+    const types = Array.isArray(event_types) ? event_types.filter((t: string) =>
+      ALERT_EVENT_TYPES.some(a => a.value === t)
+    ) : [];
+    const active = typeof is_active === 'boolean' ? is_active : true;
+    const settings = await saveAdminTgSettings(adminUserId, tg_chat_id, types, active);
+    if (!settings) {
+      return res.status(500).json({ error: 'Failed to save settings' });
+    }
+    res.json({ settings, event_types: ALERT_EVENT_TYPES });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /admin/tg-alerts/test — отправить тестовое сообщение
+app.post('/admin/tg-alerts/test', requireAdmin, async (req: any, res) => {
+  try {
+    const adminUserId = req.user?.userId;
+    if (!adminUserId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    const { tg_chat_id } = req.body;
+    if (!tg_chat_id || typeof tg_chat_id !== 'string' || !tg_chat_id.trim()) {
+      return res.status(400).json({ error: 'tg_chat_id is required' });
+    }
+    const ok = await sendTestAlert(adminUserId, tg_chat_id.trim());
+    if (!ok) {
+      return res.status(502).json({ error: 'Failed to send Telegram message. Check chat_id and bot token.' });
+    }
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Migration endpoint — applies DB migrations for LLM error tracking (v3)
 // ═══════════════════════════════════════════════════════════════════════════
 app.post('/migrate-v3', async (req, res) => {
@@ -4458,6 +4526,9 @@ async function start() {
     { sql: `CREATE INDEX IF NOT EXISTS idx_sub_notif_user_type ON subscription_notifications_sent(user_id, type)`, name: 'idx_sub_notif_user_type' },
     { sql: `CREATE TABLE IF NOT EXISTS password_reset_codes (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, code VARCHAR(6) NOT NULL, created_at TIMESTAMPTZ DEFAULT ${_SQL_NOW}, expires_at TIMESTAMPTZ NOT NULL, used_at TIMESTAMPTZ, used BOOLEAN DEFAULT FALSE)`, name: 'password_reset_codes' },
     { sql: `CREATE INDEX IF NOT EXISTS idx_password_reset_codes_user_expires ON password_reset_codes(user_id, expires_at DESC)`, name: 'idx_password_reset_codes_user_expires' },
+    // Admin TG alerts
+    { sql: `CREATE TABLE IF NOT EXISTS admin_tg_settings (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), admin_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, tg_chat_id VARCHAR(50) NOT NULL, event_types TEXT[] DEFAULT '{}', is_active BOOLEAN DEFAULT TRUE, created_at TIMESTAMP DEFAULT ${_SQL_NOW}, updated_at TIMESTAMP DEFAULT ${_SQL_NOW}, UNIQUE(admin_user_id))`, name: 'admin_tg_settings' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_admin_tg_settings_active ON admin_tg_settings(is_active)`, name: 'idx_admin_tg_settings_active' },
   ];
   for (const m of migrations) {
     try {
