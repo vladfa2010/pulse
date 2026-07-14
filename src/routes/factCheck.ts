@@ -91,11 +91,6 @@ router.post('/:id/fact-check', async (req: AuthRequest, res) => {
       return res.status(409).json({ error: 'Проверка уже выполняется' });
     }
 
-    const text = [news.title_ru, news.summary_ru].filter(Boolean).join('\n');
-    if (text.length < 50) {
-      return res.status(400).json({ error: 'Текст новости слишком короткий для проверки' });
-    }
-
     const jobId = await createFactCheckJob(newsId, userId);
     if (!jobId) {
       return res.status(409).json({ error: 'Fact-check already in progress' });

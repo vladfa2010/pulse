@@ -413,7 +413,6 @@ export async function processFactCheckJob(jobId: string): Promise<void> {
   try {
     await updateJobStatus(jobId, 'extracting_claims');
     const text = [news.title_ru, news.summary_ru].filter(Boolean).join('\n');
-    if (text.length < 50) throw new Error('Текст новости слишком короткий');
 
     const claims = await extractClaims(text);
     console.log('[FactCheckWorker] Claims extracted:', claims.length);
