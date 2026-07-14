@@ -186,6 +186,8 @@ async function kimiChatWithRetry(messages: any[], tools?: any[]): Promise<any> {
         lastMessageRole: payload.messages[payload.messages.length - 1]?.role,
       }));
 
+      const timeoutMs = (tools && tools.length > 0) ? 300000 : 120000;
+
       const res = await axios.post(
         `${KIMI_BASE_URL}/chat/completions`,
         payload,
@@ -194,7 +196,7 @@ async function kimiChatWithRetry(messages: any[], tools?: any[]): Promise<any> {
             Authorization: `Bearer ${KIMI_API_KEY}`,
             'Content-Type': 'application/json',
           },
-          timeout: 120000,
+          timeout: timeoutMs,
         }
       );
 
