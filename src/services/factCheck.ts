@@ -239,9 +239,11 @@ async function runWebSearchLoop(messages: any[]): Promise<string> {
   let lastContent = '';
 
   while (finishReason === null || finishReason === 'tool_calls') {
-    const msg = await kimiChatWithRetry(messages, [
+    // ВСЕГДА передаём tools в web_search loop — для правильного timeout (300s) и thinking
+    const tools = [
       { type: 'builtin_function', function: { name: '$web_search' } },
-    ]);
+    ];
+    const msg = await kimiChatWithRetry(messages, tools);
     finishReason = msg.finish_reason;
     lastContent = msg.content || '';
 
