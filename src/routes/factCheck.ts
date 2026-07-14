@@ -155,47 +155,4 @@ router.get('/:id/fact-check', async (req: AuthRequest, res) => {
   }
 });
 
-// POST /api/news/:id/fact-check/retry — retry after error
-router.post('/:id/fact-check/retry', async (req: AuthRequest, res) => {
-  try {
-    const newsId = req.params.id.toLowerCase();
-    const userId = req.user!.userId;
-
-    if (!(await requirePremium(req, res))) return;
-
-    const newsResult = await query(
-      `SELECT fact_check_status, fact_check_result FROM news WHERE id = $1`,
-      [newsId]
-    );
-    if (newsResult.rows.length === 0) {
-      return res.status(404).json({ error: 'News not found' });
-    }
-    const news = newsResult.rows[0];
-    const result = parseFactCheckResult(news.fact_check_result);
-
-    if (!result?.error) {
-      return res.status(400).json({ error: 'No error to retry' });
-    }
-
-    const sub = await getUserSubscription(userId);
-    if (!(await checkRateLimit(userId, sub.plan))) {
-      return res.status(429).json({ error: 'Rate limit exceeded. Try again later.' });
-    }
-
-    const jobId = await createFactCheckJob(newsId, userId);
-    if (!jobId) {
-      return res.status(409).json({ error: 'Fact-check already in progress' });
-    }
-
-    res.status(201).json({
-      job_id: jobId,
-      status: 'in_progress',
-      news_status: 'in_progress',
-    });
-  } catch (err: any) {
-    console.error('[FactCheckRoute] Retry error:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
-
 export default router;
