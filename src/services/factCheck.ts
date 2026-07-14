@@ -251,12 +251,17 @@ async function kimiChat(messages: any[], tools?: any[]): Promise<any> {
   let lastError: any;
   for (let attempt = 1; attempt <= KIMI_MAX_RETRIES; attempt++) {
     try {
-      const completion = await client.chat.completions.create({
+      const params: any = {
         model: FACT_CHECK_MODEL,
         messages: messages as any,
         max_tokens: 16384,
-        ...(tools?.length ? { tools: tools as any, tool_choice: 'auto' as any } : {}),
-      });
+        extra_body: { thinking: { type: 'disabled' } },
+      };
+      if (tools?.length) {
+        params.tools = tools as any;
+        params.tool_choice = 'auto';
+      }
+      const completion = await client.chat.completions.create(params);
       return completion.choices[0].message as any;
     } catch (err: any) {
       lastError = err;
@@ -364,37 +369,40 @@ export async function* runFactCheckPipeline(
   const foundSources: { title: string; url: string; snippet: string }[] = [];
 
   const pushToolResult = async (tc: any) => {
+    let args: any;
+    try {
+      args = JSON.parse(tc.function.arguments);
+    } catch (err: any) {
+      console.error('[FactCheckWorker] Failed to parse tool arguments:', err.message);
+      args = {};
+    }
+
     if (tc.function.name === '$web_search') {
-      try {
-        const searchData = JSON.parse(tc.function.arguments);
-        const sources = (searchData.results || []).map((r: any) => ({
-          title: String(r.title || ''),
-          url: String(r.url || ''),
-          snippet: String(r.snippet || ''),
-        }));
-        foundSources.push(...sources);
+      const sources = (args.results || []).map((r: any) => ({
+        title: String(r.title || ''),
+        url: String(r.url || ''),
+        snippet: String(r.snippet || ''),
+      }));
+      foundSources.push(...sources);
 
-        emitStage(newsId, userId, 'search', {
-          status: 'done',
-          sources: foundSources.length,
-          items: sources,
-        });
+      emitStage(newsId, userId, 'search', {
+        status: 'done',
+        sources: foundSources.length,
+        items: sources,
+      });
 
-        await updateFactCheckSession(sessionId, {
-          status: 'search',
-          sources_json: JSON.stringify(foundSources),
-          sources_count: foundSources.length,
-        });
-      } catch (err: any) {
-        console.error('[FactCheckWorker] Failed to parse $web_search result:', err.message);
-      }
+      await updateFactCheckSession(sessionId, {
+        status: 'search',
+        sources_json: JSON.stringify(foundSources),
+        sources_count: foundSources.length,
+      });
     }
 
     messages.push({
       role: 'tool',
       tool_call_id: tc.id,
       name: tc.function.name,
-      content: tc.function.arguments,
+      content: JSON.stringify(args),
     });
   };
 
