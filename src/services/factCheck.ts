@@ -222,7 +222,7 @@ async function runWebSearchLoop(messages: any[]): Promise<string> {
           role: 'tool',
           tool_call_id: tc.id,
           name: tc.function.name,
-          content: JSON.stringify(tc.function.arguments),
+          content: tc.function.arguments,
         });
       }
     }
