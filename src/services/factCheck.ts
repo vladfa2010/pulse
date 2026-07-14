@@ -134,7 +134,8 @@ export async function updateNewsFactCheck(
   status: 'not_checked' | 'in_progress' | 'checked',
   result: FactCheckResult | null
 ): Promise<void> {
-  const resultValue = result ? (USE_SQLITE ? JSON.stringify(result) : result) : null;
+  // ВСЕГДА JSON.stringify — для SQLite и PostgreSQL
+  const resultValue = result ? JSON.stringify(result) : null;
   await query(
     `UPDATE news SET fact_check_status = $1, fact_check_result = $2 WHERE id = $3`,
     [status, resultValue, newsId]
@@ -417,6 +418,7 @@ export async function processFactCheckJob(jobId: string): Promise<void> {
     const claims = await extractClaims(text);
 
     if (claims.length === 0) {
+      console.log('[FactCheckWorker] No claims found, marking as unverified');
       const result: FactCheckResult = {
         verdict: 'unverified',
         claims: [],
@@ -428,6 +430,7 @@ export async function processFactCheckJob(jobId: string): Promise<void> {
       };
       await updateJobStatus(jobId, 'done');
       await updateNewsFactCheck(job.news_id, 'checked', result);
+      console.log('[FactCheckWorker] News fact_check updated to checked (unverified)');
       return;
     }
 
@@ -443,6 +446,8 @@ export async function processFactCheckJob(jobId: string): Promise<void> {
       await delay(API_DELAY_MS);
     }
 
+    console.log('[FactCheckWorker] Verified claims:', verifiedClaims.length);
+
     const result: FactCheckResult = {
       verdict: computeVerdict(verifiedClaims),
       claims: verifiedClaims,
@@ -455,8 +460,13 @@ export async function processFactCheckJob(jobId: string): Promise<void> {
       error: null,
     };
 
+    console.log('[FactCheckWorker] Result computed:', { verdict: result.verdict, claims: result.claims.length });
+
     await updateJobStatus(jobId, 'done');
+    console.log('[FactCheckWorker] Job status updated to done');
+
     await updateNewsFactCheck(job.news_id, 'checked', result);
+    console.log('[FactCheckWorker] News fact_check updated to checked');
   } catch (error: any) {
     const attempts = (job.attempts || 0) + 1;
     const message = error instanceof Error ? error.message : String(error);
