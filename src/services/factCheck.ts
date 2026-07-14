@@ -165,7 +165,7 @@ async function kimiChatWithRetry(messages: any[], tools?: any[]): Promise<any> {
         model: FACT_CHECK_MODEL,
         messages,
         max_tokens: 16384,
-        temperature: 0.1,
+        temperature: 1,
       };
 
       // tools — только для web_search
