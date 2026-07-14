@@ -1,20 +1,21 @@
 /**
  * =============================================================================
- * PULSE — Fact-Check Service (v2)
+ * PULSE — Fact-Check Service (v3)
  * =============================================================================
  *
- * On-demand факт-чекинг новостей через Kimi API ($web_search).
+ * On-demand факт-чекинг новостей через Kimi API ($web_search / $fetch).
  *
- * Pipeline v2 (end-to-end):
- *   queued → in_progress → done
- *
- * Один вызов: Kimi сама решает, какие факты проверять, сколько раз искать
- * и какой дать вердикт.
+ * Pipeline v3 (видимый):
+ *   queries → search → fetch → claims → verdict
  *
  * Worker: polling fact_check_jobs каждые 10 сек, max 1 concurrent job.
+ *
+ * OpenAI SDK используется только как HTTP-клиент для Kimi API.
+ * Базовый URL: https://api.moonshot.ai/v1
  */
 
-import axios from 'axios';
+import OpenAI from 'openai';
+import { EventEmitter } from 'events';
 import { query } from '../config/db';
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
@@ -22,13 +23,17 @@ const KIMI_API_KEY = process.env.KIMI_API_KEY;
 const KIMI_BASE_URL = process.env.KIMI_BASE_URL || 'https://api.moonshot.ai/v1';
 const FACT_CHECK_MODEL = process.env.FACT_CHECK_MODEL || 'kimi-k2.6';
 
+const client = new OpenAI({
+  apiKey: KIMI_API_KEY,
+  baseURL: KIMI_BASE_URL,
+});
+
 const POLL_INTERVAL_SECONDS = 10;
 const MAX_CONCURRENT_JOBS = 1;
 const KIMI_MAX_RETRIES = 4;
-const KIMI_TIMEOUT_MS = 300000;
 const JOB_MAX_ATTEMPTS = 3;
 const RETRY_DELAYS_MS = [60000, 300000, 900000]; // 1min, 5min, 15min
-const MAX_WEB_SEARCH_ITERATIONS = 5;
+const MAX_TOOL_ITERATIONS = 5;
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -62,7 +67,39 @@ export interface FactCheckResult {
   error: string | null;
 }
 
-// ─── DB helpers ─────────────────────────────────────────────────────────────
+export interface FactCheckStage {
+  stage: 'queries' | 'search' | 'fetch' | 'claims' | 'verdict';
+  payload: any;
+}
+
+// ─── SSE emitter registry ───────────────────────────────────────────────────
+
+const factCheckEmitters = new Map<string, EventEmitter>();
+
+function emitterKey(newsId: string, userId: string): string {
+  return `${newsId.toLowerCase()}_${userId.toLowerCase()}`;
+}
+
+export function getEmitter(newsId: string, userId: string): EventEmitter | undefined {
+  return factCheckEmitters.get(emitterKey(newsId, userId));
+}
+
+export function setEmitter(newsId: string, userId: string, emitter: EventEmitter): void {
+  factCheckEmitters.set(emitterKey(newsId, userId), emitter);
+}
+
+export function removeEmitter(newsId: string, userId: string): void {
+  factCheckEmitters.delete(emitterKey(newsId, userId));
+}
+
+function emitStage(newsId: string, userId: string, stage: string, payload: any): void {
+  const emitter = getEmitter(newsId, userId);
+  if (emitter) {
+    emitter.emit('stage', stage, payload);
+  }
+}
+
+// ─── DB helpers: fact_check_jobs ────────────────────────────────────────────
 
 function nowSql(): string {
   return USE_SQLITE ? "datetime('now')" : 'NOW()';
@@ -153,6 +190,55 @@ export async function getNewsForFactCheck(newsId: string): Promise<any | null> {
   return result.rows[0] || null;
 }
 
+// ─── DB helpers: fact_check_sessions ────────────────────────────────────────
+
+export async function createFactCheckSession(newsId: string, userId: string): Promise<any> {
+  const result = await query(
+    `INSERT INTO fact_check_sessions (news_id, user_id, status, model)
+     VALUES ($1, $2, 'pending', $3)
+     RETURNING *`,
+    [newsId, userId, FACT_CHECK_MODEL]
+  );
+  return result.rows[0];
+}
+
+type SessionPatch = Partial<{
+  status: string;
+  queries_json: string;
+  sources_json: string;
+  sources_count: number;
+  fetched_json: string;
+  fetched_count: number;
+  claims_json: string;
+  claims_count: number;
+  final_verdict: string | null;
+  final_confidence: number;
+  final_reasoning: string;
+  error_message: string;
+  completed_at: string;
+}>;
+
+export async function updateFactCheckSession(sessionId: string, patch: SessionPatch): Promise<void> {
+  const allowed = [
+    'status', 'queries_json', 'sources_json', 'sources_count',
+    'fetched_json', 'fetched_count', 'claims_json', 'claims_count',
+    'final_verdict', 'final_confidence', 'final_reasoning',
+    'error_message', 'completed_at',
+  ];
+
+  const keys = Object.keys(patch).filter((k) => allowed.includes(k));
+  if (keys.length === 0) return;
+
+  const sets = keys.map((k, i) => `${k} = $${i + 1}`).join(', ');
+  const values = keys.map((k) => (patch as any)[k]);
+  values.push(sessionId);
+
+  await query(
+    `UPDATE fact_check_sessions SET ${sets}, updated_at = ${nowSql()} WHERE id = $${values.length}`,
+    values
+  );
+}
+
 // ─── LLM helpers ────────────────────────────────────────────────────────────
 
 function delay(ms: number): Promise<void> {
@@ -165,34 +251,16 @@ async function kimiChat(messages: any[], tools?: any[]): Promise<any> {
   let lastError: any;
   for (let attempt = 1; attempt <= KIMI_MAX_RETRIES; attempt++) {
     try {
-      const payload: any = {
+      const completion = await client.chat.completions.create({
         model: FACT_CHECK_MODEL,
-        messages,
+        messages: messages as any,
         max_tokens: 16384,
-      };
-
-      if (tools && tools.length > 0) {
-        payload.tools = tools;
-        payload.tool_choice = 'auto';
-        payload.thinking = { type: 'disabled' };
-      }
-
-      const res = await axios.post(
-        `${KIMI_BASE_URL}/chat/completions`,
-        payload,
-        {
-          headers: {
-            Authorization: `Bearer ${KIMI_API_KEY}`,
-            'Content-Type': 'application/json',
-          },
-          timeout: KIMI_TIMEOUT_MS,
-        }
-      );
-
-      return res.data?.choices?.[0]?.message;
+        ...(tools?.length ? { tools: tools as any, tool_choice: 'auto' as any } : {}),
+      });
+      return completion.choices[0].message as any;
     } catch (err: any) {
       lastError = err;
-      const status = err.response?.status;
+      const status = err.status || err.response?.status;
       const isRetryable = status === 429 || status === 502 || status === 503 || err.code === 'ECONNRESET' || err.code === 'ETIMEDOUT';
       if (!isRetryable || attempt === KIMI_MAX_RETRIES) throw err;
       const wait = Math.min(1000 * Math.pow(2, attempt - 1), 16000);
@@ -217,32 +285,41 @@ function parseLlmJson(content: string): any | null {
   }
 }
 
-// ─── End-to-end fact-check ──────────────────────────────────────────────────
+// ─── End-to-end pipeline with visible stages ────────────────────────────────
 
-const SYSTEM_FACTCHECK = `Ты — факт-чекер. Проверь текст новости через веб-поиск.
+const SYSTEM_FACTCHECK_V3 = `Ты — факт-чекер. Проанализируй текст новости через веб-поиск.
 
-Процесс:
-1. Извлеки проверяемые факты из текста
-2. Найди независимые источники через $web_search
-3. Сравни факты с источниками
-4. Дай общий вердикт
+Этапы работы:
+1. Выдели до 8 проверяемых claims из текста (факты, даты, цифры, имена, события).
+2. Для каждого claim выполни поиск через $web_search.
+3. При необходимости прочти релевантные URL через $fetch.
+4. Для каждого claim дай вердикт с обоснованием и источниками.
+
+Вердикты:
+- confirmed: подтверждено 2+ независимыми источниками
+- partly_true: частично верно, есть уточнения
+- unconfirmed: недостаточно данных
+- false: опровергнуто авторитетными источниками
 
 Формат — строго JSON:
 {
-  "verdict": "reliable|partly_reliable|unreliable|unverified",
   "claims": [
     {
       "id": 1,
-      "text": "утверждение",
+      "text": "утверждение из текста",
       "verdict": "confirmed|partly_true|unconfirmed|false",
-      "explanation": "обоснование",
-      "sources": [{"name": "источник", "url": "https://..."}],
-      "confidence": 0-100
+      "explanation": "обоснование на 2-4 предложения",
+      "sources": [{"name": "Reuters", "url": "https://reuters.com/..."}],
+      "confidence": 95
     }
   ],
   "sources": [{"name": "источник", "url": "https://..."}],
-  "confidence": 0-100
+  "verdict": "reliable|partly_reliable|unreliable|unverified",
+  "confidence": 85
 }`;
+
+const WEB_SEARCH_TOOL = { type: 'builtin_function', function: { name: '$web_search' } };
+const FETCH_TOOL = { type: 'builtin_function', function: { name: '$fetch' } };
 
 function normalizeClaim(c: any): VerifiedClaim {
   const verdicts = ['confirmed', 'partly_true', 'unconfirmed', 'false'];
@@ -261,9 +338,10 @@ function normalizeClaim(c: any): VerifiedClaim {
 
 function normalizeFactCheckResult(parsed: any): FactCheckResult {
   const verdicts = ['reliable', 'partly_reliable', 'unreliable', 'unverified'];
+  const claims = Array.isArray(parsed?.claims) ? parsed.claims.map(normalizeClaim) : [];
   return {
     verdict: verdicts.includes(parsed?.verdict) ? parsed.verdict : 'unverified',
-    claims: Array.isArray(parsed?.claims) ? parsed.claims.map(normalizeClaim) : [],
+    claims,
     sources: Array.isArray(parsed?.sources) ? parsed.sources : [],
     confidence: Math.min(100, Math.max(0, Number(parsed?.confidence || 0))),
     checked_at: new Date().toISOString(),
@@ -272,45 +350,124 @@ function normalizeFactCheckResult(parsed: any): FactCheckResult {
   };
 }
 
-async function factCheckEndToEnd(articleText: string): Promise<FactCheckResult> {
+export async function* runFactCheckPipeline(
+  newsId: string,
+  userId: string,
+  articleText: string,
+  sessionId: string
+): AsyncGenerator<FactCheckStage, FactCheckResult, unknown> {
   const messages: any[] = [
-    { role: 'system', content: SYSTEM_FACTCHECK },
+    { role: 'system', content: SYSTEM_FACTCHECK_V3 },
     { role: 'user', content: `Текст новости:\n${articleText.slice(0, 8000)}` },
   ];
 
-  const tools = [
-    { type: 'builtin_function', function: { name: '$web_search' } },
-  ];
+  // ─── Этап 1: Генерация запросов ───
+  yield { stage: 'queries', payload: { status: 'generating' } };
+  emitStage(newsId, userId, 'queries', { status: 'generating' });
 
-  for (let i = 0; i < MAX_WEB_SEARCH_ITERATIONS; i++) {
-    const msg = await kimiChat(messages, tools);
-    messages.push(msg);
+  const step1 = await kimiChat(messages, [WEB_SEARCH_TOOL]);
+  messages.push(step1);
 
-    const finishReason = msg?.finish_reason;
-    console.log(`[FactCheckLLM] Iteration: ${i}, finish_reason: ${finishReason}`);
-
-    if (msg?.tool_calls) {
-      console.log('[FactCheckLLM] Tool calls:', msg.tool_calls.length);
-    }
-
-    if (finishReason !== 'tool_calls') break;
-
-    for (const toolCall of msg.tool_calls || []) {
-      messages.push({
-        role: 'tool',
-        tool_call_id: toolCall.id,
-        name: toolCall.function.name,
-        content: toolCall.function.arguments, // echo as-is
-      });
+  if (step1.tool_calls) {
+    for (const tc of step1.tool_calls) {
+      messages.push({ role: 'tool', tool_call_id: tc.id, name: tc.function.name, content: tc.function.arguments });
     }
   }
 
-  const lastMsg = messages[messages.length - 1];
-  const parsed = parseLlmJson(lastMsg?.content || '{}');
+  const parsed1 = parseLlmJson(step1.content || '{}');
+  const claims = Array.isArray(parsed1?.claims) ? parsed1.claims : [];
 
-  console.log('[FactCheckWorker] Content preview:', (lastMsg?.content || '').slice(0, 200));
+  yield { stage: 'queries', payload: { status: 'done', claims: claims.length } };
+  emitStage(newsId, userId, 'queries', { status: 'done', claims: claims.length });
+  await updateFactCheckSession(sessionId, {
+    status: 'queries',
+    queries_json: JSON.stringify(claims),
+    claims_count: claims.length,
+  });
 
-  return normalizeFactCheckResult(parsed);
+  // ─── Этап 2: Поиск источников ───
+  yield { stage: 'search', payload: { status: 'searching' } };
+  emitStage(newsId, userId, 'search', { status: 'searching' });
+
+  const step2 = await kimiChat(messages, [WEB_SEARCH_TOOL]);
+  messages.push(step2);
+
+  if (step2.tool_calls) {
+    for (const tc of step2.tool_calls) {
+      messages.push({ role: 'tool', tool_call_id: tc.id, name: tc.function.name, content: tc.function.arguments });
+    }
+  }
+
+  const parsed2 = parseLlmJson(step2.content || '{}');
+  const sources = Array.isArray(parsed2?.sources) ? parsed2.sources : [];
+
+  yield { stage: 'search', payload: { status: 'done', sources: sources.length, items: sources.slice(0, 10) } };
+  emitStage(newsId, userId, 'search', { status: 'done', sources: sources.length, items: sources.slice(0, 10) });
+  await updateFactCheckSession(sessionId, {
+    status: 'search',
+    sources_json: JSON.stringify(sources),
+    sources_count: sources.length,
+  });
+
+  // ─── Этап 3: Fetch (если модель запросила) ───
+  yield { stage: 'fetch', payload: { status: 'fetching' } };
+  emitStage(newsId, userId, 'fetch', { status: 'fetching' });
+
+  let fetchCount = 0;
+  for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
+    const step = await kimiChat(messages, [WEB_SEARCH_TOOL, FETCH_TOOL]);
+    messages.push(step);
+
+    if (step.finish_reason !== 'tool_calls') break;
+
+    for (const tc of step.tool_calls || []) {
+      messages.push({ role: 'tool', tool_call_id: tc.id, name: tc.function.name, content: tc.function.arguments });
+      if (tc.function.name === '$fetch') fetchCount++;
+    }
+
+    yield { stage: 'fetch', payload: { status: 'progress', fetched: fetchCount } };
+    emitStage(newsId, userId, 'fetch', { status: 'progress', fetched: fetchCount });
+  }
+
+  yield { stage: 'fetch', payload: { status: 'done', fetched: fetchCount } };
+  emitStage(newsId, userId, 'fetch', { status: 'done', fetched: fetchCount });
+  await updateFactCheckSession(sessionId, {
+    status: 'fetch',
+    fetched_count: fetchCount,
+  });
+
+  // ─── Этап 4: Разбор по claims ───
+  yield { stage: 'claims', payload: { status: 'analyzing' } };
+  emitStage(newsId, userId, 'claims', { status: 'analyzing' });
+
+  const finalMsg = messages[messages.length - 1];
+  const parsedFinal = parseLlmJson(finalMsg?.content || '{}');
+  const verifiedClaims: VerifiedClaim[] = Array.isArray(parsedFinal?.claims) ? parsedFinal.claims.map(normalizeClaim) : [];
+
+  yield { stage: 'claims', payload: { status: 'done', claims: verifiedClaims } };
+  emitStage(newsId, userId, 'claims', { status: 'done', claims: verifiedClaims });
+  await updateFactCheckSession(sessionId, {
+    status: 'claims',
+    claims_json: JSON.stringify(verifiedClaims),
+    claims_count: verifiedClaims.length,
+  });
+
+  // ─── Этап 5: Вердикт ───
+  const result = normalizeFactCheckResult(parsedFinal);
+  const reasoning = verifiedClaims.map((c) => c.explanation).join(' ');
+
+  yield { stage: 'verdict', payload: { status: 'done', verdict: result.verdict, confidence: result.confidence, reasoning } };
+  emitStage(newsId, userId, 'verdict', { status: 'done', verdict: result.verdict, confidence: result.confidence, reasoning });
+  await updateFactCheckSession(sessionId, {
+    status: 'verdict',
+    final_verdict: result.verdict,
+    final_confidence: result.confidence,
+    final_reasoning: reasoning,
+  });
+
+  console.log('[FactCheckWorker] Content preview:', (finalMsg?.content || '').slice(0, 200));
+
+  return result;
 }
 
 // ─── Worker ─────────────────────────────────────────────────────────────────
@@ -325,19 +482,53 @@ export async function processFactCheckJob(jobId: string): Promise<void> {
     return;
   }
 
+  const session = await createFactCheckSession(job.news_id, job.user_id);
+
   try {
     const text = [news.title_ru, news.summary_ru].filter(Boolean).join('\n');
+    const pipeline = runFactCheckPipeline(job.news_id, job.user_id, text, session.id);
 
-    const result = await factCheckEndToEnd(text);
+    let finalResult: FactCheckResult | undefined;
+    let iter = await pipeline.next();
+    while (!iter.done) {
+      // stage already emitted + saved inside generator
+      iter = await pipeline.next();
+    }
+    finalResult = iter.value;
+
+    if (!finalResult) {
+      finalResult = normalizeFactCheckResult(null);
+    }
 
     await updateJobStatus(jobId, 'done');
-    await updateNewsFactCheck(job.news_id, 'checked', result);
+    await updateNewsFactCheck(job.news_id, 'checked', finalResult);
+
+    await updateFactCheckSession(session.id, {
+      status: 'completed',
+      final_verdict: finalResult.verdict,
+      final_confidence: finalResult.confidence,
+      final_reasoning: finalResult.claims.map((c) => c.explanation).join(' '),
+      completed_at: new Date().toISOString(),
+    });
+
+    const emitter = getEmitter(job.news_id, job.user_id);
+    emitter?.emit('complete');
+
     console.log('[FactCheckWorker] News fact_check updated to checked');
   } catch (error: any) {
     const attempts = (job.attempts || 0) + 1;
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[FactCheckWorker] Job ${jobId} failed (attempt ${attempts}):`, message);
+
     await updateJobFailed(jobId, message, attempts);
+    await updateFactCheckSession(session.id, {
+      status: 'failed',
+      error_message: message,
+      completed_at: new Date().toISOString(),
+    });
+
+    const emitter = getEmitter(job.news_id, job.user_id);
+    emitter?.emit('error', message);
 
     if (attempts < JOB_MAX_ATTEMPTS) {
       const retryDelay = RETRY_DELAYS_MS[Math.min(attempts - 1, RETRY_DELAYS_MS.length - 1)];

@@ -39,14 +39,16 @@ export interface AuthRequest extends Request {
  */
 export function authMiddleware(req: AuthRequest, res: Response, next: NextFunction) {
   try {
-    // Извлекаем заголовок Authorization
+    // Извлекаем токен из заголовка Authorization или из query (?token=...) для SSE
     const authHeader = req.headers.authorization;
-    if (!authHeader) {
+    const queryToken = typeof req.query?.token === 'string' ? req.query.token : undefined;
+
+    const rawToken = authHeader ? authHeader.replace('Bearer ', '') : queryToken;
+    if (!rawToken) {
       return res.status(401).json({ error: 'No token provided' });
     }
 
-    // Убираем префикс "Bearer " — получаем чистый токен
-    const token = authHeader.replace('Bearer ', '');
+    const token = rawToken;
 
     // Верифицируем токен (jwt.verify проверяет подпись и exp)
     // Если токен протух или подпись неверна → выбросит ошибку

@@ -197,7 +197,7 @@ export async function initSQLiteSchema(): Promise<void> {
       id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
       news_id TEXT NOT NULL REFERENCES news(id) ON DELETE CASCADE,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      status TEXT NOT NULL DEFAULT 'queued',
+      status TEXT NOT NULL DEFAULT 'queued' CHECK(status IN ('queued','done','failed')),
       error_message TEXT,
       attempts INTEGER NOT NULL DEFAULT 0,
       max_attempts INTEGER NOT NULL DEFAULT 3,
@@ -210,6 +210,34 @@ export async function initSQLiteSchema(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_fact_check_jobs_status ON fact_check_jobs(status);
     CREATE INDEX IF NOT EXISTS idx_fact_check_jobs_news_id ON fact_check_jobs(news_id);
     CREATE INDEX IF NOT EXISTS idx_fact_check_jobs_user_id ON fact_check_jobs(user_id);
+
+    CREATE TABLE IF NOT EXISTS fact_check_sessions (
+      id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+      news_id TEXT NOT NULL REFERENCES news(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','queries','search','fetch','claims','verdict','completed','failed')),
+      queries_json TEXT,
+      sources_json TEXT,
+      sources_count INTEGER DEFAULT 0,
+      fetched_json TEXT,
+      fetched_count INTEGER DEFAULT 0,
+      claims_json TEXT,
+      claims_count INTEGER DEFAULT 0,
+      final_verdict TEXT CHECK(final_verdict IN ('reliable','partly_reliable','unreliable','unverified')),
+      final_confidence INTEGER CHECK(final_confidence BETWEEN 0 AND 100),
+      final_reasoning TEXT,
+      error_message TEXT,
+      tokens_input INTEGER DEFAULT 0,
+      tokens_output INTEGER DEFAULT 0,
+      model TEXT,
+      started_at TEXT DEFAULT (datetime('now')),
+      completed_at TEXT,
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_fc_sessions_news ON fact_check_sessions(news_id);
+    CREATE INDEX IF NOT EXISTS idx_fc_sessions_user ON fact_check_sessions(user_id);
+    CREATE INDEX IF NOT EXISTS idx_fc_sessions_status ON fact_check_sessions(status);
 
     CREATE TABLE IF NOT EXISTS search_cache (
       query_hash TEXT PRIMARY KEY,

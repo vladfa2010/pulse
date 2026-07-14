@@ -4,16 +4,17 @@
  * =============================================================================
  *
  * Endpoints:
- *   POST /api/news/:id/fact-check       — запуск/перезапуск проверки
- *   GET  /api/news/:id/fact-check       — статус/результат
- *   POST /api/news/:id/fact-check/retry — повторить после ошибки
+ *   POST /api/news/:id/fact-check        — запуск/перезапуск проверки
+ *   GET  /api/news/:id/fact-check        — статус/результат
+ *   GET  /api/news/:id/fact-check/stream — SSE-прогресс проверки
  */
 
 import { Router, type Response } from 'express';
+import { EventEmitter } from 'events';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { query } from '../config/db';
 import { getUserSubscription, planLevel } from '../services/subscription';
-import { createFactCheckJob, updateNewsFactCheck } from '../services/factCheck';
+import { createFactCheckJob, updateNewsFactCheck, setEmitter, removeEmitter } from '../services/factCheck';
 
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
@@ -146,6 +147,46 @@ router.get('/:id/fact-check', async (req: AuthRequest, res) => {
     });
   } catch (err: any) {
     console.error('[FactCheckRoute] GET error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/news/:id/fact-check/stream — SSE stream of fact-check stages
+router.get('/:id/fact-check/stream', async (req: AuthRequest, res) => {
+  try {
+    const newsId = req.params.id.toLowerCase();
+    const userId = req.user!.userId;
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders?.();
+
+    const emitter = new EventEmitter();
+    setEmitter(newsId, userId, emitter);
+
+    const send = (data: any) => {
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    };
+
+    emitter.on('stage', (stage: string, payload: any) => {
+      send({ stage, payload, timestamp: Date.now() });
+    });
+    emitter.on('complete', () => {
+      send({ type: 'complete' });
+      res.end();
+    });
+    emitter.on('error', (message: string) => {
+      send({ type: 'error', message });
+      res.end();
+    });
+
+    req.on('close', () => {
+      emitter.removeAllListeners();
+      removeEmitter(newsId, userId);
+    });
+  } catch (err: any) {
+    console.error('[FactCheckRoute] SSE error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

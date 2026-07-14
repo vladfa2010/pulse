@@ -2,23 +2,34 @@
 
 ## Обзор
 
-On-demand факт-чекинг новостей через LLM + веб-поиск (Kimi API `$web_search`).
+On-demand факт-чекинг новостей через LLM + веб-поиск (Kimi API `$web_search` / `$fetch`).
 
 - Доступно только для тарифов **Premium / Club / Pro**.
 - Проверка запускается по требованию пользователя и выполняется асинхронно воркером.
-- UI опрашивает статус через `GET /api/news/:id/fact-check` каждые 2 секунды.
+- UI получает прогресс в реальном времени через **SSE** (`GET /api/news/:id/fact-check/stream`).
+- Если SSE недоступен — fallback на polling `GET /api/news/:id/fact-check`.
 
-## Pipeline
+## Pipeline v3 (видимый)
 
 ```
 queued → in_progress → done
 ```
 
-1. **in_progress** — воркер берёт job из очереди и передаёт текст новости (title + summary) в end-to-end вызов Kimi API.
-2. **Kimi API** — модель сама решает, какие факты проверять, сколько раз вызывать `$web_search` и какой дать вердикт.
-3. **done** — результат сохраняется в `news.fact_check_result`, статус меняется на `checked`.
+Внутри `in_progress` проходят 5 видимых этапов:
 
-Реализация: прямые HTTP-запросы к Kimi API (`https://api.moonshot.ai/v1`) через `axios`, без использования OpenAI API.
+```
+queries → search → fetch → claims → verdict
+```
+
+1. **queries** — модель выделяет проверяемые claims.
+2. **search** — модель ищет независимые источники через `$web_search`.
+3. **fetch** — при необходимости читает конкретные URL через `$fetch`.
+4. **claims** — разбор вердиктов по каждому claim.
+5. **verdict** — итоговый вердикт и confidence.
+
+Каждый этап отправляется в SSE и сохраняется в `fact_check_sessions`.
+
+Реализация: OpenAI SDK как HTTP-клиент для Kimi API (`baseURL = https://api.moonshot.ai/v1`). Запросы уходят к Kimi, не к OpenAI.
 
 ## API endpoints
 
@@ -84,9 +95,26 @@ queued → in_progress → done
 }
 ```
 
+### GET `/api/news/:id/fact-check/stream`
+
+SSE-стрим этапов проверки. Токен передаётся через query-параметр `?token=...`, потому что браузерный `EventSource` не поддерживает заголовки.
+
+**События:**
+
+```json
+// этап
+{ "stage": "queries", "payload": { "status": "done", "claims": 5 }, "timestamp": 1234567890 }
+
+// завершение
+{ "type": "complete" }
+
+// ошибка
+{ "type": "error", "message": "..." }
+```
+
 ### GET `/api/news/:id/fact-check`
 
-Получить статус или результат проверки.
+Получить статус или результат проверки (fallback polling).
 
 **Ответы:**
 
@@ -154,12 +182,13 @@ interface FactCheckSource {
 - `MAX_CONCURRENT_JOBS = 1` — job'ы обрабатываются по одному.
 - При неудаче job перезапускается до **3 раз** с задержками 1 / 5 / 15 минут.
 - Используемая модель: `kimi-k2.6` (переопределяется через `FACT_CHECK_MODEL`).
-- End-to-end вызов: один запрос к `/chat/completions` с `$web_search`, до 5 итераций tool_calls.
+- Pipeline: `runFactCheckPipeline()` — async generator, до 5 итераций tool_calls (`$web_search` / `$fetch`).
+- SSE: каждый этап отправляется через `factCheckEmitters` в `GET /api/news/:id/fact-check/stream`.
 
 ## Ограничения и особенности Kimi API
 
 - `$web_search` требует `tool_choice: 'auto'`.
-- Для вызовов с tools передаётся `thinking: { type: 'disabled' }`.
+- Для вызовов с tools передаётся `tool_choice: 'auto'` (SDK сам управляет остальными параметрами).
 - Таймаут для end-to-end вызова — **300 секунд** (реальный поиск занимает 2-5 минут).
 - Tool content передаётся обратно в Kimi **as-is** (`content: toolCall.function.arguments`), без `JSON.parse/stringify`.
 
@@ -180,6 +209,7 @@ id UUID PRIMARY KEY DEFAULT gen_random_uuid()
 news_id UUID NOT NULL REFERENCES news(id) ON DELETE CASCADE
 user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE
 status TEXT NOT NULL DEFAULT 'queued'
+  -- queued | done | failed
 attempts INTEGER NOT NULL DEFAULT 0
 error_message TEXT
 next_retry_at TIMESTAMPTZ
