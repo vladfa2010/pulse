@@ -416,6 +416,8 @@ export async function processFactCheckJob(jobId: string): Promise<void> {
     if (text.length < 50) throw new Error('Текст новости слишком короткий');
 
     const claims = await extractClaims(text);
+    console.log('[FactCheckWorker] Claims extracted:', claims.length);
+    claims.forEach((c: Claim) => console.log(`  [${c.id}] ${c.text.slice(0, 60)}`));
 
     if (claims.length === 0) {
       console.log('[FactCheckWorker] No claims found, marking as unverified');
@@ -436,12 +438,19 @@ export async function processFactCheckJob(jobId: string): Promise<void> {
 
     await updateJobStatus(jobId, 'searching');
     const searchResult = await searchClaimsBatch(claims);
+    console.log('[FactCheckWorker] Search result length:', searchResult.length, 'chars');
+    if (searchResult.length > 0) {
+      console.log('[FactCheckWorker] Search result preview:', searchResult.slice(0, 800));
+    } else {
+      console.log('[FactCheckWorker] Search result is EMPTY');
+    }
     await delay(API_DELAY_MS);
 
     await updateJobStatus(jobId, 'verifying');
     const verifiedClaims: VerifiedClaim[] = [];
     for (const claim of claims) {
       const verdict = await verifyClaim(claim, searchResult);
+      console.log(`[FactCheckWorker] Claim [${claim.id}] verdict: ${verdict.verdict}, confidence: ${verdict.confidence}, sources: ${verdict.sources?.length || 0}`);
       verifiedClaims.push(verdict);
       await delay(API_DELAY_MS);
     }
