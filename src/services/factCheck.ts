@@ -167,12 +167,25 @@ async function kimiChatWithRetry(messages: any[], tools?: any[]): Promise<any> {
         max_tokens: 16384,
         temperature: 0.1,
       };
+
+      // tools — только для web_search
       if (tools && tools.length > 0) {
         payload.tools = tools;
         payload.tool_choice = 'auto';
+        // thinking disabled ТОЛЬКО для web_search calls
+        payload.thinking = { type: 'disabled' };
       }
-      // Disable thinking for $web_search (required by Kimi API)
-      payload.thinking = { type: 'disabled' };
+      // Для обычных вызовов (extract, verify) — thinking НЕ передаём
+
+      // ЛОГИРОВАНИЕ: запрос
+      console.log('[FactCheckLLM] REQUEST payload:', JSON.stringify({
+        model: payload.model,
+        hasTools: !!payload.tools,
+        hasThinking: !!payload.thinking,
+        messagesCount: payload.messages.length,
+        lastMessageRole: payload.messages[payload.messages.length - 1]?.role,
+      }));
+
       const res = await axios.post(
         `${KIMI_BASE_URL}/chat/completions`,
         payload,
@@ -184,14 +197,34 @@ async function kimiChatWithRetry(messages: any[], tools?: any[]): Promise<any> {
           timeout: 120000,
         }
       );
-      return res.data?.choices?.[0]?.message;
+
+      // ЛОГИРОВАНИЕ: ответ
+      const msg = res.data?.choices?.[0]?.message;
+      console.log('[FactCheckLLM] RESPONSE:', JSON.stringify({
+        finish_reason: res.data?.choices?.[0]?.finish_reason,
+        hasToolCalls: !!msg?.tool_calls,
+        toolCallsCount: msg?.tool_calls?.length || 0,
+        contentPreview: (msg?.content || '').slice(0, 100),
+      }));
+
+      return msg;
     } catch (err: any) {
       lastError = err;
       const status = err.response?.status;
+
+      // ЛОГИРОВАНИЕ: ошибка
+      console.error('[FactCheckLLM] ERROR:', JSON.stringify({
+        status,
+        statusText: err.response?.statusText,
+        errorData: err.response?.data,
+        message: err.message,
+        attempt,
+      }));
+
       const isRetryable = status === 429 || status === 502 || status === 503 || err.code === 'ECONNRESET' || err.code === 'ETIMEDOUT';
       if (!isRetryable || attempt === KIMI_MAX_RETRIES) throw err;
       const wait = Math.min(1000 * Math.pow(2, attempt - 1), 16000);
-      console.log(`[FactCheckLLM] Attempt ${attempt}/${KIMI_MAX_RETRIES} failed (status=${status}), retrying in ${wait}ms...`);
+      console.log(`[FactCheckLLM] Retrying in ${wait}ms...`);
       await delay(wait);
     }
   }
