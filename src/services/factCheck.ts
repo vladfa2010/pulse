@@ -361,6 +361,43 @@ export async function* runFactCheckPipeline(
     { role: 'user', content: `Текст новости:\n${articleText.slice(0, 8000)}` },
   ];
 
+  const foundSources: { title: string; url: string; snippet: string }[] = [];
+
+  const pushToolResult = async (tc: any) => {
+    if (tc.function.name === '$web_search') {
+      try {
+        const searchData = JSON.parse(tc.function.arguments);
+        const sources = (searchData.results || []).map((r: any) => ({
+          title: String(r.title || ''),
+          url: String(r.url || ''),
+          snippet: String(r.snippet || ''),
+        }));
+        foundSources.push(...sources);
+
+        emitStage(newsId, userId, 'search', {
+          status: 'done',
+          sources: foundSources.length,
+          items: sources,
+        });
+
+        await updateFactCheckSession(sessionId, {
+          status: 'search',
+          sources_json: JSON.stringify(foundSources),
+          sources_count: foundSources.length,
+        });
+      } catch (err: any) {
+        console.error('[FactCheckWorker] Failed to parse $web_search result:', err.message);
+      }
+    }
+
+    messages.push({
+      role: 'tool',
+      tool_call_id: tc.id,
+      name: tc.function.name,
+      content: tc.function.arguments,
+    });
+  };
+
   // ─── Этап 1: Генерация запросов ───
   yield { stage: 'queries', payload: { status: 'generating' } };
   emitStage(newsId, userId, 'queries', { status: 'generating' });
@@ -370,7 +407,7 @@ export async function* runFactCheckPipeline(
 
   if (step1.tool_calls) {
     for (const tc of step1.tool_calls) {
-      messages.push({ role: 'tool', tool_call_id: tc.id, name: tc.function.name, content: tc.function.arguments });
+      await pushToolResult(tc);
     }
   }
 
@@ -394,19 +431,16 @@ export async function* runFactCheckPipeline(
 
   if (step2.tool_calls) {
     for (const tc of step2.tool_calls) {
-      messages.push({ role: 'tool', tool_call_id: tc.id, name: tc.function.name, content: tc.function.arguments });
+      await pushToolResult(tc);
     }
   }
 
-  const parsed2 = parseLlmJson(step2.content || '{}');
-  const sources = Array.isArray(parsed2?.sources) ? parsed2.sources : [];
-
-  yield { stage: 'search', payload: { status: 'done', sources: sources.length, items: sources.slice(0, 10) } };
-  emitStage(newsId, userId, 'search', { status: 'done', sources: sources.length, items: sources.slice(0, 10) });
+  yield { stage: 'search', payload: { status: 'done', sources: foundSources.length, items: foundSources.slice(0, 10) } };
+  emitStage(newsId, userId, 'search', { status: 'done', sources: foundSources.length, items: foundSources.slice(0, 10) });
   await updateFactCheckSession(sessionId, {
     status: 'search',
-    sources_json: JSON.stringify(sources),
-    sources_count: sources.length,
+    sources_json: JSON.stringify(foundSources),
+    sources_count: foundSources.length,
   });
 
   // ─── Этап 3: Fetch (если модель запросила) ───
@@ -421,7 +455,7 @@ export async function* runFactCheckPipeline(
     if (step.finish_reason !== 'tool_calls') break;
 
     for (const tc of step.tool_calls || []) {
-      messages.push({ role: 'tool', tool_call_id: tc.id, name: tc.function.name, content: tc.function.arguments });
+      await pushToolResult(tc);
       if (tc.function.name === '$fetch') fetchCount++;
     }
 
