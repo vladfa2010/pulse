@@ -326,7 +326,6 @@ export async function processFactCheckJob(jobId: string): Promise<void> {
   }
 
   try {
-    await updateJobStatus(jobId, 'in_progress');
     const text = [news.title_ru, news.summary_ru].filter(Boolean).join('\n');
 
     const result = await factCheckEndToEnd(text);
