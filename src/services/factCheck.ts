@@ -169,8 +169,10 @@ async function kimiChatWithRetry(messages: any[], tools?: any[]): Promise<any> {
       };
       if (tools && tools.length > 0) {
         payload.tools = tools;
-        payload.tool_choice = { type: 'builtin_function', function: { name: '$web_search' } };
+        payload.tool_choice = 'auto';
       }
+      // Disable thinking for $web_search (required by Kimi API)
+      payload.thinking = { type: 'disabled' };
       const res = await axios.post(
         `${KIMI_BASE_URL}/chat/completions`,
         payload,
@@ -218,11 +220,13 @@ async function runWebSearchLoop(messages: any[]): Promise<string> {
         })),
       });
       for (const tc of msg.tool_calls) {
+        // Round-trip: parse → stringify (as per Kimi API docs)
+        const toolArgs = JSON.parse(tc.function.arguments);
         messages.push({
           role: 'tool',
           tool_call_id: tc.id,
           name: tc.function.name,
-          content: tc.function.arguments,
+          content: JSON.stringify(toolArgs),
         });
       }
     }
