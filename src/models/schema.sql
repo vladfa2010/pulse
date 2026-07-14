@@ -559,3 +559,15 @@ CREATE TABLE IF NOT EXISTS fact_check_jobs (
 CREATE INDEX IF NOT EXISTS idx_fact_check_jobs_status ON fact_check_jobs(status);
 CREATE INDEX IF NOT EXISTS idx_fact_check_jobs_news_id ON fact_check_jobs(news_id);
 CREATE INDEX IF NOT EXISTS idx_fact_check_jobs_user_id ON fact_check_jobs(user_id);
+
+
+-- ============================================================
+-- 19. search_cache — кэш результатов веб-поиска
+-- ============================================================
+CREATE TABLE IF NOT EXISTS search_cache (
+  query_hash  TEXT PRIMARY KEY,
+  results     TEXT,
+  expires_at  TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_search_cache_expires ON search_cache(expires_at);

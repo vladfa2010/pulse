@@ -211,6 +211,14 @@ export async function initSQLiteSchema(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_fact_check_jobs_news_id ON fact_check_jobs(news_id);
     CREATE INDEX IF NOT EXISTS idx_fact_check_jobs_user_id ON fact_check_jobs(user_id);
 
+    CREATE TABLE IF NOT EXISTS search_cache (
+      query_hash TEXT PRIMARY KEY,
+      results TEXT,
+      expires_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_search_cache_expires ON search_cache(expires_at);
+
     CREATE TABLE IF NOT EXISTS user_sessions (
       id TEXT PRIMARY KEY,
       user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
