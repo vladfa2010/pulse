@@ -406,14 +406,14 @@ export async function processFactCheckJob(jobId: string): Promise<void> {
 
   const news = await getNewsForFactCheck(job.news_id);
   if (!news) {
-    await updateJobFailed(jobId, 'news_not_found', job.attempts + 1);
+    await updateJobFailed(jobId, 'Новость не найдена', job.attempts + 1);
     return;
   }
 
   try {
     await updateJobStatus(jobId, 'extracting_claims');
     const text = [news.title_ru, news.summary_ru].filter(Boolean).join('\n');
-    if (text.length < 50) throw new Error('text_too_short');
+    if (text.length < 50) throw new Error('Текст новости слишком короткий');
 
     const claims = await extractClaims(text);
 

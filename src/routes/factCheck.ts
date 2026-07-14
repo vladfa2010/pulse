@@ -31,7 +31,7 @@ async function requirePremium(req: AuthRequest, res: Response): Promise<boolean>
 
   if (!isEligible) {
     res.status(403).json({
-      error: 'Fact-checking requires Premium or higher subscription',
+      error: 'Факт-чекинг доступен только на тарифе Premium и выше',
       upgrade_required: true,
       min_plan: 'premium',
       min_price: 990,
@@ -75,7 +75,7 @@ router.post('/:id/fact-check', async (req: AuthRequest, res) => {
 
     const sub = await getUserSubscription(userId);
     if (!(await checkRateLimit(userId, sub.plan))) {
-      return res.status(429).json({ error: 'Rate limit exceeded. Try again later.' });
+      return res.status(429).json({ error: 'Превышен лимит проверок. Попробуйте позже.' });
     }
 
     const newsResult = await query(
@@ -83,17 +83,17 @@ router.post('/:id/fact-check', async (req: AuthRequest, res) => {
       [newsId]
     );
     if (newsResult.rows.length === 0) {
-      return res.status(404).json({ error: 'News not found' });
+      return res.status(404).json({ error: 'Новость не найдена' });
     }
     const news = newsResult.rows[0];
 
     if (news.fact_check_status === 'in_progress') {
-      return res.status(409).json({ error: 'Fact-check already in progress' });
+      return res.status(409).json({ error: 'Проверка уже выполняется' });
     }
 
     const text = [news.title_ru, news.summary_ru].filter(Boolean).join('\n');
     if (text.length < 50) {
-      return res.status(400).json({ error: 'News text too short for fact-checking' });
+      return res.status(400).json({ error: 'Текст новости слишком короткий для проверки' });
     }
 
     const jobId = await createFactCheckJob(newsId, userId);
