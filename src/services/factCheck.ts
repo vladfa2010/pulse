@@ -1,12 +1,12 @@
 /**
  * =============================================================================
- * PULSE — Fact-Check Service (v3)
+ * PULSE — Fact-Check Service (v4)
  * =============================================================================
  *
- * On-demand факт-чекинг новостей через Kimi API ($web_search / $fetch).
+ * On-demand факт-чекинг новостей через Kimi API ($web_search).
  *
- * Pipeline v3 (видимый):
- *   queries → search → fetch → claims → verdict
+ * Pipeline v4 (видимый, 4 шага):
+ *   search → analysis → sources → assessment
  *
  * Worker: polling fact_check_jobs каждые 10 сек, max 1 concurrent job.
  *
@@ -33,42 +33,45 @@ const MAX_CONCURRENT_JOBS = 1;
 const KIMI_MAX_RETRIES = 4;
 const JOB_MAX_ATTEMPTS = 3;
 const RETRY_DELAYS_MS = [60000, 300000, 900000]; // 1min, 5min, 15min
-const MAX_TOOL_ITERATIONS = 5;
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
-export interface Claim {
-  id: number;
-  text: string;
-  category: string;
-  search_query: string;
-}
-
-export interface VerifiedClaim extends Claim {
-  verdict: 'confirmed' | 'partly_true' | 'unconfirmed' | 'false';
-  explanation: string;
-  source: string;
-  confidence: number;
-  sources?: { name: string; url: string }[];
-}
-
-export interface FactCheckSource {
-  name: string;
+export interface SourceV4 {
+  site: string;
   url: string;
+  title: string;
+  date: string;
 }
 
-export interface FactCheckResult {
-  verdict: 'reliable' | 'partly_reliable' | 'unreliable' | 'unverified' | null;
-  claims: VerifiedClaim[];
-  sources: FactCheckSource[];
-  confidence: number;
+export interface AssessmentV4 {
+  credibility_score: number;
+  credibility_label: 'Высокая' | 'Средняя' | 'Низкая' | 'Критическая';
+  tone: 'нейтральная' | 'позитивная' | 'негативная' | 'манипулятивная';
+  facts_verified: 'да' | 'частично' | 'нет';
+  has_opinion_bias: boolean;
+  missing_context: string;
+  manipulation_risks: string;
+  verdict: string;
+}
+
+export interface PipelineV4Result {
+  analysis: string;
+  sources: SourceV4[];
+  assessment: AssessmentV4;
+}
+
+export interface FactCheckResultV4 {
+  version: 4;
+  analysis: string;
+  sources: SourceV4[];
+  assessment: AssessmentV4;
   checked_at: string;
   model: string;
   error: string | null;
 }
 
-export interface FactCheckStage {
-  stage: 'queries' | 'search' | 'fetch' | 'claims' | 'verdict';
+export interface FactCheckStageV4 {
+  stage: 'search' | 'analysis' | 'sources' | 'assessment';
   payload: any;
 }
 
@@ -173,7 +176,7 @@ export async function rescheduleJob(jobId: string, nextRetryAt: Date): Promise<v
 export async function updateNewsFactCheck(
   newsId: string,
   status: 'not_checked' | 'in_progress' | 'checked',
-  result: FactCheckResult | null
+  result: FactCheckResultV4 | null
 ): Promise<void> {
   const resultValue = result ? JSON.stringify(result) : null;
   await query(
@@ -290,226 +293,218 @@ function parseLlmJson(content: string): any | null {
   }
 }
 
-// ─── End-to-end pipeline with visible stages ────────────────────────────────
+// ─── Prompts ────────────────────────────────────────────────────────────────
 
-const SYSTEM_FACTCHECK_V3 = `Ты — факт-чекер. Проанализируй текст новости через веб-поиск.
+const SYSTEM_ANALYSIS = `Ты новостной аналитик. Давай развернутый анализ темы на русском языке. Используй markdown: жирный текст для ключевых фактов, заголовки для структуры.`;
 
-Этапы работы:
-1. Выдели до 8 проверяемых claims из текста (факты, даты, цифры, имена, события).
-2. Для каждого claim выполни поиск через $web_search.
-3. При необходимости прочти релевантные URL через $fetch.
-4. Для каждого claim дай вердикт с обоснованием и источниками.
+const SYSTEM_SOURCES = `Ты извлекаешь источники из результатов веб-поиска. Отвечай ТОЛЬКО JSON: {"sources": [{"site": "название сайта", "url": "https://...", "title": "заголовок статьи", "date": "YYYY-MM-DD"}]}. Перечисли ВСЕ источники.`;
 
-Вердикты:
-- confirmed: подтверждено 2+ независимыми источниками
-- partly_true: частично верно, есть уточнения
-- unconfirmed: недостаточно данных
-- false: опровергнуто авторитетными источниками
-
-Формат — строго JSON:
-{
-  "claims": [
-    {
-      "id": 1,
-      "text": "утверждение из текста",
-      "verdict": "confirmed|partly_true|unconfirmed|false",
-      "explanation": "обоснование на 2-4 предложения",
-      "sources": [{"name": "Reuters", "url": "https://reuters.com/..."}],
-      "confidence": 95
-    }
-  ],
-  "sources": [{"name": "источник", "url": "https://..."}],
-  "verdict": "reliable|partly_reliable|unreliable|unverified",
-  "confidence": 85
-}`;
+const SYSTEM_ASSESSMENT = `Ты эксперт по медиаграмотности и фактчекингу. Оцени оригинальный текст новости на основе проведенного анализа и найденных источников. Отвечай СТРОГО в формате JSON:
+{"credibility_score": число 0-100, "credibility_label": "Высокая"|"Средняя"|"Низкая"|"Критическая", "tone": "нейтральная"|"позитивная"|"негативная"|"манипулятивная", "facts_verified": "да"|"частично"|"нет", "has_opinion_bias": true|false, "missing_context": "описание", "manipulation_risks": "описание", "verdict": "вердикт 2-3 предложения"}`;
 
 const WEB_SEARCH_TOOL = { type: 'builtin_function', function: { name: '$web_search' } };
-const FETCH_TOOL = { type: 'builtin_function', function: { name: '$fetch' } };
 
-function normalizeClaim(c: any): VerifiedClaim {
-  const verdicts = ['confirmed', 'partly_true', 'unconfirmed', 'false'];
+// ─── Pipeline v4 ────────────────────────────────────────────────────────────
+
+function normalizeSource(s: any): SourceV4 {
   return {
-    id: Number(c?.id) || 0,
-    text: String(c?.text || ''),
-    category: String(c?.category || 'fact'),
-    search_query: String(c?.search_query || ''),
-    verdict: verdicts.includes(c?.verdict) ? c.verdict : 'unconfirmed',
-    explanation: String(c?.explanation || ''),
-    source: String(c?.source || ''),
-    confidence: Math.min(100, Math.max(0, Number(c?.confidence || 0))),
-    sources: Array.isArray(c?.sources) ? c.sources : [],
+    site: String(s?.site || ''),
+    url: String(s?.url || ''),
+    title: String(s?.title || ''),
+    date: String(s?.date || ''),
   };
 }
 
-function normalizeFactCheckResult(parsed: any): FactCheckResult {
-  const verdicts = ['reliable', 'partly_reliable', 'unreliable', 'unverified'];
-  const claims = Array.isArray(parsed?.claims) ? parsed.claims.map(normalizeClaim) : [];
+function normalizeAssessment(parsed: any): AssessmentV4 {
+  const labels = ['Высокая', 'Средняя', 'Низкая', 'Критическая'];
+  const tones = ['нейтральная', 'позитивная', 'негативная', 'манипулятивная'];
+  const facts = ['да', 'частично', 'нет'];
+  const label = labels.includes(parsed?.credibility_label) ? parsed.credibility_label : 'Средняя';
+  const score = Math.min(100, Math.max(0, Number(parsed?.credibility_score ?? 50)));
+
   return {
-    verdict: verdicts.includes(parsed?.verdict) ? parsed.verdict : 'unverified',
-    claims,
-    sources: Array.isArray(parsed?.sources) ? parsed.sources : [],
-    confidence: Math.min(100, Math.max(0, Number(parsed?.confidence || 0))),
-    checked_at: new Date().toISOString(),
-    model: FACT_CHECK_MODEL,
-    error: null,
+    credibility_score: score,
+    credibility_label: label,
+    tone: tones.includes(parsed?.tone) ? parsed.tone : 'нейтральная',
+    facts_verified: facts.includes(parsed?.facts_verified) ? parsed.facts_verified : 'частично',
+    has_opinion_bias: Boolean(parsed?.has_opinion_bias),
+    missing_context: String(parsed?.missing_context || ''),
+    manipulation_risks: String(parsed?.manipulation_risks || ''),
+    verdict: String(parsed?.verdict || ''),
   };
 }
 
-export async function* runFactCheckPipeline(
+async function step1WebSearch(
+  messages: any[],
   newsId: string,
   userId: string,
-  articleText: string,
   sessionId: string
-): AsyncGenerator<FactCheckStage, FactCheckResult, unknown> {
-  const messages: any[] = [
-    { role: 'system', content: SYSTEM_FACTCHECK_V3 },
-    { role: 'user', content: `Текст новости:\n${articleText.slice(0, 8000)}` },
-  ];
+): Promise<{ toolCall: any; searchResult: any }> {
+  emitStage(newsId, userId, 'search', { status: 'searching' });
 
-  const foundSources: { title: string; url: string; snippet: string }[] = [];
+  const msg = await kimiChat(messages, [WEB_SEARCH_TOOL]);
+  messages.push(msg);
 
-  const pushToolResult = async (tc: any) => {
-    let args: any;
-    try {
-      args = JSON.parse(tc.function.arguments);
-    } catch (err: any) {
-      console.error('[FactCheckWorker] Failed to parse tool arguments:', err.message);
-      args = {};
-    }
+  let searchResult: any = null;
+  if (msg.tool_calls) {
+    for (const tc of msg.tool_calls) {
+      const args = JSON.parse(tc.function.arguments);
+      searchResult = args;
 
-    if (tc.function.name === '$web_search') {
       const sources = (args.results || []).map((r: any) => ({
         title: String(r.title || ''),
         url: String(r.url || ''),
         snippet: String(r.snippet || ''),
       }));
-      foundSources.push(...sources);
 
       emitStage(newsId, userId, 'search', {
-        status: 'done',
-        sources: foundSources.length,
+        status: 'sources_found',
+        sources: sources.length,
         items: sources,
       });
 
       await updateFactCheckSession(sessionId, {
         status: 'search',
-        sources_json: JSON.stringify(foundSources),
-        sources_count: foundSources.length,
+        sources_json: JSON.stringify(sources),
+        sources_count: sources.length,
+      });
+
+      messages.push({
+        role: 'tool',
+        tool_call_id: tc.id,
+        name: tc.function.name,
+        content: JSON.stringify(args),
       });
     }
-
-    messages.push({
-      role: 'tool',
-      tool_call_id: tc.id,
-      name: tc.function.name,
-      content: JSON.stringify(args),
-    });
-  };
-
-  // ─── Этап 1: Генерация запросов ───
-  yield { stage: 'queries', payload: { status: 'generating' } };
-  emitStage(newsId, userId, 'queries', { status: 'generating' });
-
-  const step1 = await kimiChat(messages, [WEB_SEARCH_TOOL]);
-  messages.push(step1);
-
-  if (step1.tool_calls) {
-    for (const tc of step1.tool_calls) {
-      await pushToolResult(tc);
-    }
   }
 
-  const parsed1 = parseLlmJson(step1.content || '{}');
-  const claims = Array.isArray(parsed1?.claims) ? parsed1.claims : [];
-
-  yield { stage: 'queries', payload: { status: 'done', claims: claims.length } };
-  emitStage(newsId, userId, 'queries', { status: 'done', claims: claims.length });
-  await updateFactCheckSession(sessionId, {
-    status: 'queries',
-    queries_json: JSON.stringify(claims),
-    claims_count: claims.length,
+  emitStage(newsId, userId, 'search', {
+    status: 'done',
+    sources: (searchResult?.results || []).length,
   });
 
-  // ─── Этап 2: Поиск источников ───
-  yield { stage: 'search', payload: { status: 'searching' } };
-  emitStage(newsId, userId, 'search', { status: 'searching' });
+  return { toolCall: msg.tool_calls?.[0], searchResult };
+}
 
-  const step2 = await kimiChat(messages, [WEB_SEARCH_TOOL]);
-  messages.push(step2);
+async function step2Analysis(
+  messages: any[],
+  newsId: string,
+  userId: string,
+  sessionId: string
+): Promise<string> {
+  emitStage(newsId, userId, 'analysis', { status: 'analyzing' });
 
-  if (step2.tool_calls) {
-    for (const tc of step2.tool_calls) {
-      await pushToolResult(tc);
-    }
-  }
+  const analysisMessages = [
+    ...messages,
+    { role: 'system', content: SYSTEM_ANALYSIS },
+  ];
 
-  yield { stage: 'search', payload: { status: 'done', sources: foundSources.length, items: foundSources.slice(0, 10) } };
-  emitStage(newsId, userId, 'search', { status: 'done', sources: foundSources.length, items: foundSources.slice(0, 10) });
-  await updateFactCheckSession(sessionId, {
-    status: 'search',
-    sources_json: JSON.stringify(foundSources),
-    sources_count: foundSources.length,
+  const msg = await kimiChat(analysisMessages);
+  const analysis = msg.content || '';
+
+  emitStage(newsId, userId, 'analysis', {
+    status: 'done',
+    preview: analysis.slice(0, 200),
   });
 
-  // ─── Этап 3: Fetch (если модель запросила) ───
-  yield { stage: 'fetch', payload: { status: 'fetching' } };
-  emitStage(newsId, userId, 'fetch', { status: 'fetching' });
-
-  let fetchCount = 0;
-  for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
-    const step = await kimiChat(messages, [WEB_SEARCH_TOOL, FETCH_TOOL]);
-    messages.push(step);
-
-    if (step.finish_reason !== 'tool_calls') break;
-
-    for (const tc of step.tool_calls || []) {
-      await pushToolResult(tc);
-      if (tc.function.name === '$fetch') fetchCount++;
-    }
-
-    yield { stage: 'fetch', payload: { status: 'progress', fetched: fetchCount } };
-    emitStage(newsId, userId, 'fetch', { status: 'progress', fetched: fetchCount });
-  }
-
-  yield { stage: 'fetch', payload: { status: 'done', fetched: fetchCount } };
-  emitStage(newsId, userId, 'fetch', { status: 'done', fetched: fetchCount });
   await updateFactCheckSession(sessionId, {
-    status: 'fetch',
-    fetched_count: fetchCount,
+    status: 'analysis',
+    final_reasoning: analysis,
   });
 
-  // ─── Этап 4: Разбор по claims ───
-  yield { stage: 'claims', payload: { status: 'analyzing' } };
-  emitStage(newsId, userId, 'claims', { status: 'analyzing' });
+  return analysis;
+}
 
-  const finalMsg = messages[messages.length - 1];
-  const parsedFinal = parseLlmJson(finalMsg?.content || '{}');
-  const verifiedClaims: VerifiedClaim[] = Array.isArray(parsedFinal?.claims) ? parsedFinal.claims.map(normalizeClaim) : [];
+async function step3Sources(
+  messages: any[],
+  newsId: string,
+  userId: string,
+  sessionId: string
+): Promise<SourceV4[]> {
+  emitStage(newsId, userId, 'sources', { status: 'extracting' });
 
-  yield { stage: 'claims', payload: { status: 'done', claims: verifiedClaims } };
-  emitStage(newsId, userId, 'claims', { status: 'done', claims: verifiedClaims });
-  await updateFactCheckSession(sessionId, {
-    status: 'claims',
-    claims_json: JSON.stringify(verifiedClaims),
-    claims_count: verifiedClaims.length,
+  const sourcesMessages = [
+    ...messages,
+    { role: 'system', content: SYSTEM_SOURCES },
+  ];
+
+  const msg = await kimiChat(sourcesMessages);
+  const parsed = parseLlmJson(msg.content || '{}');
+  const sources: SourceV4[] = Array.isArray(parsed?.sources)
+    ? parsed.sources.map(normalizeSource)
+    : [];
+
+  emitStage(newsId, userId, 'sources', {
+    status: 'done',
+    count: sources.length,
+    items: sources,
   });
 
-  // ─── Этап 5: Вердикт ───
-  const result = normalizeFactCheckResult(parsedFinal);
-  const reasoning = verifiedClaims.map((c) => c.explanation).join(' ');
-
-  yield { stage: 'verdict', payload: { status: 'done', verdict: result.verdict, confidence: result.confidence, reasoning } };
-  emitStage(newsId, userId, 'verdict', { status: 'done', verdict: result.verdict, confidence: result.confidence, reasoning });
   await updateFactCheckSession(sessionId, {
-    status: 'verdict',
-    final_verdict: result.verdict,
-    final_confidence: result.confidence,
-    final_reasoning: reasoning,
+    status: 'sources',
+    sources_json: JSON.stringify(sources),
+    sources_count: sources.length,
   });
 
-  console.log('[FactCheckWorker] Content preview:', (finalMsg?.content || '').slice(0, 200));
+  return sources;
+}
 
-  return result;
+async function step4Assessment(
+  messages: any[],
+  articleText: string,
+  analysis: string,
+  sources: SourceV4[],
+  newsId: string,
+  userId: string,
+  sessionId: string
+): Promise<AssessmentV4> {
+  emitStage(newsId, userId, 'assessment', { status: 'assessing' });
+
+  const assessmentMessages = [
+    ...messages,
+    { role: 'system', content: SYSTEM_ASSESSMENT },
+    {
+      role: 'user',
+      content: `Оцени этот текст новости:\n\n---ОРИГИНАЛЬНЫЙ ТЕКСТ---\n${articleText}\n\n---АНАЛИЗ---\n${analysis}\n\n---ИСТОЧНИКИ---\n${sources.map((s) => `[${s.site}] ${s.title} — ${s.url}`).join('\n')}`,
+    },
+  ];
+
+  const msg = await kimiChat(assessmentMessages);
+  const parsed = parseLlmJson(msg.content || '{}');
+  const assessment = normalizeAssessment(parsed);
+
+  emitStage(newsId, userId, 'assessment', {
+    status: 'done',
+    ...assessment,
+  });
+
+  await updateFactCheckSession(sessionId, {
+    status: 'assessment',
+    final_verdict: assessment.credibility_label,
+    final_confidence: assessment.credibility_score,
+    final_reasoning: assessment.verdict,
+  });
+
+  return assessment;
+}
+
+export async function runFactCheckPipelineV4(
+  newsId: string,
+  userId: string,
+  articleText: string,
+  sessionId: string
+): Promise<PipelineV4Result> {
+  const messages: any[] = [
+    { role: 'system', content: 'Ты помощник, который ищет информацию в интернете и анализирует новости.' },
+    { role: 'user', content: `Проанализируй эту тему:\n\n${articleText.slice(0, 8000)}` },
+  ];
+
+  await step1WebSearch(messages, newsId, userId, sessionId);
+  const analysis = await step2Analysis(messages, newsId, userId, sessionId);
+  const sources = await step3Sources(messages, newsId, userId, sessionId);
+  const assessment = await step4Assessment(messages, articleText, analysis, sources, newsId, userId, sessionId);
+
+  return { analysis, sources, assessment };
 }
 
 // ─── Worker ─────────────────────────────────────────────────────────────────
@@ -528,35 +523,31 @@ export async function processFactCheckJob(jobId: string): Promise<void> {
 
   try {
     const text = [news.title_ru, news.summary_ru].filter(Boolean).join('\n');
-    const pipeline = runFactCheckPipeline(job.news_id, job.user_id, text, session.id);
+    const result = await runFactCheckPipelineV4(job.news_id, job.user_id, text, session.id);
 
-    let finalResult: FactCheckResult | undefined;
-    let iter = await pipeline.next();
-    while (!iter.done) {
-      // stage already emitted + saved inside generator
-      iter = await pipeline.next();
-    }
-    finalResult = iter.value;
-
-    if (!finalResult) {
-      finalResult = normalizeFactCheckResult(null);
-    }
+    const factCheckResult: FactCheckResultV4 = {
+      version: 4,
+      ...result,
+      checked_at: new Date().toISOString(),
+      model: FACT_CHECK_MODEL,
+      error: null,
+    };
 
     await updateJobStatus(jobId, 'done');
-    await updateNewsFactCheck(job.news_id, 'checked', finalResult);
+    await updateNewsFactCheck(job.news_id, 'checked', factCheckResult);
 
     await updateFactCheckSession(session.id, {
       status: 'completed',
-      final_verdict: finalResult.verdict,
-      final_confidence: finalResult.confidence,
-      final_reasoning: finalResult.claims.map((c) => c.explanation).join(' '),
+      final_verdict: result.assessment.credibility_label,
+      final_confidence: result.assessment.credibility_score,
+      final_reasoning: result.assessment.verdict,
       completed_at: new Date().toISOString(),
     });
 
     const emitter = getEmitter(job.news_id, job.user_id);
     emitter?.emit('complete');
 
-    console.log('[FactCheckWorker] News fact_check updated to checked');
+    console.log('[FactCheckWorker] News fact_check updated to checked (v4)');
   } catch (error: any) {
     const attempts = (job.attempts || 0) + 1;
     const message = error instanceof Error ? error.message : String(error);
@@ -576,11 +567,20 @@ export async function processFactCheckJob(jobId: string): Promise<void> {
       const retryDelay = RETRY_DELAYS_MS[Math.min(attempts - 1, RETRY_DELAYS_MS.length - 1)];
       await rescheduleJob(jobId, new Date(Date.now() + retryDelay));
     } else {
-      const errorResult: FactCheckResult = {
-        verdict: null,
-        claims: [],
+      const errorResult: FactCheckResultV4 = {
+        version: 4,
+        analysis: '',
         sources: [],
-        confidence: 0,
+        assessment: {
+          credibility_score: 0,
+          credibility_label: 'Критическая',
+          tone: 'нейтральная',
+          facts_verified: 'нет',
+          has_opinion_bias: false,
+          missing_context: '',
+          manipulation_risks: '',
+          verdict: `Ошибка проверки: ${message}`,
+        },
         checked_at: new Date().toISOString(),
         model: FACT_CHECK_MODEL,
         error: message,

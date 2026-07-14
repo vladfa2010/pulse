@@ -569,7 +569,7 @@ CREATE TABLE IF NOT EXISTS fact_check_sessions (
   news_id           UUID NOT NULL REFERENCES news(id) ON DELETE CASCADE,
   user_id           UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   status            TEXT NOT NULL DEFAULT 'pending'
-    CHECK(status IN ('pending','queries','search','fetch','claims','verdict','completed','failed')),
+    CHECK(status IN ('pending','search','analysis','sources','assessment','completed','failed')),
   queries_json      TEXT,
   sources_json      TEXT,
   sources_count     INTEGER DEFAULT 0,
@@ -577,7 +577,7 @@ CREATE TABLE IF NOT EXISTS fact_check_sessions (
   fetched_count     INTEGER DEFAULT 0,
   claims_json       TEXT,
   claims_count      INTEGER DEFAULT 0,
-  final_verdict     TEXT CHECK(final_verdict IN ('reliable','partly_reliable','unreliable','unverified')),
+  final_verdict     TEXT,
   final_confidence  INTEGER CHECK(final_confidence BETWEEN 0 AND 100),
   final_reasoning   TEXT,
   error_message     TEXT,
@@ -592,6 +592,12 @@ CREATE TABLE IF NOT EXISTS fact_check_sessions (
 CREATE INDEX IF NOT EXISTS idx_fc_sessions_news ON fact_check_sessions(news_id);
 CREATE INDEX IF NOT EXISTS idx_fc_sessions_user ON fact_check_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_fc_sessions_status ON fact_check_sessions(status);
+
+-- Migration: обновить CHECK-ограничения для v4 pipeline
+ALTER TABLE fact_check_sessions DROP CONSTRAINT IF EXISTS fact_check_sessions_status_check;
+ALTER TABLE fact_check_sessions ADD CONSTRAINT fact_check_sessions_status_check
+  CHECK(status IN ('pending','search','analysis','sources','assessment','completed','failed'));
+ALTER TABLE fact_check_sessions DROP CONSTRAINT IF EXISTS fact_check_sessions_final_verdict_check;
 
 
 -- ============================================================
