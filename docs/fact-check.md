@@ -2,7 +2,7 @@
 
 ## Обзор
 
-On-demand факт-чекинг новостей через LLM + веб-поиск (Kimi API `$web_search`).
+On-demand факт-чекинг новостей через LLM + веб-поиск (Kimi API `$web_search` + Yandex Search API).
 
 - Доступно только для тарифов **Premium / Club / Pro** (запуск и перепроверка).
 - **Результат проверки виден всем пользователям**, не только Premium.
@@ -19,10 +19,10 @@ queued → in_progress → done
 Внутри `in_progress` проходят 4 видимых этапа:
 
 ```
-search → analysis → sources → assessment
+search (Kimi + Yandex) → analysis → sources → assessment
 ```
 
-1. **search** — модель выполняет поиск по теме через `$web_search`. Результаты (сниппеты) передаются дальше по цепочке сообщений.
+1. **search** — параллельно выполняется поиск через Kimi `$web_search` и Yandex Search API. Результаты объединяются, дедуплицируются по URL и передаются дальше по цепочке сообщений.
 2. **analysis** — модель генерирует развёрнутый анализ темы на русском языке в формате markdown.
 3. **sources** — модель извлекает структурированный список источников из результатов поиска.
 4. **assessment** — модель даёт итоговую оценку достоверности оригинального текста на основе анализа и источников.
@@ -37,10 +37,11 @@ search → analysis → sources → assessment
 
 ```
 [system] + [user: текст новости]
-  → assistant: $web_search tool_call
-  → tool: search_result  ← сохраняем
+  ├──→ assistant: $web_search tool_call  ┐
+  ├──→ tool: search_result               ├──→ dedup по URL
+  └──→ Yandex Search API (XML/Base64)    ┘
   → [system: ANALYSIS]  → анализ (markdown)
-  → [system: SOURCES]   → sources[] (JSON)
+  → [system: SOURCES]   → sources[] (JSON + engine badge)
   → [system: ASSESSMENT] + [user: текст + анализ + источники] → assessment (JSON)
 ```
 
@@ -280,6 +281,7 @@ error_message TEXT
 | Переменная | Описание | По умолчанию |
 |---|---|---|
 | `KIMI_API_KEY` | API-ключ Kimi | — |
+| `YANDEX_API_KEY` | API-ключ Yandex Search API | — |
 | `FACT_CHECK_MODEL` | Модель для факт-чекинга | `kimi-k2.6` |
 | `USE_SQLITE` | `true` — SQLite, иначе PostgreSQL | — |
 

@@ -17,6 +17,7 @@
 import OpenAI from 'openai';
 import { EventEmitter } from 'events';
 import { query } from '../config/db';
+import { yandexSearch } from './yandexSearch';
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 const KIMI_API_KEY = process.env.KIMI_API_KEY;
@@ -41,6 +42,21 @@ export interface SourceV4 {
   url: string;
   title: string;
   date: string;
+  engine?: 'kimi' | 'yandex';
+}
+
+interface SearchSource {
+  title: string;
+  url: string;
+  snippet: string;
+  engine: 'kimi' | 'yandex';
+}
+
+interface EngineStatus {
+  engine: 'kimi' | 'yandex';
+  status: 'ok' | 'error';
+  sources: number;
+  error?: string;
 }
 
 export interface AssessmentV4 {
@@ -295,23 +311,24 @@ function parseLlmJson(content: string): any | null {
 
 // ─── Prompts ────────────────────────────────────────────────────────────────
 
-const SYSTEM_ANALYSIS = `Ты новостной аналитик. Давай развернутый анализ темы на русском языке. Используй markdown: жирный текст для ключевых фактов, заголовки для структуры.`;
+const SYSTEM_ANALYSIS = `Ты новостной аналитик. Давай развернутый анализ темы на русском языке. Используй markdown: жирный текст для ключевых фактов, заголовки для структуры. Анализируй контекст, причины, последствия.`;
 
-const SYSTEM_SOURCES = `Ты извлекаешь источники из результатов веб-поиска. Отвечай ТОЛЬКО JSON: {"sources": [{"site": "название сайта", "url": "https://...", "title": "заголовок статьи", "date": "YYYY-MM-DD"}]}. Перечисли ВСЕ источники.`;
+const SYSTEM_SOURCES = `Извлеки источники из результатов поиска. Отвечай ТОЛЬКО JSON: {"sources": [{"site": "название", "url": "https://...", "title": "заголовок", "date": "YYYY-MM-DD", "engine": "kimi|yandex"}]}. Перечисли ВСЕ источники.`;
 
-const SYSTEM_ASSESSMENT = `Ты эксперт по медиаграмотности и фактчекингу. Оцени оригинальный текст новости на основе проведенного анализа и найденных источников. Отвечай СТРОГО в формате JSON:
-{"credibility_score": число 0-100, "credibility_label": "Высокая"|"Средняя"|"Низкая"|"Критическая", "tone": "нейтральная"|"позитивная"|"негативная"|"манипулятивная", "facts_verified": "да"|"частично"|"нет", "has_opinion_bias": true|false, "missing_context": "описание", "manipulation_risks": "описание", "verdict": "вердикт 2-3 предложения"}`;
+const SYSTEM_ASSESSMENT = `Ты эксперт по медиаграмотности. Оцени текст на основе анализа и источников. JSON: {"credibility_score": 0-100, "credibility_label": "Высокая"|"Средняя"|"Низкая"|"Критическая", "tone": "нейтральная"|"позитивная"|"негативная"|"манипулятивная", "facts_verified": "да"|"частично"|"нет", "has_opinion_bias": true|false, "missing_context": "...", "manipulation_risks": "...", "verdict": "2-3 предложения"}`;
 
 const WEB_SEARCH_TOOL = { type: 'builtin_function', function: { name: '$web_search' } };
 
 // ─── Pipeline v4 ────────────────────────────────────────────────────────────
 
 function normalizeSource(s: any): SourceV4 {
+  const engine = s?.engine === 'kimi' || s?.engine === 'yandex' ? s.engine : undefined;
   return {
     site: String(s?.site || ''),
     url: String(s?.url || ''),
     title: String(s?.title || ''),
     date: String(s?.date || ''),
+    engine,
   };
 }
 
@@ -334,56 +351,99 @@ function normalizeAssessment(parsed: any): AssessmentV4 {
   };
 }
 
-async function step1WebSearch(
+async function step1DualSearch(
   messages: any[],
+  articleText: string,
   newsId: string,
   userId: string,
   sessionId: string
-): Promise<{ toolCall: any; searchResult: any }> {
+): Promise<{ sources: SearchSource[]; engineStatuses: EngineStatus[] }> {
   emitStage(newsId, userId, 'search', { status: 'searching' });
 
-  const msg = await kimiChat(messages, [WEB_SEARCH_TOOL]);
-  messages.push(msg);
+  const engineStatuses: EngineStatus[] = [];
+  let allSources: SearchSource[] = [];
 
-  let searchResult: any = null;
-  if (msg.tool_calls) {
-    for (const tc of msg.tool_calls) {
-      const args = JSON.parse(tc.function.arguments);
-      searchResult = args;
+  // ─── Kimi $web_search ───
+  emitStage(newsId, userId, 'search', { status: 'kimi_search' });
+  try {
+    const kimiMsg = await kimiChat(messages, [WEB_SEARCH_TOOL]);
+    messages.push(kimiMsg);
 
-      const sources = (args.results || []).map((r: any) => ({
-        title: String(r.title || ''),
-        url: String(r.url || ''),
-        snippet: String(r.snippet || ''),
-      }));
+    let kimiSources: SearchSource[] = [];
+    if (kimiMsg.tool_calls) {
+      for (const tc of kimiMsg.tool_calls) {
+        const args = JSON.parse(tc.function.arguments);
+        kimiSources = (args.results || []).map((r: any) => ({
+          title: String(r.title || ''),
+          url: String(r.url || ''),
+          snippet: String(r.snippet || ''),
+          engine: 'kimi' as const,
+        }));
 
-      emitStage(newsId, userId, 'search', {
-        status: 'sources_found',
-        sources: sources.length,
-        items: sources,
-      });
-
-      await updateFactCheckSession(sessionId, {
-        status: 'search',
-        sources_json: JSON.stringify(sources),
-        sources_count: sources.length,
-      });
-
-      messages.push({
-        role: 'tool',
-        tool_call_id: tc.id,
-        name: tc.function.name,
-        content: JSON.stringify(args),
-      });
+        messages.push({
+          role: 'tool',
+          tool_call_id: tc.id,
+          name: tc.function.name,
+          content: JSON.stringify(args),
+        });
+      }
     }
+
+    allSources.push(...kimiSources);
+    engineStatuses.push({ engine: 'kimi', status: 'ok', sources: kimiSources.length });
+    emitStage(newsId, userId, 'search', { status: 'kimi_done', sources: kimiSources.length });
+  } catch (err: any) {
+    const message = err instanceof Error ? err.message : String(err);
+    engineStatuses.push({ engine: 'kimi', status: 'error', sources: 0, error: message });
+    emitStage(newsId, userId, 'search', { status: 'kimi_error', error: message });
   }
+
+  // ─── Yandex Search API ───
+  emitStage(newsId, userId, 'search', { status: 'yandex_search' });
+  const yandexSources = await yandexSearch(articleText.slice(0, 400));
+
+  if (yandexSources.length > 0) {
+    allSources.push(...yandexSources);
+    engineStatuses.push({ engine: 'yandex', status: 'ok', sources: yandexSources.length });
+    emitStage(newsId, userId, 'search', { status: 'yandex_done', sources: yandexSources.length });
+  } else {
+    const errorMsg = 'Нет результатов или ошибка API';
+    engineStatuses.push({ engine: 'yandex', status: 'error', sources: 0, error: errorMsg });
+    emitStage(newsId, userId, 'search', { status: 'yandex_error', error: errorMsg });
+  }
+
+  // ─── Dedup по URL ───
+  const seen = new Set<string>();
+  const deduped = allSources.filter((s) => {
+    if (!s.url || seen.has(s.url)) return false;
+    seen.add(s.url);
+    return true;
+  });
+
+  // ─── Сохраняем + отправляем в context ───
+  await updateFactCheckSession(sessionId, {
+    status: 'search',
+    sources_json: JSON.stringify(deduped),
+    sources_count: deduped.length,
+  });
 
   emitStage(newsId, userId, 'search', {
     status: 'done',
-    sources: (searchResult?.results || []).length,
+    sources: deduped.length,
+    engines: engineStatuses,
+    items: deduped.slice(0, 20),
   });
 
-  return { toolCall: msg.tool_calls?.[0], searchResult };
+  if (deduped.length > 0) {
+    messages.push({
+      role: 'user',
+      content: `Найденные источники (${deduped.length}):\n${deduped
+        .map((s, i) => `[${i + 1}] ${s.title} (${s.engine})\n${s.url}\n${s.snippet?.slice(0, 200)}`)
+        .join('\n\n')}`,
+    });
+  }
+
+  return { sources: deduped, engineStatuses };
 }
 
 async function step2Analysis(
@@ -499,7 +559,7 @@ export async function runFactCheckPipelineV4(
     { role: 'user', content: `Проанализируй эту тему:\n\n${articleText.slice(0, 8000)}` },
   ];
 
-  await step1WebSearch(messages, newsId, userId, sessionId);
+  await step1DualSearch(messages, articleText, newsId, userId, sessionId);
   const analysis = await step2Analysis(messages, newsId, userId, sessionId);
   const sources = await step3Sources(messages, newsId, userId, sessionId);
   const assessment = await step4Assessment(messages, articleText, analysis, sources, newsId, userId, sessionId);
