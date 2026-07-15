@@ -477,6 +477,7 @@ async function step2Analysis(
 
 async function step3Sources(
   messages: any[],
+  rawSources: SearchSource[],
   newsId: string,
   userId: string,
   sessionId: string
@@ -493,6 +494,20 @@ async function step3Sources(
   const sources: SourceV4[] = Array.isArray(parsed?.sources)
     ? parsed.sources.map(normalizeSource)
     : [];
+
+  // Если модель не сохранила engine — восстанавливаем по URL из raw-источников
+  const engineByUrl = new Map<string, 'kimi' | 'yandex'>();
+  for (const rs of rawSources) {
+    if (rs.url && !engineByUrl.has(rs.url)) {
+      engineByUrl.set(rs.url, rs.engine);
+    }
+  }
+  for (const s of sources) {
+    if (!s.engine && s.url) {
+      const engine = engineByUrl.get(s.url);
+      if (engine) s.engine = engine;
+    }
+  }
 
   emitStage(newsId, userId, 'sources', {
     status: 'done',
@@ -559,9 +574,9 @@ export async function runFactCheckPipelineV4(
     { role: 'user', content: `Проанализируй эту тему:\n\n${articleText.slice(0, 8000)}` },
   ];
 
-  await step1DualSearch(messages, articleText, newsId, userId, sessionId);
+  const { sources: rawSources } = await step1DualSearch(messages, articleText, newsId, userId, sessionId);
   const analysis = await step2Analysis(messages, newsId, userId, sessionId);
-  const sources = await step3Sources(messages, newsId, userId, sessionId);
+  const sources = await step3Sources(messages, rawSources, newsId, userId, sessionId);
   const assessment = await step4Assessment(messages, articleText, analysis, sources, newsId, userId, sessionId);
 
   return { analysis, sources, assessment };
