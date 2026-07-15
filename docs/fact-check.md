@@ -2,34 +2,49 @@
 
 ## Обзор
 
-On-demand факт-чекинг новостей через LLM + веб-поиск (Kimi API `$web_search` / `$fetch`).
+On-demand факт-чекинг новостей через LLM + веб-поиск (Kimi API `$web_search`).
 
-- Доступно только для тарифов **Premium / Club / Pro**.
+- Доступно только для тарифов **Premium / Club / Pro** (запуск и перепроверка).
+- **Результат проверки виден всем пользователям**, не только Premium.
 - Проверка запускается по требованию пользователя и выполняется асинхронно воркером.
 - UI получает прогресс в реальном времени через **SSE** (`GET /api/news/:id/fact-check/stream`).
 - Если SSE недоступен — fallback на polling `GET /api/news/:id/fact-check`.
 
-## Pipeline v3 (видимый)
+## Pipeline v4 (видимый)
 
 ```
 queued → in_progress → done
 ```
 
-Внутри `in_progress` проходят 5 видимых этапов:
+Внутри `in_progress` проходят 4 видимых этапа:
 
 ```
-queries → search → fetch → claims → verdict
+search → analysis → sources → assessment
 ```
 
-1. **queries** — модель выделяет проверяемые claims.
-2. **search** — модель ищет независимые источники через `$web_search`.
-3. **fetch** — при необходимости читает конкретные URL через `$fetch`.
-4. **claims** — разбор вердиктов по каждому claim.
-5. **verdict** — итоговый вердикт и confidence.
+1. **search** — модель выполняет поиск по теме через `$web_search`. Результаты (сниппеты) передаются дальше по цепочке сообщений.
+2. **analysis** — модель генерирует развёрнутый анализ темы на русском языке в формате markdown.
+3. **sources** — модель извлекает структурированный список источников из результатов поиска.
+4. **assessment** — модель даёт итоговую оценку достоверности оригинального текста на основе анализа и источников.
 
 Каждый этап отправляется в SSE и сохраняется в `fact_check_sessions`.
 
-Реализация: OpenAI SDK как HTTP-клиент для Kimi API (`baseURL = https://api.moonshot.ai/v1`). Запросы уходят к Kimi, не к OpenAI.
+Реализация: OpenAI SDK используется **только как HTTP-клиент** для Kimi API (`baseURL = https://api.moonshot.ai/v1`). Запросы уходят к Kimi, не к OpenAI.
+
+## Follow-up chain
+
+Все 4 шага используют **один контекст `messages`**:
+
+```
+[system] + [user: текст новости]
+  → assistant: $web_search tool_call
+  → tool: search_result  ← сохраняем
+  → [system: ANALYSIS]  → анализ (markdown)
+  → [system: SOURCES]   → sources[] (JSON)
+  → [system: ASSESSMENT] + [user: текст + анализ + источники] → assessment (JSON)
+```
+
+Так модель на каждом шаге видит результаты поиска и может ссылаться на них.
 
 ## API endpoints
 
@@ -103,7 +118,10 @@ SSE-стрим этапов проверки. Токен передаётся ч
 
 ```json
 // этап
-{ "stage": "queries", "payload": { "status": "done", "claims": 5 }, "timestamp": 1234567890 }
+{ "stage": "search", "payload": { "status": "done", "sources": 5 }, "timestamp": 1234567890 }
+
+// промежуточный результат поиска
+{ "stage": "search", "payload": { "status": "sources_found", "sources": 5, "items": [...] }, "timestamp": 1234567890 }
 
 // завершение
 { "type": "complete" }
@@ -123,10 +141,21 @@ SSE-стрим этапов проверки. Токен передаётся ч
 {
   "status": "checked",
   "result": {
-    "verdict": "reliable",
-    "claims": [...],
-    "sources": [...],
-    "confidence": 90,
+    "version": 4,
+    "analysis": "## Главное\n\nТекст новости подтверждается...",
+    "sources": [
+      { "site": "Reuters", "url": "https://reuters.com/...", "title": "...", "date": "2026-06-17" }
+    ],
+    "assessment": {
+      "credibility_score": 85,
+      "credibility_label": "Высокая",
+      "tone": "нейтральная",
+      "facts_verified": "да",
+      "has_opinion_bias": false,
+      "missing_context": "...",
+      "manipulation_risks": "...",
+      "verdict": "..."
+    },
     "checked_at": "2026-06-18T12:00:00.000Z",
     "model": "kimi-k2.6",
     "error": null
@@ -138,7 +167,7 @@ SSE-стрим этапов проверки. Токен передаётся ч
 ```json
 {
   "status": "in_progress",
-  "job_status": "searching"
+  "job_status": "queued"
 }
 ```
 
@@ -147,33 +176,45 @@ SSE-стрим этапов проверки. Токен передаётся ч
 ## Формат результата
 
 ```typescript
-interface FactCheckResult {
-  verdict: 'reliable' | 'partly_reliable' | 'unreliable' | 'unverified' | null;
-  claims: VerifiedClaim[];
-  sources: FactCheckSource[];
-  confidence: number;      // 0-100
-  checked_at: string;      // ISO 8601
-  model: string;           // например, "kimi-k2.6"
-  error: string | null;    // ошибка воркера, если проверка не удалась
+interface FactCheckResultV4 {
+  version: 4;
+  analysis: string;           // markdown-анализ темы
+  sources: FactCheckSourceV4[];
+  assessment: AssessmentV4;
+  checked_at: string;         // ISO 8601
+  model: string;              // например, "kimi-k2.6"
+  error: string | null;       // ошибка воркера, если проверка не удалась
 }
 
-interface VerifiedClaim {
-  id: number;
-  text: string;
-  category: string;
-  search_query: string;
-  verdict: 'confirmed' | 'partly_true' | 'unconfirmed' | 'false';
-  explanation: string;
-  source: string;
-  confidence: number;
-  sources?: { name: string; url: string }[];
-}
-
-interface FactCheckSource {
-  name: string;
+interface FactCheckSourceV4 {
+  site: string;
   url: string;
+  title: string;
+  date: string;               // YYYY-MM-DD или пустая строка
+}
+
+interface AssessmentV4 {
+  credibility_score: number;  // 0-100
+  credibility_label: 'Высокая' | 'Средняя' | 'Низкая' | 'Критическая';
+  tone: 'нейтральная' | 'позитивная' | 'негативная' | 'манипулятивная';
+  facts_verified: 'да' | 'частично' | 'нет';
+  has_opinion_bias: boolean;
+  missing_context: string;
+  manipulation_risks: string;
+  verdict: string;            // вердикт 2-3 предложения
 }
 ```
+
+## Frontend
+
+- `pulse-frontend/src/components/factCheck/ProgressPanel.tsx` — 4 видимых этапа в реальном времени.
+- `pulse-frontend/src/components/factCheck/ResultTabs.tsx` — табы: Анализ / Источники / Оценка.
+- `pulse-frontend/src/components/factCheck/SourceCard.tsx` — карточка источника.
+- `pulse-frontend/src/components/factCheck/AssessmentPanel.tsx` — score, label, metrics, verdict.
+- `pulse-frontend/src/components/FactCheckSection.tsx` — управление SSE, polling и отображением.
+- `pulse-frontend/src/hooks/useFactCheckSSE.ts` — POST + SSE + fallback polling.
+
+Результат отображается в `NewsDetailModal` для всех пользователей. Кнопка запуска/перепроверки — только Premium.
 
 ## Воркер
 
@@ -182,15 +223,16 @@ interface FactCheckSource {
 - `MAX_CONCURRENT_JOBS = 1` — job'ы обрабатываются по одному.
 - При неудаче job перезапускается до **3 раз** с задержками 1 / 5 / 15 минут.
 - Используемая модель: `kimi-k2.6` (переопределяется через `FACT_CHECK_MODEL`).
-- Pipeline: `runFactCheckPipeline()` — async generator, до 5 итераций tool_calls (`$web_search` / `$fetch`).
+- Pipeline: `runFactCheckPipelineV4()` — 4 последовательных LLM-вызова с общим контекстом.
 - SSE: каждый этап отправляется через `factCheckEmitters` в `GET /api/news/:id/fact-check/stream`.
 
 ## Ограничения и особенности Kimi API
 
+- Используется **только `$web_search`**. `$fetch` не поддерживается Kimi API и удалён из pipeline.
 - `$web_search` требует `tool_choice: 'auto'`.
-- Для вызовов с tools передаётся `tool_choice: 'auto'` (SDK сам управляет остальными параметрами).
-- Таймаут для end-to-end вызова — **300 секунд** (реальный поиск занимает 2-5 минут).
-- Tool content передаётся обратно в Kimi **as-is** (`content: toolCall.function.arguments`), без `JSON.parse/stringify`.
+- Для всех вызовов с tools передаётся `extra_body: { thinking: { type: 'disabled' } }`.
+- Tool content передаётся обратно в Kimi через `role: 'tool'` с `content: JSON.stringify(args)`.
+- OpenAI SDK используется только как HTTP-клиент; `baseURL` указывает на `https://api.moonshot.ai/v1`.
 
 ## База данных
 
@@ -218,6 +260,21 @@ updated_at TIMESTAMPTZ DEFAULT NOW()
 UNIQUE(news_id, user_id)
 ```
 
+### Таблица `fact_check_sessions`
+
+Хранит промежуточные этапы текущей проверки.
+
+```sql
+status TEXT NOT NULL DEFAULT 'pending'
+  -- pending | search | analysis | sources | assessment | completed | failed
+sources_json TEXT
+sources_count INTEGER DEFAULT 0
+final_verdict TEXT
+final_confidence INTEGER CHECK(final_confidence BETWEEN 0 AND 100)
+final_reasoning TEXT
+error_message TEXT
+```
+
 ## Переменные окружения
 
 | Переменная | Описание | По умолчанию |
@@ -232,9 +289,6 @@ UNIQUE(news_id, user_id)
 
 ```
 [FactCheckWorker] Processing job <id> for news <id>
-[FactCheckWorker] Claims extracted: 4
-[FactCheckWorker] Search result length: 4523 chars
-[FactCheckWorker] Claim [1] verdict: confirmed, confidence: 95, sources: 2
-[FactCheckWorker] Result computed: { verdict: 'reliable', claims: 4 }
-[FactCheckWorker] News fact_check updated to checked
+[FactCheckLLM] Attempt 1/4 failed (status=429), retrying in 1000ms...
+[FactCheckWorker] News fact_check updated to checked (v4)
 ```
