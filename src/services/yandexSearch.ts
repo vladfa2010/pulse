@@ -10,11 +10,20 @@ export interface YandexSource {
   engine: 'yandex';
 }
 
-export async function yandexSearch(query: string): Promise<YandexSource[]> {
+interface YandexSearchResult {
+  sources: YandexSource[];
+  error?: string;
+}
+
+export async function yandexSearch(query: string): Promise<YandexSearchResult> {
   if (!YANDEX_API_KEY) {
-    console.log('[YandexSearch] No API key configured');
-    return [];
+    const msg = 'No API key configured';
+    console.log('[YandexSearch]', msg);
+    return { sources: [], error: msg };
   }
+
+  const safeQuery = query.slice(0, 400).trim();
+  console.log(`[YandexSearch] Query: "${safeQuery.slice(0, 80)}..."`);
 
   try {
     const res = await axios.post(
@@ -22,7 +31,7 @@ export async function yandexSearch(query: string): Promise<YandexSource[]> {
       {
         query: {
           searchType: 'SEARCH_TYPE_RU',
-          queryText: query.slice(0, 400),
+          queryText: safeQuery,
         },
       },
       {
@@ -35,6 +44,11 @@ export async function yandexSearch(query: string): Promise<YandexSource[]> {
     );
 
     const rawB64 = res.data.rawData || '';
+    if (!rawB64) {
+      console.log('[YandexSearch] Empty rawData in response');
+      return { sources: [] };
+    }
+
     const xmlStr = Buffer.from(rawB64, 'base64').toString('utf-8');
     const parser = new XMLParser({ ignoreAttributes: false });
     const parsed = parser.parse(xmlStr);
@@ -56,10 +70,12 @@ export async function yandexSearch(query: string): Promise<YandexSource[]> {
       });
     }
 
-    return results;
+    console.log(`[YandexSearch] Found ${results.length} results`);
+    return { sources: results };
   } catch (err: any) {
-    console.error('[YandexSearch] Error:', err.message);
-    return [];
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[YandexSearch] Error:', message);
+    return { sources: [], error: message };
   }
 }
 

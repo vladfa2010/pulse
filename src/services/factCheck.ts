@@ -17,7 +17,7 @@
 import OpenAI from 'openai';
 import { EventEmitter } from 'events';
 import { query } from '../config/db';
-import { yandexSearch } from './yandexSearch';
+import { yandexSearch, YandexSource } from './yandexSearch';
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 const KIMI_API_KEY = process.env.KIMI_API_KEY;
@@ -74,6 +74,7 @@ export interface PipelineV4Result {
   analysis: string;
   sources: SourceV4[];
   assessment: AssessmentV4;
+  engineStatuses: EngineStatus[];
 }
 
 export interface FactCheckResultV4 {
@@ -81,6 +82,7 @@ export interface FactCheckResultV4 {
   analysis: string;
   sources: SourceV4[];
   assessment: AssessmentV4;
+  engines?: EngineStatus[];
   checked_at: string;
   model: string;
   error: string | null;
@@ -400,16 +402,19 @@ async function step1DualSearch(
 
   // ─── Yandex Search API ───
   emitStage(newsId, userId, 'search', { status: 'yandex_search' });
-  const yandexSources = await yandexSearch(articleText.slice(0, 400));
+  const { sources: yandexSources, error: yandexError } = await yandexSearch(articleText.slice(0, 400));
 
-  if (yandexSources.length > 0) {
-    allSources.push(...yandexSources);
+  if (!yandexError && yandexSources.length > 0) {
+    allSources.push(...(yandexSources as YandexSource[]));
     engineStatuses.push({ engine: 'yandex', status: 'ok', sources: yandexSources.length });
     emitStage(newsId, userId, 'search', { status: 'yandex_done', sources: yandexSources.length });
+  } else if (yandexError) {
+    engineStatuses.push({ engine: 'yandex', status: 'error', sources: 0, error: yandexError });
+    emitStage(newsId, userId, 'search', { status: 'yandex_error', error: yandexError });
   } else {
-    const errorMsg = 'Нет результатов или ошибка API';
-    engineStatuses.push({ engine: 'yandex', status: 'error', sources: 0, error: errorMsg });
-    emitStage(newsId, userId, 'search', { status: 'yandex_error', error: errorMsg });
+    // API отработал, но результатов нет — это не ошибка движка
+    engineStatuses.push({ engine: 'yandex', status: 'ok', sources: 0 });
+    emitStage(newsId, userId, 'search', { status: 'yandex_done', sources: 0 });
   }
 
   // ─── Dedup по URL ───
@@ -574,12 +579,12 @@ export async function runFactCheckPipelineV4(
     { role: 'user', content: `Проанализируй эту тему:\n\n${articleText.slice(0, 8000)}` },
   ];
 
-  const { sources: rawSources } = await step1DualSearch(messages, articleText, newsId, userId, sessionId);
+  const { sources: rawSources, engineStatuses } = await step1DualSearch(messages, articleText, newsId, userId, sessionId);
   const analysis = await step2Analysis(messages, newsId, userId, sessionId);
   const sources = await step3Sources(messages, rawSources, newsId, userId, sessionId);
   const assessment = await step4Assessment(messages, articleText, analysis, sources, newsId, userId, sessionId);
 
-  return { analysis, sources, assessment };
+  return { analysis, sources, assessment, engineStatuses };
 }
 
 // ─── Worker ─────────────────────────────────────────────────────────────────
@@ -603,6 +608,7 @@ export async function processFactCheckJob(jobId: string): Promise<void> {
     const factCheckResult: FactCheckResultV4 = {
       version: 4,
       ...result,
+      engines: result.engineStatuses,
       checked_at: new Date().toISOString(),
       model: FACT_CHECK_MODEL,
       error: null,
