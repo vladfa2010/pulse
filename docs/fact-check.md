@@ -19,10 +19,10 @@ queued → in_progress → done
 Внутри `in_progress` проходят 4 видимых этапа:
 
 ```
-search (Kimi + Yandex) → analysis → sources → assessment
+search (Kimi + Yandex RU + Yandex COM) → analysis → sources → assessment
 ```
 
-1. **search** — параллельно выполняется поиск через Kimi `$web_search` и Yandex Search API. Результаты объединяются, дедуплицируются по URL и передаются дальше по цепочке сообщений.
+1. **search** — параллельно выполняется поиск через Kimi `$web_search`, Yandex RU (`SEARCH_TYPE_RU`) и Yandex COM (`SEARCH_TYPE_COM`). Результаты объединяются, дедуплицируются по URL и передаются дальше по цепочке сообщений.
 2. **analysis** — модель генерирует развёрнутый анализ темы на русском языке в формате markdown.
 3. **sources** — модель извлекает структурированный список источников из результатов поиска.
 4. **assessment** — модель даёт итоговую оценку достоверности оригинального текста на основе анализа и источников.
@@ -39,7 +39,8 @@ search (Kimi + Yandex) → analysis → sources → assessment
 [system] + [user: текст новости]
   ├──→ assistant: $web_search tool_call  ┐
   ├──→ tool: search_result               ├──→ dedup по URL
-  └──→ Yandex Search API (XML/Base64)    ┘
+  ├──→ Yandex RU Search API (XML/Base64)─┤
+  └──→ Yandex COM Search API (XML/Base64)┘
   → [system: ANALYSIS]  → анализ (markdown)
   → [system: SOURCES]   → sources[] (JSON + engine badge)
   → [system: ASSESSMENT] + [user: текст + анализ + источники] → assessment (JSON)
@@ -57,7 +58,7 @@ search (Kimi + Yandex) → analysis → sources → assessment
 
 **Условия:**
 - Пользователь должен быть на тарифе Premium+.
-- Не более **10 проверок в час** для Premium, **30 в час** для Club/Pro.
+- Не более **100 проверок в час** для Premium, **300 в час** для Club/Pro.
 - Если проверка уже идёт (`in_progress`) — возвращается `409`.
 
 **Ответы:**
@@ -67,7 +68,8 @@ search (Kimi + Yandex) → analysis → sources → assessment
 {
   "job_id": "uuid",
   "status": "in_progress",
-  "news_status": "in_progress"
+  "news_status": "in_progress",
+  "limit_per_hour": 100
 }
 ```
 
@@ -76,7 +78,8 @@ search (Kimi + Yandex) → analysis → sources → assessment
 {
   "job_id": "uuid",
   "status": "in_progress",
-  "news_status": "in_progress"
+  "news_status": "in_progress",
+  "limit_per_hour": 100
 }
 ```
 
@@ -93,7 +96,8 @@ search (Kimi + Yandex) → analysis → sources → assessment
 `429 Too Many Requests` — превышен лимит.
 ```json
 {
-  "error": "Превышен лимит проверок. Попробуйте позже."
+  "error": "Превышен лимит проверок. Попробуйте позже.",
+  "retry_after": 3600
 }
 ```
 
@@ -160,6 +164,11 @@ SSE-стрим этапов проверки. Токен передаётся ч
     "checked_at": "2026-06-18T12:00:00.000Z",
     "model": "kimi-k2.6",
     "error": null
+  },
+  "limit": {
+    "per_hour": 100,
+    "remaining": 87,
+    "reset_in_minutes": 42
   }
 }
 ```
@@ -220,9 +229,11 @@ interface AssessmentV4 {
 ## Воркер
 
 - Запускается в `startFactCheckCron()` при старте сервера.
-- Опрос очереди `fact_check_jobs` каждые **10 секунд**.
-- `MAX_CONCURRENT_JOBS = 1` — job'ы обрабатываются по одному.
+- Опрос очереди `fact_check_jobs` каждые **5 секунд**.
+- `MAX_CONCURRENT_JOBS = 3` — до 3 job'ов обрабатываются параллельно.
 - При неудаче job перезапускается до **3 раз** с задержками 1 / 5 / 15 минут.
+- Повторная проверка той же новости (любым пользователем) использует закэшированный результат из `news.fact_check_result` вместо повторного вызова LLM.
+- Ретраи Kimi API ограничены **2 попытками** (`KIMI_MAX_RETRIES = 2`) для снижения риска 429-шторма.
 - Используемая модель: `kimi-k2.6` (переопределяется через `FACT_CHECK_MODEL`).
 - Pipeline: `runFactCheckPipelineV4()` — 4 последовательных LLM-вызова с общим контекстом.
 - SSE: каждый этап отправляется через `factCheckEmitters` в `GET /api/news/:id/fact-check/stream`.
@@ -281,7 +292,8 @@ error_message TEXT
 | Переменная | Описание | По умолчанию |
 |---|---|---|
 | `KIMI_API_KEY` | API-ключ Kimi | — |
-| `YANDEX_API_KEY` | API-ключ Yandex Search API | — |
+| `YANDEX_SEARCH_API_KEY` | API-ключ Yandex Search API (приоритетное имя) | — |
+| `YANDEX_API_KEY` | Fallback API-ключ Yandex Search API | — |
 | `FACT_CHECK_MODEL` | Модель для факт-чекинга | `kimi-k2.6` |
 | `USE_SQLITE` | `true` — SQLite, иначе PostgreSQL | — |
 
@@ -291,6 +303,6 @@ error_message TEXT
 
 ```
 [FactCheckWorker] Processing job <id> for news <id>
-[FactCheckLLM] Attempt 1/4 failed (status=429), retrying in 1000ms...
+[FactCheckLLM] Attempt 1/2 failed (status=429), retrying in 1000ms...
 [FactCheckWorker] News fact_check updated to checked (v4)
 ```
