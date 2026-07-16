@@ -4535,6 +4535,8 @@ async function start() {
     // Fact-checking
     { sql: `ALTER TABLE news ADD COLUMN IF NOT EXISTS fact_check_status TEXT NOT NULL DEFAULT 'not_checked'`, name: 'news_fact_check_status' },
     { sql: `ALTER TABLE news ADD COLUMN IF NOT EXISTS fact_check_result JSONB DEFAULT NULL`, name: 'news_fact_check_result' },
+    { sql: `ALTER TABLE notification_settings ADD COLUMN IF NOT EXISTS fact_check_email_enabled BOOLEAN DEFAULT TRUE`, name: 'notification_settings_fact_check_email_enabled' },
+    { sql: `ALTER TABLE notification_settings ADD COLUMN IF NOT EXISTS fact_check_tg_enabled BOOLEAN DEFAULT TRUE`, name: 'notification_settings_fact_check_tg_enabled' },
     { sql: `CREATE INDEX IF NOT EXISTS idx_news_fact_check_status ON news(fact_check_status)`, name: 'idx_news_fact_check_status' },
     { sql: `CREATE TABLE IF NOT EXISTS fact_check_jobs (id ${USE_SQLITE ? 'TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16))))' : 'UUID PRIMARY KEY DEFAULT uuid_generate_v4()'}, news_id ${USE_SQLITE ? 'TEXT' : 'UUID'} NOT NULL REFERENCES news(id) ON DELETE CASCADE, user_id ${USE_SQLITE ? 'TEXT' : 'UUID'} NOT NULL REFERENCES users(id) ON DELETE CASCADE, status TEXT NOT NULL DEFAULT 'queued', error_message TEXT, attempts INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL DEFAULT 3, next_retry_at TIMESTAMP, created_at TIMESTAMP DEFAULT ${_SQL_NOW}, updated_at TIMESTAMP DEFAULT ${_SQL_NOW}, UNIQUE(news_id, user_id))`, name: 'fact_check_jobs' },
     { sql: `CREATE INDEX IF NOT EXISTS idx_fact_check_jobs_status ON fact_check_jobs(status)`, name: 'idx_fact_check_jobs_status' },

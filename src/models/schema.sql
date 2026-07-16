@@ -243,6 +243,8 @@ CREATE TABLE IF NOT EXISTS notification_settings (
   quiet_hours_enabled  BOOLEAN DEFAULT TRUE,
   report_format        VARCHAR(20) DEFAULT 'full',
   report_language      VARCHAR(10) DEFAULT 'ru',
+  fact_check_email_enabled BOOLEAN DEFAULT TRUE,
+  fact_check_tg_enabled    BOOLEAN DEFAULT TRUE,
   updated_at           TIMESTAMP DEFAULT NOW()
 );
 

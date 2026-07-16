@@ -245,7 +245,8 @@ router.get('/notifications', authMiddleware, async (req: AuthRequest, res) => {
       `SELECT tg_enabled, email_enabled, push_enabled, report_frequency,
               report_type, alert_negative, alert_positive, alert_threshold,
               report_time, quiet_hours_start, quiet_hours_end, quiet_hours_enabled,
-              report_format, report_language
+              report_format, report_language,
+              fact_check_email_enabled, fact_check_tg_enabled
        FROM notification_settings WHERE user_id = $1`,
       [userId]
     );
@@ -260,7 +261,8 @@ router.get('/notifications', authMiddleware, async (req: AuthRequest, res) => {
         `SELECT tg_enabled, email_enabled, push_enabled, report_frequency,
                 report_type, alert_negative, alert_positive, alert_threshold,
                 report_time, quiet_hours_start, quiet_hours_end, quiet_hours_enabled,
-                report_format, report_language
+                report_format, report_language,
+                fact_check_email_enabled, fact_check_tg_enabled
          FROM notification_settings WHERE user_id = $1`,
         [userId]
       );
@@ -284,6 +286,7 @@ router.patch('/notifications', authMiddleware, async (req: AuthRequest, res) => 
       'report_type', 'alert_negative', 'alert_positive', 'alert_threshold',
       'report_time', 'quiet_hours_start', 'quiet_hours_end', 'quiet_hours_enabled',
       'report_format', 'report_language',
+      'fact_check_email_enabled', 'fact_check_tg_enabled',
     ];
 
     const fields: string[] = [];

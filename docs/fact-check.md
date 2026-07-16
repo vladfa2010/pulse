@@ -310,3 +310,20 @@ error_message TEXT
 [FactCheckLLM] Attempt 1/2 failed (status=429), retrying in 1000ms...
 [FactCheckWorker] News fact_check updated to checked (v4)
 ```
+
+
+## Уведомления о результате проверки
+
+После завершения проверки (включая повторное использование закэшированного результата) воркер вызывает `sendFactCheckNotifications()` в режиме fire-and-forget:
+
+- **Email** — HTML-письмо на основе шаблона `templates/fact-check-result.html`.
+- **Telegram** — краткий отчёт в формате `MarkdownV2` со ссылками на источники и кнопкой "Открыть в приложении".
+
+Отправка не блокирует pipeline и не влияет на статус job'а. Пользователь управляет каналами через два переключателя:
+
+- `notification_settings.fact_check_email_enabled` — email-отчёт.
+- `notification_settings.fact_check_tg_enabled` — Telegram-отчёт.
+
+API для управления: `GET /api/user/notifications` и `PATCH /api/user/notifications`.
+
+Telegram-отправка использует `sendTelegramMessage(..., 'MarkdownV2')`. Если у пользователя не подключён Telegram-канал или отключён соответствующий флаг, отправка пропускается.

@@ -10,7 +10,11 @@ function isConfigured(): boolean {
 }
 
 // Send message via Telegram Bot API
-export async function sendTelegramMessage(chatId: string, text: string): Promise<boolean> {
+export async function sendTelegramMessage(
+  chatId: string,
+  text: string,
+  parseMode: 'HTML' | 'MarkdownV2' = 'HTML'
+): Promise<boolean> {
   if (!isConfigured()) {
     console.warn('[Telegram] Bot token not configured');
     return false;
@@ -20,7 +24,7 @@ export async function sendTelegramMessage(chatId: string, text: string): Promise
     await axios.post(`${TELEGRAM_API}/sendMessage`, {
       chat_id: chatId,
       text,
-      parse_mode: 'HTML',
+      parse_mode: parseMode,
       disable_web_page_preview: false,
     });
     return true;

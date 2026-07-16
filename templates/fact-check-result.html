@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Результат проверки — PULSE</title>
+  <style>
+    body { margin: 0; padding: 0; background: #0A0A0A; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+    .container { max-width: 600px; margin: 0 auto; background: #0F0F0F; }
+    .header { padding: 32px 24px 16px; text-align: center; border-bottom: 1px solid #1a1a1a; }
+    .logo { color: #00D4FF; font-size: 20px; font-weight: 700; letter-spacing: 2px; }
+    .subtitle { color: #6B7280; font-size: 12px; margin-top: 4px; }
+    .score-section { padding: 32px 24px; text-align: center; border-bottom: 1px solid #1a1a1a; }
+    .score-circle { width: 80px; height: 80px; border-radius: 50%; margin: 0 auto 16px; display: flex; align-items: center; justify-content: center; font-size: 28px; font-weight: 700; color: #fff; }
+    .score-high { background: #22C55E; }
+    .score-medium { background: #EAB308; }
+    .score-low { background: #F97316; }
+    .score-critical { background: #EF4444; }
+    .label { display: inline-block; padding: 8px 20px; border-radius: 20px; font-size: 14px; font-weight: 600; color: #fff; }
+    .section { padding: 24px; border-bottom: 1px solid #1a1a1a; }
+    .section-title { color: #D1D5DB; font-size: 14px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; }
+    .analysis { color: #9CA3AF; font-size: 14px; line-height: 1.7; }
+    .source-item { padding: 12px 0; border-bottom: 1px solid #1a1a1a; }
+    .source-item:last-child { border-bottom: none; }
+    .source-title { color: #00D4FF; font-size: 14px; text-decoration: none; }
+    .source-meta { color: #6B7280; font-size: 11px; margin-top: 4px; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 500; }
+    .badge-kimi { background: rgba(0,212,255,0.1); color: #00D4FF; }
+    .badge-yandex-ru { background: rgba(234,179,8,0.1); color: #EAB308; }
+    .badge-yandex-com { background: rgba(249,115,22,0.1); color: #F97316; }
+    .badge-serper-ru { background: rgba(239,68,68,0.1); color: #EF4444; }
+    .badge-serper-en { background: rgba(34,197,94,0.1); color: #22C55E; }
+    .verdict { color: #D1D5DB; font-size: 14px; line-height: 1.6; padding: 16px; background: #1a1a1a; border-radius: 12px; border-left: 3px solid #00D4FF; }
+    .metrics { display: flex; gap: 16px; flex-wrap: wrap; }
+    .metric { flex: 1; min-width: 120px; padding: 12px; background: #1a1a1a; border-radius: 8px; }
+    .metric-label { color: #6B7280; font-size: 11px; text-transform: uppercase; }
+    .metric-value { color: #D1D5DB; font-size: 14px; font-weight: 600; margin-top: 4px; }
+    .cta { padding: 24px; text-align: center; }
+    .cta-button { display: inline-block; padding: 14px 32px; background: #00D4FF; color: #000; font-size: 14px; font-weight: 600; text-decoration: none; border-radius: 12px; }
+    .footer { padding: 24px; text-align: center; color: #4B5563; font-size: 11px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="logo">PULSE</div>
+      <div class="subtitle">Результат проверки фактов</div>
+    </div>
+    <div class="score-section">
+      <div class="score-circle score-{{scoreClass}}">{{score}}</div>
+      <div class="label" style="background: {{labelColor}};">{{label}}</div>
+      <div style="color: #6B7280; font-size: 12px; margin-top: 8px;">{{newsTitle}}</div>
+    </div>
+    <div class="section">
+      <div class="section-title">Анализ</div>
+      <div class="analysis">{{analysis}}</div>
+    </div>
+    <div class="section">
+      <div class="section-title">Источники ({{sourcesCount}})</div>
+      {{sources}}
+    </div>
+    <div class="section">
+      <div class="section-title">Метрики</div>
+      <div class="metrics">
+        <div class="metric"><div class="metric-label">Тон</div><div class="metric-value">{{tone}}</div></div>
+        <div class="metric"><div class="metric-label">Факты</div><div class="metric-value">{{factsVerified}}</div></div>
+        <div class="metric"><div class="metric-label">Оценочный сдвиг</div><div class="metric-value">{{hasBias}}</div></div>
+      </div>
+    </div>
+    <div class="section">
+      <div class="section-title">Вердикт</div>
+      <div class="verdict">{{verdict}}</div>
+    </div>
+    <div class="cta">
+      <a href="{{appUrl}}/news/{{newsId}}" class="cta-button">Открыть в приложении</a>
+    </div>
+    <div style="padding: 16px 24px; background: #1a1a1a; border-radius: 8px; margin: 0 24px 16px;">
+      <div style="color: #6B7280; font-size: 11px; line-height: 1.5;">
+        ⚠️ Этот анализ не является индивидуальной инвестиционной рекомендацией. Результаты сгенерированы искусственным интеллектом и могут содержать ошибки. Проверяйте критически важную информацию самостоятельно.
+      </div>
+    </div>
+    <div class="footer">PULSE · Проверено {{checkedAt}}<br>Модель: {{model}}</div>
+  </div>
+</body>
+</html>

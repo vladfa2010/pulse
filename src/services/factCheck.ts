@@ -19,6 +19,7 @@ import { EventEmitter } from 'events';
 import { query } from '../config/db';
 import { yandexSearch, YandexSearchType, YandexSource } from './yandexSearch';
 import { serperSearch, SerperSource } from './serperSearch';
+import { sendFactCheckNotifications } from './factCheckNotifications';
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 const KIMI_API_KEY = process.env.KIMI_API_KEY;
@@ -729,6 +730,9 @@ export async function processFactCheckJob(jobId: string): Promise<void> {
       await updateNewsFactCheck(job.news_id, 'checked', factCheckResult);
       const emitter = getEmitter(job.news_id, job.user_id);
       emitter?.emit('complete');
+      sendFactCheckNotifications({ userId: job.user_id, newsId: job.news_id, result: factCheckResult }).catch((err) =>
+        console.error('[FactCheckWorker] Cached result notification error:', err)
+      );
       console.log(`[FactCheckWorker] Cached result reused for news ${job.news_id}`);
       return;
     }
@@ -768,6 +772,10 @@ export async function processFactCheckJob(jobId: string): Promise<void> {
 
     const emitter = getEmitter(job.news_id, job.user_id);
     emitter?.emit('complete');
+
+    sendFactCheckNotifications({ userId: job.user_id, newsId: job.news_id, result: factCheckResult }).catch((err) =>
+      console.error('[FactCheckWorker] Notification error:', err)
+    );
 
     console.log('[FactCheckWorker] News fact_check updated to checked (v4)');
   } catch (error: any) {
