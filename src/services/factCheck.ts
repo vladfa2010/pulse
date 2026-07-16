@@ -18,6 +18,7 @@ import OpenAI from 'openai';
 import { EventEmitter } from 'events';
 import { query } from '../config/db';
 import { yandexSearch, YandexSearchType, YandexSource } from './yandexSearch';
+import { serperSearch, SerperSource } from './serperSearch';
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 const KIMI_API_KEY = process.env.KIMI_API_KEY;
@@ -42,18 +43,18 @@ export interface SourceV4 {
   url: string;
   title: string;
   date: string;
-  engine?: 'kimi' | 'yandex_ru' | 'yandex_com';
+  engine?: 'kimi' | 'yandex_ru' | 'yandex_com' | 'serper_ru' | 'serper_en';
 }
 
 interface SearchSource {
   title: string;
   url: string;
   snippet: string;
-  engine: 'kimi' | 'yandex_ru' | 'yandex_com';
+  engine: 'kimi' | 'yandex_ru' | 'yandex_com' | 'serper_ru' | 'serper_en';
 }
 
 interface EngineStatus {
-  engine: 'kimi' | 'yandex_ru' | 'yandex_com';
+  engine: 'kimi' | 'yandex_ru' | 'yandex_com' | 'serper_ru' | 'serper_en';
   status: 'ok' | 'error';
   sources: number;
   error?: string;
@@ -205,7 +206,7 @@ export async function updateNewsFactCheck(
 
 export async function getNewsForFactCheck(newsId: string): Promise<any | null> {
   const result = await query(
-    `SELECT id, title_ru, summary_ru, url FROM news WHERE id = $1`,
+    `SELECT id, title_ru, title_original, summary_ru, url FROM news WHERE id = $1`,
     [newsId]
   );
   return result.rows[0] || null;
@@ -323,7 +324,7 @@ function parseLlmJson(content: string): any | null {
 
 const SYSTEM_ANALYSIS = `Ты новостной аналитик. Давай развернутый анализ темы на русском языке. Используй markdown: жирный текст для ключевых фактов, заголовки для структуры. Анализируй контекст, причины, последствия.`;
 
-const SYSTEM_SOURCES = `Извлеки источники из результатов поиска. Отвечай ТОЛЬКО JSON: {"sources": [{"site": "название", "url": "https://...", "title": "заголовок", "date": "YYYY-MM-DD", "engine": "kimi|yandex_ru|yandex_com"}]}. Перечисли ВСЕ источники.`;
+const SYSTEM_SOURCES = `Извлеки источники из результатов поиска. Отвечай ТОЛЬКО JSON: {"sources": [{"site": "название", "url": "https://...", "title": "заголовок", "date": "YYYY-MM-DD", "engine": "kimi|yandex_ru|yandex_com|serper_ru|serper_en"}]}. Перечисли ВСЕ источники.`;
 
 const SYSTEM_ASSESSMENT = `Ты эксперт по медиаграмотности. Оцени текст на основе анализа и источников. JSON: {"credibility_score": 0-100, "credibility_label": "Высокая"|"Средняя"|"Низкая"|"Критическая", "tone": "нейтральная"|"позитивная"|"негативная"|"манипулятивная", "facts_verified": "да"|"частично"|"нет", "has_opinion_bias": true|false, "missing_context": "...", "manipulation_risks": "...", "verdict": "2-3 предложения"}`;
 
@@ -332,7 +333,7 @@ const WEB_SEARCH_TOOL = { type: 'builtin_function', function: { name: '$web_sear
 // ─── Pipeline v4 ────────────────────────────────────────────────────────────
 
 function normalizeSource(s: any): SourceV4 {
-  const validEngines = ['kimi', 'yandex_ru', 'yandex_com'];
+  const validEngines = ['kimi', 'yandex_ru', 'yandex_com', 'serper_ru', 'serper_en'];
   const engine = validEngines.includes(s?.engine) ? s.engine : undefined;
   return {
     site: String(s?.site || ''),
@@ -362,9 +363,11 @@ function normalizeAssessment(parsed: any): AssessmentV4 {
   };
 }
 
-async function step1TripleSearch(
+async function step1MultiSearch(
   messages: any[],
   articleText: string,
+  titleRu: string,
+  titleOriginal: string | null | undefined,
   newsId: string,
   userId: string,
   sessionId: string
@@ -441,6 +444,30 @@ async function step1TripleSearch(
     emitStage(newsId, userId, 'search', { status: 'yandex_com_done', sources: 0 });
   }
 
+  // ─── Serper RU + EN (Google News) ───
+  emitStage(newsId, userId, 'search', { status: 'serper_search' });
+  const { sources: serperSources, engineStatuses: serperStatuses } = await serperSearch(titleRu, titleOriginal);
+
+  if (serperSources.length > 0) {
+    allSources.push(
+      ...serperSources.map((s) => ({
+        title: s.title,
+        url: s.url,
+        snippet: [s.snippet, s.date, s.site].filter(Boolean).join(' | '),
+        engine: s.engine,
+      }))
+    );
+  }
+  for (const es of serperStatuses) {
+    engineStatuses.push(es);
+    const statusKey = es.status === 'ok' && es.sources > 0 ? 'done' : es.status === 'error' ? 'error' : 'done';
+    emitStage(newsId, userId, 'search', {
+      status: `${es.engine}_${statusKey}`,
+      sources: es.sources,
+      ...(es.error ? { error: es.error } : {}),
+    });
+  }
+
   // ─── Dedup по URL ───
   const seen = new Set<string>();
   const deduped = allSources.filter((s) => {
@@ -465,7 +492,7 @@ async function step1TripleSearch(
 
   if (deduped.length > 0) {
     // Kimi-источники уже в messages через tool response — не дублируем их полностью
-    const yandexOnly = deduped.filter((s) => s.engine === 'yandex_ru' || s.engine === 'yandex_com');
+    const nonKimi = deduped.filter((s) => s.engine !== 'kimi');
     const kimiSources = deduped.filter((s) => s.engine === 'kimi');
     const contextParts: string[] = [];
 
@@ -473,12 +500,18 @@ async function step1TripleSearch(
       contextParts.push(`[Kimi] ${kimiSources.length} источников (см. tool response)`);
     }
 
-    for (const seg of ['yandex_ru', 'yandex_com'] as const) {
-      const segSources = yandexOnly.filter((s) => s.engine === seg);
+    const labels: Record<string, string> = {
+      yandex_ru: 'Yandex RU',
+      yandex_com: 'Yandex COM',
+      serper_ru: 'Serper RU',
+      serper_en: 'Serper EN',
+    };
+
+    for (const seg of ['yandex_ru', 'yandex_com', 'serper_ru', 'serper_en'] as const) {
+      const segSources = nonKimi.filter((s) => s.engine === seg);
       if (segSources.length > 0) {
-        const label = seg === 'yandex_ru' ? 'Yandex RU' : 'Yandex COM';
         contextParts.push(
-          `[${label}] ${segSources.length} источников:\n${segSources
+          `[${labels[seg]}] ${segSources.length} источников:\n${segSources
             .map((s, i) => `[${i + 1}] ${s.title}\n${s.url}\n${s.snippet?.slice(0, 200)}`)
             .join('\n\n')}`
         );
@@ -548,14 +581,14 @@ async function step3Sources(
 
   // Восстанавливаем engine по достоверным данным из Step 1 (rawSources)
   // Приоритет: точный URL → домен → оставляем как есть
-  const engineByUrl = new Map<string, 'kimi' | 'yandex_ru' | 'yandex_com'>();
+  const engineByUrl = new Map<string, 'kimi' | 'yandex_ru' | 'yandex_com' | 'serper_ru' | 'serper_en'>();
   for (const rs of rawSources) {
     if (rs.url && !engineByUrl.has(rs.url)) {
       engineByUrl.set(rs.url, rs.engine);
     }
   }
 
-  const engineByDomain = new Map<string, 'kimi' | 'yandex_ru' | 'yandex_com'>();
+  const engineByDomain = new Map<string, 'kimi' | 'yandex_ru' | 'yandex_com' | 'serper_ru' | 'serper_en'>();
   for (const rs of rawSources) {
     if (rs.url) {
       try {
@@ -640,6 +673,8 @@ export async function runFactCheckPipelineV4(
   newsId: string,
   userId: string,
   articleText: string,
+  titleRu: string,
+  titleOriginal: string | null | undefined,
   sessionId: string
 ): Promise<PipelineV4Result> {
   const messages: any[] = [
@@ -647,7 +682,15 @@ export async function runFactCheckPipelineV4(
     { role: 'user', content: `Проанализируй эту тему:\n\n${articleText.slice(0, 8000)}` },
   ];
 
-  const { sources: rawSources, engineStatuses } = await step1TripleSearch(messages, articleText, newsId, userId, sessionId);
+  const { sources: rawSources, engineStatuses } = await step1MultiSearch(
+    messages,
+    articleText,
+    titleRu,
+    titleOriginal,
+    newsId,
+    userId,
+    sessionId
+  );
   const analysis = await step2Analysis(messages, newsId, userId, sessionId);
   const sources = await step3Sources(messages, rawSources, newsId, userId, sessionId);
   const assessment = await step4Assessment(messages, articleText, analysis, sources, newsId, userId, sessionId);
@@ -694,7 +737,14 @@ export async function processFactCheckJob(jobId: string): Promise<void> {
   const session = await createFactCheckSession(job.news_id, job.user_id);
 
   try {
-    const result = await runFactCheckPipelineV4(job.news_id, job.user_id, text, session.id);
+    const result = await runFactCheckPipelineV4(
+      job.news_id,
+      job.user_id,
+      text,
+      news.title_ru || '',
+      news.title_original,
+      session.id
+    );
 
     const factCheckResult: FactCheckResultV4 = {
       version: 4,
