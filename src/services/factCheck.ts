@@ -29,9 +29,9 @@ const client = new OpenAI({
   baseURL: KIMI_BASE_URL,
 });
 
-const POLL_INTERVAL_SECONDS = 10;
-const MAX_CONCURRENT_JOBS = 1;
-const KIMI_MAX_RETRIES = 4;
+const POLL_INTERVAL_SECONDS = 5;
+const MAX_CONCURRENT_JOBS = 3;
+const KIMI_MAX_RETRIES = 2;
 const JOB_MAX_ATTEMPTS = 3;
 const RETRY_DELAYS_MS = [60000, 300000, 900000]; // 1min, 5min, 15min
 
@@ -295,6 +295,14 @@ async function kimiChat(messages: any[], tools?: any[]): Promise<any> {
     }
   }
   throw lastError;
+}
+
+function parseFactCheckResult(raw: any): FactCheckResultV4 | null {
+  if (!raw) return null;
+  if (typeof raw === 'string') {
+    try { return JSON.parse(raw); } catch { return null; }
+  }
+  return raw as FactCheckResultV4;
 }
 
 function parseLlmJson(content: string): any | null {
@@ -659,10 +667,33 @@ export async function processFactCheckJob(jobId: string): Promise<void> {
     return;
   }
 
+  const text = [news.title_ru, news.summary_ru].filter(Boolean).join('\n');
+
+  // Проверяем, есть ли готовый результат по этой новости (любой пользователь)
+  const cachedResult = await query(
+    `SELECT fact_check_result FROM news
+     WHERE id = $1 AND fact_check_status = 'checked' AND fact_check_result IS NOT NULL`,
+    [job.news_id]
+  );
+  if (cachedResult.rows.length > 0) {
+    const existing = parseFactCheckResult(cachedResult.rows[0].fact_check_result);
+    if (existing && !existing.error) {
+      const factCheckResult: FactCheckResultV4 = {
+        ...existing,
+        checked_at: new Date().toISOString(),
+      };
+      await updateJobStatus(jobId, 'done');
+      await updateNewsFactCheck(job.news_id, 'checked', factCheckResult);
+      const emitter = getEmitter(job.news_id, job.user_id);
+      emitter?.emit('complete');
+      console.log(`[FactCheckWorker] Cached result reused for news ${job.news_id}`);
+      return;
+    }
+  }
+
   const session = await createFactCheckSession(job.news_id, job.user_id);
 
   try {
-    const text = [news.title_ru, news.summary_ru].filter(Boolean).join('\n');
     const result = await runFactCheckPipelineV4(job.news_id, job.user_id, text, session.id);
 
     const factCheckResult: FactCheckResultV4 = {

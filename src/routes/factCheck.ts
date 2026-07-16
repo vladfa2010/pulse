@@ -43,7 +43,7 @@ async function requirePremium(req: AuthRequest, res: Response): Promise<boolean>
 }
 
 async function checkRateLimit(userId: string, plan: string): Promise<boolean> {
-  const limit = plan === 'premium' ? 10 : 30;
+  const limit = plan === 'premium' ? 100 : 300;
   const since = USE_SQLITE
     ? "datetime('now', '-1 hour')"
     : "NOW() - INTERVAL '1 hour'";
@@ -76,7 +76,7 @@ router.post('/:id/fact-check', async (req: AuthRequest, res) => {
 
     const sub = await getUserSubscription(userId);
     if (!(await checkRateLimit(userId, sub.plan))) {
-      return res.status(429).json({ error: 'Превышен лимит проверок. Попробуйте позже.' });
+      return res.status(429).json({ error: 'Превышен лимит проверок. Попробуйте позже.', retry_after: 3600 });
     }
 
     const newsResult = await query(
@@ -101,6 +101,7 @@ router.post('/:id/fact-check', async (req: AuthRequest, res) => {
       job_id: jobId,
       status: 'in_progress',
       news_status: 'in_progress',
+      limit_per_hour: sub.plan === 'premium' ? 100 : 300,
     });
   } catch (err: any) {
     console.error('[FactCheckRoute] POST error:', err.message);
@@ -128,9 +129,21 @@ router.get('/:id/fact-check', async (req: AuthRequest, res) => {
     }
 
     if (news.fact_check_status === 'checked') {
+      const sub = await getUserSubscription(userId);
+      const limitPerHour = sub.plan === 'premium' ? 100 : 300;
+      const since = USE_SQLITE
+        ? "datetime('now', '-1 hour')"
+        : "NOW() - INTERVAL '1 hour'";
+      const usedThisHour = await query(
+        `SELECT COUNT(*) as count FROM fact_check_jobs WHERE user_id = $1 AND created_at > ${since}`,
+        [userId]
+      );
+      const used = parseInt(usedThisHour.rows[0]?.count || '0', 10);
+      const remaining = Math.max(0, limitPerHour - used);
       return res.json({
         status: 'checked',
         result: parseFactCheckResult(news.fact_check_result),
+        limit: { per_hour: limitPerHour, remaining, reset_in_minutes: 60 - Math.floor((Date.now() % 3_600_000) / 60_000) },
       });
     }
 
