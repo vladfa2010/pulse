@@ -17,7 +17,7 @@
 import OpenAI from 'openai';
 import { EventEmitter } from 'events';
 import { query } from '../config/db';
-import { yandexSearch, YandexSource } from './yandexSearch';
+import { yandexSearch, YandexSearchType, YandexSource } from './yandexSearch';
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 const KIMI_API_KEY = process.env.KIMI_API_KEY;
@@ -42,18 +42,18 @@ export interface SourceV4 {
   url: string;
   title: string;
   date: string;
-  engine?: 'kimi' | 'yandex';
+  engine?: 'kimi' | 'yandex_ru' | 'yandex_com';
 }
 
 interface SearchSource {
   title: string;
   url: string;
   snippet: string;
-  engine: 'kimi' | 'yandex';
+  engine: 'kimi' | 'yandex_ru' | 'yandex_com';
 }
 
 interface EngineStatus {
-  engine: 'kimi' | 'yandex';
+  engine: 'kimi' | 'yandex_ru' | 'yandex_com';
   status: 'ok' | 'error';
   sources: number;
   error?: string;
@@ -315,7 +315,7 @@ function parseLlmJson(content: string): any | null {
 
 const SYSTEM_ANALYSIS = `Ты новостной аналитик. Давай развернутый анализ темы на русском языке. Используй markdown: жирный текст для ключевых фактов, заголовки для структуры. Анализируй контекст, причины, последствия.`;
 
-const SYSTEM_SOURCES = `Извлеки источники из результатов поиска. Отвечай ТОЛЬКО JSON: {"sources": [{"site": "название", "url": "https://...", "title": "заголовок", "date": "YYYY-MM-DD", "engine": "kimi|yandex"}]}. Перечисли ВСЕ источники.`;
+const SYSTEM_SOURCES = `Извлеки источники из результатов поиска. Отвечай ТОЛЬКО JSON: {"sources": [{"site": "название", "url": "https://...", "title": "заголовок", "date": "YYYY-MM-DD", "engine": "kimi|yandex_ru|yandex_com"}]}. Перечисли ВСЕ источники.`;
 
 const SYSTEM_ASSESSMENT = `Ты эксперт по медиаграмотности. Оцени текст на основе анализа и источников. JSON: {"credibility_score": 0-100, "credibility_label": "Высокая"|"Средняя"|"Низкая"|"Критическая", "tone": "нейтральная"|"позитивная"|"негативная"|"манипулятивная", "facts_verified": "да"|"частично"|"нет", "has_opinion_bias": true|false, "missing_context": "...", "manipulation_risks": "...", "verdict": "2-3 предложения"}`;
 
@@ -324,7 +324,8 @@ const WEB_SEARCH_TOOL = { type: 'builtin_function', function: { name: '$web_sear
 // ─── Pipeline v4 ────────────────────────────────────────────────────────────
 
 function normalizeSource(s: any): SourceV4 {
-  const engine = s?.engine === 'kimi' || s?.engine === 'yandex' ? s.engine : undefined;
+  const validEngines = ['kimi', 'yandex_ru', 'yandex_com'];
+  const engine = validEngines.includes(s?.engine) ? s.engine : undefined;
   return {
     site: String(s?.site || ''),
     url: String(s?.url || ''),
@@ -353,7 +354,7 @@ function normalizeAssessment(parsed: any): AssessmentV4 {
   };
 }
 
-async function step1DualSearch(
+async function step1TripleSearch(
   messages: any[],
   articleText: string,
   newsId: string,
@@ -400,21 +401,36 @@ async function step1DualSearch(
     emitStage(newsId, userId, 'search', { status: 'kimi_error', error: message });
   }
 
-  // ─── Yandex Search API ───
-  emitStage(newsId, userId, 'search', { status: 'yandex_search' });
-  const { sources: yandexSources, error: yandexError } = await yandexSearch(articleText.slice(0, 400));
+  // ─── Yandex RU ───
+  emitStage(newsId, userId, 'search', { status: 'yandex_ru_search' });
+  const yandexRuResult = await yandexSearch(articleText.slice(0, 400), 'SEARCH_TYPE_RU');
 
-  if (!yandexError && yandexSources.length > 0) {
-    allSources.push(...(yandexSources as YandexSource[]));
-    engineStatuses.push({ engine: 'yandex', status: 'ok', sources: yandexSources.length });
-    emitStage(newsId, userId, 'search', { status: 'yandex_done', sources: yandexSources.length });
-  } else if (yandexError) {
-    engineStatuses.push({ engine: 'yandex', status: 'error', sources: 0, error: yandexError });
-    emitStage(newsId, userId, 'search', { status: 'yandex_error', error: yandexError });
+  if (!yandexRuResult.error && yandexRuResult.sources.length > 0) {
+    allSources.push(...(yandexRuResult.sources as YandexSource[]));
+    engineStatuses.push({ engine: 'yandex_ru', status: 'ok', sources: yandexRuResult.sources.length });
+    emitStage(newsId, userId, 'search', { status: 'yandex_ru_done', sources: yandexRuResult.sources.length });
+  } else if (yandexRuResult.error) {
+    engineStatuses.push({ engine: 'yandex_ru', status: 'error', sources: 0, error: yandexRuResult.error });
+    emitStage(newsId, userId, 'search', { status: 'yandex_ru_error', error: yandexRuResult.error });
   } else {
-    // API отработал, но результатов нет — это не ошибка движка
-    engineStatuses.push({ engine: 'yandex', status: 'ok', sources: 0 });
-    emitStage(newsId, userId, 'search', { status: 'yandex_done', sources: 0 });
+    engineStatuses.push({ engine: 'yandex_ru', status: 'ok', sources: 0 });
+    emitStage(newsId, userId, 'search', { status: 'yandex_ru_done', sources: 0 });
+  }
+
+  // ─── Yandex COM ───
+  emitStage(newsId, userId, 'search', { status: 'yandex_com_search' });
+  const yandexComResult = await yandexSearch(articleText.slice(0, 400), 'SEARCH_TYPE_COM');
+
+  if (!yandexComResult.error && yandexComResult.sources.length > 0) {
+    allSources.push(...(yandexComResult.sources as YandexSource[]));
+    engineStatuses.push({ engine: 'yandex_com', status: 'ok', sources: yandexComResult.sources.length });
+    emitStage(newsId, userId, 'search', { status: 'yandex_com_done', sources: yandexComResult.sources.length });
+  } else if (yandexComResult.error) {
+    engineStatuses.push({ engine: 'yandex_com', status: 'error', sources: 0, error: yandexComResult.error });
+    emitStage(newsId, userId, 'search', { status: 'yandex_com_error', error: yandexComResult.error });
+  } else {
+    engineStatuses.push({ engine: 'yandex_com', status: 'ok', sources: 0 });
+    emitStage(newsId, userId, 'search', { status: 'yandex_com_done', sources: 0 });
   }
 
   // ─── Dedup по URL ───
@@ -441,7 +457,7 @@ async function step1DualSearch(
 
   if (deduped.length > 0) {
     // Kimi-источники уже в messages через tool response — не дублируем их полностью
-    const yandexOnly = deduped.filter((s) => s.engine === 'yandex');
+    const yandexOnly = deduped.filter((s) => s.engine === 'yandex_ru' || s.engine === 'yandex_com');
     const kimiSources = deduped.filter((s) => s.engine === 'kimi');
     const contextParts: string[] = [];
 
@@ -449,12 +465,16 @@ async function step1DualSearch(
       contextParts.push(`[Kimi] ${kimiSources.length} источников (см. tool response)`);
     }
 
-    if (yandexOnly.length > 0) {
-      contextParts.push(
-        `[Yandex] ${yandexOnly.length} источников:\n${yandexOnly
-          .map((s, i) => `[${i + 1}] ${s.title}\n${s.url}\n${s.snippet?.slice(0, 200)}`)
-          .join('\n\n')}`
-      );
+    for (const seg of ['yandex_ru', 'yandex_com'] as const) {
+      const segSources = yandexOnly.filter((s) => s.engine === seg);
+      if (segSources.length > 0) {
+        const label = seg === 'yandex_ru' ? 'Yandex RU' : 'Yandex COM';
+        contextParts.push(
+          `[${label}] ${segSources.length} источников:\n${segSources
+            .map((s, i) => `[${i + 1}] ${s.title}\n${s.url}\n${s.snippet?.slice(0, 200)}`)
+            .join('\n\n')}`
+        );
+      }
     }
 
     messages.push({
@@ -520,14 +540,14 @@ async function step3Sources(
 
   // Восстанавливаем engine по достоверным данным из Step 1 (rawSources)
   // Приоритет: точный URL → домен → оставляем как есть
-  const engineByUrl = new Map<string, 'kimi' | 'yandex'>();
+  const engineByUrl = new Map<string, 'kimi' | 'yandex_ru' | 'yandex_com'>();
   for (const rs of rawSources) {
     if (rs.url && !engineByUrl.has(rs.url)) {
       engineByUrl.set(rs.url, rs.engine);
     }
   }
 
-  const engineByDomain = new Map<string, 'kimi' | 'yandex'>();
+  const engineByDomain = new Map<string, 'kimi' | 'yandex_ru' | 'yandex_com'>();
   for (const rs of rawSources) {
     if (rs.url) {
       try {
@@ -619,7 +639,7 @@ export async function runFactCheckPipelineV4(
     { role: 'user', content: `Проанализируй эту тему:\n\n${articleText.slice(0, 8000)}` },
   ];
 
-  const { sources: rawSources, engineStatuses } = await step1DualSearch(messages, articleText, newsId, userId, sessionId);
+  const { sources: rawSources, engineStatuses } = await step1TripleSearch(messages, articleText, newsId, userId, sessionId);
   const analysis = await step2Analysis(messages, newsId, userId, sessionId);
   const sources = await step3Sources(messages, rawSources, newsId, userId, sessionId);
   const assessment = await step4Assessment(messages, articleText, analysis, sources, newsId, userId, sessionId);

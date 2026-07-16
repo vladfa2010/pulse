@@ -3,36 +3,41 @@ import { XMLParser } from 'fast-xml-parser';
 
 const YANDEX_API_KEY = process.env.YANDEX_SEARCH_API_KEY || process.env.YANDEX_API_KEY;
 
+export type YandexSearchType = 'SEARCH_TYPE_RU' | 'SEARCH_TYPE_COM';
+
 export interface YandexSource {
   title: string;
   url: string;
   snippet: string;
-  engine: 'yandex';
+  engine: 'yandex_ru' | 'yandex_com';
 }
 
-interface YandexSearchResult {
+export interface YandexSearchResult {
   sources: YandexSource[];
   error?: string;
 }
 
-export async function yandexSearch(query: string): Promise<YandexSearchResult> {
+export async function yandexSearch(
+  query: string,
+  searchType: YandexSearchType = 'SEARCH_TYPE_RU'
+): Promise<YandexSearchResult> {
   if (!YANDEX_API_KEY) {
     const msg = 'No API key configured';
-    console.log('[YandexSearch]', msg);
+    console.log(`[YandexSearch ${searchType}]`, msg);
     return { sources: [], error: msg };
   }
 
   const safeQuery = query.slice(0, 400).trim();
-  console.log(`[YandexSearch] Query: "${safeQuery.slice(0, 80)}..."`);
+  const engineLabel = searchType === 'SEARCH_TYPE_COM' ? 'yandex_com' : 'yandex_ru';
+  console.log(`[YandexSearch ${searchType}] Query: "${safeQuery.slice(0, 80)}..."`);
 
   try {
     const res = await axios.post(
       'https://searchapi.api.cloud.yandex.net/v2/web/search',
       {
-        query: {
-          searchType: 'SEARCH_TYPE_RU',
-          queryText: safeQuery,
-        },
+        query: { searchType, queryText: safeQuery },
+        responseFormat: 'FORMAT_XML',
+        page: 0,
       },
       {
         headers: {
@@ -45,7 +50,7 @@ export async function yandexSearch(query: string): Promise<YandexSearchResult> {
 
     const rawB64 = res.data.rawData || '';
     if (!rawB64) {
-      console.log('[YandexSearch] Empty rawData in response');
+      console.log(`[YandexSearch ${searchType}] Empty rawData in response`);
       return { sources: [] };
     }
 
@@ -66,15 +71,15 @@ export async function yandexSearch(query: string): Promise<YandexSearchResult> {
         title: extractXmlText(doc.title),
         url,
         snippet: extractXmlText(doc.passages),
-        engine: 'yandex',
+        engine: engineLabel,
       });
     }
 
-    console.log(`[YandexSearch] Found ${results.length} results`);
+    console.log(`[YandexSearch ${searchType}] Found ${results.length} results`);
     return { sources: results };
   } catch (err: any) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error('[YandexSearch] Error:', message);
+    console.error(`[YandexSearch ${searchType}] Error:`, message);
     return { sources: [], error: message };
   }
 }
