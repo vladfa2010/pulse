@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { XMLParser } from 'fast-xml-parser';
 
-const YANDEX_API_KEY = process.env.YANDEX_API_KEY;
+const YANDEX_API_KEY = process.env.YANDEX_SEARCH_API_KEY || process.env.YANDEX_API_KEY;
 
 export interface YandexSource {
   title: string;
