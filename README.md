@@ -68,6 +68,8 @@ docker-compose up
 | PUT | `/api/user/profile` | Обновление профиля |
 | GET | `/api/user/portfolio` | Портфель |
 | PUT | `/api/user/portfolio` | Обновление портфеля |
+| GET | `/api/user/notifications` | Настройки уведомлений |
+| PATCH | `/api/user/notifications` | Обновление настроек уведомлений |
 
 ### Payment
 | Method | Endpoint | Описание |
@@ -83,6 +85,18 @@ docker-compose up
 | Method | Endpoint | Описание |
 |--------|----------|----------|
 | POST | `/api/translate` | Перевод EN→RU |
+
+### Fact-check
+
+On-demand факт-чекинг новостей через LLM + веб-поиск (5 поисковиков). Результат проверки отправляется в Telegram (MarkdownV2) и/или на email, если пользователь включил соответствующие флаги в `/api/user/notifications`.
+
+| Method | Endpoint | Описание |
+|--------|----------|----------|
+| POST | `/api/news/:id/fact-check` | Запуск/перезапуск проверки |
+| GET | `/api/news/:id/fact-check` | Статус и результат проверки |
+| GET | `/api/news/:id/fact-check/stream` | SSE-прогресс проверки |
+
+Подробная документация: [`docs/fact-check.md`](./docs/fact-check.md)
 
 ### Telegram (бот и уведомления)
 

@@ -22,6 +22,7 @@
 | **Digest (каждый час)** | ✅ Реализовано | Cron + фильтрация по тегам и тихим часам + hybrid fetched_at |
 | **Weekly Report** | ✅ Реализовано | Воскресенье 13:00 MSK |
 | **Sentiment Alerts** | ✅ Реализовано | Асинхронные алерты по тегам |
+| **Fact-check Reports** | ✅ Реализовано | Telegram (MarkdownV2) + HTML email после завершения проверки |
 | **Rate limiting** | ✅ Реализовано | 300ms/200ms задержки |
 
 ---
@@ -73,7 +74,8 @@
 |-----------|------|------------|--------|
 | **Digest Service** | `services/digest.ts` | Периодическая рассылка непрочитанных новостей | ✅ |
 | **Reports Service** | `services/reports.ts` | Еженедельные аналитические отчёты | ✅ |
-| **Telegram Service** | `services/telegram.ts` | Низкоуровневое взаимодействие с Telegram API | ✅ |
+| **Fact-check Notifications** | `services/factCheckNotifications.ts` | Отчёт после завершения факт-чекинга | ✅ |
+| **Telegram Service** | `services/telegram.ts` | Низкоуровневое взаимодействие с Telegram API (HTML + MarkdownV2) | ✅ |
 | **Bot Commands** | `index.ts` (webhook) | Обработка команд пользователя | ✅ |
 | **Cron Scheduler** | `node-cron` | Триггеры по расписанию (digest, weekly) | ✅ |
 
@@ -109,6 +111,8 @@
               │  @Insidepulse_bot  │
               └────────────────────┘
 ```
+
+> Дополнительно, после завершения факт-чекинга `services/factCheckNotifications.ts` инициирует отправку отчёта через `sendTelegramMessage(..., 'MarkdownV2')` и email-письмо через `services/email.ts`.
 
 ---
 
@@ -327,10 +331,10 @@ https://t.me/Insidepulse_bot?start=uuid-123:a3f7b2c9d1e8f5a4
 
 ### Тарифы: кто получает уведомления
 
-| Тариф | Digest | Weekly Report | Sentiment Alerts |
-|-------|--------|---------------|------------------|
-| **Free** | ❌ Нет | ❌ Нет | ❌ Нет |
-| **Premium** | ✅ Каждый час | ✅ Воскресенье | ✅ Мгновенно |
+| Тариф | Digest | Weekly Report | Sentiment Alerts | Fact-check Reports |
+|-------|--------|---------------|------------------|--------------------|
+| **Free** | ❌ Нет | ❌ Нет | ❌ Нет | ❌ Нет |
+| **Premium** | ✅ Каждый час | ✅ Воскресенье | ✅ Мгновенно | ✅ После проверки |
 
 **Проверка подписки:**
 ```sql
@@ -1217,9 +1221,11 @@ app.post('/webhook/telegram', async (req, res) => {
 | `quiet_hours_start` | `integer` | Час начала тихих часов (0-23) |
 | `quiet_hours_end` | `integer` | Час окончания тихих часов (0-23) |
 | `last_digest_sent` | `timestamptz` | Время последней отправки дайджеста |
-| `tg_enabled` | `boolean` | Telegram канал активен |
-| `email_enabled` | `boolean` | Email канал активен |
+| `tg_enabled` | `boolean` | Telegram канал активен (общий флаг) |
+| `email_enabled` | `boolean` | Email канал активен (общий флаг) |
 | `report_format` | `text` | Формат отчёта |
+| `fact_check_email_enabled` | `boolean` | Отправлять email-отчёт после факт-чекинга |
+| `fact_check_tg_enabled` | `boolean` | Отправлять Telegram-отчёт после факт-чекинга |
 
 #### `user_news_reads`
 
@@ -1291,6 +1297,7 @@ Timeline (24h):
 | **Digest** | Да | Да |
 | **Weekly Report** | Нет | Да |
 | **Sentiment Alerts** | Да | Да |
+| **Fact-check Reports** | Нет | Да |
 | **Тихие часы** | Да | Да |
 | **Частота** | 1h-24h | 1h-24h |
 
@@ -1487,6 +1494,42 @@ Authorization: Bearer <JWT_TOKEN>
 ### `POST /api/user/telegram-disconnect` — Отключение бота ✅
 
 Отключает Telegram-бота для текущего пользователя. См. [раздел 3](#3-профиль--уведомления-ui).
+
+### `GET /api/user/notifications` — Настройки уведомлений ✅
+
+Возвращает все настройки `notification_settings`, включая флаги рассылки репортов факт-чекинга:
+
+```json
+{
+  "settings": {
+    "tg_enabled": true,
+    "email_enabled": true,
+    "push_enabled": false,
+    "fact_check_email_enabled": true,
+    "fact_check_tg_enabled": true
+  }
+}
+```
+
+### `PATCH /api/user/notifications` — Обновление настроек уведомлений ✅
+
+Принимает только поля из белого списка. Для управления отчётами факт-чекинга используются:
+
+```http
+PATCH /api/user/notifications
+Authorization: Bearer <JWT_TOKEN>
+Content-Type: application/json
+
+{
+  "fact_check_email_enabled": true,
+  "fact_check_tg_enabled": false
+}
+```
+
+**Response:**
+```json
+{ "success": true }
+```
 
 ### `POST /webhook/telegram` — Webhook бота ✅
 
