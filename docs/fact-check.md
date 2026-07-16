@@ -19,10 +19,10 @@ queued → in_progress → done
 Внутри `in_progress` проходят 4 видимых этапа:
 
 ```
-search (Kimi + Yandex RU + Yandex COM) → analysis → sources → assessment
+search (Kimi + Yandex RU + Yandex COM + Serper RU + Serper EN) → analysis → sources → assessment
 ```
 
-1. **search** — параллельно выполняется поиск через Kimi `$web_search`, Yandex RU (`SEARCH_TYPE_RU`) и Yandex COM (`SEARCH_TYPE_COM`). Результаты объединяются, дедуплицируются по URL и передаются дальше по цепочке сообщений.
+1. **search** — параллельно выполняется поиск через Kimi `$web_search`, Yandex RU (`SEARCH_TYPE_RU`), Yandex COM (`SEARCH_TYPE_COM`), Serper RU (Google News) и Serper EN (Google News, только для англоязычных оригиналов). Результаты объединяются, дедуплицируются по URL и передаются дальше по цепочке сообщений.
 2. **analysis** — модель генерирует развёрнутый анализ темы на русском языке в формате markdown.
 3. **sources** — модель извлекает структурированный список источников из результатов поиска.
 4. **assessment** — модель даёт итоговую оценку достоверности оригинального текста на основе анализа и источников.
@@ -40,7 +40,9 @@ search (Kimi + Yandex RU + Yandex COM) → analysis → sources → assessment
   ├──→ assistant: $web_search tool_call  ┐
   ├──→ tool: search_result               ├──→ dedup по URL
   ├──→ Yandex RU Search API (XML/Base64)─┤
-  └──→ Yandex COM Search API (XML/Base64)┘
+  ├──→ Yandex COM Search API (XML/Base64)┤
+  ├──→ Serper RU (Google News)           ┤
+  └──→ Serper EN (Google News)           ┘
   → [system: ANALYSIS]  → анализ (markdown)
   → [system: SOURCES]   → sources[] (JSON + engine badge)
   → [system: ASSESSMENT] + [user: текст + анализ + источники] → assessment (JSON)
@@ -201,6 +203,7 @@ interface FactCheckSourceV4 {
   url: string;
   title: string;
   date: string;               // YYYY-MM-DD или пустая строка
+  engine?: 'kimi' | 'yandex_ru' | 'yandex_com' | 'serper_ru' | 'serper_en';
 }
 
 interface AssessmentV4 {
@@ -218,7 +221,7 @@ interface AssessmentV4 {
 ## Frontend
 
 - `pulse-frontend/src/components/factCheck/ProgressPanel.tsx` — 4 видимых этапа в реальном времени.
-- `pulse-frontend/src/components/factCheck/ResultTabs.tsx` — табы: Анализ / Источники / Оценка.
+- `pulse-frontend/src/components/factCheck/ResultTabs.tsx` — табы: Анализ / Источники / Оценка. Фильтр источников по пяти поисковым движкам.
 - `pulse-frontend/src/components/factCheck/SourceCard.tsx` — карточка источника.
 - `pulse-frontend/src/components/factCheck/AssessmentPanel.tsx` — score, label, metrics, verdict.
 - `pulse-frontend/src/components/FactCheckSection.tsx` — управление SSE, polling и отображением.
@@ -294,6 +297,7 @@ error_message TEXT
 | `KIMI_API_KEY` | API-ключ Kimi | — |
 | `YANDEX_SEARCH_API_KEY` | API-ключ Yandex Search API (приоритетное имя) | — |
 | `YANDEX_API_KEY` | Fallback API-ключ Yandex Search API | — |
+| `SERPER_API_KEY` | API-ключ Serper (Google News) | — |
 | `FACT_CHECK_MODEL` | Модель для факт-чекинга | `kimi-k2.6` |
 | `USE_SQLITE` | `true` — SQLite, иначе PostgreSQL | — |
 
