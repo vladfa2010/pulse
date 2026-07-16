@@ -440,11 +440,26 @@ async function step1DualSearch(
   });
 
   if (deduped.length > 0) {
+    // Kimi-источники уже в messages через tool response — не дублируем их полностью
+    const yandexOnly = deduped.filter((s) => s.engine === 'yandex');
+    const kimiSources = deduped.filter((s) => s.engine === 'kimi');
+    const contextParts: string[] = [];
+
+    if (kimiSources.length > 0) {
+      contextParts.push(`[Kimi] ${kimiSources.length} источников (см. tool response)`);
+    }
+
+    if (yandexOnly.length > 0) {
+      contextParts.push(
+        `[Yandex] ${yandexOnly.length} источников:\n${yandexOnly
+          .map((s, i) => `[${i + 1}] ${s.title}\n${s.url}\n${s.snippet?.slice(0, 200)}`)
+          .join('\n\n')}`
+      );
+    }
+
     messages.push({
       role: 'user',
-      content: `Найденные источники (${deduped.length}):\n${deduped
-        .map((s, i) => `[${i + 1}] ${s.title} (${s.engine})\n${s.url}\n${s.snippet?.slice(0, 200)}`)
-        .join('\n\n')}`,
+      content: `Найденные источники (${deduped.length}):\n${contextParts.join('\n\n')}`,
     });
   }
 
@@ -466,6 +481,9 @@ async function step2Analysis(
 
   const msg = await kimiChat(analysisMessages);
   const analysis = msg.content || '';
+
+  // Делаем анализ доступным для Steps 3-4
+  messages.push({ role: 'assistant', content: analysis });
 
   emitStage(newsId, userId, 'analysis', {
     status: 'done',
@@ -500,17 +518,39 @@ async function step3Sources(
     ? parsed.sources.map(normalizeSource)
     : [];
 
-  // Если модель не сохранила engine — восстанавливаем по URL из raw-источников
+  // Восстанавливаем engine по достоверным данным из Step 1 (rawSources)
+  // Приоритет: точный URL → домен → оставляем как есть
   const engineByUrl = new Map<string, 'kimi' | 'yandex'>();
   for (const rs of rawSources) {
     if (rs.url && !engineByUrl.has(rs.url)) {
       engineByUrl.set(rs.url, rs.engine);
     }
   }
+
+  const engineByDomain = new Map<string, 'kimi' | 'yandex'>();
+  for (const rs of rawSources) {
+    if (rs.url) {
+      try {
+        const domain = new URL(rs.url).hostname.replace(/^www\./, '');
+        if (!engineByDomain.has(domain)) {
+          engineByDomain.set(domain, rs.engine);
+        }
+      } catch { /* ignore */ }
+    }
+  }
+
   for (const s of sources) {
-    if (!s.engine && s.url) {
-      const engine = engineByUrl.get(s.url);
-      if (engine) s.engine = engine;
+    if (s.url) {
+      const byUrl = engineByUrl.get(s.url);
+      if (byUrl) {
+        s.engine = byUrl;
+      } else {
+        try {
+          const domain = new URL(s.url).hostname.replace(/^www\./, '');
+          const byDomain = engineByDomain.get(domain);
+          if (byDomain) s.engine = byDomain;
+        } catch { /* ignore */ }
+      }
     }
   }
 
