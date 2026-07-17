@@ -493,7 +493,7 @@ router.get('/by-slug/:slugOrId', async (req: AuthRequest, res) => {
         matched_tags, tag_impact, is_political, article_type,
         source_count, all_sources, fact_check_status, fact_check_result, slug
       FROM news
-      WHERE slug = $1 ${isUuid ? 'OR id = $1' : ''}`,
+      WHERE slug = $1 ${isUuid ? 'OR id = $1::uuid' : ''}`,
       [slugOrId]
     );
 
@@ -518,7 +518,7 @@ router.get('/by-slug/:slugOrId/tag-enrichments', async (req: AuthRequest, res) =
     const isUuid = uuidRegex.test(slugOrId);
 
     const newsResult = await query(
-      `SELECT id, matched_tags, tag_impact FROM news WHERE slug = $1 ${isUuid ? 'OR id = $1' : ''}`,
+      `SELECT id, matched_tags, tag_impact FROM news WHERE slug = $1 ${isUuid ? 'OR id = $1::uuid' : ''}`,
       [slugOrId]
     );
 
