@@ -83,6 +83,7 @@
 | Close behavior | `src/App.tsx` | `handleClose` выбирает `navigate(-1)` для overlay или `navigate('/')` для standalone |
 | Модалка | `src/components/NewsDetailModal.tsx` | Загружает по `slugOrId`, шарит `/news/{slug}` через `BASE_URL` |
 | SEO title/canonical | `src/components/NewsDetailModal.tsx` | Меняет `document.title` и `<link rel="canonical">` при открытии |
+| Нативный шеринг | `src/components/NewsDetailModal.tsx` + `@capacitor/share` | Android Sharesheet / iOS Share Sheet; web fallback на Telegram |
 | Мобильные ссылки | `.env.production`/`.env.development` | `VITE_FRONTEND_URL` — в Capacitor ссылки с продового домена |
 | Карусели / лента | `UnreadNewsCarousel`, `AllNewsCarousel`, `NewsFeed` | `navigate(/news/${slug}, { state: { background: location } })` |
 | OG-изображение | `public/og-default.png` | 1200×630 px |
