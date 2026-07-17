@@ -1,271 +1,194 @@
-# PULSE — Диплинки новостей: аудит, фиксы и проверка в проде
+# PULSE — Диплинки новостей: итоговая конфигурация
 
-> Frontend: `pulse-frontend` (commit `3b5e67c` + ручные правки правил Render)  
-> Backend: `pulse` (commits `27198d8`, `0675c18`)  
+> Frontend: `pulse-frontend` (commit `bf86357`)  
+> Backend: `pulse` (commit `e69fdf4`)  
 > Продакшен: `https://pulse.inside-trade.ru` → `https://pulse-api-bsov.onrender.com`  
-> Дата актуализации: 2026-07-17
+> Дата актуализации: 2026-07-18
 
 ---
 
 ## 1. Целевая архитектура
 
 ```text
-Пользователь открывает https://pulse.inside-trade.ru/n/{slug}
+Пользователь открывает https://pulse.inside-trade.ru/news/{slug}
                 │
                 ▼
-        Render Static Site
-        /n/*  ──rewrite──►  backend /n/{slug}
+        Cloudflare → Render Static Site
+        Dashboard rule /*  ──rewrite──►  /index.html (SPA fallback)
                 │
                 ▼
-        Express отдаёт HTML с og:* meta-тегами
-        + <script>location.href='/news/{slug}'</script>
+        Браузер загружает React SPA (BrowserRouter)
+        NewsDetailModal открывается по /news/:slugOrId
                 │
                 ▼
-        Браузер / Telegram / WhatsApp scraper
-        видит OG-карточку и редиректит на /news/{slug}
+        XHR: GET /api/news/by-slug/{slug}
                 │
                 ▼
-        Render Static Site
-        /*  ──rewrite──►  /index.html (SPA fallback)
+        Backend возвращает JSON → модалка рендерит контент
+
+Поисковый бот / Telegram открывает https://pulse.inside-trade.ru/n/{slug}
                 │
                 ▼
-        React Router загружает NewsDetailModal по slugOrId
+        Cloudflare → Render Static Site
+        Dashboard rule /n/*  ──rewrite──►  backend /n/{slug}
+                │
+                ▼
+        Backend отдаёт HTML с og:*, JSON-LD Article, canonical
+                │
+                ▼
+        Бот / scraper видит контент без JS
 ```
 
 ---
 
-## 2. Что реализовано
+## 2. Конфигурация Render Dashboard (Static Site)
 
-### 2.1 Backend
+Настройка: Render Dashboard → `pulse-frontend` → Settings → Redirects/Rewrites
+
+| # | Source | Destination | Action | Описание |
+|---|---|---|---|---|
+| 1 | `/n/*` | `https://pulse-api-bsov.onrender.com/n/*` | Rewrite | OG-страницы новостей (HTML + meta + JSON-LD) |
+| 2 | `/sitemap.xml` | `https://pulse-api-bsov.onrender.com/sitemap.xml` | Rewrite | Карта сайта (5000 новостей за 30 дней) |
+| 3 | `/robots.txt` | `https://pulse-api-bsov.onrender.com/robots.txt` | Rewrite | Разрешение `/news/`, `/n/`; запрет API/admin/личных |
+| 4 | `/*` | `/index.html` | Rewrite | SPA fallback для BrowserRouter |
+
+**Порядок критичен:** `/n/*`, `/sitemap.xml`, `/robots.txt` должны быть **выше** `/*`.
+
+---
+
+## 3. Что реализовано
+
+### 3.1 Backend
 
 | Компонент | Где | Что делает |
 |---|---|---|
-| `slug` колонка | `migrations/add_news_slug.sql`, `index.ts` миграции | `VARCHAR(250) UNIQUE` + индекс |
+| `slug` колонка | миграции / `index.ts` | `VARCHAR(250) UNIQUE` + индекс |
 | `slugify.ts` | `src/utils/slugify.ts` | Транслитерация, cleanup, UUID-suffix (8 символов) |
 | Генерация slug | `src/services/newsProcessor.ts` | `COALESCE(news.slug, $18)` — существующий slug не перезаписывается |
-| RSS `<link>` | `src/services/rssFetcher.ts` | Self-closing `<link href="..."/>` fallback |
-| Ленты | `src/routes/news.ts` | `slug` добавлен во все SELECT: `/global`, `/`, `/tags/:tagId`, `/search` |
-| Загрузка по slug | `GET /api/news/by-slug/:slugOrId` | Ищет по `slug`, fallback по UUID `id` |
-| Tag enrichments | `GET /api/news/by-slug/:slugOrId/tag-enrichments` | То же + `matched_tags`/`tag_impact` |
-| OG endpoint | `GET /n/:slug` | HTML shell с `og:title`, `og:description`, `og:url`, `og:image`, `twitter:*` |
 | Backfill | `index.ts` startup | `autoBackfillSlugs()` — заполняет пустые slug при старте (`LIMIT 5000`) |
+| Ленты | `src/routes/news.ts` | `slug` добавлен во все SELECT: `/global`, `/`, `/tags/:tagId`, `/search` |
+| Загрузка по slug | `GET /api/news/by-slug/:slugOrId` | Ищет по `slug`, fallback по UUID `id` (`::uuid`) |
+| Tag enrichments | `GET /api/news/by-slug/:slugOrId/tag-enrichments` | То же + `matched_tags`/`tag_impact` |
+| OG endpoint | `GET /n/:slug` | HTML без JS-редиректа, с `og:*`, `twitter:*`, JSON-LD Article, canonical |
+| Sitemap | `GET /sitemap.xml` | XML с 5000 URL за 30 дней |
+| Robots | `GET /robots.txt` | `Allow: /news/`, `/n/`; `Disallow:` API/admin/личные |
 
-### 2.2 Frontend
+### 3.2 Frontend
 
 | Компонент | Где | Что делает |
 |---|---|---|
-| Dual Routes | `src/App.tsx` | Первый `<Routes>` на `state?.background \|\| location`, второй — overlay-модалка |
-| Модалка | `src/components/NewsDetailModal.tsx` | Загружает по `slugOrId`, шарит `/news/{slug}` |
+| Router | `src/main.tsx` | `BrowserRouter` — работает с реальными путями `/news/:slug` |
+| Hash migration | `src/App.tsx` | Переадресует старые `/#/news/slug` → `/news/slug` |
+| Dual Routes | `src/App.tsx` | Первый `<Routes>` на `state?.background \|\| location`, второй — модалка (без условия) |
+| Close behavior | `src/App.tsx` | `handleClose` выбирает `navigate(-1)` для overlay или `navigate('/')` для standalone |
+| Модалка | `src/components/NewsDetailModal.tsx` | Загружает по `slugOrId`, шарит `/news/{slug}` через `BASE_URL` |
+| SEO title/canonical | `src/components/NewsDetailModal.tsx` | Меняет `document.title` и `<link rel="canonical">` при открытии |
+| Мобильные ссылки | `.env.production`/`.env.development` | `VITE_FRONTEND_URL` — в Capacitor ссылки с продового домена |
 | Карусели / лента | `UnreadNewsCarousel`, `AllNewsCarousel`, `NewsFeed` | `navigate(/news/${slug}, { state: { background: location } })` |
-| Типы | `src/types/news.ts` | `NewsArticle.slug: string` |
 | OG-изображение | `public/og-default.png` | 1200×630 px |
 | Android intent-filter | `android/app/src/main/AndroidManifest.xml` | `com.pulse.app` + `pulse.inside-trade.ru/news/` |
 
 ---
 
-## 3. Баги, найденные при проверке, и применённые фиксы
+## 4. История фиксов (что ломалось и как починили)
 
-### 3.1 Render rewrite: wildcard `$1` не подставляется
+### 4.1 `render.yaml` с `$1` не работал
 
-**Проблема:** в `pulse-frontend/render.yaml` было:
-
-```yaml
-routes:
-  - type: rewrite
-    source: /n/*
-    destination: https://pulse-api-bsov.onrender.com/n/$1
-```
-
-Render Static Site не подставляет `$1`. Запрос `/n/foo` проксировался на `/n/$1`, и backend всегда отвечал 404.
-
-**Правильный синтаксис Render** (см. `https://render.com/docs/redirects-rewrites.md`):
+Render Static Site не подставляет `$1` в destination. Правильный синтаксис — wildcard `*`:
 
 ```yaml
-routes:
-  - type: rewrite
-    source: /n/*
-    destination: https://pulse-api-bsov.onrender.com/n/*
-  - type: rewrite
-    source: /*
-    destination: /index.html
+/n/*  →  https://pulse-api-bsov.onrender.com/n/*
 ```
 
-В wildcard-источнике `*` захватывает всё; в destination `*` вставляет захваченную строку.
+### 4.2 `render.yaml` в `public/` / `dist/` игнорировался
 
-**Применено:** через Render REST API (`POST /v1/services/{serviceId}/routes`) удалён старый `redirect`-правило, добавлены два `rewrite`-правила:
+Render Static Site читает `render.yaml` только из корня репозитория при Blueprint deploy. В Publish Directory он не действует.
 
-```text
-/n/*  →  https://pulse-api-bsov.onrender.com/n/*   (rewrite, priority 1)
-/*    →  /index.html                                (rewrite, priority 5)
-```
+### 4.3 `_redirects` (Netlify-style) не поддерживался
 
-> **Важно:** `render.yaml` в репозитории всё ещё содержит `$1`. Его нужно заменить на `*` и пересоздать/синхронизировать сервис, если когда-то будете пересоздавать Static Site.
+Файл `public/_redirects` тоже не применялся Render Static Site — диплинки `/news/:slug` возвращали пустой экран.
 
----
+### 4.4 Финальное решение — Dashboard Redirects/Rewrites
 
-### 3.2 `factCheckRoutes` блокировал публичные маршруты `/api/news/*`
+Единственный рабочий способ для Render Static Site — ручная настройка в Dashboard. См. таблицу в разделе 2.
 
-**Проблема:** в `src/index.ts` роуты подключались так:
+### 4.5 `HashRouter` не понимал чистые URL
 
-```ts
-app.use('/api/news', factCheckRoutes); // router.use(authMiddleware) — на ВСЕ /api/news/*
-app.use('/api/news', newsRoutes);
-```
+При открытии `/news/{slug}` `HashRouter` видел пустой hash и рендерил `<Home />`. Перешли на `BrowserRouter` + SPA fallback `/* → /index.html`.
 
-Поскольку `factCheckRoutes` использует `router.use(authMiddleware)`, любой запрос под `/api/news/*`, включая публичные `/global` и `/tags/:tagId`, возвращал 401.
+### 4.6 Standalone `/news/{slug}` не рендерил модалку
 
-**Фикс:** поменял порядок:
+В `App.tsx` второй `<Routes>` с `NewsDetailModalRoute` был обёрнут в `{state?.background && (...)}`. При прямом заходе `state` отсутствовал, модалка не рендерилась. Условие убрано.
+
+### 4.7 `factCheckRoutes` блокировал публичные маршруты
+
+`factCheckRoutes` использовал `router.use(authMiddleware)` на все `/api/news/*`. Поменяли порядок:
 
 ```ts
 app.use('/api/news', newsRoutes);       // публичные маршруты первыми
-app.use('/api/news', factCheckRoutes);  // fact-check остаётся защищённым
+app.use('/api/news', factCheckRoutes);  // защищённые fact-check
 ```
 
-**Commit:** `27198d8`
+### 4.8 Fallback по UUID падал с 500
 
----
-
-### 3.3 Fallback по UUID в `by-slug` падал с 500
-
-**Проблема:** запрос `/api/news/by-slug/{uuid}` падал с:
-
-```json
-{"error":"Failed to fetch news"}
-```
-
-Причина: один и тот же параметр `$1` использовался одновременно для сравнения с `slug` (text) и `id` (uuid):
-
-```ts
-`WHERE slug = $1 ${isUuid ? 'OR id = $1' : ''}`
-```
-
-PostgreSQL не может вывести один тип для `$1`, и `id = $1` ломается.
-
-**Фикс:** явное приведение UUID:
+Исправлено явным приведением типа:
 
 ```ts
 `WHERE slug = $1 ${isUuid ? 'OR id = $1::uuid' : ''}`
 ```
 
-То же самое сделано в `/by-slug/:slugOrId/tag-enrichments`.
-
-**Commit:** `0675c18`
-
 ---
 
-### 3.4 Standalone-рендеринг `/news/{slug}` (замечание)
+## 5. Проверка в проде
 
-В `src/App.tsx` второй `<Routes>` с `NewsDetailModalRoute` обёрнут в условие:
-
-```tsx
-{state?.background && (
-  <Routes>
-    <Route path="/news/:slugOrId" element={<NewsDetailModalRoute />} />
-  </Routes>
-)}
-```
-
-При прямом заходе на `/news/{slug}` (F5, Telegram) `location.state` отсутствует, поэтому модалка не рендерится, а первый `<Routes>` имеет `<Route path="/news/:slugOrId" element={null} />` — страница будет пустой.
-
-**Рекомендуемый фикс:** убрать условие:
-
-```tsx
-<Routes>
-  <Route path="/news/:slugOrId" element={<NewsDetailModalRoute />} />
-</Routes>
-```
-
-> На момент написания документации в репозитории `pulse-frontend` (commit `3b5e67c`) это условие ещё на месте. Если вручную задеплоенная версия уже содержит фикс — нужно запушить изменения в `main`.
-
----
-
-## 4. Проверка в проде
-
-### 4.1 OG-ссылка `/n/{slug}`
+### 5.1 SPA fallback `/news/{slug}`
 
 ```bash
-curl -s "https://pulse.inside-trade.ru/n/wall-street-breakfast-podcast-starship-stall-weighs-on-spacex-12321e30" | head -20
+curl -s "https://pulse.inside-trade.ru/news/test-slug-12345678" | grep -c "doctype"
+# 1
 ```
 
-Результат (HTTP 200):
-
-```html
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-  <meta charset="utf-8">
-  <title>Полдник на Уолл-стрит: Замедление Starship затрудняет работу SpaceX</title>
-  <meta property="og:title" content="Полдник на Уолл-стрит: Замедление Starship затрудняет работу SpaceX">
-  <meta property="og:description" content="Поodcast Утра Уолл-стрит: Замедление Starship затрудняет работу SpaceX">
-  <meta property="og:url" content="https://pulse.inside-trade.ru/news/wall-street-breakfast-podcast-starship-stall-weighs-on-spacex-12321e30">
-  <meta property="og:type" content="article">
-  <meta property="og:site_name" content="PULSE">
-  <meta property="og:image" content="https://pulse.inside-trade.ru/og-default.png">
-  <meta property="og:locale" content="ru_RU">
-  <script>window.location.href = '/news/wall-street-breakfast-podcast-starship-stall-weighs-on-spacex-12321e30'</script>
-```
-
-✅ OG-метатеги отдаются на кастомном домене.
-
----
-
-### 4.2 SPA fallback `/news/{slug}`
+### 5.2 OG-страница `/n/{slug}`
 
 ```bash
-curl -s -o /dev/null -w "%{http_code}" \
-  "https://pulse.inside-trade.ru/news/wall-street-breakfast-podcast-starship-stall-weighs-on-spacex-12321e30"
-# 200
+curl -s "https://pulse.inside-trade.ru/n/wall-street-breakfast-podcast-starship-stall-weighs-on-spacex-12321e30" | grep -c "og:title"
+# 1
 ```
 
-✅ Возвращает `index.html`, React Router может подхватить маршрут.
+HTML не должен содержать JS-редиректа `<script>window.location.href = ...</script>`.
 
----
+### 5.3 Sitemap
 
-### 4.3 Fallback по старой UUID-ссылке
+```bash
+curl -s "https://pulse.inside-trade.ru/sitemap.xml" | grep -c "urlset"
+# 1
+```
+
+### 5.4 Robots
+
+```bash
+curl -s "https://pulse.inside-trade.ru/robots.txt" | grep -c "User-agent"
+# 1
+```
+
+### 5.5 Fallback по старой UUID-ссылке
 
 ```bash
 curl -s "https://pulse-api-bsov.onrender.com/api/news/by-slug/12321e30-0f43-4e2b-b7ab-73f88e3a9562" | \
   python3 -c "import sys,json; d=json.load(sys.stdin); print('slug:', d.get('slug'))"
 ```
 
-Результат:
-
-```text
-slug: wall-street-breakfast-podcast-starship-stall-weighs-on-spacex-12321e30
-```
-
-✅ Старые ссылки `/news/{uuid}` продолжают открывать новость.
-
----
-
-### 4.4 Публичные маршруты
+### 5.6 Публичные маршруты
 
 ```bash
 curl -s "https://pulse-api-bsov.onrender.com/api/news/global?limit=1" | \
   python3 -c "import sys,json; d=json.load(sys.stdin); print('articles:', len(d.get('articles',[])))"
 # articles: 1
-
-curl -s "https://pulse-api-bsov.onrender.com/api/news/tags/spacex" | \
-  python3 -c "import sys,json; d=json.load(sys.stdin); print('count:', len(d.get('articles',[])))"
-# count: >0
 ```
 
-✅ `global` и `tags/:tagId` больше не требуют токена.
-
 ---
 
-## 5. Оставшиеся задачи
-
-| # | Задача | Статус | Примечание |
-|---|---|---|---|
-| 1 | **Android APK** | ⏳ | Нужно пересобрать с обновлённым `AndroidManifest.xml` (intent-filter `com.pulse.app` + `pulse.inside-trade.ru/news/*`) |
-| 2 | **Backfill оставшихся null-slug** | ⏳ | В `/api/news/global` встречаются `slug: null`. Автобэкфилл ограничен `LIMIT 5000`. Можно добить через `POST /admin/backfill` (admin JWT) или поднять лимит и перезапустить сервис. |
-| 3 | **Обновить `pulse-frontend/render.yaml`** | ⏳ | Заменить `$1` на `*`. Если Static Site когда-то пересоздаётся из Blueprint — правила загрузятся корректно. |
-| 4 | **Standalone `/news/{slug}` в frontend** | ⏳ | Убрать `state?.background &&` вокруг второго `<Routes>` в `App.tsx`, если ещё не сделано вручную. |
-
----
-
-## 6. Как управлять правилами Render через API
+## 6. Управление правилами через Render API
 
 ```bash
 TOKEN=$(cat .render-token)
@@ -275,25 +198,44 @@ SERVICE_ID="srv-d8ao626k1jcs73856fbg"  # pulse-frontend static site
 curl -s -H "Authorization: Bearer $TOKEN" \
   "https://api.render.com/v1/services/$SERVICE_ID/routes"
 
-# Добавить rewrite /n/*
+# /n/*
 curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   "https://api.render.com/v1/services/$SERVICE_ID/routes" \
   -d '{"type":"rewrite","source":"/n/*","destination":"https://pulse-api-bsov.onrender.com/n/*","priority":1}'
 
-# Добавить SPA fallback
+# /sitemap.xml
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  "https://api.render.com/v1/services/$SERVICE_ID/routes" \
+  -d '{"type":"rewrite","source":"/sitemap.xml","destination":"https://pulse-api-bsov.onrender.com/sitemap.xml","priority":2}'
+
+# /robots.txt
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  "https://api.render.com/v1/services/$SERVICE_ID/routes" \
+  -d '{"type":"rewrite","source":"/robots.txt","destination":"https://pulse-api-bsov.onrender.com/robots.txt","priority":3}'
+
+# SPA fallback
 curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   "https://api.render.com/v1/services/$SERVICE_ID/routes" \
   -d '{"type":"rewrite","source":"/*","destination":"/index.html","priority":5}'
 ```
 
-Правила применяются сверху вниз по `priority`; первое совпавшее выигрывает. Поэтому `/n/*` должен идти раньше `/*`.
+---
+
+## 7. Оставшиеся задачи
+
+| # | Задача | Статус | Примечание |
+|---|---|---|---|
+| 1 | **Android APK** | ✅ | Собрано `8.6.20` (`versionCode 42`) с BrowserRouter и диплинками |
+| 2 | **Standalone `/news/{slug}`** | ✅ | Условие `state?.background` убрано |
+| 3 | **SEO `/n/:slug`, sitemap, robots** | ✅ | Задеплоено |
+| 4 | **Backfill оставшихся null-slug** | ⏳ | Автобэкфилл ограничен `LIMIT 5000`. Добить через `POST /admin/backfill` (admin JWT) или поднять лимит |
 
 ---
 
-## 7. Итог
+## 8. Итог
 
-- Rewrite `/n/*` на OG-endpoint backend **работает**.
-- SPA fallback `/* → /index.html` **работает**.
-- Fallback старых UUID-ссылок **починен и задеплоен**.
-- Публичные маршруты новостей **снова открыты**.
-- До финального "prod ready" осталось: пересобрать Android APK, добить backfill slug, убедиться что standalone `/news/{slug}` в frontend рендерится.
+- Диплинки `/news/{slug}` открывают модалку через BrowserRouter + SPA fallback.
+- OG-ссылки `/n/{slug}` отдают HTML с meta-тегами и JSON-LD для поисковиков и мессенджеров.
+- Sitemap и robots.txt доступны для индексации.
+- Render Static Site настроен через Dashboard Redirects/Rewrites — единственный поддерживаемый способ.
+- Конфигурационные файлы `render.yaml` и `_redirects` **не используются** и удалены из `public/`.
