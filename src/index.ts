@@ -3862,8 +3862,8 @@ app.use('/api/auth/forgot-password', forgotPasswordLimiter); // 3/час на em
 app.use('/api/auth/verify-code', passwordResetFlowLimiter);
 app.use('/api/auth/reset-password', passwordResetFlowLimiter);
 app.use('/api/auth', authLimiter, authRoutes);  // Строгий лимит (15/15min) — защита от брутфорса
+app.use('/api/news', newsRoutes);       // GET /api/news, /api/news/:tag (должен быть первым, т.к. содержит публичные маршруты)
 app.use('/api/news', factCheckRoutes);  // POST/GET /api/news/:id/fact-check
-app.use('/api/news', newsRoutes);       // GET /api/news, /api/news/:tag
 app.use('/api/payment', paymentRoutes); // POST /api/payment/create, /confirm
 app.use('/api/plans', plansRoutes);     // GET /api/plans
 app.use('/api/user', userRoutes);       // GET/POST/DELETE /api/user/tags
