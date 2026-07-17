@@ -20,6 +20,7 @@ import crypto from 'crypto';
 import axios from 'axios';
 import { query, pool } from './config/db';  // ← query + pool (for transactions)
 import { setCachedPopularTags } from './utils/tagCache';
+import { slugify } from './utils/slugify';
 import authRoutes from './routes/auth';
 import newsRoutes from './routes/news';
 import factCheckRoutes from './routes/factCheck';
@@ -4616,6 +4617,32 @@ async function start() {
       console.log(`[DB] Migration warning for ${m.name}:`, e.message);
     }
   }
+
+  // Backfill missing news slugs on startup (one-time / after migration)
+  (async () => {
+    try {
+      const missing = await query(`SELECT id, title_original, title_ru FROM news WHERE slug IS NULL LIMIT 5000`);
+      if (missing.rows.length === 0) return;
+      console.log(`[SlugBackfill] ${missing.rows.length} articles without slug`);
+      for (const row of missing.rows) {
+        const title = row.title_original || row.title_ru || 'news';
+        let slug = slugify(title, row.id);
+        try {
+          await query(`UPDATE news SET slug = $1 WHERE id = $2`, [slug, row.id]);
+        } catch (err: any) {
+          if (/unique constraint/i.test(err.message)) {
+            slug = slug + row.id.replace(/-/g, '').substring(8, 12);
+            await query(`UPDATE news SET slug = $1 WHERE id = $2`, [slug, row.id]);
+          } else {
+            console.error(`[SlugBackfill] ${row.id} failed:`, err.message);
+          }
+        }
+      }
+      console.log('[SlugBackfill] Done');
+    } catch (err: any) {
+      console.error('[SlugBackfill] Error:', err.message);
+    }
+  })();
 
   // Seed subscription plans
   try {
