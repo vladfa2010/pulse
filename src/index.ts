@@ -3792,6 +3792,68 @@ app.get('/sentiment-stats', async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// OG / Deeplink render — HTML shell for Telegram/WhatsApp scrapers
+// ═══════════════════════════════════════════════════════════════════════════
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+app.get('/n/:slug', async (req, res) => {
+  try {
+    const { slug } = req.params;
+    const result = await query(
+      `SELECT title_ru, title_original, summary_ru, summary_original, source, published_at, sentiment, slug
+       FROM news WHERE slug = $1`,
+      [slug]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).send('<html><body>Not found</body></html>');
+    }
+
+    const article = result.rows[0];
+    const title = article.title_ru || article.title_original || 'PULSE News';
+    const desc = article.summary_ru || article.summary_original || '';
+    const frontendUrl = process.env.FRONTEND_URL || 'https://pulse.inside-trade.ru';
+    const url = `${frontendUrl}/news/${article.slug}`;
+    const image = `${frontendUrl}/og-default.png`;
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(`<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>${escapeHtml(title)}</title>
+  <meta property="og:title" content="${escapeHtml(title)}">
+  <meta property="og:description" content="${escapeHtml(desc)}">
+  <meta property="og:url" content="${url}">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="PULSE">
+  <meta property="og:image" content="${image}">
+  <meta property="og:locale" content="ru_RU">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="${escapeHtml(title)}">
+  <meta name="twitter:description" content="${escapeHtml(desc)}">
+  <script>window.location.href = '/news/${article.slug}'</script>
+</head>
+<body>
+  <h1>${escapeHtml(title)}</h1>
+  <p>${escapeHtml(desc)}</p>
+  <p><a href="/news/${article.slug}">Открыть в PULSE</a></p>
+</body>
+</html>`);
+  } catch (err: any) {
+    console.error('[OG] Render error:', err.message);
+    res.status(500).send('Server error');
+  }
+});
+
 // API Routes — все эндпоинты начинаются с /api/
 // ═══════════════════════════════════════════════════════════════════════════
 // Лимитеры для восстановления пароля (сначала — специфичные, потом общий authLimiter)
@@ -4542,6 +4604,9 @@ async function start() {
     { sql: `CREATE INDEX IF NOT EXISTS idx_fact_check_jobs_status ON fact_check_jobs(status)`, name: 'idx_fact_check_jobs_status' },
     { sql: `CREATE INDEX IF NOT EXISTS idx_fact_check_jobs_news_id ON fact_check_jobs(news_id)`, name: 'idx_fact_check_jobs_news_id' },
     { sql: `CREATE INDEX IF NOT EXISTS idx_fact_check_jobs_user_id ON fact_check_jobs(user_id)`, name: 'idx_fact_check_jobs_user_id' },
+    // News slugs for deeplinks
+    { sql: `ALTER TABLE news ADD COLUMN IF NOT EXISTS slug VARCHAR(250) UNIQUE`, name: 'news_slug' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_news_slug ON news(slug)`, name: 'idx_news_slug' },
   ];
   for (const m of migrations) {
     try {

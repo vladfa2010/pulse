@@ -56,7 +56,7 @@ router.get('/global', async (req, res) => {
 
     const result = await query(
       `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags,
-              tag_impact, source_count, all_sources, fact_check_status, fact_check_result
+              tag_impact, source_count, all_sources, fact_check_status, fact_check_result, slug
        FROM news
        WHERE ${timeFilter}
        ORDER BY published_at DESC
@@ -106,7 +106,7 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
     if (global) {
       const result = await query(
         `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags,
-                tag_impact, source_count, all_sources, fact_check_status, fact_check_result
+                tag_impact, source_count, all_sources, fact_check_status, fact_check_result, slug
          FROM news
          WHERE ${timeFilter}
          ORDER BY published_at DESC
@@ -167,7 +167,7 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
       const orderDir = 'DESC'; // всегда новые сверху
       const result = await query(
         `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags,
-                tag_impact, source_count, all_sources, fact_check_status, fact_check_result
+                tag_impact, source_count, all_sources, fact_check_status, fact_check_result, slug
          FROM news
          WHERE (${conditions})${readFilter}
          AND ${timeFilter}
@@ -208,7 +208,7 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
       const pgOrder = 'DESC'; // всегда новые сверху
       const result = await query(
         `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags,
-                tag_impact, source_count, all_sources, fact_check_status, fact_check_result
+                tag_impact, source_count, all_sources, fact_check_status, fact_check_result, slug
          FROM news
          WHERE matched_tags && $1::text[]${pgReadFilter}
          AND ${timeFilter}
@@ -356,7 +356,7 @@ router.get('/tags/:tagId', async (req, res) => {
     if (USE_SQLITE) {
       result = await query(
         `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags,
-                tag_impact, source_count, all_sources, fact_check_status, fact_check_result
+                tag_impact, source_count, all_sources, fact_check_status, fact_check_result, slug
          FROM news
          WHERE matched_tags LIKE $1 AND ${timeFilter}
          ORDER BY published_at DESC
@@ -366,7 +366,7 @@ router.get('/tags/:tagId', async (req, res) => {
     } else {
       result = await query(
         `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags,
-                tag_impact, source_count, all_sources, fact_check_status, fact_check_result
+                tag_impact, source_count, all_sources, fact_check_status, fact_check_result, slug
          FROM news
          WHERE $1 = ANY(matched_tags)
          AND ${timeFilter}
@@ -423,7 +423,7 @@ router.get('/search', authMiddleware, async (req: AuthRequest, res) => {
       total = parseInt(countResult.rows[0]?.count || '0');
 
       const result = await query(
-        `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags, tag_impact, source_count, all_sources, fact_check_status, fact_check_result
+        `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags, tag_impact, source_count, all_sources, fact_check_status, fact_check_result, slug
          FROM news
          WHERE ${where}
          ORDER BY published_at DESC
@@ -449,7 +449,7 @@ router.get('/search', authMiddleware, async (req: AuthRequest, res) => {
       total = parseInt(countResult.rows[0]?.count || '0');
 
       const result = await query(
-        `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags, tag_impact, source_count, all_sources, fact_check_status, fact_check_result
+        `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags, tag_impact, source_count, all_sources, fact_check_status, fact_check_result, slug
          FROM news
          WHERE ${where}
          ORDER BY published_at DESC
@@ -475,6 +475,94 @@ router.get('/search', authMiddleware, async (req: AuthRequest, res) => {
 function escapeLikePattern(q: string): string {
   return q.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GET /api/news/by-slug/:slugOrId — загрузка новости по slug (fallback по id)
+// ═══════════════════════════════════════════════════════════════════════════
+router.get('/by-slug/:slugOrId', async (req: AuthRequest, res) => {
+  try {
+    const { slugOrId } = req.params;
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const isUuid = uuidRegex.test(slugOrId);
+
+    const result = await query(
+      `SELECT
+        id, title_ru, summary_ru, title_original, summary_original, lang_original,
+        source, source_id, url, published_at, fetched_at,
+        sentiment, sentiment_score, sentiment_reasoning, sentiment_source,
+        matched_tags, tag_impact, is_political, article_type,
+        source_count, all_sources, fact_check_status, fact_check_result, slug
+      FROM news
+      WHERE slug = $1 ${isUuid ? 'OR id = $1' : ''}`,
+      [slugOrId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'News not found' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err: any) {
+    console.error('[News] By slug error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch news' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GET /api/news/by-slug/:slugOrId/tag-enrichments
+// ═══════════════════════════════════════════════════════════════════════════
+router.get('/by-slug/:slugOrId/tag-enrichments', async (req: AuthRequest, res) => {
+  try {
+    const { slugOrId } = req.params;
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const isUuid = uuidRegex.test(slugOrId);
+
+    const newsResult = await query(
+      `SELECT id, matched_tags, tag_impact FROM news WHERE slug = $1 ${isUuid ? 'OR id = $1' : ''}`,
+      [slugOrId]
+    );
+
+    if (newsResult.rows.length === 0) {
+      return res.status(404).json({ error: 'News not found' });
+    }
+
+    const matchedTags = newsResult.rows[0].matched_tags || [];
+    const tagImpact = newsResult.rows[0].tag_impact || [];
+    const allTagIds = new Set<string>(matchedTags);
+    tagImpact.forEach((ti: any) => { if (ti.tag) allTagIds.add(ti.tag); });
+
+    if (allTagIds.size === 0) {
+      return res.json({ tags: [] });
+    }
+
+    const enrichResult = await query(
+      `SELECT tag_id, tag_name, enriched_data
+       FROM user_defined_tags
+       WHERE tag_id = ANY($1::text[])`,
+      [Array.from(allTagIds)]
+    );
+
+    const result = enrichResult.rows.map((row: any) => {
+      const ed = row.enriched_data || {};
+      return {
+        tag_id: row.tag_id,
+        tag_name: row.tag_name,
+        ticker: ed.ticker || null,
+        website: ed.website || null,
+        description_ru: ed.description_ru || ed.description || null,
+        key_products: ed.key_products || [],
+        synonyms_en: ed.synonyms_en || [],
+        synonyms_ru: ed.synonyms_ru || [],
+        related_entities: ed.related_entities || [],
+      };
+    });
+
+    res.json({ tags: result });
+  } catch (err: any) {
+    console.error('[TagEnrichments] By slug error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch tag enrichments' });
+  }
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // GET /api/news/:id/tag-enrichments — enriched data для всех тегов новости
@@ -562,7 +650,7 @@ router.get('/:id', async (req: AuthRequest, res) => {
         source, source_id, url, published_at, fetched_at,
         sentiment, sentiment_score, sentiment_reasoning, sentiment_source,
         matched_tags, tag_impact, is_political, article_type,
-        source_count, all_sources, fact_check_status, fact_check_result
+        source_count, all_sources, fact_check_status, fact_check_result, slug
       FROM news
       WHERE id = $1`,
       [newsId]

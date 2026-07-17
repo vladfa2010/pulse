@@ -130,6 +130,7 @@ CREATE TABLE IF NOT EXISTS news (
   fact_check_status TEXT NOT NULL DEFAULT 'not_checked'
     CHECK(fact_check_status IN ('not_checked', 'in_progress', 'checked')),
   fact_check_result JSONB DEFAULT NULL,
+  slug            VARCHAR(250) UNIQUE,
   created_at      TIMESTAMP DEFAULT NOW(),
   UNIQUE(url),              -- Защита по оригинальному URL (один URL = одна запись)
   -- UNIQUE(url_normalized) УБРАНО: normalizeUrl() даёт одинаковый результат
@@ -366,6 +367,7 @@ CREATE INDEX IF NOT EXISTS idx_news_matched_tags ON news USING GIN (matched_tags
 CREATE INDEX IF NOT EXISTS idx_news_published_at ON news (published_at);
 CREATE INDEX IF NOT EXISTS idx_news_source_id ON news (source_id);
 CREATE INDEX IF NOT EXISTS idx_news_fact_check_status ON news(fact_check_status);
+CREATE INDEX IF NOT EXISTS idx_news_slug ON news(slug);
 CREATE INDEX IF NOT EXISTS idx_portfolios_user_id ON portfolios (user_id);
 CREATE INDEX IF NOT EXISTS idx_payments_user_id ON payments (user_id);
 CREATE INDEX IF NOT EXISTS idx_user_channels_user_id ON user_channels (user_id);

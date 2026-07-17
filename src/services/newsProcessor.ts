@@ -17,6 +17,7 @@ import { query } from '../config/db';
 import { translateBatch } from './translate';
 import { smartMatchTags, analyzeUnifiedBatch, UnifiedResult, matchTagsByKeywords } from './smartTagMatcher';
 import { sendNewArticlePush } from './push';
+import { slugify } from '../utils/slugify';
 
 const INSTANCE_ID = `${process.env.HOSTNAME || 'unknown'}-${Date.now()}`;
 const SQL_NOW = "NOW()";
@@ -399,7 +400,10 @@ async function saveProcessedArticles(
     // If English title was not translated, keep needs_translation = TRUE for retry
     const titleRu = (a as any).title_ru;
     const isTranslationSuccessful = a.lang_original !== 'en' || (!!titleRu && titleRu !== a.title_original);
-    
+
+    // Generate slug once and freeze it (do not overwrite existing slug)
+    const slug = slugify(a.title_original || (a as any).title_ru || 'news', a.id);
+
     try {
       await query(`
         UPDATE news
@@ -418,7 +422,8 @@ async function saveProcessedArticles(
             llm_attempts = $12,
             llm_raw_preview = $13,
             llm_batch_size = $14,
-            llm_results_count = $15
+            llm_results_count = $15,
+            slug = COALESCE(news.slug, $18)
         WHERE id = $16
       `, [
         (a as any).title_ru,
@@ -438,6 +443,7 @@ async function saveProcessedArticles(
         (s as any)._llmResultsCount || null,
         a.id,
         !isTranslationSuccessful,
+        slug,
       ]);
       updated++;
 
@@ -461,6 +467,7 @@ async function saveProcessedArticles(
 async function markNoTags(articles: RawArticle[]): Promise<void> {
   let updated = 0;
   for (const a of articles) {
+    const slug = slugify(a.title_original || (a as any).title_ru || 'news', a.id);
     try {
       await query(`
         UPDATE news
@@ -477,9 +484,10 @@ async function markNoTags(articles: RawArticle[]): Promise<void> {
             llm_attempts = NULL,
             llm_raw_preview = NULL,
             llm_batch_size = NULL,
-            llm_results_count = NULL
+            llm_results_count = NULL,
+            slug = COALESCE(news.slug, $2)
         WHERE id = $1
-      `, [a.id]);
+      `, [a.id, slug]);
       updated++;
     } catch (err: any) {
       console.error(`[NewsProcessor] markNoTags failed for ${a.id}:`, err.message);

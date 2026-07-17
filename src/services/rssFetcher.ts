@@ -154,6 +154,11 @@ function parseRSS(xml: string, source: RssSource): ParsedArticle[] {
       title = extractTag(item, 'title');
       description = extractTag(item, 'description');
       link = extractTag(item, 'link');
+      // RSS 2.0 — fallback for self-closing <link href="..."/>
+      if (!link || !link.startsWith('http')) {
+        const linkMatch = item.match(/<link[^>]*href="([^"]*)"[^>]*\/?>/i);
+        link = linkMatch ? linkMatch[1] : '';
+      }
       pubDate = extractTag(item, 'pubDate');
     }
 
