@@ -3809,7 +3809,8 @@ app.get('/n/:slug', async (req, res) => {
   try {
     const { slug } = req.params;
     const result = await query(
-      `SELECT title_ru, title_original, summary_ru, summary_original, source, published_at, sentiment, slug
+      `SELECT id, title_ru, title_original, summary_ru, summary_original,
+              source, published_at, sentiment, sentiment_score, url, slug
        FROM news WHERE slug = $1`,
       [slug]
     );
@@ -3818,41 +3819,129 @@ app.get('/n/:slug', async (req, res) => {
       return res.status(404).send('<html><body>Not found</body></html>');
     }
 
-    const article = result.rows[0];
-    const title = article.title_ru || article.title_original || 'PULSE News';
-    const desc = article.summary_ru || article.summary_original || '';
+    const a = result.rows[0];
+    const title = a.title_ru || a.title_original || 'PULSE News';
+    const desc = (a.summary_ru || a.summary_original || '').substring(0, 300);
+    const pubDate = a.published_at ? new Date(a.published_at).toISOString() : '';
+    const modDate = pubDate;
     const frontendUrl = process.env.FRONTEND_URL || 'https://pulse.inside-trade.ru';
-    const url = `${frontendUrl}/news/${article.slug}`;
-    const image = `${frontendUrl}/og-default.png`;
+    const canonical = `${frontendUrl}/news/${a.slug}`;
+    const ogImage = `${frontendUrl}/og-default.png`;
+
+    const jsonLd = JSON.stringify({
+      '@context': 'https://schema.org',
+      '@type': 'NewsArticle',
+      headline: title,
+      description: desc,
+      url: canonical,
+      image: ogImage,
+      datePublished: pubDate,
+      dateModified: modDate,
+      author: { '@type': 'Organization', name: a.source || 'PULSE' },
+      publisher: {
+        '@type': 'Organization',
+        name: 'PULSE',
+        logo: { '@type': 'ImageObject', url: `${frontendUrl}/logo.png` }
+      },
+      mainEntityOfPage: { '@type': 'WebPage', '@id': canonical }
+    });
 
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(`<!DOCTYPE html>
 <html lang="ru">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${escapeHtml(title)}</title>
+  <meta name="description" content="${escapeHtml(desc)}">
+  <link rel="canonical" href="${canonical}">
   <meta property="og:title" content="${escapeHtml(title)}">
   <meta property="og:description" content="${escapeHtml(desc)}">
-  <meta property="og:url" content="${url}">
+  <meta property="og:url" content="${canonical}">
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="PULSE">
-  <meta property="og:image" content="${image}">
+  <meta property="og:image" content="${ogImage}">
   <meta property="og:locale" content="ru_RU">
-  <meta name="twitter:card" content="summary">
+  <meta property="article:published_time" content="${pubDate}">
+  <meta property="article:modified_time" content="${modDate}">
+  <meta property="article:author" content="${escapeHtml(a.source || 'PULSE')}">
+  <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="${escapeHtml(title)}">
   <meta name="twitter:description" content="${escapeHtml(desc)}">
-  <script>window.location.href = '/news/${article.slug}'</script>
+  <meta name="twitter:image" content="${ogImage}">
+  <script type="application/ld+json">${jsonLd}</script>
+  <style>body{font-family:system-ui,sans-serif;max-width:720px;margin:0 auto;padding:24px;color:#333;line-height:1.6}a{color:#2563eb;text-decoration:none}</style>
 </head>
 <body>
-  <h1>${escapeHtml(title)}</h1>
-  <p>${escapeHtml(desc)}</p>
-  <p><a href="/news/${article.slug}">Открыть в PULSE</a></p>
+  <nav style="margin-bottom:24px">
+    <a href="${frontendUrl}/">PULSE</a> / <a href="${frontendUrl}/feed">Новости</a>
+  </nav>
+  <article>
+    <h1>${escapeHtml(title)}</h1>
+    <p style="color:#666;font-size:14px">
+      ${escapeHtml(a.source || '')} · ${pubDate ? new Date(pubDate).toLocaleDateString('ru-RU') : ''}
+    </p>
+    <p>${escapeHtml(desc)}</p>
+    <p><a href="${canonical}">Открыть в PULSE →</a></p>
+  </article>
+  <footer style="margin-top:48px;padding-top:24px;border-top:1px solid #eee;color:#999;font-size:12px">
+    <p>PULSE — инвестиционные новости в реальном времени</p>
+    <p><a href="${frontendUrl}">pulse.inside-trade.ru</a></p>
+  </footer>
 </body>
 </html>`);
   } catch (err: any) {
-    console.error('[OG] Render error:', err.message);
+    console.error('[OG] Error:', err.message);
     res.status(500).send('Server error');
   }
+});
+
+// Sitemap — SEO discovery for news articles
+app.get('/sitemap.xml', async (req, res) => {
+  try {
+    const frontendUrl = process.env.FRONTEND_URL || 'https://pulse.inside-trade.ru';
+    const dateFilter = USE_SQLITE
+      ? "published_at > datetime('now', '-30 days')"
+      : "published_at > NOW() - INTERVAL '30 days'";
+    const result = await query(
+      `SELECT slug, published_at FROM news
+       WHERE ${dateFilter}
+       AND slug IS NOT NULL
+       ORDER BY published_at DESC
+       LIMIT 5000`
+    );
+
+    const urls = result.rows.map((row: any) => {
+      const lastmod = new Date(row.published_at).toISOString().split('T')[0];
+      return `  <url>\n    <loc>${frontendUrl}/news/${row.slug}</loc>\n    <lastmod>${lastmod}</lastmod>\n    <changefreq>never</changefreq>\n    <priority>0.8</priority>\n  </url>`;
+    }).join('\n');
+
+    const sitemap = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>`;
+
+    res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+    res.send(sitemap);
+  } catch (err: any) {
+    console.error('[Sitemap] Error:', err.message);
+    res.status(500).send('Server error');
+  }
+});
+
+// robots.txt — allow indexing news pages, disallow private/admin routes
+app.get('/robots.txt', (req, res) => {
+  const frontendUrl = process.env.FRONTEND_URL || 'https://pulse.inside-trade.ru';
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.send(`User-agent: *
+Allow: /news/
+Allow: /n/
+Disallow: /api/
+Disallow: /admin/
+Disallow: /debug/
+Disallow: /feed
+Disallow: /profile
+Disallow: /payment/
+
+Sitemap: ${frontendUrl}/sitemap.xml
+`);
 });
 
 // API Routes — все эндпоинты начинаются с /api/
