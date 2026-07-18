@@ -22,7 +22,13 @@ import { ZodSchema, ZodError } from 'zod';
 export function validate<T>(schema: ZodSchema<T>) {
   return (req: Request, res: Response, next: NextFunction) => {
     try {
-      req.body = schema.parse(req.body);
+      const input = req.method === 'GET' ? req.query : req.body;
+      const parsed = schema.parse(input);
+      if (req.method === 'GET') {
+        req.query = parsed as any;
+      } else {
+        req.body = parsed;
+      }
       next();
     } catch (err) {
       if (err instanceof ZodError) {

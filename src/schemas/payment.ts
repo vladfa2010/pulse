@@ -7,10 +7,11 @@
 import { z } from 'zod';
 
 export const CreatePaymentSchema = z.object({
-  planId: z.enum(['free', 'base', 'premium', 'club', 'pro']),
-  billingCycle: z.enum(['monthly', 'yearly']),
+  planId: z.string().regex(/^[a-z0-9_-]+$/).max(20),
+  billingCycle: z.enum(['weekly', 'monthly', 'quarterly', 'yearly']),
   isUpgrade: z.boolean().default(false),
   method: z.string().max(50).default('bank_card'),
+  promoCode: z.string().max(50).optional(),
   // legacy fields, ignored
   amount: z.number().optional(),
   discount: z.number().optional(),
@@ -21,8 +22,8 @@ export const ConfirmPaymentSchema = z.object({
 });
 
 export const UpgradePreviewSchema = z.object({
-  targetPlan: z.enum(['base', 'premium', 'club', 'pro']),
-  billingCycle: z.enum(['monthly', 'yearly']),
+  targetPlan: z.string().regex(/^[a-z0-9_-]+$/).max(20),
+  billingCycle: z.enum(['weekly', 'monthly', 'quarterly', 'yearly']),
 });
 
 export type CreatePaymentInput = z.infer<typeof CreatePaymentSchema>;

@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { query } from '../config/db';
 import axios from 'axios';
 import { isYookassaIp, getClientIp } from '../services/ipCheck';
-import { activateSubscription, savePaymentMethod } from '../services/subscription';
+import { activateSubscription, savePaymentMethod, getPlanById, scheduleDowngrade, notifySubscriptionEvent } from '../services/subscription';
 import {
   logPaymentCompleted,
   logSubscriptionCancelled,
@@ -190,15 +190,63 @@ router.post('/yookassa', async (req, res) => {
       await savePaymentMethod(payment.user_id, object.payment_method);
     }
 
+    // Refund 1₽ for trial or 100% promo authorization
+    const meta = object.metadata || {};
+    if (meta.trial_days || meta.promo_100_percent_refund) {
+      try {
+        const auth = 'Basic ' + Buffer.from(`${process.env.YOOKASSA_SHOP_ID}:${process.env.YOOKASSA_SECRET_KEY}`).toString('base64');
+        await axios.post(
+          'https://api.yookassa.ru/v3/refunds',
+          {
+            payment_id: object.id,
+            amount: { value: '1.00', currency: 'RUB' },
+          },
+          {
+            headers: {
+              Authorization: auth,
+              'Idempotence-Key': `refund-${payment.id}`,
+              'Content-Type': 'application/json',
+            },
+            timeout: 15000,
+          }
+        );
+        console.log(`[YooKassa] Refund 1₽ created for payment ${payment.id}`);
+      } catch (refundErr: any) {
+        console.error(`[YooKassa] Refund failed for payment ${payment.id}:`, refundErr.response?.data || refundErr.message);
+      }
+    }
+
+    // Handle plan deleted after payment creation
+    const plan = payment.plan_id ? await getPlanById(payment.plan_id) : null;
+    const durationDays = meta.trial_days ? Number(meta.trial_days) : (payment.duration_days || 30);
+
+    if (plan?.deleted_at) {
+      await activateSubscription(
+        payment.user_id,
+        payment.plan_id || 'premium',
+        durationDays,
+        payment.id,
+        payment.is_upgrade === true
+      );
+      await scheduleDowngrade(payment.user_id, 'free');
+      const expiresAt = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000).toISOString();
+      await notifySubscriptionEvent(
+        payment.user_id,
+        'grace_1d',
+        `Тариф ${plan.name} больше не доступен. Подписка активна до ${expiresAt}, затем Free.`
+      );
+      return res.status(200).json({ received: true });
+    }
+
     await activateSubscription(
       payment.user_id,
       payment.plan_id || 'premium',
-      payment.duration_days || 30,
+      durationDays,
       payment.id,
       payment.is_upgrade === true
     );
 
-    if (object.metadata?.auto_renew === 'true') {
+    if (meta.auto_renew === 'true') {
       console.log(`[AutoRenew] Webhook confirmed for user ${payment.user_id}`);
       await query(`UPDATE users SET auto_renew_failures = 0 WHERE id = $1`, [payment.user_id]);
     }

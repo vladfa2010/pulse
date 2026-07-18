@@ -140,11 +140,13 @@ export async function initSQLiteSchema(): Promise<void> {
       username TEXT NOT NULL,
       password_hash TEXT NOT NULL,
       is_verified INTEGER DEFAULT 0,
+      is_admin INTEGER DEFAULT 0,
       subscription_active INTEGER DEFAULT 0,
+      subscription_plan TEXT DEFAULT 'free' REFERENCES subscription_plans(id),
       subscription_expires_at TEXT,
       subscription_auto_renew INTEGER DEFAULT 1,
       auto_renew_failures INTEGER DEFAULT 0,
-      is_admin INTEGER DEFAULT 0,
+      scheduled_plan_downgrade TEXT,
       news_count INTEGER DEFAULT 0,
       created_at TEXT DEFAULT (datetime('now'))
     );
@@ -159,6 +161,23 @@ export async function initSQLiteSchema(): Promise<void> {
       UNIQUE(user_id, tag_id)
     );
 
+    CREATE TABLE IF NOT EXISTS subscription_plans (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      price REAL NOT NULL DEFAULT 0,
+      billing_frequency TEXT NOT NULL DEFAULT 'monthly',
+      yearly_discount INTEGER DEFAULT 0,
+      tag_limit INTEGER NOT NULL,
+      features TEXT NOT NULL DEFAULT '{}',
+      display_order INTEGER NOT NULL DEFAULT 0,
+      is_active INTEGER DEFAULT 1,
+      is_popular INTEGER DEFAULT 0,
+      coming_soon_label TEXT DEFAULT NULL,
+      plan_level INTEGER NOT NULL DEFAULT 0,
+      deleted_at TEXT DEFAULT NULL,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
     CREATE TABLE IF NOT EXISTS payments (
       id TEXT PRIMARY KEY,
       user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
@@ -168,9 +187,145 @@ export async function initSQLiteSchema(): Promise<void> {
       method TEXT NOT NULL,
       status TEXT DEFAULT 'pending',
       provider_ref TEXT,
+      plan_id TEXT REFERENCES subscription_plans(id),
+      billing_cycle TEXT DEFAULT 'monthly',
+      duration_days INTEGER DEFAULT 30,
+      is_upgrade INTEGER DEFAULT 0,
+      promo_code TEXT DEFAULT NULL,
+      promo_discount_type TEXT DEFAULT NULL,
+      promo_discount_value INTEGER DEFAULT NULL,
       paid_at TEXT,
       created_at TEXT DEFAULT (datetime('now'))
     );
+
+    CREATE INDEX IF NOT EXISTS idx_payments_promo ON payments(promo_code);
+
+    CREATE TABLE IF NOT EXISTS promo_codes (
+      id TEXT PRIMARY KEY,
+      code TEXT NOT NULL UNIQUE,
+      description TEXT DEFAULT NULL,
+      discount_type TEXT NOT NULL DEFAULT 'percent',
+      discount_value INTEGER NOT NULL DEFAULT 0,
+      applicable_plans TEXT DEFAULT NULL,
+      max_uses INTEGER DEFAULT NULL,
+      uses_count INTEGER NOT NULL DEFAULT 0,
+      valid_from TEXT NOT NULL DEFAULT (datetime('now')),
+      expires_at TEXT DEFAULT NULL,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_by TEXT REFERENCES users(id),
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_promo_codes_code ON promo_codes(code);
+    CREATE INDEX IF NOT EXISTS idx_promo_codes_active ON promo_codes(is_active) WHERE is_active = 1;
+
+    CREATE TABLE IF NOT EXISTS user_promo_uses (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      promo_code_id TEXT NOT NULL REFERENCES promo_codes(id) ON DELETE CASCADE,
+      plan_id TEXT NOT NULL,
+      billing_cycle TEXT NOT NULL,
+      discount_applied INTEGER NOT NULL DEFAULT 0,
+      trial_days_used INTEGER DEFAULT NULL,
+      expected_renewal_price REAL DEFAULT NULL,
+      payment_id TEXT REFERENCES payments(id),
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(user_id, promo_code_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_user_promo_uses_user ON user_promo_uses(user_id);
+    CREATE INDEX IF NOT EXISTS idx_user_promo_uses_promo ON user_promo_uses(promo_code_id);
+
+    CREATE TABLE IF NOT EXISTS features_registry (
+      id TEXT PRIMARY KEY,
+      label TEXT NOT NULL,
+      type TEXT NOT NULL DEFAULT 'boolean',
+      options TEXT DEFAULT NULL,
+      description TEXT DEFAULT NULL,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS user_payment_methods (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      payment_method_id TEXT NOT NULL,
+      provider TEXT DEFAULT 'yookassa',
+      card_last4 TEXT,
+      card_brand TEXT,
+      card_expiry TEXT,
+      is_active INTEGER DEFAULT 1,
+      is_default INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now')),
+      deactivated_at TEXT,
+      UNIQUE(user_id, payment_method_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_user_payment_methods_user_id ON user_payment_methods(user_id);
+
+    CREATE TABLE IF NOT EXISTS subscription_renewals (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      plan_id TEXT NOT NULL REFERENCES subscription_plans(id),
+      billing_cycle TEXT NOT NULL,
+      payment_id TEXT REFERENCES payments(id),
+      status TEXT NOT NULL,
+      period_start TEXT NOT NULL,
+      period_end TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_renewals_user_id ON subscription_renewals(user_id);
+    CREATE INDEX IF NOT EXISTS idx_renewals_period_end ON subscription_renewals(period_end);
+
+    CREATE TABLE IF NOT EXISTS frozen_tags (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      tag_id TEXT NOT NULL,
+      tag_name TEXT NOT NULL,
+      tag_type TEXT NOT NULL,
+      frozen_at TEXT DEFAULT (datetime('now')),
+      unfrozen_at TEXT,
+      UNIQUE(user_id, tag_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_frozen_tags_user_id ON frozen_tags(user_id);
+
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      endpoint TEXT NOT NULL,
+      p256dh TEXT NOT NULL,
+      auth TEXT NOT NULL,
+      is_active INTEGER DEFAULT 1,
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(user_id, endpoint)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user_id ON push_subscriptions(user_id);
+
+    CREATE TABLE IF NOT EXISTS webhook_events (
+      id TEXT PRIMARY KEY,
+      provider TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      payload TEXT DEFAULT '{}',
+      processed INTEGER DEFAULT 0,
+      error TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_webhook_events_created_at ON webhook_events(created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS subscription_notifications_sent (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      type TEXT NOT NULL,
+      sent_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(user_id, type)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_sub_notif_user_type ON subscription_notifications_sent(user_id, type);
 
     CREATE TABLE IF NOT EXISTS news (
       id TEXT PRIMARY KEY,
@@ -389,6 +544,38 @@ export async function initSQLiteSchema(): Promise<void> {
     console.log('[SQLite] Migration: added auto_renew_failures column');
   } catch {
     // Column already exists — ignore
+  }
+
+  // Seed subscription plans
+  try {
+    db.run(`INSERT OR IGNORE INTO subscription_plans
+      (id, name, price, billing_frequency, yearly_discount, tag_limit, features, display_order, is_active, is_popular, coming_soon_label, plan_level)
+    VALUES
+      ('free', 'Free', 0, 'monthly', 0, 3, '{"telegram":false,"push":false,"ai_summary":false,"alerts":false,"priority":"normal"}', 1, 1, 0, NULL, 0),
+      ('base', 'Base', 100, 'monthly', 20, 10, '{"telegram":true,"push":true,"ai_summary":false,"alerts":false,"priority":"normal"}', 2, 1, 0, NULL, 1),
+      ('premium', 'Premium', 990, 'monthly', 20, 25, '{"telegram":true,"push":true,"ai_summary":true,"alerts":true,"priority":"high"}', 3, 1, 1, NULL, 2),
+      ('club', 'Club', 2500, 'monthly', 20, -1, '{"telegram":true,"push":true,"ai_summary":true,"alerts":true,"priority":"max","early_delivery":true,"custom_thresholds":true,"club_access":true}', 4, 1, 0, 'Скоро', 3),
+      ('pro', 'Pro', 2500, 'monthly', 20, -1, '{"telegram":true,"push":true,"ai_summary":true,"alerts":true,"priority":"max","early_delivery":true,"custom_thresholds":true,"api_access":true}', 5, 1, 0, 'Скоро', 4)`);
+    console.log('[SQLite] Migration: subscription_plans seeded');
+  } catch {
+    // ignore
+  }
+
+  // Seed features registry
+  try {
+    db.run(`INSERT OR IGNORE INTO features_registry (id, label, type, options, description) VALUES
+      ('telegram', 'Telegram-дайджест', 'boolean', NULL, 'Дайджест новостей в Telegram'),
+      ('push', 'Push-уведомления', 'boolean', NULL, 'Push-уведомления в браузере/приложении'),
+      ('ai_summary', 'AI-саммари по портфелю', 'boolean', NULL, 'AI-анализ портфеля каждый час'),
+      ('alerts', 'Sentiment-алерты', 'boolean', NULL, 'Уведомления при резком изменении сентимента'),
+      ('priority', 'Приоритетная доставка', 'string', '["normal", "high", "max"]', 'Приоритет обработки новостей'),
+      ('early_delivery', 'Ранняя доставка', 'boolean', NULL, 'Доступ к новостям на 5 минут раньше'),
+      ('custom_thresholds', 'Кастомные пороги', 'boolean', NULL, 'Настройка порогов для алертов'),
+      ('club_access', 'Club доступ', 'boolean', NULL, 'Доступ к закрытому Telegram-чату'),
+      ('api_access', 'API доступ', 'boolean', NULL, 'Доступ к REST API с токеном')`);
+    console.log('[SQLite] Migration: features_registry seeded');
+  } catch {
+    // ignore
   }
 
   saveDb();

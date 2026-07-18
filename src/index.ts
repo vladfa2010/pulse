@@ -27,6 +27,8 @@ import factCheckRoutes from './routes/factCheck';
 import { startFactCheckCron } from './services/factCheck';
 import paymentRoutes from './routes/payment';
 import plansRoutes from './routes/plans';
+import promoRoutes from './routes/promo';
+import featuresRoutes from './routes/features';
 import userRoutes from './routes/user';
 import translateRoutes from './routes/translate';
 import webhookRoutes from './routes/webhook';
@@ -34,14 +36,14 @@ import adminRoutes from './routes/admin';
 import sentimentRoutes from './routes/sentiment';
 import appRoutes from './routes/app';
 import { authMiddleware, AuthRequest } from './middleware/auth';
-import { apiLimiter, authLimiter, webhookLimiter, forgotPasswordLimiter, passwordResetFlowLimiter } from './middleware/rateLimit';
+import { apiLimiter, authLimiter, webhookLimiter, forgotPasswordLimiter, passwordResetFlowLimiter, promoValidateLimiter } from './middleware/rateLimit';
 import { startCron } from './services/cron';   // RSS cron отключен (TZ_REMOVE_DUPLICATE_RSS_CRON) — модуль оставлен для отката
 import { startReportCron, sendWeeklyReportForUser } from './services/reports'; // ← Еженедельные репорты
 import { startDigestCron, sendAllDigests } from './services/digest'; // ← TG дайджест (каждый час)
 import cron from 'node-cron';
 import { resetDailyWindows, refreshImoexCache } from './services/sentimentIndex';
 import { sendSentimentVotePush } from './services/push';
-import { processScheduledDowngrades, processAutoRenewals } from './services/subscription';
+import { processScheduledDowngrades, processAutoRenewals, processTrialExpirations } from './services/subscription';
 import { isUserEventType } from './services/activityLog';
 import { getAdminTgSettings, saveAdminTgSettings, sendTestAlert, ALERT_EVENT_TYPES } from './services/adminAlerts';
 import { setupYookassaWebhook } from './routes/payment'; // ← Auto-setup YuKassa webhook
@@ -3955,6 +3957,8 @@ app.use('/api/news', newsRoutes);       // GET /api/news, /api/news/:tag (дол
 app.use('/api/news', factCheckRoutes);  // POST/GET /api/news/:id/fact-check
 app.use('/api/payment', paymentRoutes); // POST /api/payment/create, /confirm
 app.use('/api/plans', plansRoutes);     // GET /api/plans
+app.use('/api/promo/validate', promoValidateLimiter, promoRoutes); // GET /api/promo/validate
+app.use('/api/features', featuresRoutes); // GET /api/features
 app.use('/api/user', userRoutes);       // GET/POST/DELETE /api/user/tags
 app.use('/api/translate', translateRoutes);
 app.use('/api/webhook', webhookLimiter, webhookRoutes); // Высокий лимит для YuKassa
@@ -4679,6 +4683,28 @@ async function start() {
     { sql: `CREATE INDEX IF NOT EXISTS idx_webhook_events_created_at ON webhook_events(created_at DESC)`, name: 'idx_webhook_events_created_at' },
     { sql: `CREATE TABLE IF NOT EXISTS subscription_notifications_sent (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, type VARCHAR(30) NOT NULL, sent_at TIMESTAMP DEFAULT ${_SQL_NOW}, UNIQUE(user_id, type))`, name: 'subscription_notifications_sent' },
     { sql: `CREATE INDEX IF NOT EXISTS idx_sub_notif_user_type ON subscription_notifications_sent(user_id, type)`, name: 'idx_sub_notif_user_type' },
+    // Admin tariffs v3: plan_level, is_popular, deleted_at, billing_frequency, price
+    { sql: `ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP DEFAULT NULL`, name: 'plans_deleted_at' },
+    { sql: `ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS plan_level INTEGER NOT NULL DEFAULT 0`, name: 'plans_plan_level' },
+    { sql: `ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS is_popular BOOLEAN NOT NULL DEFAULT FALSE`, name: 'plans_is_popular' },
+    { sql: `ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS billing_frequency VARCHAR(20) NOT NULL DEFAULT 'monthly'`, name: 'plans_billing_frequency' },
+    { sql: `ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS price DECIMAL(10,2) NOT NULL DEFAULT 0`, name: 'plans_price' },
+    { sql: `UPDATE subscription_plans SET price = price_monthly, billing_frequency = 'monthly' WHERE price = 0 AND price_monthly IS NOT NULL`, name: 'plans_migrate_price' },
+    { sql: `UPDATE subscription_plans SET plan_level = CASE WHEN id = 'free' THEN 0 WHEN id = 'base' THEN 1 WHEN id = 'premium' THEN 2 WHEN id = 'club' THEN 3 WHEN id = 'pro' THEN 4 END WHERE plan_level = 0`, name: 'plans_init_levels' },
+    { sql: `UPDATE subscription_plans SET is_popular = TRUE WHERE id = 'premium'`, name: 'plans_premium_popular' },
+    { sql: `UPDATE subscription_plans SET is_active = TRUE WHERE id IN ('club', 'pro')`, name: 'plans_activate_club_pro' },
+    { sql: `ALTER TABLE payments ADD COLUMN IF NOT EXISTS promo_code VARCHAR(50) DEFAULT NULL`, name: 'payments_promo_code' },
+    { sql: `ALTER TABLE payments ADD COLUMN IF NOT EXISTS promo_discount_type VARCHAR(20) DEFAULT NULL`, name: 'payments_promo_discount_type' },
+    { sql: `ALTER TABLE payments ADD COLUMN IF NOT EXISTS promo_discount_value INTEGER DEFAULT NULL`, name: 'payments_promo_discount_value' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_payments_promo ON payments(promo_code)`, name: 'idx_payments_promo' },
+    { sql: `CREATE TABLE IF NOT EXISTS promo_codes (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), code VARCHAR(50) NOT NULL UNIQUE, description VARCHAR(255) DEFAULT NULL, discount_type VARCHAR(20) NOT NULL DEFAULT 'percent', discount_value INTEGER NOT NULL DEFAULT 0, applicable_plans VARCHAR(20)[] DEFAULT NULL, max_uses INTEGER DEFAULT NULL, uses_count INTEGER NOT NULL DEFAULT 0, valid_from TIMESTAMP NOT NULL DEFAULT ${_SQL_NOW}, expires_at TIMESTAMP DEFAULT NULL, is_active BOOLEAN NOT NULL DEFAULT TRUE, created_by UUID REFERENCES users(id), created_at TIMESTAMP DEFAULT ${_SQL_NOW}, updated_at TIMESTAMP DEFAULT ${_SQL_NOW})`, name: 'promo_codes' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_promo_codes_code ON promo_codes(code)`, name: 'idx_promo_codes_code' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_promo_codes_active ON promo_codes(is_active) WHERE is_active = TRUE`, name: 'idx_promo_codes_active' },
+    { sql: `CREATE TABLE IF NOT EXISTS user_promo_uses (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, promo_code_id UUID NOT NULL REFERENCES promo_codes(id) ON DELETE CASCADE, plan_id VARCHAR(20) NOT NULL, billing_cycle VARCHAR(10) NOT NULL, discount_applied INTEGER NOT NULL DEFAULT 0, trial_days_used INTEGER DEFAULT NULL, expected_renewal_price DECIMAL(10,2) DEFAULT NULL, payment_id UUID REFERENCES payments(id), created_at TIMESTAMP DEFAULT ${_SQL_NOW}, UNIQUE(user_id, promo_code_id))`, name: 'user_promo_uses' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_user_promo_uses_user ON user_promo_uses(user_id)`, name: 'idx_user_promo_uses_user' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_user_promo_uses_promo ON user_promo_uses(promo_code_id)`, name: 'idx_user_promo_uses_promo' },
+    { sql: `CREATE TABLE IF NOT EXISTS features_registry (id VARCHAR(50) PRIMARY KEY, label VARCHAR(100) NOT NULL, type VARCHAR(20) NOT NULL DEFAULT 'boolean', options JSONB DEFAULT NULL, description VARCHAR(255) DEFAULT NULL, is_active BOOLEAN NOT NULL DEFAULT TRUE, created_at TIMESTAMP DEFAULT ${_SQL_NOW})`, name: 'features_registry' },
+    { sql: `INSERT INTO features_registry (id, label, type, options, description) VALUES ('telegram', 'Telegram-дайджест', 'boolean', NULL, 'Дайджест новостей в Telegram'), ('push', 'Push-уведомления', 'boolean', NULL, 'Push-уведомления в браузере/приложении'), ('ai_summary', 'AI-саммари по портфелю', 'boolean', NULL, 'AI-анализ портфеля каждый час'), ('alerts', 'Sentiment-алерты', 'boolean', NULL, 'Уведомления при резком изменении сентимента'), ('priority', 'Приоритетная доставка', 'string', '["normal", "high", "max"]', 'Приоритет обработки новостей'), ('early_delivery', 'Ранняя доставка', 'boolean', NULL, 'Доступ к новостям на 5 минут раньше'), ('custom_thresholds', 'Кастомные пороги', 'boolean', NULL, 'Настройка порогов для алертов'), ('club_access', 'Club доступ', 'boolean', NULL, 'Доступ к закрытому Telegram-чату'), ('api_access', 'API доступ', 'boolean', NULL, 'Доступ к REST API с токеном') ON CONFLICT (id) DO NOTHING`, name: 'features_registry_seed' },
     { sql: `CREATE TABLE IF NOT EXISTS password_reset_codes (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, code VARCHAR(6) NOT NULL, created_at TIMESTAMPTZ DEFAULT ${_SQL_NOW}, expires_at TIMESTAMPTZ NOT NULL, used_at TIMESTAMPTZ, used BOOLEAN DEFAULT FALSE)`, name: 'password_reset_codes' },
     { sql: `CREATE INDEX IF NOT EXISTS idx_password_reset_codes_user_expires ON password_reset_codes(user_id, expires_at DESC)`, name: 'idx_password_reset_codes_user_expires' },
     // Admin TG alerts
@@ -4737,32 +4763,24 @@ async function start() {
   try {
     await query(`
       INSERT INTO subscription_plans
-        (id, name, price_monthly, price_yearly, tag_limit, features, display_order, is_active, coming_soon_label)
+        (id, name, price, billing_frequency, yearly_discount, tag_limit, features, display_order, is_active, is_popular, coming_soon_label, plan_level)
       VALUES
-        ('free',    'Free',    0,     0,      3,
+        ('free',    'Free',    0,     'monthly', 0,  3,
          '{"telegram":false,"push":false,"ai_summary":false,"alerts":false,"priority":"normal"}',
-         1, TRUE, NULL),
-        ('base',    'Base',    100,   960,    10,
+         1, TRUE, FALSE, NULL, 0),
+        ('base',    'Base',    100,   'monthly', 20, 10,
          '{"telegram":true,"push":true,"ai_summary":false,"alerts":false,"priority":"normal"}',
-         2, TRUE, NULL),
-        ('premium', 'Premium', 990,   9504,   25,
+         2, TRUE, FALSE, NULL, 1),
+        ('premium', 'Premium', 990,   'monthly', 20, 25,
          '{"telegram":true,"push":true,"ai_summary":true,"alerts":true,"priority":"high"}',
-         3, TRUE, NULL),
-        ('club',    'Club',    2500,  24000,  -1,
+         3, TRUE, TRUE, NULL, 2),
+        ('club',    'Club',    2500,  'monthly', 20, -1,
          '{"telegram":true,"push":true,"ai_summary":true,"alerts":true,"priority":"max","early_delivery":true,"custom_thresholds":true,"club_access":true}',
-         4, FALSE, 'Скоро'),
-        ('pro',     'Pro',     2500,  24000,  -1,
+         4, TRUE, FALSE, 'Скоро', 3),
+        ('pro',     'Pro',     2500,  'monthly', 20, -1,
          '{"telegram":true,"push":true,"ai_summary":true,"alerts":true,"priority":"max","early_delivery":true,"custom_thresholds":true,"api_access":true}',
-         5, FALSE, 'Скоро')
-      ON CONFLICT (id) DO UPDATE SET
-        name = EXCLUDED.name,
-        price_monthly = EXCLUDED.price_monthly,
-        price_yearly = EXCLUDED.price_yearly,
-        tag_limit = EXCLUDED.tag_limit,
-        features = EXCLUDED.features,
-        display_order = EXCLUDED.display_order,
-        is_active = EXCLUDED.is_active,
-        coming_soon_label = EXCLUDED.coming_soon_label
+         5, TRUE, FALSE, 'Скоро', 4)
+      ON CONFLICT (id) DO NOTHING
     `);
     console.log('[DB] Migration: subscription_plans seeded');
   } catch (e: any) {
@@ -5031,6 +5049,14 @@ async function start() {
         .catch((e: any) => console.error('[Cron] Auto-renew failed:', e.message));
     });
     console.log('[Cron] Auto-renew scheduled daily at 09:00 UTC');
+
+    // Trial expirations — every 6 hours
+    cron.schedule('0 */6 * * *', () => {
+      processTrialExpirations()
+        .then((result) => console.log('[Cron] Trial expirations:', result))
+        .catch((e: any) => console.error('[Cron] Trial expirations failed:', e.message));
+    });
+    console.log('[Cron] Trial expirations scheduled every 6 hours');
 
     // ═══════════════════════════════════════════════════════════════════
     // Cron: scheduled downgrades

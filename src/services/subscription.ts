@@ -20,30 +20,29 @@ import { logSubscriptionActivated } from './activityLog';
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
-export const PLAN_LEVELS: Record<string, number> = {
-  free: 0,
-  base: 1,
-  premium: 2,
-  club: 3,
-  pro: 4,
-};
-
-export const PLAN_BILLING_DAYS = {
+export const PLAN_BILLING_DAYS: Record<string, number> = {
+  weekly: 7,
   monthly: 30,
+  quarterly: 90,
   yearly: 365,
 };
+
+export type BillingCycle = 'weekly' | 'monthly' | 'quarterly' | 'yearly';
 
 export interface Plan {
   id: string;
   name: string;
-  price_monthly: number;
-  price_yearly: number;
+  price: number;
+  billing_frequency: BillingCycle;
   yearly_discount: number;
   tag_limit: number;
   features: Record<string, any>;
   display_order: number;
   is_active: boolean;
+  is_popular: boolean;
   coming_soon_label: string | null;
+  plan_level: number;
+  deleted_at: string | null;
 }
 
 export interface SubscriptionStatus {
@@ -83,30 +82,91 @@ function uuidv4(): string {
   });
 }
 
+// ─── JSON parsing helper ───────────────────────────────────────────────────
+export function parseDbJson<T = any>(value: unknown): T | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'object') return value as T;
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value) as T;
+    } catch {
+      return value as unknown as T;
+    }
+  }
+  return null;
+}
+
 // ─── Plan helpers ──────────────────────────────────────────────────────────
-export function planLevel(planId: string): number {
-  return PLAN_LEVELS[planId] ?? 0;
+export async function planLevel(planId: string): Promise<number> {
+  const plan = await getPlanById(planId);
+  return plan?.plan_level ?? 0;
 }
 
-export function isAtLeast(currentPlanId: string, minPlanId: string): boolean {
-  return planLevel(currentPlanId) >= planLevel(minPlanId);
+export function planLevelOf(plan: Plan | null): number {
+  return plan?.plan_level ?? 0;
 }
 
-export function isPaid(planId: string): boolean {
-  return planLevel(planId) >= 1;
+export async function isAtLeast(currentPlanId: string, minPlanId: string): Promise<boolean> {
+  const [current, min] = await Promise.all([planLevel(currentPlanId), planLevel(minPlanId)]);
+  return current >= min;
+}
+
+export async function isPaid(planId: string): Promise<boolean> {
+  return (await planLevel(planId)) >= 1;
 }
 
 export async function getPlanById(planId: string): Promise<Plan | null> {
   const result = await query(`SELECT * FROM subscription_plans WHERE id = $1`, [planId]);
-  return result.rows[0] || null;
+  if (!result.rows[0]) return null;
+  const plan = result.rows[0];
+  plan.features = parseDbJson(plan.features) || {};
+  return plan;
 }
 
 export async function getActivePlans(): Promise<Plan[]> {
   const result = await query(
+    `SELECT * FROM subscription_plans
+     WHERE is_active = TRUE AND deleted_at IS NULL
+     ORDER BY display_order ASC`,
+    []
+  );
+  return result.rows.map((p) => ({ ...p, features: parseDbJson(p.features) || {} }));
+}
+
+export async function getAllPlans(): Promise<Plan[]> {
+  const result = await query(
     `SELECT * FROM subscription_plans ORDER BY display_order ASC`,
     []
   );
-  return result.rows;
+  return result.rows.map((p) => ({ ...p, features: parseDbJson(p.features) || {} }));
+}
+
+export async function getActiveSubscriberCount(planId: string): Promise<number> {
+  const result = await query(
+    `SELECT COUNT(*)::int as cnt FROM users
+     WHERE subscription_plan = $1 AND subscription_active = TRUE`,
+    [planId]
+  );
+  return Number(result.rows[0]?.cnt || 0);
+}
+
+export function computePlanPrice(plan: Plan, billingCycle: BillingCycle): number {
+  const base = Number(plan.price);
+  if (billingCycle === 'yearly') {
+    if (plan.yearly_discount > 0) {
+      return Math.round(base * 12 * (1 - plan.yearly_discount / 100));
+    }
+    if (plan.billing_frequency !== 'yearly') {
+      return Math.round(base * 12);
+    }
+  }
+  if (billingCycle === 'quarterly' && plan.billing_frequency !== 'quarterly') {
+    return Math.round(base * 3);
+  }
+  if (billingCycle === 'weekly' && plan.billing_frequency !== 'weekly') {
+    return Math.round(base / 4);
+  }
+  return base;
 }
 
 // ─── User subscription helpers ─────────────────────────────────────────────
@@ -174,7 +234,7 @@ export function buildSubscriptionStatus(sub: ReturnType<typeof getUserSubscripti
 export interface UpgradePreview {
   currentPlan: string;
   targetPlan: string;
-  billingCycle: 'monthly' | 'yearly';
+  billingCycle: BillingCycle;
   daysLeft: number;
   topUpAmount: number;
   fullPrice: number;
@@ -184,11 +244,12 @@ export interface UpgradePreview {
 }
 
 export async function calculateUpgradePrice(
-  currentPlanId: string,
+  userId: string,
   targetPlanId: string,
-  billingCycle: 'monthly' | 'yearly',
-  subscriptionExpiresAt: Date | null
+  billingCycle: BillingCycle
 ): Promise<UpgradePreview> {
+  const sub = await getUserSubscription(userId);
+  const currentPlanId = sub.plan;
   const currentPlan = await getPlanById(currentPlanId);
   const targetPlan = await getPlanById(targetPlanId);
 
@@ -196,14 +257,19 @@ export async function calculateUpgradePrice(
     throw new Error('Plan not found');
   }
 
-  const currentPrice =
-    billingCycle === 'monthly' ? Number(currentPlan.price_monthly) : Number(currentPlan.price_yearly);
-  const targetPrice =
-    billingCycle === 'monthly' ? Number(targetPlan.price_monthly) : Number(targetPlan.price_yearly);
+  // Current price from user's last completed payment, not plan.price
+  const lastPayment = await query(
+    `SELECT amount FROM payments
+     WHERE user_id = $1 AND status = 'completed'
+     ORDER BY paid_at DESC NULLS LAST, created_at DESC LIMIT 1`,
+    [userId]
+  );
+  const currentPrice = Number(lastPayment.rows[0]?.amount || 0);
+  const targetPrice = computePlanPrice(targetPlan, billingCycle);
   const daysInPeriod = PLAN_BILLING_DAYS[billingCycle];
 
   const now = new Date();
-  const expires = subscriptionExpiresAt ? new Date(subscriptionExpiresAt) : null;
+  const expires = sub.expiresAt;
   const msPerDay = 24 * 60 * 60 * 1000;
 
   let daysLeft = 0;
@@ -233,7 +299,7 @@ export async function calculateUpgradePrice(
     fullPrice: targetPrice,
     newPeriodDays: daysInPeriod,
     description: `Доплата ${currentPlanId} → ${targetPlanId} (${daysLeft} дн. осталось)`,
-    canUpgrade: planLevel(targetPlanId) > planLevel(currentPlanId) || samePrice,
+    canUpgrade: planLevelOf(targetPlan) > planLevelOf(currentPlan) || samePrice,
   };
 }
 
@@ -440,8 +506,8 @@ export async function processAutoRenewals(): Promise<{
   for (const row of dueUsers.rows) {
     try {
       const plan = await getPlanById(row.subscription_plan);
-      if (!plan || !plan.is_active) {
-        console.warn(`[AutoRenew] Plan ${row.subscription_plan} not active for user ${row.user_id}`);
+      if (!plan || !plan.is_active || plan.deleted_at) {
+        console.warn(`[AutoRenew] Plan ${row.subscription_plan} not available (deleted=${plan?.deleted_at || 'N/A'}, active=${plan?.is_active})`);
         continue;
       }
 
@@ -460,14 +526,16 @@ export async function processAutoRenewals(): Promise<{
       }
       const paymentMethod = pmResult.rows[0];
 
-      const amount = Number(plan.price_monthly);
+      const billingCycle = plan.billing_frequency || 'monthly';
+      const amount = Number(plan.price);
+      const durationDays = PLAN_BILLING_DAYS[billingCycle] || 30;
       const paymentId = uuidv4();
 
       await query(
         `INSERT INTO payments
            (id, user_id, amount, base_amount, discount, method, status, plan_id, billing_cycle, duration_days, is_upgrade)
-         VALUES ($1, $2, $3, $4, 0, 'bank_card', 'pending', $5, 'monthly', 30, FALSE)`,
-        [paymentId, row.user_id, amount, amount, row.subscription_plan]
+         VALUES ($1, $2, $3, $4, 0, 'bank_card', 'pending', $5, $6, $7, FALSE)`,
+        [paymentId, row.user_id, amount, amount, row.subscription_plan, billingCycle, durationDays]
       );
 
       const yookassaRes = await axios.post(
@@ -481,8 +549,8 @@ export async function processAutoRenewals(): Promise<{
             payment_id: paymentId,
             user_id: row.user_id,
             plan_id: row.subscription_plan,
-            billing_cycle: 'monthly',
-            duration_days: '30',
+            billing_cycle: billingCycle,
+            duration_days: String(durationDays),
             is_upgrade: 'false',
             auto_renew: 'true',
           },
@@ -518,7 +586,7 @@ export async function processAutoRenewals(): Promise<{
           `UPDATE payments SET status = 'completed', paid_at = ${nowSql()} WHERE id = $1`,
           [paymentId]
         );
-        await activateSubscription(row.user_id, row.subscription_plan, 30, paymentId, false);
+        await activateSubscription(row.user_id, row.subscription_plan, durationDays, paymentId, false);
         await query(`UPDATE users SET auto_renew_failures = 0 WHERE id = $1`, [row.user_id]);
         console.log(`[AutoRenew] Success: user ${row.user_id}, ${amount} RUB, card *${paymentMethod.card_last4 || '****'}`);
         result.processed++;
@@ -599,6 +667,10 @@ export async function cancelScheduledDowngrade(userId: string): Promise<void> {
     `UPDATE users SET scheduled_plan_downgrade = NULL WHERE id = $1`,
     [userId]
   );
+  // Unfreeze all tags — user cancelled the downgrade
+  await query(`DELETE FROM frozen_tags WHERE user_id = $1`, [userId]);
+  await query(`UPDATE portfolios SET is_frozen = FALSE WHERE user_id = $1`, [userId]);
+  await notifySubscriptionEvent(userId, 'downgrade_cancelled', 'Даунгрейд отменён, все теги разморожены');
 }
 
 export async function processScheduledDowngrades(): Promise<number> {
@@ -630,7 +702,7 @@ export async function processScheduledDowngrades(): Promise<number> {
 // ─── Notifications ─────────────────────────────────────────────────────────
 export async function notifySubscriptionEvent(
   userId: string,
-  type: 'reminder_3d' | 'reminder_1d' | 'grace_1d' | 'grace_3d' | 'downgrade_done',
+  type: 'reminder_3d' | 'reminder_1d' | 'grace_1d' | 'grace_3d' | 'downgrade_done' | 'downgrade_cancelled',
   message: string
 ): Promise<void> {
   // Dedup by user+type (we keep only the latest record per type)
@@ -739,6 +811,212 @@ function nowSqlPlusDays(days: number): string {
     : `NOW() + INTERVAL '${days} days'`;
 }
 
+// ─── Feature registry cache ────────────────────────────────────────────────
+interface FeatureRegistryEntry {
+  id: string;
+  label: string;
+  type: string;
+  options: any;
+  description: string | null;
+  is_active: boolean;
+  loadedAt: number;
+}
+
+let featuresRegistryCache: Record<string, FeatureRegistryEntry> | null = null;
+let featuresRegistryCacheAt = 0;
+const FEATURE_REGISTRY_TTL = 5 * 60 * 1000; // 5 minutes
+
+async function loadFeaturesRegistry(): Promise<Record<string, FeatureRegistryEntry>> {
+  const now = Date.now();
+  if (featuresRegistryCache && now - featuresRegistryCacheAt < FEATURE_REGISTRY_TTL) {
+    return featuresRegistryCache;
+  }
+  const result = await query(`SELECT * FROM features_registry`);
+  const map: Record<string, FeatureRegistryEntry> = {};
+  for (const row of result.rows) {
+    map[row.id] = { ...row, options: parseDbJson(row.options), loadedAt: now };
+  }
+  featuresRegistryCache = map;
+  featuresRegistryCacheAt = now;
+  return map;
+}
+
+export async function hasFeature(userId: string, featureId: string): Promise<boolean> {
+  const sub = await getUserSubscription(userId);
+  if (!sub.active) return false;
+
+  const plan = await getPlanById(sub.plan);
+  if (!plan?.features?.[featureId]) return false;
+
+  const registry = await loadFeaturesRegistry();
+  const feature = registry[featureId];
+  if (!feature?.is_active) return false;
+
+  return true;
+}
+
+export function requireFeature(featureId: string) {
+  return async (req: AuthRequest, res: Response, next: NextFunction) => {
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    const has = await hasFeature(userId, featureId);
+    if (!has) {
+      return res.status(403).json({ error: `Feature '${featureId}' not available` });
+    }
+    next();
+  };
+}
+
+// ─── Trial expiration cron ─────────────────────────────────────────────────
+export async function processTrialExpirations(): Promise<{
+  processed: number;
+  failed: number;
+}> {
+  const result = { processed: 0, failed: 0 };
+
+  const since = USE_SQLITE
+    ? "datetime('now', '-7 days')"
+    : "NOW() - INTERVAL '7 days'";
+
+  const trialUsers = await query(
+    `SELECT u.id as user_id, u.email, u.subscription_plan, u.subscription_expires_at,
+            uup.trial_days_used, uup.promo_code_id, uup.expected_renewal_price
+     FROM users u
+     JOIN user_promo_uses uup ON uup.user_id = u.id
+     WHERE uup.trial_days_used IS NOT NULL
+       AND u.subscription_expires_at < ${nowSql()}
+       AND u.subscription_expires_at > ${since}
+       AND u.subscription_active = TRUE
+       AND u.scheduled_plan_downgrade IS NULL`,
+    []
+  );
+
+  for (const row of trialUsers.rows) {
+    try {
+      const plan = await getPlanById(row.subscription_plan);
+      if (!plan || !plan.is_active || plan.deleted_at) {
+        await scheduleDowngrade(row.user_id, 'free');
+        await notifySubscriptionEvent(
+          row.user_id,
+          'grace_1d',
+          `Тариф ${plan?.name || row.subscription_plan} больше не доступен. Подписка будет переведена на Free.`
+        );
+        result.processed++;
+        continue;
+      }
+
+      if (!IS_YOOKASSA_CONFIGURED) {
+        // DEMO mode: grace period then downgrade
+        await scheduleDowngrade(row.user_id, 'free');
+        await notifySubscriptionEvent(
+          row.user_id,
+          'grace_1d',
+          'Ваш пробный период закончился. Оформите подписку для продолжения.'
+        );
+        result.processed++;
+        continue;
+      }
+
+      const pmResult = await query(
+        `SELECT payment_method_id, card_last4
+         FROM user_payment_methods
+         WHERE user_id = $1 AND is_active = TRUE
+         ORDER BY is_default DESC, created_at DESC
+         LIMIT 1`,
+        [row.user_id]
+      );
+      if (pmResult.rows.length === 0) {
+        await scheduleDowngrade(row.user_id, 'free');
+        await notifySubscriptionEvent(
+          row.user_id,
+          'grace_1d',
+          'Ваш пробный период закончился. Привяжите карту для продолжения подписки.'
+        );
+        result.processed++;
+        continue;
+      }
+      const paymentMethod = pmResult.rows[0];
+
+      const amount = Number(plan.price);
+      const paymentId = uuidv4();
+
+      await query(
+        `INSERT INTO payments
+           (id, user_id, amount, base_amount, discount, method, status, plan_id, billing_cycle, duration_days, is_upgrade)
+         VALUES ($1, $2, $3, $4, 0, 'bank_card', 'pending', $5, 'monthly', 30, FALSE)`,
+        [paymentId, row.user_id, amount, amount, row.subscription_plan]
+      );
+
+      const yookassaRes = await axios.post(
+        'https://api.yookassa.ru/v3/payments',
+        {
+          amount: { value: amount.toFixed(2), currency: 'RUB' },
+          payment_method_id: paymentMethod.payment_method_id,
+          capture: true,
+          description: `PULSE ${plan.name} — продление после trial`.slice(0, 128),
+          metadata: {
+            payment_id: paymentId,
+            user_id: row.user_id,
+            plan_id: row.subscription_plan,
+            billing_cycle: 'monthly',
+            duration_days: '30',
+            is_upgrade: 'false',
+            auto_renew: 'true',
+          },
+          receipt: {
+            customer: { email: row.email },
+            items: [{
+              description: `Подписка PULSE ${plan.name} (продление после trial)`.slice(0, 128),
+              quantity: '1.00',
+              amount: { value: amount.toFixed(2), currency: 'RUB' },
+              vat_code: 1,
+              payment_subject: 'service',
+              payment_mode: 'full_payment',
+            }],
+          },
+        },
+        {
+          headers: {
+            Authorization: yookassaAuth(),
+            'Idempotence-Key': `trial-renew-${paymentId}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 15000,
+        }
+      );
+
+      await query(`UPDATE payments SET provider_ref = $1 WHERE id = $2`, [yookassaRes.data.id, paymentId]);
+
+      if (yookassaRes.data.status === 'succeeded') {
+        await query(`UPDATE payments SET status = 'completed', paid_at = ${nowSql()} WHERE id = $1`, [paymentId]);
+        await activateSubscription(row.user_id, row.subscription_plan, 30, paymentId, false);
+        await query(`UPDATE users SET auto_renew_failures = 0 WHERE id = $1`, [row.user_id]);
+        result.processed++;
+      } else if (yookassaRes.data.status === 'canceled') {
+        await query(`UPDATE payments SET status = 'failed' WHERE id = $1`, [paymentId]);
+        await scheduleDowngrade(row.user_id, 'free');
+        await notifySubscriptionEvent(
+          row.user_id,
+          'grace_1d',
+          'Ваш пробный период закончился. Привяжите новую карту для продолжения подписки.'
+        );
+        result.failed++;
+      }
+      // pending / waiting_for_capture → webhook will finish the job
+    } catch (err: any) {
+      console.error(`[TrialExpiration] Failed for user ${row.user_id}:`, err.response?.data || err.message);
+      try {
+        await scheduleDowngrade(row.user_id, 'free');
+      } catch { /* ignore */ }
+      result.failed++;
+    }
+  }
+
+  return result;
+}
+
 // ─── Middleware factory ────────────────────────────────────────────────────
 import { Response, NextFunction } from 'express';
 import { AuthRequest } from '../middleware/auth';
@@ -754,7 +1032,8 @@ export function requireMinPlan(minPlanId: string) {
     if (!status.active && minPlanId !== 'free') {
       return res.status(403).json({ error: 'Subscription required', required: minPlanId, current: sub.plan });
     }
-    if (planLevel(sub.plan) < planLevel(minPlanId)) {
+    const [currentLevel, minLevel] = await Promise.all([planLevel(sub.plan), planLevel(minPlanId)]);
+    if (currentLevel < minLevel) {
       return res.status(403).json({ error: 'Requires paid plan', required: minPlanId, current: sub.plan });
     }
     next();

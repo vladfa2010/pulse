@@ -11,44 +11,39 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE TABLE IF NOT EXISTS subscription_plans (
   id              VARCHAR(20) PRIMARY KEY,
   name            VARCHAR(50) NOT NULL,
-  price_monthly   DECIMAL(10,2) NOT NULL,
-  price_yearly    DECIMAL(10,2) NOT NULL,
-  yearly_discount INTEGER DEFAULT 20,
+  price           DECIMAL(10,2) NOT NULL DEFAULT 0,
+  billing_frequency VARCHAR(20) NOT NULL DEFAULT 'monthly',
+  yearly_discount INTEGER DEFAULT 0,
   tag_limit       INTEGER NOT NULL,
   features        JSONB NOT NULL DEFAULT '{}',
   display_order   INTEGER NOT NULL DEFAULT 0,
   is_active       BOOLEAN DEFAULT TRUE,
+  is_popular      BOOLEAN DEFAULT FALSE,
   coming_soon_label VARCHAR(50) DEFAULT NULL,
+  plan_level      INTEGER NOT NULL DEFAULT 0,
+  deleted_at      TIMESTAMP DEFAULT NULL,
   created_at      TIMESTAMP DEFAULT NOW()
 );
 
 INSERT INTO subscription_plans
-  (id, name, price_monthly, price_yearly, tag_limit, features, display_order, is_active, coming_soon_label)
+  (id, name, price, billing_frequency, yearly_discount, tag_limit, features, display_order, is_active, is_popular, coming_soon_label, plan_level)
 VALUES
-  ('free',    'Free',    0,     0,      3,
+  ('free',    'Free',    0,     'monthly', 0,  3,
    '{"telegram":false,"push":false,"ai_summary":false,"alerts":false,"priority":"normal"}',
-   1, TRUE, NULL),
-  ('base',    'Base',    100,   960,    10,
+   1, TRUE, FALSE, NULL, 0),
+  ('base',    'Base',    100,   'monthly', 20, 10,
    '{"telegram":true,"push":true,"ai_summary":false,"alerts":false,"priority":"normal"}',
-   2, TRUE, NULL),
-  ('premium', 'Premium', 990,   9504,   25,
+   2, TRUE, FALSE, NULL, 1),
+  ('premium', 'Premium', 990,   'monthly', 20, 25,
    '{"telegram":true,"push":true,"ai_summary":true,"alerts":true,"priority":"high"}',
-   3, TRUE, NULL),
-  ('club',    'Club',    2500,  24000,  -1,
+   3, TRUE, TRUE, NULL, 2),
+  ('club',    'Club',    2500,  'monthly', 20, -1,
    '{"telegram":true,"push":true,"ai_summary":true,"alerts":true,"priority":"max","early_delivery":true,"custom_thresholds":true,"club_access":true}',
-   4, FALSE, 'Скоро'),
-  ('pro',     'Pro',     2500,  24000,  -1,
+   4, TRUE, FALSE, 'Скоро', 3),
+  ('pro',     'Pro',     2500,  'monthly', 20, -1,
    '{"telegram":true,"push":true,"ai_summary":true,"alerts":true,"priority":"max","early_delivery":true,"custom_thresholds":true,"api_access":true}',
-   5, FALSE, 'Скоро')
-ON CONFLICT (id) DO UPDATE SET
-  name = EXCLUDED.name,
-  price_monthly = EXCLUDED.price_monthly,
-  price_yearly = EXCLUDED.price_yearly,
-  tag_limit = EXCLUDED.tag_limit,
-  features = EXCLUDED.features,
-  display_order = EXCLUDED.display_order,
-  is_active = EXCLUDED.is_active,
-  coming_soon_label = EXCLUDED.coming_soon_label;
+   5, TRUE, FALSE, 'Скоро', 4)
+ON CONFLICT (id) DO NOTHING;
 
 -- ============================================================
 -- 1. users
@@ -99,9 +94,82 @@ CREATE TABLE IF NOT EXISTS payments (
   billing_cycle VARCHAR(10) DEFAULT 'monthly',
   duration_days INTEGER DEFAULT 30,
   is_upgrade  BOOLEAN DEFAULT FALSE,
+  promo_code  VARCHAR(50) DEFAULT NULL,
+  promo_discount_type VARCHAR(20) DEFAULT NULL,
+  promo_discount_value INTEGER DEFAULT NULL,
   paid_at     TIMESTAMP,
   created_at  TIMESTAMP DEFAULT NOW()
 );
+
+CREATE INDEX IF NOT EXISTS idx_payments_promo ON payments(promo_code);
+
+-- ============================================================
+-- 3b. promo_codes
+-- ============================================================
+CREATE TABLE IF NOT EXISTS promo_codes (
+  id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  code            VARCHAR(50) NOT NULL UNIQUE,
+  description     VARCHAR(255) DEFAULT NULL,
+  discount_type   VARCHAR(20) NOT NULL DEFAULT 'percent',
+  discount_value  INTEGER NOT NULL DEFAULT 0,
+  applicable_plans VARCHAR(20)[] DEFAULT NULL,
+  max_uses        INTEGER DEFAULT NULL,
+  uses_count      INTEGER NOT NULL DEFAULT 0,
+  valid_from      TIMESTAMP NOT NULL DEFAULT NOW(),
+  expires_at      TIMESTAMP DEFAULT NULL,
+  is_active       BOOLEAN NOT NULL DEFAULT TRUE,
+  created_by      UUID REFERENCES users(id),
+  created_at      TIMESTAMP DEFAULT NOW(),
+  updated_at      TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_promo_codes_code ON promo_codes(code);
+CREATE INDEX IF NOT EXISTS idx_promo_codes_active ON promo_codes(is_active) WHERE is_active = TRUE;
+
+-- ============================================================
+-- 3c. user_promo_uses
+-- ============================================================
+CREATE TABLE IF NOT EXISTS user_promo_uses (
+  id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  promo_code_id   UUID NOT NULL REFERENCES promo_codes(id) ON DELETE CASCADE,
+  plan_id         VARCHAR(20) NOT NULL,
+  billing_cycle   VARCHAR(10) NOT NULL,
+  discount_applied INTEGER NOT NULL DEFAULT 0,
+  trial_days_used INTEGER DEFAULT NULL,
+  expected_renewal_price DECIMAL(10,2) DEFAULT NULL,
+  payment_id      UUID REFERENCES payments(id),
+  created_at      TIMESTAMP DEFAULT NOW(),
+  UNIQUE(user_id, promo_code_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_promo_uses_user ON user_promo_uses(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_promo_uses_promo ON user_promo_uses(promo_code_id);
+
+-- ============================================================
+-- 3d. features_registry
+-- ============================================================
+CREATE TABLE IF NOT EXISTS features_registry (
+  id          VARCHAR(50) PRIMARY KEY,
+  label       VARCHAR(100) NOT NULL,
+  type        VARCHAR(20) NOT NULL DEFAULT 'boolean',
+  options     JSONB DEFAULT NULL,
+  description VARCHAR(255) DEFAULT NULL,
+  is_active   BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at  TIMESTAMP DEFAULT NOW()
+);
+
+INSERT INTO features_registry (id, label, type, options, description) VALUES
+  ('telegram', 'Telegram-дайджест', 'boolean', NULL, 'Дайджест новостей в Telegram'),
+  ('push', 'Push-уведомления', 'boolean', NULL, 'Push-уведомления в браузере/приложении'),
+  ('ai_summary', 'AI-саммари по портфелю', 'boolean', NULL, 'AI-анализ портфеля каждый час'),
+  ('alerts', 'Sentiment-алерты', 'boolean', NULL, 'Уведомления при резком изменении сентимента'),
+  ('priority', 'Приоритетная доставка', 'string', '["normal", "high", "max"]', 'Приоритет обработки новостей'),
+  ('early_delivery', 'Ранняя доставка', 'boolean', NULL, 'Доступ к новостям на 5 минут раньше'),
+  ('custom_thresholds', 'Кастомные пороги', 'boolean', NULL, 'Настройка порогов для алертов'),
+  ('club_access', 'Club доступ', 'boolean', NULL, 'Доступ к закрытому Telegram-чату'),
+  ('api_access', 'API доступ', 'boolean', NULL, 'Доступ к REST API с токеном')
+ON CONFLICT (id) DO NOTHING;
 
 -- ============================================================
 -- 4. news

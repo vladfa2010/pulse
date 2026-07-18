@@ -100,3 +100,18 @@ export const webhookLimiter = rateLimit({
   legacyHeaders: false,
   validate: { trustProxy: false },
 });
+
+// ─── Promo validate endpoint ───────────────────────────────────────────────
+// 10 проверок промокода в минуту на IP
+export const promoValidateLimiter = rateLimit({
+  windowMs: 60 * 1000,   // 1 минута
+  max: 10,
+  message: {
+    error: 'Слишком много попыток. Попробуйте позже.',
+    retryAfter: '1 minute',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.ip || 'unknown',
+  validate: { trustProxy: false },
+});

@@ -8,12 +8,13 @@ import { createUserTag, getAllTagNames, detectTagTypeViaLLM, TAG_TYPE_LABELS } f
 import {
   getPlanById, getUserSubscription, buildSubscriptionStatus,
   scheduleDowngrade, cancelScheduledDowngrade, requireMinPlan,
-  getExcessTagsForDowngrade,
+  getExcessTagsForDowngrade, parseDbJson,
 } from '../services/subscription';
 import type { TagType, TagEnrichment } from '../services/tagManager';
 import axios from 'axios';
 import { getVapidPublicKey } from '../services/webPush';
 import { logTagAdded, logTagRemoved } from '../services/activityLog';
+import { savePaymentMethod } from '../services/subscription';
 
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
@@ -829,6 +830,124 @@ router.get('/stats', authMiddleware, async (req: AuthRequest, res) => {
 // ============================================================
 // Subscription / downgrade / auto-renew / push subscriptions
 // ============================================================
+
+// GET /api/user/my-plan — текущий тариф пользователя (даже удалённый)
+router.get('/my-plan', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.userId;
+    const userResult = await query(
+      `SELECT subscription_plan FROM users WHERE id = $1`,
+      [userId]
+    );
+    const planId = userResult.rows[0]?.subscription_plan || 'free';
+    const planResult = await query(
+      `SELECT * FROM subscription_plans WHERE id = $1`,
+      [planId]
+    );
+    const plan = planResult.rows[0];
+    if (!plan) {
+      return res.status(404).json({ error: 'Plan not found' });
+    }
+    res.json({
+      plan: {
+        id: plan.id,
+        name: plan.name,
+        price: Number(plan.price),
+        billingFrequency: plan.billing_frequency,
+        yearlyDiscount: plan.yearly_discount,
+        tagLimit: plan.tag_limit,
+        features: parseDbJson(plan.features) || {},
+        isActive: plan.is_active,
+        isPopular: plan.is_popular,
+        deletedAt: plan.deleted_at,
+        planLevel: plan.plan_level,
+      },
+    });
+  } catch (err) {
+    console.error('[MyPlan] Error:', err);
+    res.status(500).json({ error: 'Failed to fetch plan' });
+  }
+});
+
+// POST /api/user/update-payment-method — создать 1₽ платёж для привязки карты
+router.post('/update-payment-method', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.userId;
+    const userEmail = req.user!.email || '';
+
+    const YOOKASSA_SHOP_ID = process.env.YOOKASSA_SHOP_ID || '';
+    const YOOKASSA_SECRET_KEY = process.env.YOOKASSA_SECRET_KEY || '';
+    const IS_YOOKASSA_CONFIGURED = YOOKASSA_SHOP_ID && YOOKASSA_SECRET_KEY;
+    const FRONTEND_URL = process.env.FRONTEND_URL || 'https://pulse-frontend-jt53.onrender.com';
+
+    if (!IS_YOOKASSA_CONFIGURED) {
+      return res.status(400).json({ error: 'YuKassa not configured' });
+    }
+
+    function uuidv4(): string {
+      return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+        const r = Math.random() * 16 | 0;
+        const v = c === 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+      });
+    }
+
+    const paymentId = uuidv4();
+    const amount = 1.0;
+
+    await query(
+      `INSERT INTO payments (id, user_id, amount, base_amount, discount, method, status, plan_id, billing_cycle, duration_days, is_upgrade)
+       VALUES ($1, $2, $3, $3, 0, 'bank_card', 'pending', NULL, 'monthly', 0, FALSE)`,
+      [paymentId, userId, amount]
+    );
+
+    const yookassaRes = await axios.post(
+      'https://api.yookassa.ru/v3/payments',
+      {
+        amount: { value: amount.toFixed(2), currency: 'RUB' },
+        capture: true,
+        confirmation: { type: 'redirect', return_url: `${FRONTEND_URL}/payment/return?payment_id=${paymentId}&update_method=1` },
+        description: `PULSE — привязка карты ${userEmail}`.slice(0, 128),
+        save_payment_method: 'true',
+        merchant_customer_id: userId,
+        metadata: {
+          payment_id: paymentId,
+          user_id: userId,
+          update_payment_method: 'true',
+        },
+        receipt: {
+          customer: { email: userEmail },
+          items: [{
+            description: 'Привязка карты PULSE'.slice(0, 128),
+            quantity: '1.00',
+            amount: { value: amount.toFixed(2), currency: 'RUB' },
+            vat_code: 1,
+            payment_subject: 'service',
+            payment_mode: 'full_payment',
+          }],
+        },
+      },
+      {
+        headers: {
+          Authorization: 'Basic ' + Buffer.from(`${YOOKASSA_SHOP_ID}:${YOOKASSA_SECRET_KEY}`).toString('base64'),
+          'Idempotence-Key': uuidv4(),
+          'Content-Type': 'application/json',
+        },
+        timeout: 15000,
+      }
+    );
+
+    await query(`UPDATE payments SET provider_ref = $1 WHERE id = $2`, [yookassaRes.data.id, paymentId]);
+
+    res.json({
+      payment: { id: paymentId, amount, status: 'pending' },
+      confirmation_url: yookassaRes.data.confirmation?.confirmation_url,
+    });
+  } catch (err: any) {
+    console.error('[UpdatePaymentMethod] Error:', err.response?.data || err.message);
+    res.status(500).json({ error: 'Failed to create payment method update' });
+  }
+});
 
 // GET /api/user/tariff-status — полный статус тарифа для профиля
 router.get('/tariff-status', authMiddleware, async (req: AuthRequest, res) => {

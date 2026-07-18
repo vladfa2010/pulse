@@ -3,7 +3,7 @@
  * PULSE — Public Plans API
  * =============================================================================
  *
- * GET /api/plans — список тарифов (включая coming soon)
+ * GET /api/plans — список активных тарифов
  */
 
 import { Router } from 'express';
@@ -18,14 +18,16 @@ router.get('/', async (_req, res) => {
       plans: plans.map((p) => ({
         id: p.id,
         name: p.name,
-        priceMonthly: Number(p.price_monthly),
-        priceYearly: Number(p.price_yearly),
+        price: Number(p.price),
+        billingFrequency: p.billing_frequency,
         yearlyDiscount: p.yearly_discount,
         tagLimit: p.tag_limit,
+        planLevel: p.plan_level,
         features: p.features || {},
         isActive: p.is_active,
+        isPopular: p.is_popular,
         comingSoonLabel: p.coming_soon_label,
-        isPopular: p.id === 'premium',
+        displayOrder: p.display_order,
       })),
     });
   } catch (err: any) {

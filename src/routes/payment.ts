@@ -31,8 +31,11 @@ import {
   getPlanById,
   getUserSubscription,
   PLAN_BILLING_DAYS,
-  planLevel,
+  planLevelOf,
+  computePlanPrice,
+  BillingCycle,
 } from '../services/subscription';
+import { validatePromoCode, applyPromoToPayment, incrementPromoUsage, getPromoByCode } from '../services/promo';
 import { logPaymentCompleted } from '../services/activityLog';
 
 const router = Router();
@@ -63,12 +66,12 @@ function yookassaAuth(): string {
 }
 
 function buildReturnUrl(paymentId: string): string {
-  // Hash-router reads search params after the hash fragment
-  return `${FRONTEND_URL}/#/payment/return?payment_id=${paymentId}&return=1`;
+  // BrowserRouter path
+  return `${FRONTEND_URL}/payment/return?payment_id=${paymentId}&return=1`;
 }
 
 function buildDemoReturnUrl(paymentId: string): string {
-  return `${FRONTEND_URL}/#/payment/return?demo=1&payment_id=${paymentId}&return=1`;
+  return `${FRONTEND_URL}/payment/return?demo=1&payment_id=${paymentId}&return=1`;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -79,12 +82,10 @@ router.get('/upgrade-preview', authMiddleware, validate(UpgradePreviewSchema), a
     const userId = req.user!.userId;
     const { targetPlan, billingCycle } = req.query as any;
 
-    const sub = await getUserSubscription(userId);
     const preview = await calculateUpgradePrice(
-      sub.plan,
+      userId,
       targetPlan as string,
-      billingCycle as 'monthly' | 'yearly',
-      sub.expiresAt
+      billingCycle as BillingCycle
     );
 
     res.json(preview);
@@ -102,32 +103,69 @@ router.post('/create', authMiddleware, validate(CreatePaymentSchema), async (req
     const userId = req.user!.userId;
     const userEmail = req.user!.email || '';
     const planId = req.body.planId as string;
-    const billingCycle = req.body.billingCycle as 'monthly' | 'yearly';
+    const billingCycle = req.body.billingCycle as BillingCycle;
     const isUpgrade = !!req.body.isUpgrade;
     const method = (req.body.method as string) || 'bank_card';
+    const promoCodeInput = req.body.promoCode as string | undefined;
 
     const plan = await getPlanById(planId);
     if (!plan) {
       return res.status(400).json({ error: 'Invalid plan' });
     }
-    if (!plan.is_active) {
+    if (!plan.is_active || plan.deleted_at) {
       return res.status(400).json({ error: 'Plan not available for purchase' });
     }
 
     const sub = await getUserSubscription(userId);
+    const currentPlan = await getPlanById(sub.plan);
 
     // Validate upgrade direction
-    if (isUpgrade && planLevel(planId) <= planLevel(sub.plan)) {
+    if (isUpgrade && planLevelOf(plan) <= planLevelOf(currentPlan)) {
       return res.status(400).json({ error: 'Invalid upgrade direction' });
     }
 
-    const durationDays = PLAN_BILLING_DAYS[billingCycle];
-    const fullPrice = billingCycle === 'monthly' ? Number(plan.price_monthly) : Number(plan.price_yearly);
+    let durationDays = PLAN_BILLING_DAYS[billingCycle];
+    const fullPrice = computePlanPrice(plan, billingCycle);
 
     let finalAmount = fullPrice;
+    let appliedPromo: { code: string; discount_type: string; discount_value: number } | null = null;
+    let trialDays: number | undefined;
+    let savePaymentMethod = 'true';
+    let metadata: Record<string, string> = {};
+
+    if (promoCodeInput && !isUpgrade) {
+      const promoResult = await validatePromoCode(promoCodeInput, planId, userId);
+      if (!promoResult.valid) {
+        return res.status(400).json({ error: 'Invalid promo code', reason: promoResult.reason });
+      }
+      const promo = promoResult.promo!;
+      const computed = promo.discount_type === 'trial'
+        ? { finalAmount: 1.0, trialDays: promo.discount_value, discountApplied: 0 }
+        : { finalAmount: Math.max(1.0, Math.round(fullPrice * (1 - promo.discount_value / 100) * 100) / 100), trialDays: undefined, discountApplied: Math.round((fullPrice - Math.max(1.0, fullPrice * (1 - promo.discount_value / 100))) * 100) / 100 };
+      finalAmount = computed.finalAmount;
+      trialDays = computed.trialDays;
+      appliedPromo = {
+        code: promo.code,
+        discount_type: promo.discount_type,
+        discount_value: promo.discount_value,
+      };
+      if (promo.discount_type === 'trial') {
+        durationDays = trialDays || durationDays;
+        metadata.trial_days = String(trialDays);
+        metadata.trial_promo_code = promo.code;
+      }
+      if (promo.discount_type === 'percent' && promo.discount_value >= 100) {
+        metadata.promo_100_percent_refund = 'true';
+        metadata.trial_promo_code = promo.code;
+      }
+    }
+
     if (isUpgrade) {
-      const preview = await calculateUpgradePrice(sub.plan, planId, billingCycle, sub.expiresAt);
+      const preview = await calculateUpgradePrice(userId, planId, billingCycle);
       finalAmount = preview.topUpAmount;
+      appliedPromo = null; // promos do not apply to upgrades
+      trialDays = undefined;
+      metadata = {};
     }
 
     if (finalAmount <= 0) {
@@ -143,6 +181,15 @@ router.post('/create', authMiddleware, validate(CreatePaymentSchema), async (req
        VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9, $10)`,
       [paymentId, userId, finalAmount, fullPrice, plan.yearly_discount, method, planId, billingCycle, durationDays, isUpgrade]
     );
+
+    // Apply promo with real payment id
+    if (appliedPromo) {
+      const promo = await getPromoByCode(appliedPromo.code);
+      if (promo) {
+        await applyPromoToPayment(paymentId, promo, userId, planId, billingCycle, fullPrice);
+        await incrementPromoUsage(promo.id);
+      }
+    }
 
     // DEMO режим
     if (!IS_YOOKASSA_CONFIGURED) {
@@ -160,15 +207,16 @@ router.post('/create', authMiddleware, validate(CreatePaymentSchema), async (req
       capture: true,
       confirmation: { type: 'redirect', return_url: buildReturnUrl(paymentId) },
       description: `PULSE ${plan.name} — ${userEmail}`.slice(0, 128),
-      save_payment_method: 'true',
+      save_payment_method: savePaymentMethod,
       merchant_customer_id: userId,
       metadata: {
         payment_id: paymentId,
         user_id: userId,
         plan_id: planId,
         billing_cycle: billingCycle,
-        duration_days: String(durationDays),
+        duration_days: trialDays ? String(trialDays) : String(durationDays),
         is_upgrade: String(isUpgrade),
+        ...metadata,
       },
       receipt: {
         customer: { email: userEmail },
@@ -269,7 +317,8 @@ router.get('/status/:id', authMiddleware, async (req: AuthRequest, res) => {
 
     const result = await query(
       `SELECT id, amount, base_amount, discount, method, status, provider_ref, plan_id, billing_cycle, duration_days,
-              is_upgrade, paid_at, created_at FROM payments WHERE id = $1 AND user_id = $2`,
+              is_upgrade, promo_code, promo_discount_type, promo_discount_value,
+              paid_at, created_at FROM payments WHERE id = $1 AND user_id = $2`,
       [id, userId]
     );
     if (result.rows.length === 0) {
@@ -322,6 +371,7 @@ router.get('/history', authMiddleware, async (req: AuthRequest, res) => {
   try {
     const result = await query(
       `SELECT id, amount, base_amount, discount, method, status, plan_id, billing_cycle, duration_days,
+              promo_code, promo_discount_type, promo_discount_value,
               paid_at, created_at FROM payments WHERE user_id = $1 ORDER BY created_at DESC`,
       [req.user!.userId]
     );

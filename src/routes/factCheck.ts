@@ -28,7 +28,11 @@ function nowSql(): string {
 async function requirePremium(req: AuthRequest, res: Response): Promise<boolean> {
   const userId = req.user!.userId;
   const sub = await getUserSubscription(userId);
-  const isEligible = sub.active && planLevel(sub.plan) >= planLevel('premium');
+  const [currentLevel, premiumLevel] = await Promise.all([
+    planLevel(sub.plan),
+    planLevel('premium'),
+  ]);
+  const isEligible = sub.active && currentLevel >= premiumLevel;
 
   if (!isEligible) {
     res.status(403).json({
