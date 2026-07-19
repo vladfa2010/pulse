@@ -163,7 +163,11 @@ router.post('/tags', authMiddleware, validate(AddTagSchema), async (req: AuthReq
     );
     const planId = subResult.rows[0]?.subscription_plan || 'free';
     const plan = await getPlanById(planId);
-    const maxTags = plan?.tag_limit ?? 3;
+    if (!plan) {
+      console.error(`[tagLimit] Plan not found: ${planId}`);
+      return res.status(500).json({ error: 'Plan not configured' });
+    }
+    const maxTags = plan.tag_limit;
 
     const countResult = await query(
       'SELECT COUNT(*) as count FROM portfolios WHERE user_id = $1 AND is_frozen = FALSE',
@@ -956,6 +960,9 @@ router.get('/tariff-status', authMiddleware, async (req: AuthRequest, res) => {
     const sub = await getUserSubscription(userId);
     const status = buildSubscriptionStatus(sub);
     const plan = await getPlanById(sub.plan);
+    if (!plan) {
+      return res.status(500).json({ error: 'Plan not configured', planId: sub.plan });
+    }
 
     const tagsResult = await query(
       `SELECT COUNT(*) FILTER (WHERE is_frozen = FALSE) as active,
@@ -966,7 +973,7 @@ router.get('/tariff-status', authMiddleware, async (req: AuthRequest, res) => {
     const tagUsage = {
       active: parseInt(tagsResult.rows[0]?.active || '0'),
       frozen: parseInt(tagsResult.rows[0]?.frozen || '0'),
-      limit: plan?.tag_limit ?? 3,
+      limit: plan.tag_limit,
     };
 
     const methods = await query(

@@ -43,7 +43,7 @@ import { startDigestCron, sendAllDigests } from './services/digest'; // ← TG �
 import cron from 'node-cron';
 import { resetDailyWindows, refreshImoexCache } from './services/sentimentIndex';
 import { sendSentimentVotePush } from './services/push';
-import { processScheduledDowngrades, processAutoRenewals, processTrialExpirations } from './services/subscription';
+import { processScheduledDowngrades, processAutoRenewals, processTrialExpirations, getPlanById } from './services/subscription';
 import { isUserEventType } from './services/activityLog';
 import { getAdminTgSettings, saveAdminTgSettings, sendTestAlert, ALERT_EVENT_TYPES } from './services/adminAlerts';
 import { setupYookassaWebhook } from './routes/payment'; // ← Auto-setup YuKassa webhook
@@ -4788,6 +4788,14 @@ async function start() {
   } catch (e: any) {
     console.log('[DB] Migration subscription_plans seed warning:', e.message);
   }
+
+  // Critical: free plan must exist
+  const freePlan = await getPlanById('free');
+  if (!freePlan) {
+    console.error('[CRITICAL] Free plan not found! System cannot function.');
+    process.exit(1);
+  }
+  console.log(`[OK] Free plan loaded: tag_limit=${freePlan.tag_limit}`);
 
   // Migrate existing users to subscription_plan
   try {
