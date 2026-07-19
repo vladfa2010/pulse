@@ -338,39 +338,74 @@ router.patch('/plans/:planId', adminMiddleware, validate(UpdatePlanSchema), asyn
   }
 });
 
-// DELETE /api/admin/plans/:planId — soft delete
+async function archivePlan(planId: string): Promise<{ subscriberCount: number; message: string }> {
+  const plan = await getPlanById(planId);
+  if (!plan) {
+    const err: any = new Error('Plan not found');
+    err.status = 404;
+    throw err;
+  }
+
+  const pendingPayments = await query(
+    `SELECT COUNT(*) as cnt FROM payments WHERE plan_id = $1 AND status = 'pending'`,
+    [planId]
+  );
+  const pendingCount = Number(pendingPayments.rows[0]?.cnt || 0);
+  if (pendingCount > 0) {
+    const err: any = new Error(`Cannot archive: ${pendingCount} pending payments. Wait or cancel them.`);
+    err.status = 409;
+    err.pendingPayments = pendingCount;
+    throw err;
+  }
+
+  const subscriberCount = await getActiveSubscriberCount(planId);
+  await query(`UPDATE subscription_plans SET deleted_at = ${nowSql()} WHERE id = $1`, [planId]);
+
+  return {
+    subscriberCount,
+    message: `Тариф архивирован. ${subscriberCount} активных подписчиков останутся на нём до конца оплаченного периода.`,
+  };
+}
+
+// DELETE /api/admin/plans/:planId — soft delete (legacy alias for archive)
 router.delete('/plans/:planId', adminMiddleware, async (req: AuthRequest, res) => {
   try {
     const planId = req.params.planId;
-    const plan = await getPlanById(planId);
-    if (!plan) {
-      return res.status(404).json({ error: 'Plan not found' });
-    }
-
-    const pendingPayments = await query(
-      `SELECT COUNT(*) as cnt FROM payments WHERE plan_id = $1 AND status = 'pending'`,
-      [planId]
-    );
-    const pendingCount = Number(pendingPayments.rows[0]?.cnt || 0);
-    if (pendingCount > 0) {
-      return res.status(409).json({
-        error: `Cannot delete: ${pendingCount} pending payments. Wait or cancel them.`,
-        pendingPayments: pendingCount,
-      });
-    }
-
-    const subscriberCount = await getActiveSubscriberCount(planId);
-    await query(`UPDATE subscription_plans SET deleted_at = ${nowSql()} WHERE id = $1`, [planId]);
+    const { subscriberCount, message } = await archivePlan(planId);
 
     res.json({
       deleted: true,
       plan_id: planId,
       active_subscribers: subscriberCount,
-      message: `Тариф удалён из каталога. ${subscriberCount} активных подписчиков останутся на нём до конца оплаченного периода.`,
+      message,
     });
   } catch (err: any) {
     console.error('[Admin] Delete plan error:', err.message);
+    if (err.status) {
+      return res.status(err.status).json({ error: err.message, pendingPayments: err.pendingPayments });
+    }
     res.status(500).json({ error: 'Failed to delete plan' });
+  }
+});
+
+// POST /api/admin/plans/:planId/archive — explicit archive action
+router.post('/plans/:planId/archive', adminMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const planId = req.params.planId;
+    const { subscriberCount, message } = await archivePlan(planId);
+
+    res.json({
+      archived: true,
+      plan_id: planId,
+      active_subscribers: subscriberCount,
+      message,
+    });
+  } catch (err: any) {
+    console.error('[Admin] Archive plan error:', err.message);
+    if (err.status) {
+      return res.status(err.status).json({ error: err.message, pendingPayments: err.pendingPayments });
+    }
+    res.status(500).json({ error: 'Failed to archive plan' });
   }
 });
 
