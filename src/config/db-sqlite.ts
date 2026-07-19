@@ -178,7 +178,6 @@ export async function initSQLiteSchema(): Promise<void> {
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now'))
     );
-    ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS updated_at TEXT DEFAULT (datetime('now'));
 
     CREATE TABLE IF NOT EXISTS payments (
       id TEXT PRIMARY KEY,
@@ -249,7 +248,6 @@ export async function initSQLiteSchema(): Promise<void> {
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now'))
     );
-    ALTER TABLE features_registry ADD COLUMN IF NOT EXISTS updated_at TEXT DEFAULT (datetime('now'));
 
     CREATE TABLE IF NOT EXISTS user_payment_methods (
       id TEXT PRIMARY KEY,
