@@ -170,14 +170,19 @@ router.get('/plans/:planId/subscribers', adminMiddleware, async (req: AuthReques
       return res.status(404).json({ error: 'Plan not found' });
     }
 
-    const sql = USE_SQLITE
+    const countSql = USE_SQLITE
+      ? `SELECT COUNT(*) as cnt FROM users
+         WHERE subscription_plan = $1 AND subscription_active = TRUE`
+      : `SELECT COUNT(*)::int as cnt FROM users
+         WHERE subscription_plan = $1 AND subscription_active = TRUE`;
+
+    const listSql = USE_SQLITE
       ? `SELECT
            u.id,
            u.email,
            u.username as name,
-           COALESCE(u.subscription_expires_at, '') as subscription_end,
-           COALESCE(MIN(p.paid_at), u.created_at) as subscription_start,
-           COUNT(*) OVER() as total
+           u.subscription_expires_at as subscription_end,
+           COALESCE(MIN(p.paid_at), u.created_at) as subscription_start
          FROM users u
          LEFT JOIN payments p ON p.user_id = u.id AND p.plan_id = $1 AND p.status = 'completed'
          WHERE u.subscription_plan = $1 AND u.subscription_active = TRUE
@@ -188,9 +193,8 @@ router.get('/plans/:planId/subscribers', adminMiddleware, async (req: AuthReques
            u.id,
            u.email,
            u.username as name,
-           COALESCE(u.subscription_expires_at, '') as subscription_end,
-           COALESCE(MIN(p.paid_at), u.created_at) as subscription_start,
-           COUNT(*) OVER() as total
+           u.subscription_expires_at as subscription_end,
+           COALESCE(MIN(p.paid_at), u.created_at) as subscription_start
          FROM users u
          LEFT JOIN payments p ON p.user_id = u.id AND p.plan_id = $1 AND p.status = 'completed'
          WHERE u.subscription_plan = $1 AND u.subscription_active = TRUE
@@ -198,17 +202,19 @@ router.get('/plans/:planId/subscribers', adminMiddleware, async (req: AuthReques
          ORDER BY subscription_start DESC
          LIMIT 100`;
 
-    const result = await query(sql, [planId]);
+    const [countResult, listResult] = await Promise.all([
+      query(countSql, [planId]),
+      query(listSql, [planId]),
+    ]);
 
-    const subscribers = result.rows.map((row: any) => ({
+    const total = Number(countResult.rows[0]?.cnt || 0);
+    const subscribers = listResult.rows.map((row: any) => ({
       id: row.id,
       email: row.email,
       name: row.name,
       subscription_start: row.subscription_start,
       subscription_end: row.subscription_end,
     }));
-
-    const total = subscribers.length > 0 ? Number(result.rows[0].total) : 0;
 
     res.json({ subscribers, total });
   } catch (err: any) {
