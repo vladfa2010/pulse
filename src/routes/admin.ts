@@ -244,7 +244,7 @@ router.patch('/plans/:planId', adminMiddleware, validate(UpdatePlanSchema), asyn
       await query(`UPDATE subscription_plans SET is_popular = FALSE WHERE id <> $1`, [planId]);
     }
 
-    const allowed = ['name', 'price', 'yearly_discount', 'tag_limit', 'features', 'is_active', 'is_popular', 'coming_soon_label', 'display_order'];
+    const allowed = ['name', 'price', 'billing_frequency', 'yearly_discount', 'tag_limit', 'features', 'is_active', 'is_popular', 'coming_soon_label', 'display_order'];
     const fields: string[] = [];
     const values: any[] = [];
     let paramIdx = 1;
