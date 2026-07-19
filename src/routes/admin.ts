@@ -286,7 +286,7 @@ router.patch('/plans/:planId', adminMiddleware, validate(UpdatePlanSchema), asyn
     if (subscriberCount > 0) {
       const blockedFields = ['plan_level', 'billing_frequency', 'id'];
       for (const field of blockedFields) {
-        if (body[field] !== undefined) {
+        if (body[field] !== undefined && body[field] !== (plan as any)[field]) {
           return res.status(409).json({
             error: `Cannot change '${field}': ${subscriberCount} active subscribers. Create new plan instead.`,
             subscriberCount,
