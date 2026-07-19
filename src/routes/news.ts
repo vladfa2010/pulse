@@ -248,6 +248,65 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// POST /api/news/read-all — Отметить ВСЕ непрочитанные новости как прочитанные
+// ═══════════════════════════════════════════════════════════════════════════
+// Массовая версия POST /:id/read. Одним SQL-запросом помечает все новости,
+// которые сейчас попадают в карусель "Это вы ещё не видели":
+//   matched_tags && user_tags, за 90 дней, не в user_news_reads.
+//
+// Ответ: { success: true, marked: N } — сколько записей добавлено.
+// Идемпотентен: повторный вызов → marked: 0.
+router.post('/read-all', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.userId;
+
+    const portfolioResult = await query(
+      'SELECT tag_id FROM portfolios WHERE user_id = $1',
+      [userId]
+    );
+    const tagIds = portfolioResult.rows.map(r => r.tag_id);
+
+    if (tagIds.length === 0) {
+      return res.json({ success: true, marked: 0 });
+    }
+
+    let marked = 0;
+    if (USE_SQLITE) {
+      const conditions = tagIds.map(() => 'matched_tags LIKE ?').join(' OR ');
+      const likeParams = tagIds.map(id => `%"${id}"%`);
+      const result = await query(
+        `INSERT OR IGNORE INTO user_news_reads (user_id, news_id, read_at)
+         SELECT ?, id, ${nowSql()}
+         FROM news
+         WHERE (${conditions})
+           AND ${timeFilterSql()}
+           AND id NOT IN (SELECT news_id FROM user_news_reads WHERE user_id = ?)`,
+        [userId, ...likeParams, userId]
+      );
+      marked = (result as any).rowCount ?? 0;
+    } else {
+      const result = await query(
+        `INSERT INTO user_news_reads (user_id, news_id, read_at)
+         SELECT $1, id, ${nowSql()}
+         FROM news
+         WHERE matched_tags && $2::text[]
+           AND ${timeFilterSql()}
+           AND id NOT IN (SELECT news_id FROM user_news_reads WHERE user_id = $1)
+         ON CONFLICT (user_id, news_id) DO NOTHING`,
+        [userId, tagIds]
+      );
+      marked = (result as any).rowCount ?? 0;
+    }
+
+    console.log(`[News] Read-all: user=${userId} marked=${marked}`);
+    res.json({ success: true, marked });
+  } catch (err: any) {
+    console.error('[News] Read-all error:', err.message);
+    res.status(500).json({ error: 'Failed to mark all as read' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // POST /api/news/:id/read — Отметить новость как прочитанную
 // ═══════════════════════════════════════════════════════════════════════════
 // Фронтенд вызывает этот endpoint когда:

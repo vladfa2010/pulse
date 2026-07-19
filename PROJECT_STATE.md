@@ -51,6 +51,7 @@
 - `GET /api/news/:id` — детали статьи для NewsDetailModal
 - `GET /api/news/:id/tag-enrichments` — enriched данные по тегам статьи
 - `POST /api/news/:id/read` — отметить статью прочитанной
+- `POST /api/news/read-all` — отметить ВСЕ непрочитанные статьи прочитанными (кнопка «Прочитать всё» в карусели 1)
 - `GET /sentiment-stats?userId={uuid}&days={N}` — дельта сантимента по тегам
 - `GET /sentiment-total?days={N}` — общая дельта всех новостей
 - `GET /source-stats` — статистика по источникам RSS
