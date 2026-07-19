@@ -8,6 +8,7 @@
 ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP DEFAULT NULL;
 ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS plan_level INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS is_popular BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW();
 
 -- billing_frequency: weekly | monthly | quarterly | yearly
 ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS billing_frequency VARCHAR(20) NOT NULL DEFAULT 'monthly';
@@ -96,8 +97,10 @@ CREATE TABLE IF NOT EXISTS features_registry (
   options     JSONB DEFAULT NULL,
   description VARCHAR(255) DEFAULT NULL,
   is_active   BOOLEAN NOT NULL DEFAULT TRUE,
-  created_at  TIMESTAMP DEFAULT NOW()
+  created_at  TIMESTAMP DEFAULT NOW(),
+  updated_at  TIMESTAMP DEFAULT NOW()
 );
+ALTER TABLE features_registry ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW();
 
 INSERT INTO features_registry (id, label, type, options, description) VALUES
   ('telegram', 'Telegram-дайджест', 'boolean', NULL, 'Дайджест новостей в Telegram'),

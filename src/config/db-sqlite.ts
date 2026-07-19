@@ -175,8 +175,10 @@ export async function initSQLiteSchema(): Promise<void> {
       coming_soon_label TEXT DEFAULT NULL,
       plan_level INTEGER NOT NULL DEFAULT 0,
       deleted_at TEXT DEFAULT NULL,
-      created_at TEXT DEFAULT (datetime('now'))
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
     );
+    ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS updated_at TEXT DEFAULT (datetime('now'));
 
     CREATE TABLE IF NOT EXISTS payments (
       id TEXT PRIMARY KEY,
@@ -244,8 +246,10 @@ export async function initSQLiteSchema(): Promise<void> {
       options TEXT DEFAULT NULL,
       description TEXT DEFAULT NULL,
       is_active INTEGER NOT NULL DEFAULT 1,
-      created_at TEXT DEFAULT (datetime('now'))
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
     );
+    ALTER TABLE features_registry ADD COLUMN IF NOT EXISTS updated_at TEXT DEFAULT (datetime('now'));
 
     CREATE TABLE IF NOT EXISTS user_payment_methods (
       id TEXT PRIMARY KEY,

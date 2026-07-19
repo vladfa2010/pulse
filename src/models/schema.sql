@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS subscription_plans (
   coming_soon_label VARCHAR(50) DEFAULT NULL,
   plan_level      INTEGER NOT NULL DEFAULT 0,
   deleted_at      TIMESTAMP DEFAULT NULL,
-  created_at      TIMESTAMP DEFAULT NOW()
+  created_at      TIMESTAMP DEFAULT NOW(),
+  updated_at      TIMESTAMP DEFAULT NOW()
 );
 
 INSERT INTO subscription_plans
