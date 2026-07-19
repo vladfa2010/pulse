@@ -241,8 +241,6 @@ export async function initSQLiteSchema(): Promise<void> {
     CREATE TABLE IF NOT EXISTS features_registry (
       id TEXT PRIMARY KEY,
       label TEXT NOT NULL,
-      type TEXT NOT NULL DEFAULT 'boolean',
-      options TEXT DEFAULT NULL,
       description TEXT DEFAULT NULL,
       is_active INTEGER NOT NULL DEFAULT 1,
       created_at TEXT DEFAULT (datetime('now')),
@@ -565,16 +563,16 @@ export async function initSQLiteSchema(): Promise<void> {
 
   // Seed features registry
   try {
-    db.run(`INSERT OR IGNORE INTO features_registry (id, label, type, options, description) VALUES
-      ('telegram', 'Telegram-дайджест', 'boolean', NULL, 'Дайджест новостей в Telegram'),
-      ('push', 'Push-уведомления', 'boolean', NULL, 'Push-уведомления в браузере/приложении'),
-      ('ai_summary', 'AI-саммари по портфелю', 'boolean', NULL, 'AI-анализ портфеля каждый час'),
-      ('alerts', 'Sentiment-алерты', 'boolean', NULL, 'Уведомления при резком изменении сентимента'),
-      ('priority', 'Приоритетная доставка', 'string', '["normal", "high", "max"]', 'Приоритет обработки новостей'),
-      ('early_delivery', 'Ранняя доставка', 'boolean', NULL, 'Доступ к новостям на 5 минут раньше'),
-      ('custom_thresholds', 'Кастомные пороги', 'boolean', NULL, 'Настройка порогов для алертов'),
-      ('club_access', 'Club доступ', 'boolean', NULL, 'Доступ к закрытому Telegram-чату'),
-      ('api_access', 'API доступ', 'boolean', NULL, 'Доступ к REST API с токеном')`);
+    db.run(`INSERT OR IGNORE INTO features_registry (id, label, description) VALUES
+      ('telegram', 'Telegram-дайджест', 'Дайджест новостей в Telegram'),
+      ('push', 'Push-уведомления', 'Push-уведомления в браузере/приложении'),
+      ('ai_summary', 'AI-саммари по портфелю', 'AI-анализ портфеля каждый час'),
+      ('alerts', 'Sentiment-алерты', 'Уведомления при резком изменении сентимента'),
+      ('priority', 'Приоритетная доставка', 'Приоритет обработки новостей'),
+      ('early_delivery', 'Ранняя доставка', 'Доступ к новостям на 5 минут раньше'),
+      ('custom_thresholds', 'Кастомные пороги', 'Настройка порогов для алертов'),
+      ('club_access', 'Club доступ', 'Доступ к закрытому Telegram-чату'),
+      ('api_access', 'API доступ', 'Доступ к REST API с токеном')`);
     console.log('[SQLite] Migration: features_registry seeded');
   } catch {
     // ignore

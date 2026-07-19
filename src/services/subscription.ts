@@ -815,8 +815,6 @@ function nowSqlPlusDays(days: number): string {
 interface FeatureRegistryEntry {
   id: string;
   label: string;
-  type: string;
-  options: any;
   description: string | null;
   is_active: boolean;
   loadedAt: number;
@@ -831,10 +829,10 @@ async function loadFeaturesRegistry(): Promise<Record<string, FeatureRegistryEnt
   if (featuresRegistryCache && now - featuresRegistryCacheAt < FEATURE_REGISTRY_TTL) {
     return featuresRegistryCache;
   }
-  const result = await query(`SELECT * FROM features_registry`);
+  const result = await query(`SELECT id, label, description, is_active FROM features_registry`);
   const map: Record<string, FeatureRegistryEntry> = {};
   for (const row of result.rows) {
-    map[row.id] = { ...row, options: parseDbJson(row.options), loadedAt: now };
+    map[row.id] = { ...row, loadedAt: now };
   }
   featuresRegistryCache = map;
   featuresRegistryCacheAt = now;

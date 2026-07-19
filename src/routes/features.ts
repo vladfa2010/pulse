@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * PULSE — Features Registry Routes
+ * PULSE — Features Registry Routes (boolean-only)
  * =============================================================================
  *
  * Public: GET /api/features
@@ -9,7 +9,6 @@
 
 import { Router, Request, Response } from 'express';
 import { query } from '../config/db';
-import { parseDbJson } from '../services/subscription';
 
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
@@ -22,8 +21,6 @@ function normalizeFeatureRow(row: any): any {
   return {
     id: row.id,
     label: row.label,
-    type: row.type,
-    options: parseDbJson(row.options),
     description: row.description,
     is_active: USE_SQLITE ? Boolean(row.is_active) : row.is_active,
   };
@@ -33,7 +30,7 @@ function normalizeFeatureRow(row: any): any {
 export async function listFeatures(_req: Request, res: Response): Promise<void> {
   try {
     const result = await query(
-      `SELECT id, label, type, options, description, is_active
+      `SELECT id, label, description, is_active
        FROM features_registry
        WHERE is_active = TRUE
        ORDER BY created_at ASC`,
@@ -50,7 +47,7 @@ export async function listFeatures(_req: Request, res: Response): Promise<void> 
 export async function listAllFeatures(_req: Request, res: Response): Promise<void> {
   try {
     const result = await query(
-      `SELECT id, label, type, options, description, is_active
+      `SELECT id, label, description, is_active
        FROM features_registry
        ORDER BY created_at ASC`,
       []
@@ -65,14 +62,14 @@ export async function listAllFeatures(_req: Request, res: Response): Promise<voi
 // Admin create feature
 export async function createFeature(req: Request, res: Response): Promise<void> {
   try {
-    const { id, label, type, options, description, is_active } = req.body;
+    const { id, label, description, is_active } = req.body;
     await query(
-      `INSERT INTO features_registry (id, label, type, options, description, is_active)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [id, label, type, options ? JSON.stringify(options) : null, description || null, is_active !== false]
+      `INSERT INTO features_registry (id, label, description, is_active)
+       VALUES ($1, $2, $3, $4)`,
+      [id, label, description || null, is_active !== false]
     );
     const result = await query(
-      `SELECT id, label, type, options, description, is_active
+      `SELECT id, label, description, is_active
        FROM features_registry WHERE id = $1`,
       [id]
     );
@@ -92,7 +89,7 @@ export async function updateFeature(req: Request, res: Response): Promise<void> 
   try {
     const { id } = req.params;
     const updates = req.body;
-    const allowed = ['label', 'type', 'options', 'description', 'is_active'];
+    const allowed = ['label', 'description', 'is_active'];
     const fields: string[] = [];
     const values: any[] = [];
     let paramIdx = 1;
@@ -100,7 +97,7 @@ export async function updateFeature(req: Request, res: Response): Promise<void> 
     for (const key of allowed) {
       if (updates[key] !== undefined) {
         fields.push(`${key} = $${paramIdx}`);
-        values.push(key === 'options' && updates[key] ? JSON.stringify(updates[key]) : updates[key]);
+        values.push(updates[key]);
         paramIdx++;
       }
     }
@@ -117,7 +114,7 @@ export async function updateFeature(req: Request, res: Response): Promise<void> 
     );
 
     const result = await query(
-      `SELECT id, label, type, options, description, is_active
+      `SELECT id, label, description, is_active
        FROM features_registry WHERE id = $1`,
       [id]
     );

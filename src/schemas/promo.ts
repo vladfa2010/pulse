@@ -64,16 +64,12 @@ export const ValidatePromoQuerySchema = z.object({
 export const CreateFeatureSchema = z.object({
   id: z.string().regex(/^[a-z0-9_]+$/).max(50),
   label: z.string().min(1).max(100),
-  type: z.enum(['boolean', 'string']),
-  options: z.array(z.string()).optional(),
   description: z.string().max(255).optional(),
   is_active: z.boolean().default(true),
 });
 
 export const UpdateFeatureSchema = z.object({
   label: z.string().min(1).max(100).optional(),
-  type: z.enum(['boolean', 'string']).optional(),
-  options: z.array(z.string()).optional(),
   description: z.string().max(255).optional(),
   is_active: z.boolean().optional(),
 });
