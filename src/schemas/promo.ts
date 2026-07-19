@@ -24,6 +24,7 @@ export const CreatePlanSchema = z.object({
 export const UpdatePlanSchema = z.object({
   name: z.string().min(1).max(50).optional(),
   price: z.number().min(0).optional(),
+  billing_frequency: z.enum(['weekly', 'monthly', 'quarterly', 'yearly']).optional(),
   yearly_discount: z.number().int().min(0).max(100).optional(),
   tag_limit: z.number().int().min(-1).optional(),
   features: z.record(z.any()).optional(),
