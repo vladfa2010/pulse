@@ -160,6 +160,63 @@ router.get('/plans', adminMiddleware, async (_req, res) => {
   }
 });
 
+// GET /api/admin/plans/:planId/subscribers
+router.get('/plans/:planId/subscribers', adminMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const planId = req.params.planId;
+
+    const plan = await getPlanById(planId);
+    if (!plan) {
+      return res.status(404).json({ error: 'Plan not found' });
+    }
+
+    const sql = USE_SQLITE
+      ? `SELECT
+           u.id,
+           u.email,
+           u.username as name,
+           COALESCE(u.subscription_expires_at, '') as subscription_end,
+           COALESCE(MIN(p.paid_at), u.created_at) as subscription_start,
+           COUNT(*) OVER() as total
+         FROM users u
+         LEFT JOIN payments p ON p.user_id = u.id AND p.plan_id = $1 AND p.status = 'completed'
+         WHERE u.subscription_plan = $1 AND u.subscription_active = TRUE
+         GROUP BY u.id, u.email, u.username, u.subscription_expires_at, u.created_at
+         ORDER BY subscription_start DESC
+         LIMIT 100`
+      : `SELECT
+           u.id,
+           u.email,
+           u.username as name,
+           COALESCE(u.subscription_expires_at, '') as subscription_end,
+           COALESCE(MIN(p.paid_at), u.created_at) as subscription_start,
+           COUNT(*) OVER() as total
+         FROM users u
+         LEFT JOIN payments p ON p.user_id = u.id AND p.plan_id = $1 AND p.status = 'completed'
+         WHERE u.subscription_plan = $1 AND u.subscription_active = TRUE
+         GROUP BY u.id, u.email, u.username, u.subscription_expires_at, u.created_at
+         ORDER BY subscription_start DESC
+         LIMIT 100`;
+
+    const result = await query(sql, [planId]);
+
+    const subscribers = result.rows.map((row: any) => ({
+      id: row.id,
+      email: row.email,
+      name: row.name,
+      subscription_start: row.subscription_start,
+      subscription_end: row.subscription_end,
+    }));
+
+    const total = subscribers.length > 0 ? Number(result.rows[0].total) : 0;
+
+    res.json({ subscribers, total });
+  } catch (err: any) {
+    console.error('[Admin] Plan subscribers error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch plan subscribers' });
+  }
+});
+
 // POST /api/admin/plans
 router.post('/plans', adminMiddleware, validate(CreatePlanSchema), async (req: AuthRequest, res) => {
   try {
