@@ -1,7 +1,7 @@
 # PULSE — Backend Architecture
 
 > Техническая документация backend'а. Логика, flow, принятие решений.
-> Последнее обновление: 2026-06-19 (v10.0.0 — NewsFeed search + Keyword-First Pipeline)
+> Последнее обновление: 2026-07-20 (v10.0.0 — NewsFeed search + Keyword-First Pipeline + Sentiment Index user voting)
 
 ---
 
@@ -17,6 +17,7 @@
 6. [Translation](#6-translation)
 7. [Unified LLM Batch](#7-unified-llm-batch-v717)
 8. [Sentiment Analysis](#8-sentiment-analysis)
+8a. [Sentiment Index — User Voting](#8a-sentiment-index--user-voting)
 9. [User-Defined Tags](#9-user-defined-tags)
 9a. [Tag Search](#9a-tag-search--поиск-тегов-по-enriched-полям)
 9b. [NewsDetailModal — enriched data](#9b-newsdetailmodal--enriched-data-блок)
@@ -934,6 +935,120 @@ which the market typically rewards with multiple expansion.
 | `sentiment_source` | `TEXT` | `llm` (единственный источник в v7.17) |
 | `tag_impact` | `JSONB` | Массив `TagImpact[]` или `null` |
 | `is_political` | `BOOLEAN` | `true` — статья политическая |
+
+---
+
+## 8a. Sentiment Index — User Voting
+
+> **Отдельная фича от анализа тональности новостей.** Пользователи голосуют за настроение рынка; голоса суммируются в единый индекс за календарный день по МСК.
+
+### Принцип
+
+- Индекс = кумулятивная сумма `vote_value` за текущий московский день (10:00–19:00 — основная сессия IMOEX, вне сессии отображается flat line).
+- Каждый пользователь может голосовать **раз в 30 минут** (персональное окно `VOTE_COOLDOWN_MINUTES = 30`).
+- Значения голосов: `-1` (медвежий), `0` (нейтральный), `1` (бычий).
+
+### Модель данных
+
+#### `sentiment_votes`
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `id` | `UUID PK` | — |
+| `user_id` | `UUID → users` | Кто проголосовал |
+| `vote_value` | `SMALLINT` | `-1` / `0` / `1` |
+| `created_at` | `TIMESTAMPTZ` | Время голоса |
+| `tickers` | `JSONB` | Тикеры из портфеля на момент голоса |
+| `index_at_vote` | `INT` | Значение индекса до голоса |
+
+#### `sentiment_user_windows`
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `user_id` | `UUID PK → users` | Пользователь |
+| `last_vote_at` | `TIMESTAMPTZ` | Последний голос |
+| `next_vote_at` | `TIMESTAMPTZ` | Когда разрешён следующий голос |
+| `vote_count_today` | `INT` | Голосов сегодня |
+| `total_votes_all_time` | `INT` | Всего голосов |
+| `sync_count` | `INT` | Сколько раз голос совпал с направлением индекса |
+| `total_votes_count` | `INT` | Общее число голосов для расчёта sync rate |
+| `impact_sum` | `INT` | Суммарный вклад в индекс |
+| `streak_days` | `INT` | Текущий streak дней |
+
+#### `sentiment_index_cache`
+
+Кэш свечей IMOEX за день (`imoex_candles`, `imoex_updated_at`) — чтобы не дергать внешний API при каждом открытии графика.
+
+### Атомарный захват окна (multi-vote guard)
+
+Функция `recordVote(userId, value)` в `src/services/sentimentIndex.ts`:
+
+```typescript
+const CLAIM_SQL = `
+  UPDATE sentiment_user_windows
+  SET last_vote_at = $1,
+      next_vote_at = $2,
+      updated_at = $1
+  WHERE user_id = $3
+    AND (next_vote_at IS NULL OR next_vote_at <= $1)`;
+```
+
+- PostgreSQL: выполняется внутри транзакции (`BEGIN ... COMMIT`). `rowCount === 0` означает, что окно уже занято — параллельный запрос или cooldown ещё не истёк.
+- SQLite: одиночный `UPDATE` атомарен благодаря сериализации statement'ов в `sqlite3`.
+
+Если захват не удался — `recordVote` бросает `Error('Vote cooldown')`, и route возвращает `429`.
+
+### API Endpoints
+
+| Method | Path | Auth | Описание |
+|--------|------|------|----------|
+| `GET` | `/api/sentiment/index` | Нет | Текущий индекс, история за день, IMOEX |
+| `GET` | `/api/sentiment/status` | Да | Персональный статус + `secondsUntilNextVote` + метрики |
+| `POST` | `/api/sentiment/vote` | Да | Проголосовать |
+
+### 429-контракт
+
+Если пользователь голосует раньше `next_vote_at`:
+
+```json
+HTTP 429
+{
+  "error": "Too soon. Wait for your personal window.",
+  "secondsUntilNext": 847
+}
+```
+
+Успешный ответ:
+
+```json
+HTTP 201
+{
+  "success": true,
+  "newIndex": 5,
+  "nextVoteAt": "2026-07-20T12:30:00Z",
+  "secondsUntilNext": 1800,
+  "sync": true
+}
+```
+
+`sync = true`, когда знак голоса (`value`) совпадает со знаком индекса после голоса (`afterIndex`).
+
+### Frontend
+
+**Файл:** `src/components/SentimentChartCard.tsx`
+
+- Загружает `/api/sentiment/index` и `/api/sentiment/status`.
+- При `state === 'active'` (cooldown активен) кнопки голосования **disabled**, показывается обратный отсчёт `secondsUntilNextVote`.
+- При успешном голосе — `setSecondsLeft(result.secondsUntilNext)` + тост (`VoteToast`) с вариантами:
+  - `sync` — голос совпал с настроением сообщества (confetti).
+  - `contrarian` — голос против индекса.
+  - `balance` — нейтральный голос, который вернул индекс к 0.
+- При 429 — тост «Ваш голос уже учтён» и перезагрузка статуса.
+- Обновления индекса приходят через SSE (`/api/sentiment/stream`).
+
+### Real-time
+
+После успешного голоса backend вызывает `broadcastSentimentUpdate({ currentValue, timestamp })`, и все подключённые клиенты перезагружают индекс.
 
 ---
 
