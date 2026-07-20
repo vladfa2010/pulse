@@ -45,7 +45,7 @@ import { resetDailyWindows, refreshImoexCache } from './services/sentimentIndex'
 import { sendSentimentVotePush } from './services/push';
 import { processScheduledDowngrades, processAutoRenewals, processTrialExpirations, getPlanById } from './services/subscription';
 import { isUserEventType, logPageViewPlans } from './services/activityLog';
-import { getAdminTgSettings, saveAdminTgSettings, sendTestAlert, ALERT_EVENT_TYPES, notifyAdmins } from './services/adminAlerts';
+import { getAdminTgSettings, saveAdminTgSettings, sendTestAlert, ALERT_EVENT_TYPES } from './services/adminAlerts';
 import { setupYookassaWebhook } from './routes/payment'; // ← Auto-setup YuKassa webhook
 import { addSubscriber, getSubscriberCount, addSentimentSubscriber } from './services/sse'; // ← Real-time news stream
 
@@ -4036,7 +4036,6 @@ app.post('/api/events/page-view', authMiddleware, async (req: AuthRequest, res) 
     const { page } = req.body;
     if (page === 'plans') {
       logPageViewPlans(req.user!.userId).catch(() => {});
-      notifyAdmins('page_view_plans', { page: 'plans' }, req.user!.userId).catch(() => {});
     }
     res.json({ success: true });
   } catch (err: any) {
