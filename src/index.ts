@@ -33,6 +33,7 @@ import userRoutes from './routes/user';
 import translateRoutes from './routes/translate';
 import webhookRoutes from './routes/webhook';
 import adminRoutes from './routes/admin';
+import adminAnalyticsRoutes from './routes/adminAnalytics';
 import sentimentRoutes from './routes/sentiment';
 import appRoutes from './routes/app';
 import { authMiddleware, AuthRequest } from './middleware/auth';
@@ -61,6 +62,38 @@ const USE_SQLITE = process.env.USE_SQLITE === 'true';
 // PostgreSQL vs SQLite datetime helpers for migrations
 // ═══════════════════════════════════════════════════════════════════════════
 const _SQL_NOW = USE_SQLITE ? "datetime('now')" : 'NOW()';
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SQLite-safe ALTER TABLE ADD COLUMN IF NOT EXISTS helper
+// PostgreSQL supports `IF NOT EXISTS` in ALTER TABLE; SQLite does not.
+// This helper parses the migration and checks PRAGMA table_info before adding.
+// ═══════════════════════════════════════════════════════════════════════════
+async function runMigration(sql: string, name: string) {
+  if (USE_SQLITE && /^ALTER TABLE\s+/i.test(sql)) {
+    const tableMatch = sql.match(/^ALTER TABLE\s+(\w+)\s+/i);
+    if (!tableMatch) return;
+    const table = tableMatch[1];
+    const parts = sql.split(/ADD COLUMN\s+IF NOT EXISTS/i).slice(1);
+    if (parts.length > 0) {
+      const info = await query(`PRAGMA table_info(${table})`);
+      const existing = new Set(info.rows.map((r: any) => r.name));
+      for (const part of parts) {
+        const trimmed = part.trim().replace(/,\s*$/, '');
+        const colMatch = trimmed.match(/^(\w+)\s+(.+)$/i);
+        if (!colMatch) continue;
+        const col = colMatch[1];
+        const def = colMatch[2];
+        if (existing.has(col)) continue;
+        await query(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+        existing.add(col);
+      }
+      console.log(`[DB] Migration: ${name} ensured`);
+      return;
+    }
+  }
+  await query(sql);
+  console.log(`[DB] Migration: ${name} added`);
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Middleware — обработка входящих запросов
@@ -1254,17 +1287,20 @@ app.get('/admin/users', requireAdmin, async (req, res) => {
         u.is_admin,
         u.is_blocked,
         u.subscription_active,
+        u.subscription_plan,
         u.subscription_expires_at,
+        u.subscription_auto_renew,
+        u.registration_source,
+        u.login_count,
         u.news_count,
         u.created_at,
-        s.last_connected_at,
+        u.last_login_at,
         COALESCE(p.total_payments, 0) as total_payments,
         COALESCE(p.total_amount, 0) as total_amount,
         (SELECT COUNT(*) FROM portfolios WHERE user_id = u.id) as tag_count,
-        (SELECT COUNT(*) FROM user_channels WHERE user_id = u.id AND is_active = TRUE) as active_channels,
+        (SELECT COUNT(*) FROM user_channels WHERE user_id = u.id AND is_active = ${USE_SQLITE ? 1 : 'TRUE'}) as active_channels,
         (SELECT COUNT(*) FROM user_news_reads WHERE user_id = u.id) as articles_read
       FROM users u
-      LEFT JOIN user_sessions s ON s.user_id = u.id
       LEFT JOIN (
         SELECT user_id, COUNT(*) as total_payments, SUM(amount) as total_amount
         FROM payments
@@ -1284,10 +1320,14 @@ app.get('/admin/users', requireAdmin, async (req, res) => {
         is_admin: row.is_admin === true || row.is_admin === 1,
         is_blocked: row.is_blocked === true || row.is_blocked === 1,
         subscription_active: row.subscription_active === true || row.subscription_active === 1,
+        subscription_plan: row.subscription_plan || 'free',
         subscription_expires_at: row.subscription_expires_at,
+        subscription_auto_renew: row.subscription_auto_renew === true || row.subscription_auto_renew === 1,
+        registration_source: row.registration_source || null,
+        login_count: parseInt(row.login_count) || 0,
         news_count: parseInt(row.news_count) || 0,
         created_at: row.created_at,
-        last_login_at: row.last_connected_at,
+        last_login_at: row.last_login_at,
         total_payments: parseInt(row.total_payments) || 0,
         total_amount: parseFloat(row.total_amount) || 0,
         tag_count: parseInt(row.tag_count) || 0,
@@ -1373,7 +1413,7 @@ app.get('/admin/events/stats', requireAdmin, async (req, res) => {
       : `e.created_at > NOW() - INTERVAL '${hours} hours'`;
 
     const byTypeResult = await query(
-      `SELECT e.event_type, COUNT(*)::int as count
+      `SELECT e.event_type, COUNT(*) as count
        FROM user_events e
        WHERE ${timeFilter}
        GROUP BY e.event_type
@@ -1386,7 +1426,7 @@ app.get('/admin/events/stats', requireAdmin, async (req, res) => {
       : "date_trunc('hour', e.created_at)::text";
 
     const hourlyResult = await query(
-      `SELECT ${hourExpr} as hour, COUNT(*)::int as count
+      `SELECT ${hourExpr} as hour, COUNT(*) as count
        FROM user_events e
        WHERE ${timeFilter}
        GROUP BY hour
@@ -1420,7 +1460,7 @@ app.get('/admin/users/:id', requireAdmin, async (req, res) => {
     const userResult = await query(`
       SELECT id, email, username, is_verified, is_admin, is_blocked,
              subscription_active, subscription_plan, subscription_expires_at, subscription_auto_renew,
-             news_count, created_at
+             registration_source, login_count, news_count, created_at, last_login_at
       FROM users
       WHERE id = $1
     `, [userId]);
@@ -1430,9 +1470,6 @@ app.get('/admin/users/:id', requireAdmin, async (req, res) => {
     }
 
     const u = userResult.rows[0];
-
-    // Last login
-    const sessionResult = await query(`SELECT last_connected_at FROM user_sessions WHERE user_id = $1`, [userId]);
 
     // Payments
     const paymentsResult = await query(`
@@ -1457,14 +1494,21 @@ app.get('/admin/users/:id', requireAdmin, async (req, res) => {
       WHERE user_id = $1
     `, [userId]);
 
-    // Login history (last 30 days)
-    const loginsResult = await query(`
-      SELECT date_trunc('day', read_at) as day, COUNT(*) as count
-      FROM user_news_reads
-      WHERE user_id = $1 AND read_at > NOW() - INTERVAL '30 days'
-      GROUP BY date_trunc('day', read_at)
-      ORDER BY day ASC
-    `, [userId]);
+    // Login history (last 30 days) from user_logins
+    const loginHistoryResult = await query(
+      USE_SQLITE
+        ? `SELECT date(login_at) as day, COUNT(*) as count
+           FROM user_logins
+           WHERE user_id = ? AND login_at > datetime('now', '-30 days')
+           GROUP BY date(login_at)
+           ORDER BY day ASC`
+        : `SELECT date_trunc('day', login_at) as day, COUNT(*) as count
+           FROM user_logins
+           WHERE user_id = $1 AND login_at > NOW() - INTERVAL '30 days'
+           GROUP BY date_trunc('day', login_at)
+           ORDER BY day ASC`,
+      [userId]
+    );
 
     // Notification settings
     const notifResult = await query(`SELECT * FROM notification_settings WHERE user_id = $1`, [userId]);
@@ -1484,9 +1528,11 @@ app.get('/admin/users/:id', requireAdmin, async (req, res) => {
         subscription_plan: u.subscription_plan || 'free',
         subscription_expires_at: u.subscription_expires_at,
         subscription_auto_renew: u.subscription_auto_renew === true || u.subscription_auto_renew === 1,
+        registration_source: u.registration_source || null,
+        login_count: parseInt(u.login_count) || 0,
         news_count: parseInt(u.news_count) || 0,
         created_at: u.created_at,
-        last_login_at: sessionResult.rows[0]?.last_connected_at || null,
+        last_login_at: u.last_login_at || null,
         articles_read: parseInt(readsCount.rows[0]?.count) || 0,
       },
       payments: paymentsResult.rows.map((p: any) => ({
@@ -1502,7 +1548,7 @@ app.get('/admin/users/:id', requireAdmin, async (req, res) => {
         .reduce((sum: number, p: any) => sum + parseFloat(p.amount), 0),
       tags: tagsResult.rows,
       channels: channelsResult.rows,
-      login_history: loginsResult.rows.map((r: any) => ({
+      login_history: loginHistoryResult.rows.map((r: any) => ({
         day: r.day,
         count: parseInt(r.count),
       })),
@@ -1614,7 +1660,7 @@ app.post('/admin/users/:id/auto-renew', requireAdmin, async (req, res) => {
 
       const pmResult = await query(`
         SELECT id FROM user_payment_methods
-        WHERE user_id = $1 AND is_active = TRUE
+        WHERE user_id = $1 AND is_active = ${USE_SQLITE ? 1 : 'TRUE'}
         LIMIT 1
       `, [userId]);
 
@@ -4138,6 +4184,8 @@ app.use('/api/user', userRoutes);       // GET/POST/DELETE /api/user/tags
 app.use('/api/translate', translateRoutes);
 app.use('/api/webhook', webhookLimiter, webhookRoutes); // Высокий лимит для YuKassa
 app.use('/api/admin', adminRoutes);     // GET /api/admin/users, /stats
+app.use('/api/admin', adminAnalyticsRoutes); // GET /api/admin/analytics
+app.use('/admin', adminAnalyticsRoutes);     // GET /admin/analytics (frontend adminApi root path)
 app.use('/api/sentiment', sentimentRoutes); // Sentiment Index
 app.use('/api/app', appRoutes);            // App version / update info
 
@@ -4797,8 +4845,7 @@ async function start() {
   // ─── Шаг 2: Миграции ──────────────────────────────────────────────────
   // Добавляем колонки и constraints, которые могут отсутствовать
   try {
-    await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE`);
-    console.log('[DB] Migration: is_admin column ensured');
+    await runMigration('ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE', 'is_admin');
   } catch { /* ignore */ }
   // url_normalized + content_hash + all_sources + source_count
   const migrations = [
@@ -4918,11 +4965,27 @@ async function start() {
     // News slugs for deeplinks
     { sql: `ALTER TABLE news ADD COLUMN IF NOT EXISTS slug VARCHAR(250) UNIQUE`, name: 'news_slug' },
     { sql: `CREATE INDEX IF NOT EXISTS idx_news_slug ON news(slug)`, name: 'idx_news_slug' },
+    // TZ_ADMIN2_ANALYTICS_v3_5: user analytics and management columns
+    { sql: `ALTER TABLE users ADD COLUMN IF NOT EXISTS is_blocked BOOLEAN DEFAULT FALSE`, name: 'users_is_blocked' },
+    { sql: `ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMP`, name: 'users_last_login_at' },
+    { sql: `ALTER TABLE users ADD COLUMN IF NOT EXISTS login_count INTEGER DEFAULT 0`, name: 'users_login_count' },
+    { sql: `ALTER TABLE users ADD COLUMN IF NOT EXISTS registration_source VARCHAR(50)`, name: 'users_registration_source' },
+    { sql: `ALTER TABLE users ADD COLUMN IF NOT EXISTS registration_ip VARCHAR(45)`, name: 'users_registration_ip' },
+    { sql: `ALTER TABLE users ADD COLUMN IF NOT EXISTS timezone VARCHAR(50)`, name: 'users_timezone' },
+    { sql: `ALTER TABLE users ADD COLUMN IF NOT EXISTS locale VARCHAR(10)`, name: 'users_locale' },
+    { sql: `ALTER TABLE users ADD COLUMN IF NOT EXISTS cohort_date DATE`, name: 'users_cohort_date' },
+    { sql: `CREATE TABLE IF NOT EXISTS user_logins (id ${USE_SQLITE ? 'TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16))))' : 'UUID PRIMARY KEY DEFAULT uuid_generate_v4()'}, user_id ${USE_SQLITE ? 'TEXT' : 'UUID'} NOT NULL REFERENCES users(id) ON DELETE CASCADE, login_at TIMESTAMP DEFAULT ${_SQL_NOW}, ip_address VARCHAR(45), user_agent TEXT, platform VARCHAR(20), device_type VARCHAR(20), os VARCHAR(50), browser VARCHAR(50), country VARCHAR(2), created_at TIMESTAMP DEFAULT ${_SQL_NOW})`, name: 'user_logins' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_user_logins_user_id ON user_logins(user_id)`, name: 'idx_user_logins_user_id' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_user_logins_login_at ON user_logins(login_at DESC)`, name: 'idx_user_logins_login_at' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_user_logins_platform ON user_logins(platform)`, name: 'idx_user_logins_platform' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_user_logins_device_type ON user_logins(device_type)`, name: 'idx_user_logins_device_type' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_user_logins_country ON user_logins(country)`, name: 'idx_user_logins_country' },
+    { sql: `ALTER TABLE push_notifications_sent ADD COLUMN IF NOT EXISTS title VARCHAR(255)`, name: 'push_notifications_sent_title' },
+    { sql: `ALTER TABLE push_notifications_sent ADD COLUMN IF NOT EXISTS source VARCHAR(50)`, name: 'push_notifications_sent_source' },
   ];
   for (const m of migrations) {
     try {
-      await query(m.sql);
-      console.log(`[DB] Migration: ${m.name} added`);
+      await runMigration(m.sql, m.name);
     } catch (e: any) {
       console.log(`[DB] Migration warning for ${m.name}:`, e.message);
     }

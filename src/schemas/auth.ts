@@ -20,6 +20,9 @@ export const RegisterSchema = z.object({
   password: z.string()
     .min(8, 'Минимум 8 символов')
     .max(128, 'Максимум 128 символов'),
+  source: z.string().max(50).optional(),
+  timezone: z.string().max(100).optional(),
+  locale: z.string().max(10).optional(),
 });
 
 // ─── Логин ────────────────────────────────────────────────────────────────
@@ -30,6 +33,7 @@ export const LoginSchema = z.object({
   password: z.string()
     .min(1, 'Пароль обязателен')
     .max(128, 'Максимум 128 символов'),
+  source: z.string().max(50).optional(),
 });
 
 // ─── Восстановление пароля ──────────────────────────────────────────────

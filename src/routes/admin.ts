@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import bcrypt from 'bcryptjs';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { query } from '../config/db';
 import { validate } from '../middleware/validate';
@@ -59,12 +60,16 @@ router.get('/users', adminMiddleware, async (_req, res) => {
   try {
     const sql = USE_SQLITE
       ? `SELECT 
-           u.id, u.email, u.username, u.is_verified, u.is_admin,
+           u.id, u.email, u.username, u.is_verified, u.is_admin, u.is_blocked,
            u.subscription_active, u.subscription_expires_at,
            u.subscription_auto_renew, u.subscription_plan,
+           u.last_login_at, u.login_count, u.registration_source,
            u.news_count, u.created_at,
            COALESCE(p.total_payments, 0) as total_payments,
-           COALESCE(p.total_amount, 0) as total_amount
+           COALESCE(p.total_amount, 0) as total_amount,
+           COALESCE(t.tag_count, 0) as tag_count,
+           COALESCE(c.active_channels, 0) as active_channels,
+           COALESCE(r.read_count, 0) as articles_read
          FROM users u
          LEFT JOIN (
            SELECT user_id,
@@ -74,14 +79,30 @@ router.get('/users', adminMiddleware, async (_req, res) => {
            WHERE status = 'completed'
            GROUP BY user_id
          ) p ON p.user_id = u.id
+         LEFT JOIN (
+           SELECT user_id, COUNT(*) as tag_count
+           FROM portfolios GROUP BY user_id
+         ) t ON t.user_id = u.id
+         LEFT JOIN (
+           SELECT user_id, COUNT(*) as active_channels
+           FROM user_channels WHERE is_active = 1 GROUP BY user_id
+         ) c ON c.user_id = u.id
+         LEFT JOIN (
+           SELECT user_id, COUNT(*) as read_count
+           FROM user_news_reads GROUP BY user_id
+         ) r ON r.user_id = u.id
          ORDER BY u.created_at DESC LIMIT 500`
       : `SELECT 
-           u.id, u.email, u.username, u.is_verified, u.is_admin,
+           u.id, u.email, u.username, u.is_verified, u.is_admin, u.is_blocked,
            u.subscription_active, u.subscription_expires_at,
            u.subscription_auto_renew, u.subscription_plan,
+           u.last_login_at, u.login_count, u.registration_source,
            u.news_count, u.created_at,
            COALESCE(p.total_payments, 0)::int as total_payments,
-           COALESCE(p.total_amount, 0)::float as total_amount
+           COALESCE(p.total_amount, 0)::float as total_amount,
+           COALESCE(t.tag_count, 0)::int as tag_count,
+           COALESCE(c.active_channels, 0)::int as active_channels,
+           COALESCE(r.read_count, 0)::int as articles_read
          FROM users u
          LEFT JOIN (
            SELECT user_id,
@@ -91,21 +112,290 @@ router.get('/users', adminMiddleware, async (_req, res) => {
            WHERE status = 'completed'
            GROUP BY user_id
          ) p ON p.user_id = u.id
+         LEFT JOIN (
+           SELECT user_id, COUNT(*)::int as tag_count
+           FROM portfolios GROUP BY user_id
+         ) t ON t.user_id = u.id
+         LEFT JOIN (
+           SELECT user_id, COUNT(*)::int as active_channels
+           FROM user_channels WHERE is_active = TRUE GROUP BY user_id
+         ) c ON c.user_id = u.id
+         LEFT JOIN (
+           SELECT user_id, COUNT(*)::int as read_count
+           FROM user_news_reads GROUP BY user_id
+         ) r ON r.user_id = u.id
          ORDER BY u.created_at DESC LIMIT 500`;
 
     const result = await query(sql);
 
     const users = result.rows.map((row: any) => ({
       ...row,
+      is_blocked: row.is_blocked === true || row.is_blocked === 1,
       subscription_auto_renew: row.subscription_auto_renew === true || row.subscription_auto_renew === 1,
       total_payments: Number(row.total_payments ?? 0),
       total_amount: Number(row.total_amount ?? 0),
+      tag_count: Number(row.tag_count ?? 0),
+      active_channels: Number(row.active_channels ?? 0),
+      articles_read: Number(row.articles_read ?? 0),
     }));
 
     res.json({ users });
   } catch (err) {
     console.error('[Admin] Failed to fetch users:', err);
     res.status(500).json({ error: 'Failed to fetch users' });
+  }
+});
+
+// GET /api/admin/users/:id — detailed user profile for admin card (matches UserDetailModal)
+router.get('/users/:id', adminMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.params.id;
+
+    const userSql = USE_SQLITE
+      ? `SELECT
+           u.id, u.email, u.username, u.is_verified, u.is_admin, u.is_blocked,
+           u.subscription_active, u.subscription_plan, u.subscription_expires_at,
+           u.subscription_auto_renew, u.auto_renew_failures, u.scheduled_plan_downgrade,
+           u.last_login_at, u.login_count, u.registration_source, u.registration_ip,
+           u.timezone, u.locale, u.cohort_date, u.news_count, u.created_at,
+           COALESCE(p.total_amount, 0) as total_amount,
+           COALESCE(p.total_payments, 0) as total_payments,
+           COALESCE(r.read_count, 0) as articles_read
+         FROM users u
+         LEFT JOIN (
+           SELECT user_id, COUNT(*) as total_payments, COALESCE(SUM(amount), 0) as total_amount
+           FROM payments WHERE status = 'completed' GROUP BY user_id
+         ) p ON p.user_id = u.id
+         LEFT JOIN (
+           SELECT user_id, COUNT(*) as read_count FROM user_news_reads GROUP BY user_id
+         ) r ON r.user_id = u.id
+         WHERE u.id = $1`
+      : `SELECT
+           u.id, u.email, u.username, u.is_verified, u.is_admin, u.is_blocked,
+           u.subscription_active, u.subscription_plan, u.subscription_expires_at,
+           u.subscription_auto_renew, u.auto_renew_failures, u.scheduled_plan_downgrade,
+           u.last_login_at, u.login_count, u.registration_source, u.registration_ip,
+           u.timezone, u.locale, u.cohort_date, u.news_count, u.created_at,
+           COALESCE(p.total_amount, 0)::float as total_amount,
+           COALESCE(p.total_payments, 0)::int as total_payments,
+           COALESCE(r.read_count, 0)::int as articles_read
+         FROM users u
+         LEFT JOIN (
+           SELECT user_id, COUNT(*)::int as total_payments, COALESCE(SUM(amount), 0)::float as total_amount
+           FROM payments WHERE status = 'completed' GROUP BY user_id
+         ) p ON p.user_id = u.id
+         LEFT JOIN (
+           SELECT user_id, COUNT(*)::int as read_count FROM user_news_reads GROUP BY user_id
+         ) r ON r.user_id = u.id
+         WHERE u.id = $1`;
+
+    const userResult = await query(userSql, [userId]);
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const user = userResult.rows[0];
+
+    const [paymentsResult, tagsResult, channelsResult, loginsResult, notifResult] = await Promise.all([
+      query(`SELECT id, amount, status, method, plan_id, paid_at, created_at FROM payments WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50`, [userId]),
+      query(`SELECT tag_id, tag_name, tag_type, created_at FROM portfolios WHERE user_id = $1 ORDER BY created_at DESC`, [userId]),
+      query(`SELECT channel, target, is_active, created_at FROM user_channels WHERE user_id = $1`, [userId]),
+      query(`SELECT date(login_at) as day, COUNT(*) as count FROM user_logins WHERE user_id = $1 AND login_at > ${USE_SQLITE ? "datetime('now', '-30 days')" : "NOW() - INTERVAL '30 days'"} GROUP BY date(login_at) ORDER BY day ASC`, [userId]),
+      query(`SELECT user_id, tg_enabled, email_enabled, push_enabled FROM notification_settings WHERE user_id = $1`, [userId]),
+    ]);
+
+    res.json({
+      user: {
+        ...user,
+        is_blocked: user.is_blocked === true || user.is_blocked === 1,
+        subscription_auto_renew: user.subscription_auto_renew === true || user.subscription_auto_renew === 1,
+        total_amount: Number(user.total_amount ?? 0),
+        total_payments: Number(user.total_payments ?? 0),
+        articles_read: Number(user.articles_read ?? 0),
+      },
+      payments: paymentsResult.rows.map((p: any) => ({
+        ...p,
+        amount: Number(p.amount ?? 0),
+      })),
+      total_amount: Number(user.total_amount ?? 0),
+      tags: tagsResult.rows,
+      channels: channelsResult.rows.map((r: any) => ({ ...r, is_active: r.is_active === true || r.is_active === 1 })),
+      login_history: loginsResult.rows.map((r: any) => ({ day: r.day, count: Number(r.count) })),
+      notifications: notifResult.rows[0] || null,
+    });
+  } catch (err: any) {
+    console.error('[Admin] User detail error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch user details' });
+  }
+});
+
+// POST /api/admin/users/:id/toggle-admin — toggle admin flag
+router.post('/users/:id/toggle-admin', adminMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.params.id;
+
+    const current = await query(`SELECT id, is_admin, email FROM users WHERE id = $1`, [userId]);
+    if (current.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const currentValue = USE_SQLITE ? current.rows[0].is_admin === 1 : current.rows[0].is_admin === true;
+    const nextValue = !currentValue;
+
+    if (req.user?.userId === userId && currentValue) {
+      return res.status(409).json({ error: 'You cannot remove your own admin rights' });
+    }
+
+    await query(`UPDATE users SET is_admin = $1 WHERE id = $2`, [nextValue, userId]);
+    res.json({ success: true, user_id: userId, is_admin: nextValue });
+  } catch (err: any) {
+    console.error('[Admin] Toggle admin error:', err.message);
+    res.status(500).json({ error: 'Failed to toggle admin' });
+  }
+});
+
+// POST /api/admin/users/:id/toggle-block — toggle block flag
+router.post('/users/:id/toggle-block', adminMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.params.id;
+
+    if (req.user?.userId === userId) {
+      return res.status(409).json({ error: 'You cannot block yourself' });
+    }
+
+    const current = await query(`SELECT id, is_blocked FROM users WHERE id = $1`, [userId]);
+    if (current.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const currentValue = USE_SQLITE ? current.rows[0].is_blocked === 1 : current.rows[0].is_blocked === true;
+    const nextValue = !currentValue;
+
+    await query(`UPDATE users SET is_blocked = $1 WHERE id = $2`, [nextValue, userId]);
+    res.json({ success: true, user_id: userId, is_blocked: nextValue });
+  } catch (err: any) {
+    console.error('[Admin] Toggle block error:', err.message);
+    res.status(500).json({ error: 'Failed to toggle block' });
+  }
+});
+
+// POST /api/admin/users/:id/auto-renew — toggle subscription auto-renewal
+router.post('/users/:id/auto-renew', adminMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.params.id;
+    const { enabled } = req.body;
+    if (enabled === undefined) {
+      return res.status(400).json({ error: 'enabled required' });
+    }
+
+    const current = await query(`SELECT id FROM users WHERE id = $1`, [userId]);
+    if (current.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    await query(`UPDATE users SET subscription_auto_renew = $1 WHERE id = $2`, [enabled, userId]);
+    res.json({ success: true, user_id: userId, enabled });
+  } catch (err: any) {
+    console.error('[Admin] Toggle auto-renew error:', err.message);
+    res.status(500).json({ error: 'Failed to toggle auto-renew' });
+  }
+});
+
+// POST /api/admin/users/:id/reset-password — set new password
+router.post('/users/:id/reset-password', adminMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.params.id;
+    const { password } = req.body;
+    if (!password || password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+
+    const current = await query(`SELECT id FROM users WHERE id = $1`, [userId]);
+    if (current.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
+    await query(`UPDATE users SET password_hash = $1 WHERE id = $2`, [passwordHash, userId]);
+    res.json({ success: true, user_id: userId, message: 'Password reset successfully' });
+  } catch (err: any) {
+    console.error('[Admin] Reset password error:', err.message);
+    res.status(500).json({ error: 'Failed to reset password' });
+  }
+});
+
+// GET /api/admin/users/:id/delete-preview — show what will be deleted/cascade
+router.get('/users/:id/delete-preview', adminMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.params.id;
+    if (req.user?.userId === userId) {
+      return res.status(409).json({ error: 'You cannot delete yourself' });
+    }
+
+    const userResult = await query(
+      `SELECT id, email, username, is_admin, subscription_expires_at, subscription_auto_renew, subscription_plan
+       FROM users WHERE id = $1`,
+      [userId]
+    );
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    const user = userResult.rows[0];
+
+    const [ownedTags, sharedTags, paymentMethod] = await Promise.all([
+      query(`SELECT tag_id, tag_name FROM user_defined_tags WHERE created_by = $1`, [userId]),
+      query(`SELECT DISTINCT p.tag_id, udt.tag_name FROM portfolios p JOIN user_defined_tags udt ON udt.tag_id = p.tag_id WHERE p.user_id = $1 AND udt.created_by IS DISTINCT FROM $1`, [userId]),
+      query(`SELECT provider, is_active FROM user_payment_methods WHERE user_id = $1 AND is_active = ${USE_SQLITE ? '1' : 'TRUE'} LIMIT 1`, [userId]),
+    ]);
+
+    const hasAutoRenew = (user.subscription_auto_renew === true || user.subscription_auto_renew === 1) && user.subscription_active;
+
+    res.json({
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.username,
+        is_admin: user.is_admin === true || user.is_admin === 1,
+        subscription_expires_at: user.subscription_expires_at,
+        payment_method: paymentMethod.rows[0]?.provider || null,
+        has_auto_renew: hasAutoRenew,
+      },
+      owned_tags: ownedTags.rows,
+      shared_portfolio_tags: sharedTags.rows,
+      summary: {
+        has_owned_tags: ownedTags.rows.length > 0,
+        has_shared_tags: sharedTags.rows.length > 0,
+        total_tags: ownedTags.rows.length + sharedTags.rows.length,
+        has_auto_renew: hasAutoRenew,
+        subscription_expires_at: user.subscription_expires_at,
+      },
+    });
+  } catch (err: any) {
+    console.error('[Admin] Delete preview error:', err.message);
+    res.status(500).json({ error: 'Failed to preview deletion' });
+  }
+});
+
+// DELETE /api/admin/users/:id — hard delete user and all cascade data
+router.delete('/users/:id', adminMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.params.id;
+    if (req.user?.userId === userId) {
+      return res.status(409).json({ error: 'You cannot delete yourself' });
+    }
+
+    const current = await query(`SELECT id FROM users WHERE id = $1`, [userId]);
+    if (current.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Set owned tags to no owner instead of deleting
+    await query(`UPDATE user_defined_tags SET created_by = NULL WHERE created_by = $1`, [userId]);
+    await query(`DELETE FROM users WHERE id = $1`, [userId]);
+    res.json({ success: true, user_id: userId, deleted: true });
+  } catch (err: any) {
+    console.error('[Admin] Delete user error:', err.message);
+    res.status(500).json({ error: 'Failed to delete user' });
   }
 });
 

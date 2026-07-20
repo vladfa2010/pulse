@@ -61,9 +61,42 @@ CREATE TABLE IF NOT EXISTS users (
   subscription_auto_renew BOOLEAN DEFAULT TRUE,
   auto_renew_failures    INTEGER DEFAULT 0,
   scheduled_plan_downgrade VARCHAR(20),
+  is_blocked             BOOLEAN DEFAULT FALSE,
+  last_login_at          TIMESTAMP,
+  login_count            INTEGER DEFAULT 0,
+  registration_source    VARCHAR(50),
+  registration_ip        VARCHAR(45),
+  timezone               VARCHAR(50),
+  locale                 VARCHAR(10),
+  cohort_date            DATE,
   news_count      INTEGER DEFAULT 0,
   created_at      TIMESTAMP DEFAULT NOW()
 );
+
+-- ============================================================
+-- 1a. user_logins — platform/device/country detection for analytics
+-- ============================================================
+CREATE TABLE IF NOT EXISTS user_logins (
+  id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  login_at    TIMESTAMP DEFAULT NOW(),
+  ip_address  VARCHAR(45),
+  user_agent  TEXT,
+  platform    VARCHAR(20),
+  device_type VARCHAR(20),   -- 'mobile' | 'desktop' | 'tablet'
+  os          VARCHAR(50),   -- 'iOS' | 'Android' | 'Windows' | 'macOS'
+  browser     VARCHAR(50),   -- 'Chrome' | 'Safari' | 'Firefox'
+  country     VARCHAR(2),
+  created_at  TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_logins_user_id ON user_logins(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_logins_login_at ON user_logins(login_at DESC);
+CREATE INDEX IF NOT EXISTS idx_user_logins_platform ON user_logins(platform);
+CREATE INDEX IF NOT EXISTS idx_user_logins_device_type ON user_logins(device_type);
+CREATE INDEX IF NOT EXISTS idx_user_logins_country ON user_logins(country);
+
+
 
 -- ============================================================
 -- 2. portfolios
@@ -469,6 +502,8 @@ CREATE TABLE IF NOT EXISTS push_notifications_sent (
   id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   news_id    UUID NOT NULL REFERENCES news(id) ON DELETE CASCADE,
+  title      VARCHAR(255),
+  source     VARCHAR(50),
   sent_at    TIMESTAMP DEFAULT NOW(),
   UNIQUE(user_id, news_id)
 );

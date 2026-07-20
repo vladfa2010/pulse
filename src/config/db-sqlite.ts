@@ -150,9 +150,50 @@ export async function initSQLiteSchema(): Promise<void> {
       subscription_auto_renew INTEGER DEFAULT 1,
       auto_renew_failures INTEGER DEFAULT 0,
       scheduled_plan_downgrade TEXT,
+      is_blocked INTEGER DEFAULT 0,
+      last_login_at TEXT,
+      login_count INTEGER DEFAULT 0,
+      registration_source TEXT,
+      registration_ip TEXT,
+      timezone TEXT,
+      locale TEXT,
+      cohort_date TEXT,
       news_count INTEGER DEFAULT 0,
       created_at TEXT DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS user_logins (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      login_at TEXT DEFAULT (datetime('now')),
+      ip_address TEXT,
+      user_agent TEXT,
+      platform TEXT,
+      device_type TEXT,
+      os TEXT,
+      browser TEXT,
+      country TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_user_logins_user_id ON user_logins(user_id);
+    CREATE INDEX IF NOT EXISTS idx_user_logins_login_at ON user_logins(login_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_user_logins_platform ON user_logins(platform);
+    CREATE INDEX IF NOT EXISTS idx_user_logins_device_type ON user_logins(device_type);
+    CREATE INDEX IF NOT EXISTS idx_user_logins_country ON user_logins(country);
+
+    CREATE TABLE IF NOT EXISTS user_news_reads (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      news_id TEXT NOT NULL REFERENCES news(id) ON DELETE CASCADE,
+      read_at TEXT DEFAULT (datetime('now')),
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(user_id, news_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_user_news_reads_user_id ON user_news_reads(user_id);
+    CREATE INDEX IF NOT EXISTS idx_user_news_reads_news_id ON user_news_reads(news_id);
+    CREATE INDEX IF NOT EXISTS idx_user_news_reads_read_at ON user_news_reads(read_at DESC);
 
     CREATE TABLE IF NOT EXISTS portfolios (
       id TEXT PRIMARY KEY,

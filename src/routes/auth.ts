@@ -44,6 +44,49 @@ const router = Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
+// Detect platform from User-Agent string
+function detectPlatform(userAgent?: string): string {
+  if (!userAgent) return 'web';
+  const ua = userAgent.toLowerCase();
+  if (/iphone|ipad|ipod/.test(ua)) return 'ios';
+  if (/android/.test(ua)) return 'android';
+  if (/postman|insomnia/.test(ua)) return 'api';
+  return 'web';
+}
+
+// Detect device/os/browser from User-Agent
+function parseUserAgent(userAgent?: string) {
+  const ua = (userAgent || '').toLowerCase();
+  let device_type = 'desktop';
+  if (/mobile|android|iphone/.test(ua)) device_type = 'mobile';
+  else if (/tablet|ipad/.test(ua)) device_type = 'tablet';
+
+  let os = 'unknown';
+  if (/windows/.test(ua)) os = 'Windows';
+  else if (/mac os/.test(ua)) os = 'macOS';
+  else if (/android/.test(ua)) os = 'Android';
+  else if (/iphone|ipad/.test(ua)) os = 'iOS';
+  else if (/linux/.test(ua)) os = 'Linux';
+
+  let browser = 'unknown';
+  if (/chrome/.test(ua) && !/edg/.test(ua)) browser = 'Chrome';
+  else if (/safari/.test(ua) && !/chrome/.test(ua)) browser = 'Safari';
+  else if (/firefox/.test(ua)) browser = 'Firefox';
+  else if (/edg/.test(ua)) browser = 'Edge';
+
+  return { device_type, os, browser };
+}
+
+// Extract client IP from request
+function getClientIp(req: any): string | null {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (forwarded) {
+    const first = Array.isArray(forwarded) ? forwarded[0] : forwarded.split(',')[0];
+    return first.trim();
+  }
+  return req.ip || null;
+}
+
 // Генератор UUID v4 (уникальный идентификатор для каждой записи)
 function uuidv4(): string {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
@@ -62,6 +105,7 @@ function uuidv4(): string {
 router.post('/register', validate(RegisterSchema), async (req, res) => {
   try {
     const { email, username, password } = req.body;
+    const source = req.body.source || 'web';
 
     // ─── Валидация ──────────────────────────────────────────────────────
     if (!email || !username || !password) {
@@ -83,12 +127,17 @@ router.post('/register', validate(RegisterSchema), async (req, res) => {
     // ─── Хешируем пароль (bcrypt, 10 раундов) ───────────────────────────
     const passwordHash = await bcrypt.hash(password, 10);
     const userId = uuidv4();
+    const clientIp = getClientIp(req);
+    const platform = detectPlatform(req.headers['user-agent'] as string);
+    const cohortDate = new Date().toISOString().split('T')[0];
 
     // ─── Создаём пользователя ───────────────────────────────────────────
     await query(
-      `INSERT INTO users (id, email, username, password_hash, news_count)
-       VALUES ($1, $2, $3, $4, 0)`,
-      [userId, email, username, passwordHash]
+      `INSERT INTO users (id, email, username, password_hash, news_count,
+         registration_source, registration_ip, timezone, locale, cohort_date, last_login_at, login_count)
+       VALUES ($1, $2, $3, $4, 0, $5, $6, $7, $8, $9, $10, 1)`,
+      [userId, email, username, passwordHash, source, clientIp,
+       req.body.timezone || null, req.body.locale || null, cohortDate, new Date().toISOString()]
     );
 
     // ─── Создаём настройки уведомлений по умолчанию ─────────────────────
@@ -135,8 +184,9 @@ router.post('/login', validate(LoginSchema), async (req, res) => {
 
     // ─── Ищем пользователя по email (case-insensitive) ──────────────────
     const result = await query(
-      `SELECT id, email, username, password_hash, is_admin, subscription_active, subscription_plan,
-              subscription_expires_at, subscription_auto_renew, scheduled_plan_downgrade
+      `SELECT id, email, username, password_hash, is_admin, is_blocked, subscription_active, subscription_plan,
+              subscription_expires_at, subscription_auto_renew, scheduled_plan_downgrade,
+              login_count, last_login_at
        FROM users WHERE LOWER(email) = LOWER($1)`,
       [email]
     );
@@ -149,6 +199,15 @@ router.post('/login', validate(LoginSchema), async (req, res) => {
 
     const user = result.rows[0];
 
+    // ─── Проверяем, не заблокирован ли пользователь ─────────────────────
+    const isBlocked = user.is_blocked === 1 || user.is_blocked === true;
+    if (isBlocked) {
+      return res.status(403).json({
+        error: 'Аккаунт заблокирован. Обратитесь в поддержку.',
+        code: 'ACCOUNT_BLOCKED'
+      });
+    }
+
     // ─── Проверяем пароль (bcrypt.compare) ──────────────────────────────
     // bcrypt сравнивает plain-text пароль с хешем из БД
     const valid = await bcrypt.compare(password, user.password_hash);
@@ -158,6 +217,23 @@ router.post('/login', validate(LoginSchema), async (req, res) => {
         code: 'INVALID_PASSWORD'
       });
     }
+
+    // ─── Обновляем login-статистику и логируем вход ───────────────────────
+    const now = new Date().toISOString();
+    const clientIp = getClientIp(req);
+    const userAgent = req.headers['user-agent'] as string || null;
+    const platform = req.body.source || detectPlatform(userAgent || undefined);
+    const { device_type, os, browser } = parseUserAgent(userAgent || undefined);
+
+    await query(
+      `UPDATE users SET last_login_at = $1, login_count = COALESCE(login_count, 0) + 1 WHERE id = $2`,
+      [now, user.id]
+    );
+    await query(
+      `INSERT INTO user_logins (user_id, login_at, ip_address, user_agent, platform, device_type, os, browser)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [user.id, now, clientIp, userAgent, platform, device_type, os, browser]
+    );
 
     logLogin(user.id, user.email).catch(() => {});
 
