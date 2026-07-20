@@ -1045,6 +1045,41 @@ ${sentimentEmoji} <b>${newsItem.title_ru}</b>
 | `page_view_plans` | Просмотр тарифов | Пользователь открыл страницу тарифов |
 | `factcheck_ordered` | Заказан фактчек | Пользователь заказал факт-чекинг |
 
+### Просмотр тарифов (`page_view_plans`)
+
+> ⚠️ Важно: frontend-клиент `api` уже включает `/api` prefix (`API_BASE = 'https://pulse-api-bsov.onrender.com/api'`). Поэтому запрос со страницы тарифов должен идти на ** `/events/page-view`**, а не на `/api/events/page-view`. Двойной `/api` приводит к 404 и алерт не приходит.
+
+**Frontend:**
+```typescript
+// src/pages/Pricing.tsx
+useEffect(() => {
+  if (!isLoggedIn) return
+  api.post('/events/page-view', { page: 'plans' }).catch(() => {})
+}, [isLoggedIn])
+```
+
+**Backend:**
+```typescript
+// POST /api/events/page-view
+app.post('/api/events/page-view', authMiddleware, async (req, res) => {
+  const { page } = req.body;
+  if (page === 'plans') {
+    logPageViewPlans(req.user!.userId).catch(() => {});
+  }
+  res.json({ success: true });
+});
+```
+
+Flow:
+```
+Пользователь открывает /pricing
+  → Frontend POST /api/events/page-view { page: 'plans' }
+  → Backend logPageViewPlans(userId)
+  → logUserEvent('page_view_plans', { page: 'plans' })
+  → notifyAdmins('page_view_plans', ...)
+  → sendTelegramMessage(chat_id, formatted_alert)
+```
+
 ### API Endpoints
 
 #### `GET /admin/tg-alerts/settings`
