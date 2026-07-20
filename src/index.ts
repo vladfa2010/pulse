@@ -1853,7 +1853,7 @@ app.get('/admin/tags', requireAdmin, async (req, res) => {
       tag_name: row.tag_name,
       tag_type: row.tag_type,
       keywords: row.keywords || [],
-      is_verified: row.is_verified === true,
+      is_verified: row.is_verified === true || row.is_verified === 1,
       created_at: row.created_at,
       subscriber_count: parseInt(row.subscriber_count) || 0,
       articles_24h: parseInt(row.articles_24h) || 0,
@@ -2071,7 +2071,7 @@ app.get('/admin/tags/:tagId', requireAdmin, async (req, res) => {
         tag_type: tag.tag_type,
         keywords: tag.keywords || [],
         created_at: tag.created_at,
-        is_verified: tag.is_verified === true,
+        is_verified: tag.is_verified === true || tag.is_verified === 1,
         related_tags: relatedTags,
         ticker,
         website,
@@ -2245,6 +2245,14 @@ app.put('/admin/tags/:tagId', requireAdmin, async (req, res) => {
     if (updates.website && !updates.website.match(/^https?:\/\//)) {
       updates.website = 'https://' + updates.website;
     }
+    if (updates.wikipedia_url && !updates.wikipedia_url.match(/^https?:\/\//)) {
+      updates.wikipedia_url = 'https://' + updates.wikipedia_url;
+    }
+    if (updates.websites && Array.isArray(updates.websites)) {
+      updates.websites = updates.websites.map(url =>
+        typeof url === 'string' && !url.match(/^https?:\/\//) ? 'https://' + url : url
+      );
+    }
 
     // Build SET clauses for flat columns
     const setClauses: string[] = [];
@@ -2363,7 +2371,7 @@ app.put('/admin/tags/:tagId', requireAdmin, async (req, res) => {
       tag_type: updated.tag_type,
       keywords: updated.keywords || [],
       created_at: updated.created_at,
-      is_verified: updated.is_verified === true,
+      is_verified: updated.is_verified === true || updated.is_verified === 1,
       ticker: ed.ticker || null,
       website: ed.website || null,
       websites: ed.websites || (ed.website ? [ed.website] : []),
