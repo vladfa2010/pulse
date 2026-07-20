@@ -24,6 +24,10 @@ export const USER_EVENT_TYPES = [
   'subscription_cancelled',
   'channel_connected',
   'channel_disconnected',
+  'telegram_connected',
+  'telegram_disconnected',
+  'email_connected',
+  'email_disconnected',
   'sentiment_vote',
   'factcheck_ordered',
   'page_view_plans',
@@ -113,6 +117,22 @@ export async function logChannelConnected(userId: string, channel: string, targe
 
 export async function logChannelDisconnected(userId: string, channel: string, target: string): Promise<void> {
   return logUserEvent(userId, 'channel_disconnected', { channel, target });
+}
+
+export async function logTelegramConnected(userId: string, chatId: string): Promise<void> {
+  return logUserEvent(userId, 'telegram_connected', { chat_id: chatId });
+}
+
+export async function logTelegramDisconnected(userId: string, chatId: string): Promise<void> {
+  return logUserEvent(userId, 'telegram_disconnected', { chat_id: chatId });
+}
+
+export async function logEmailConnected(userId: string, email: string): Promise<void> {
+  return logUserEvent(userId, 'email_connected', { email });
+}
+
+export async function logEmailDisconnected(userId: string, email: string): Promise<void> {
+  return logUserEvent(userId, 'email_disconnected', { email });
 }
 
 export async function logSentimentVote(

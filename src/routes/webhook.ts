@@ -6,8 +6,8 @@ import { activateSubscription, savePaymentMethod, getPlanById, scheduleDowngrade
 import {
   logPaymentCompleted,
   logSubscriptionCancelled,
-  logChannelConnected,
-  logChannelDisconnected,
+  logTelegramConnected,
+  logTelegramDisconnected,
 } from '../services/activityLog';
 
 const router = Router();
@@ -297,7 +297,7 @@ router.post('/telegram', async (req, res) => {
               `UPDATE notification_settings SET tg_digest_enabled = FALSE WHERE user_id = $1`,
               [userId]
             );
-            logChannelDisconnected(userId, 'telegram', chatId).catch(() => {});
+            logTelegramDisconnected(userId, chatId).catch(() => {});
             console.log(`[Webhook] Deactivated telegram channel for user ${userId}, chat ${chatId}`);
           } else {
             console.log(`[Webhook] No channel found for chat ${chatId}`);
@@ -362,7 +362,7 @@ router.post('/telegram', async (req, res) => {
             [userId]
           );
 
-          logChannelConnected(userId, 'telegram', chatId).catch(() => {});
+          logTelegramConnected(userId, chatId).catch(() => {});
 
           await sendMessage(chatId,
             '✅ PULSE подключен!\n\nДайджесты будут приходить по расписанию.\n\nКоманды:\n/now — дайджест сейчас\n/stop — отключить'

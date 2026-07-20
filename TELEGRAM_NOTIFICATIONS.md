@@ -24,7 +24,7 @@
 | **Sentiment Alerts** | ✅ Реализовано | Асинхронные алерты по тегам |
 | **Fact-check Reports** | ✅ Реализовано | Telegram (MarkdownV2) + HTML email после завершения проверки |
 | **Rate limiting** | ✅ Реализовано | 300ms/200ms задержки |
-| **Admin Telegram Alerts** | ✅ Реализовано | Алерты админам о событиях пользователей (register, payment, page_view_plans и др.) |
+| **Admin Telegram Alerts** | ✅ Реализовано | Алерты админам о событиях пользователей (register, payment, page_view_plans, telegram_connected/disconnected, email_connected/disconnected и др.) |
 
 ---
 
@@ -1037,8 +1037,10 @@ ${sentimentEmoji} <b>${newsItem.title_ru}</b>
 | `payment_completed` | Оплата | Успешный платёж |
 | `subscription_activated` | Подписка активирована | Подписка активирована/продлена |
 | `subscription_cancelled` | Подписка отменена | Подписка отменена (вручную или админом) |
-| `channel_connected` | Канал подключён | Пользователь подключил Telegram |
-| `channel_disconnected` | Канал отключён | Пользователь отключил Telegram |
+| `telegram_connected` | Telegram подключён | Пользователь подключил Telegram-бота |
+| `telegram_disconnected` | Telegram отключён | Пользователь отключил Telegram-бота |
+| `email_connected` | Email подключён | Пользователь зарегистрировался (email подтверждён) |
+| `email_disconnected` | Email отключён | Пользователь отключил email-уведомления |
 | `sentiment_vote` | Прогноз индекса (голос) | Пользователь проголосовал в Sentiment Index |
 | `page_view_plans` | Просмотр тарифов | Пользователь открыл страницу тарифов |
 | `factcheck_ordered` | Заказан фактчек | Пользователь заказал факт-чекинг |
@@ -1054,7 +1056,7 @@ ${sentimentEmoji} <b>${newsItem.title_ru}</b>
   "settings": {
     "id": "...",
     "tg_chat_id": "123456789",
-    "event_types": ["register", "payment_completed", "page_view_plans"],
+    "event_types": ["register", "payment_completed", "page_view_plans", "telegram_connected", "telegram_disconnected", "email_connected", "email_disconnected"],
     "is_active": true
   },
   "event_types": [
@@ -1071,7 +1073,7 @@ ${sentimentEmoji} <b>${newsItem.title_ru}</b>
 ```json
 {
   "tg_chat_id": "123456789",
-  "event_types": ["register", "payment_completed", "page_view_plans"],
+  "event_types": ["register", "payment_completed", "page_view_plans", "telegram_connected", "telegram_disconnected", "email_connected", "email_disconnected"],
   "is_active": true
 }
 ```

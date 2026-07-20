@@ -25,8 +25,10 @@ export const ALERT_EVENT_TYPES: { value: UserEventType | 'sentiment_vote'; label
   { value: 'payment_completed', label: 'Оплата' },
   { value: 'subscription_activated', label: 'Подписка активирована' },
   { value: 'subscription_cancelled', label: 'Подписка отменена' },
-  { value: 'channel_connected', label: 'Канал подключён' },
-  { value: 'channel_disconnected', label: 'Канал отключён' },
+  { value: 'telegram_connected', label: 'Telegram подключён' },
+  { value: 'telegram_disconnected', label: 'Telegram отключён' },
+  { value: 'email_connected', label: 'Email подключён' },
+  { value: 'email_disconnected', label: 'Email отключён' },
   { value: 'sentiment_vote', label: 'Прогноз индекса (голос)' },
   { value: 'page_view_plans', label: 'Просмотр тарифов' },
   { value: 'factcheck_ordered', label: 'Заказан фактчек' },
@@ -100,9 +102,13 @@ function formatAlert(eventType: UserEventType, user: UserMini | null, data: Reco
     case 'sentiment_vote':
       details = `📊 Голос: <b>${data.vote_value === 1 ? '🟢 Рост' : data.vote_value === -1 ? '🔴 Падение' : '⚪ Нейтрально'}</b>\n📈 Индекс: ${data.index_at_vote ?? '?'}`;
       break;
-    case 'channel_connected':
-    case 'channel_disconnected':
-      details = `🔌 Канал: ${escapeHtml(data.channel || '')}\n🎯 Цель: ${escapeHtml(data.target || '')}`;
+    case 'telegram_connected':
+    case 'telegram_disconnected':
+      details = `💬 Chat ID: <code>${escapeHtml(data.chat_id || '')}</code>`;
+      break;
+    case 'email_connected':
+    case 'email_disconnected':
+      details = `📧 Email: ${escapeHtml(data.email || '')}`;
       break;
     case 'page_view_plans':
       details = `📄 Страница: тарифы`;
