@@ -24,6 +24,7 @@
 | **Sentiment Alerts** | ✅ Реализовано | Асинхронные алерты по тегам |
 | **Fact-check Reports** | ✅ Реализовано | Telegram (MarkdownV2) + HTML email после завершения проверки |
 | **Rate limiting** | ✅ Реализовано | 300ms/200ms задержки |
+| **Admin Telegram Alerts** | ✅ Реализовано | Алерты админам о событиях пользователей (register, payment, page_view_plans и др.) |
 
 ---
 
@@ -35,6 +36,7 @@
 4. [Digest — детальная логика](#4-digest--детальная-логика)
 5. [Weekly Report — детальная логика](#5-weekly-report--детальная-логика)
 6. [Sentiment Alerts](#6-sentiment-alerts)
+6.1. [Admin Telegram Alerts](#61-admin-telegram-alerts)
 7. [Bot Commands](#7-bot-commands)
 8. [Таблицы БД](#8-таблицы-бд)
 9. [Настройки](#9-настройки)
@@ -1007,6 +1009,92 @@ ${sentimentEmoji} <b>${newsItem.title_ru}</b>
 | Sentiment | Должен быть существенно отличным от предыдущего |
 | Тихие часы | Если включены — алерт не отправляется |
 | Канал | `user_channels.is_active = TRUE` |
+
+---
+
+## 6.1 Admin Telegram Alerts
+
+### Обзор ✅
+
+Админские TG-алерты — мгновенные уведомления администраторам о ключевых событиях пользователей. Настраиваются во вкладке **Alerts** админ-панели (`/admin`).
+
+### Flow алерта
+
+```
+Событие пользователя → logUserEvent() → notifyAdmins() → sendTelegramMessage()
+```
+
+### Список событий
+
+| Event Type | Label | Когда триггерится |
+|------------|-------|------------------|
+| `register` | Регистрация | Новый пользователь завершил регистрацию |
+| `login` | Вход | Пользователь авторизовался |
+| `forgot_password` | Забыли пароль | Запрос на восстановление пароля |
+| `password_reset` | Сброс пароля | Пароль успешно сброшен |
+| `tag_added` | Добавлен тег | Пользователь добавил тег в портфолио |
+| `tag_removed` | Удалён тег | Пользователь удалил тег из портфолио |
+| `payment_completed` | Оплата | Успешный платёж |
+| `subscription_activated` | Подписка активирована | Подписка активирована/продлена |
+| `subscription_cancelled` | Подписка отменена | Подписка отменена (вручную или админом) |
+| `channel_connected` | Канал подключён | Пользователь подключил Telegram |
+| `channel_disconnected` | Канал отключён | Пользователь отключил Telegram |
+| `sentiment_vote` | Прогноз индекса (голос) | Пользователь проголосовал в Sentiment Index |
+| `page_view_plans` | Просмотр тарифов | Пользователь открыл страницу тарифов |
+| `factcheck_ordered` | Заказан фактчек | Пользователь заказал факт-чекинг |
+
+### API Endpoints
+
+#### `GET /admin/tg-alerts/settings`
+
+Возвращает настройки алертов для текущего админа + полный список доступных событий.
+
+```json
+{
+  "settings": {
+    "id": "...",
+    "tg_chat_id": "123456789",
+    "event_types": ["register", "payment_completed", "page_view_plans"],
+    "is_active": true
+  },
+  "event_types": [
+    { "value": "register", "label": "Регистрация" },
+    ...
+  ]
+}
+```
+
+#### `PUT /admin/tg-alerts/settings`
+
+Сохраняет настройки алертов.
+
+```json
+{
+  "tg_chat_id": "123456789",
+  "event_types": ["register", "payment_completed", "page_view_plans"],
+  "is_active": true
+}
+```
+
+#### `POST /admin/tg-alerts/test`
+
+Отправляет тестовое сообщение в указанный чат.
+
+```json
+{ "tg_chat_id": "123456789" }
+```
+
+### Формат сообщения
+
+```
+🔔 <b>Просмотр тарифов</b>
+
+👤 <b>Пользователь:</b> user@example.com
+   📧 user@example.com
+   🆔 <code>uuid-123</code>
+
+📄 Страница: тарифы
+```
 
 ---
 

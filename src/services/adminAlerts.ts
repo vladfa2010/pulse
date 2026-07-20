@@ -28,6 +28,8 @@ export const ALERT_EVENT_TYPES: { value: UserEventType | 'sentiment_vote'; label
   { value: 'channel_connected', label: 'Канал подключён' },
   { value: 'channel_disconnected', label: 'Канал отключён' },
   { value: 'sentiment_vote', label: 'Прогноз индекса (голос)' },
+  { value: 'page_view_plans', label: 'Просмотр тарифов' },
+  { value: 'factcheck_ordered', label: 'Заказан фактчек' },
 ];
 
 export interface AdminTgSettings {
@@ -101,6 +103,12 @@ function formatAlert(eventType: UserEventType, user: UserMini | null, data: Reco
     case 'channel_connected':
     case 'channel_disconnected':
       details = `🔌 Канал: ${escapeHtml(data.channel || '')}\n🎯 Цель: ${escapeHtml(data.target || '')}`;
+      break;
+    case 'page_view_plans':
+      details = `📄 Страница: тарифы`;
+      break;
+    case 'factcheck_ordered':
+      details = `🔍 Запрос: ${escapeHtml(data.query || '')}`;
       break;
     default:
       details = Object.entries(data)
