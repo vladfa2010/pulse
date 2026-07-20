@@ -15,6 +15,7 @@ import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { query } from '../config/db';
 import { getUserSubscription, planLevel } from '../services/subscription';
 import { createFactCheckJob, updateNewsFactCheck, setEmitter, removeEmitter } from '../services/factCheck';
+import { logFactCheckOrdered } from '../services/activityLog';
 
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
@@ -100,6 +101,8 @@ router.post('/:id/fact-check', async (req: AuthRequest, res) => {
     if (!jobId) {
       return res.status(409).json({ error: 'Fact-check already in progress' });
     }
+
+    logFactCheckOrdered(userId, newsId).catch(() => {});
 
     res.status(news.fact_check_status === 'checked' ? 200 : 201).json({
       job_id: jobId,

@@ -25,6 +25,8 @@ export const USER_EVENT_TYPES = [
   'channel_connected',
   'channel_disconnected',
   'sentiment_vote',
+  'factcheck_ordered',
+  'page_view_plans',
 ] as const;
 
 export type UserEventType = typeof USER_EVENT_TYPES[number];
@@ -119,4 +121,12 @@ export async function logSentimentVote(
   indexAtVote: number
 ): Promise<void> {
   return logUserEvent(userId, 'sentiment_vote', { vote_value: voteValue, index_at_vote: indexAtVote });
+}
+
+export async function logFactCheckOrdered(userId: string, newsId: string): Promise<void> {
+  return logUserEvent(userId, 'factcheck_ordered', { news_id: newsId });
+}
+
+export async function logPageViewPlans(userId: string): Promise<void> {
+  return logUserEvent(userId, 'page_view_plans', { page: 'plans' });
 }

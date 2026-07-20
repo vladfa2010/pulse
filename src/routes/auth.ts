@@ -37,6 +37,7 @@ import {
   logLogin,
   logForgotPassword,
   logPasswordReset,
+  logChannelConnected,
 } from '../services/activityLog';
 
 const router = Router();
@@ -105,6 +106,7 @@ router.post('/register', validate(RegisterSchema), async (req, res) => {
     const token = jwt.sign({ userId, email, is_admin: false }, JWT_SECRET, { expiresIn: '7d' });
 
     logRegister(userId, email, username).catch(() => {});
+    logChannelConnected(userId, 'email', email).catch(() => {});
 
     res.status(201).json({
       token,

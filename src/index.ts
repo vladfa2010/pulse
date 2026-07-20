@@ -44,7 +44,7 @@ import cron from 'node-cron';
 import { resetDailyWindows, refreshImoexCache } from './services/sentimentIndex';
 import { sendSentimentVotePush } from './services/push';
 import { processScheduledDowngrades, processAutoRenewals, processTrialExpirations, getPlanById } from './services/subscription';
-import { isUserEventType } from './services/activityLog';
+import { isUserEventType, logPageViewPlans } from './services/activityLog';
 import { getAdminTgSettings, saveAdminTgSettings, sendTestAlert, ALERT_EVENT_TYPES } from './services/adminAlerts';
 import { setupYookassaWebhook } from './routes/payment'; // ← Auto-setup YuKassa webhook
 import { addSubscriber, getSubscriberCount, addSentimentSubscriber } from './services/sse'; // ← Real-time news stream
@@ -1418,7 +1418,7 @@ app.get('/admin/users/:id', requireAdmin, async (req, res) => {
     // User data
     const userResult = await query(`
       SELECT id, email, username, is_verified, is_admin, is_blocked,
-             subscription_active, subscription_expires_at, subscription_auto_renew,
+             subscription_active, subscription_plan, subscription_expires_at, subscription_auto_renew,
              news_count, created_at
       FROM users
       WHERE id = $1
@@ -1480,6 +1480,7 @@ app.get('/admin/users/:id', requireAdmin, async (req, res) => {
         is_admin: u.is_admin === true || u.is_admin === 1,
         is_blocked: u.is_blocked === true || u.is_blocked === 1,
         subscription_active: u.subscription_active === true || u.subscription_active === 1,
+        subscription_plan: u.subscription_plan || 'free',
         subscription_expires_at: u.subscription_expires_at,
         subscription_auto_renew: u.subscription_auto_renew === true || u.subscription_auto_renew === 1,
         news_count: parseInt(u.news_count) || 0,
@@ -1576,8 +1577,69 @@ app.post('/admin/users/:id/toggle-block', requireAdmin, async (req, res) => {
   }
 });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// TZ_DELETE_ACCOUNT v1.0 — DELETE PREVIEW
+// POST /admin/users/:id/auto-renew — включить/выключить автопродление пользователя
+app.post('/admin/users/:id/auto-renew', requireAdmin, async (req, res) => {
+  try {
+    const userId = req.params.id;
+    const { enabled } = req.body;
+    const enable = enabled === true;
+
+    const userResult = await query(`
+      SELECT subscription_plan, subscription_expires_at, subscription_auto_renew
+      FROM users
+      WHERE id = $1
+    `, [userId]);
+
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const user = userResult.rows[0];
+    const currentAutoRenew = USE_SQLITE
+      ? (user.subscription_auto_renew === 1 || user.subscription_auto_renew === true)
+      : (user.subscription_auto_renew === true);
+
+    if (currentAutoRenew === enable) {
+      return res.status(409).json({
+        error: `Auto-renew is already ${enable ? 'enabled' : 'disabled'}`
+      });
+    }
+
+    if (enable) {
+      const plan = await getPlanById(user.subscription_plan || 'free');
+      if (!plan || !plan.is_active || plan.deleted_at) {
+        return res.status(400).json({ error: 'Current plan is not available for renewal' });
+      }
+
+      const pmResult = await query(`
+        SELECT id FROM user_payment_methods
+        WHERE user_id = $1 AND is_active = TRUE
+        LIMIT 1
+      `, [userId]);
+
+      if (pmResult.rows.length === 0) {
+        return res.status(400).json({ error: 'No saved payment method' });
+      }
+    }
+
+    await query(`
+      UPDATE users SET subscription_auto_renew = $1 WHERE id = $2
+    `, [enable, userId]);
+
+    res.json({
+      success: true,
+      enabled: enable,
+      subscription: {
+        plan: user.subscription_plan || 'free',
+        expires_at: user.subscription_expires_at,
+        auto_renew: enable,
+      },
+    });
+  } catch (err: any) {
+    console.error('[Admin] Auto-renew toggle error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
 // GET /admin/users/:id/delete-preview
 // 
 // Что делает: показывает админу ЧТО будет удалено/изменено перед удалением.
@@ -3965,6 +4027,22 @@ app.use('/api/webhook', webhookLimiter, webhookRoutes); // Высокий лим
 app.use('/api/admin', adminRoutes);     // GET /api/admin/users, /stats
 app.use('/api/sentiment', sentimentRoutes); // Sentiment Index
 app.use('/api/app', appRoutes);            // App version / update info
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Page view events
+// ═══════════════════════════════════════════════════════════════════════════
+app.post('/api/events/page-view', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const { page } = req.body;
+    if (page === 'plans') {
+      logPageViewPlans(req.user!.userId).catch(() => {});
+    }
+    res.json({ success: true });
+  } catch (err: any) {
+    console.error('[PageView] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Telegram Bot — generate secure link for connecting account
