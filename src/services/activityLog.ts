@@ -9,35 +9,9 @@
 
 import { query } from '../config/db';
 import { notifyAdmins } from './adminAlerts';
+import { UserEventType } from '../types/events';
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
-
-export const USER_EVENT_TYPES = [
-  'register',
-  'login',
-  'forgot_password',
-  'password_reset',
-  'tag_added',
-  'tag_removed',
-  'payment_completed',
-  'subscription_activated',
-  'subscription_cancelled',
-  'channel_connected',
-  'channel_disconnected',
-  'telegram_connected',
-  'telegram_disconnected',
-  'email_connected',
-  'email_disconnected',
-  'sentiment_vote',
-  'factcheck_ordered',
-  'page_view_plans',
-] as const;
-
-export type UserEventType = typeof USER_EVENT_TYPES[number];
-
-export function isUserEventType(value: string): value is UserEventType {
-  return USER_EVENT_TYPES.includes(value as UserEventType);
-}
 
 /**
  * Записать событие пользователя в лог.

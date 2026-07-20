@@ -11,7 +11,7 @@
 
 import { query } from '../config/db';
 import { sendTelegramMessage } from './telegram';
-import { UserEventType } from './activityLog';
+import { UserEventType } from '../types/events';
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
