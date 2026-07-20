@@ -74,6 +74,16 @@
 > 2. Round 2: результаты поиска возвращаются в LLM, которая формирует финальный JSON.
 > Общее время enrichment: ~10–25 секунд. Добавлен guard: если описание/тикер/синонимы не соответствуют запрошенному тегу, enrichment отклоняется (`[TagEnrich] Mismatch`).
 >
+> Результат обогащения включает поля:
+> - `ticker`, `exchange`, `description_ru`
+> - `websites` (массив официальных сайтов; первый элемент синхронизируется с legacy `website`)
+> - `wikipedia_url` (ссылка на Wikipedia)
+> - `country` (страна регистрации / основного листинга)
+> - `isin` (код ISIN, 12 символов)
+> - `sectors` (массив секторов экономики; первый элемент синхронизируется с legacy `sector`)
+> - `trends` (массив трендов/тем; первый элемент синхронизируется с legacy `trend`)
+> - `key_products`, `synonyms_ru`, `synonyms_en`, `related_tags`
+>
 > Промпт включает контекст глобальных и российских рынков (NASDAQ/NYSE + MOEX/SPB), примеры Apple и Сбербанка (ILLUSTRATION ONLY), и правила для русских компаний (MOEX-тикер, `.ru` сайт, русские синонимы и продукты).
 
 ### 2.2 Генерация keywords
@@ -89,10 +99,10 @@ function generateTagKeywords(tagName: string): string[]
 
 ### 2.3 Хранение
 
-- **Таблица:** `user_defined_tags` (tag_id, tag_name, tag_type, keywords[], enriched_data JSONB, created_by)
+- **Таблица:** `user_defined_tags` (tag_id, tag_name, tag_type, keywords[], enriched_data JSONB, is_verified BOOLEAN, created_by)
 - **Портфель:** `portfolios` (user_id, tag_id, tag_name, tag_type)
 - **Кэш:** in-memory, TTL 1 минута
-- **Инвариант:** повторное добавление существующего тега в портфель не изменяет `user_defined_tags` (не перезаписывает `enriched_data`, `keywords`, `tag_type`, `created_by`). Создание ищет тег как по `tag_id`, так и по `LOWER(tag_name)`; при совпадении по названию пользователь подписывается на существующий `tag_id`.
+- **Инвариант:** повторное добавление существующего тега в портфель не изменяет `user_defined_tags` (не перезаписывает `enriched_data`, `keywords`, `tag_type`, `created_by`, `is_verified`). Создание ищет тег как по `tag_id`, так и по `LOWER(tag_name)`; при совпадении по названию пользователь подписывается на существующий `tag_id`.
 - **Дедупликация по транслиту:** третий уровень поиска проверяет варианты названия в латинице и кириллице (`getTranslitVariants`). Это предотвращает дубли `sberbank` / `сбербанк`, `gazprom` / `газпром`, `yandex` / `яндекс`. Фонетические варианты (`apple` / `эппл`) не покрываются — известное ограничение.
 
 ### 2.4 Почему нет хардкод тегов
@@ -397,7 +407,8 @@ CREATE TABLE user_defined_tags (
   tag_name VARCHAR(100) NOT NULL,
   tag_type VARCHAR(20) DEFAULT 'company',
   keywords TEXT[] DEFAULT '{}',
-  enriched_data JSONB,                        -- LLM enrichment: ticker, description, synonyms, etc.
+  enriched_data JSONB,                        -- LLM enrichment: ticker, websites, description, synonyms, sectors, trends, etc.
+  is_verified BOOLEAN DEFAULT FALSE,          -- ручной флаг верификации админом, сохраняется при повторном обогащении
   created_by UUID REFERENCES users(id),
   created_at TIMESTAMP DEFAULT NOW()
 );
@@ -487,12 +498,13 @@ CREATE TABLE news (
 
 ## 14. Инвариант защиты тегов (v8.1+)
 
-- `POST /api/user/tags` при повторном добавлении существующего тега **не обновляет** `user_defined_tags` (`enriched_data`, `keywords`, `tag_type`, `created_by`) и возвращает флаг `alreadySubscribed`.
+- `POST /api/user/tags` при повторном добавлении существующего тега **не обновляет** `user_defined_tags` (`enriched_data`, `keywords`, `tag_type`, `created_by`, `is_verified`) и возвращает флаг `alreadySubscribed`.
 - Перед созданием тег ищется по `tag_id`, `LOWER(tag_name)`, транслит-вариантам и тикеру в `enriched_data`. Если найден — пользователь подписывается на существующий `tag_id`, дубль не создаётся.
 - В `portfolios` всегда записывается каноническое `tag_name` из `user_defined_tags`.
 - Ручное изменение enriched-полей возможно через `PUT /admin/tags/:tagId`.
 - Принудительное обогащение запускается через `POST /admin/tags/:tagId/enrich` — endpoint вызывает `enrichTagViaLLM`, перезаписывает `enriched_data`, обновляет `keywords[]` и `tag_type`, затем инвалидирует кэш и будит no-tags статьи.
-- При admin-изменении `enriched_data` мержится через `COALESCE(enriched_data, '{}') || jsonb_build_object(...)`, а `keywords[]` пересчитываются через `rebuildKeywordsFromEnrichment()`.
+- При admin-изменении `enriched_data` мержится в памяти на сервере (merge в JS), а `keywords[]` пересчитываются через `rebuildKeywordsFromEnrichment()`.
+- `is_verified` — flat-колонка, сохраняется при обогащении и не сбрасывается LLM.
 
 ## 15. Известные ограничения
 
@@ -561,15 +573,7 @@ ALTER TABLE news ADD COLUMN sentiment_score INTEGER;
 
 ---
 
-## 14. Инвариант защиты тегов (v8.1+)
-
-- `POST /api/user/tags` при повторном добавлении существующего тега **не обновляет** `user_defined_tags` (`enriched_data`, `keywords`, `tag_type`, `created_by`) и возвращает флаг `alreadySubscribed`.
-- В `portfolios` всегда записывается каноническое `tag_name` из `user_defined_tags`.
-- Ручное изменение enriched-полей возможно через `PUT /admin/tags/:tagId`.
-- Принудительное обогащение запускается через `POST /admin/tags/:tagId/enrich` — endpoint вызывает `enrichTagViaLLM`, перезаписывает `enriched_data`, обновляет `keywords[]` и `tag_type`, затем инвалидирует кэш и будит no-tags статьи.
-- При admin-изменении `enriched_data` мержится через `COALESCE(enriched_data, '{}') || jsonb_build_object(...)`, а `keywords[]` пересчитываются через `rebuildKeywordsFromEnrichment()`.
-
 ## 15. Известные ограничения
 
 - **Race condition:** `SELECT` + `INSERT` в `createUserTag()` неатомарны. Текущая реализация ловит `23505` и использует существующий тег, но для 100% защиты в будущем стоит обернуть создание в транзакцию или advisory lock.
-- **Нормализация `tag_id`:** фронтенд (`Home.tsx`) формирует `tag_id` из ввода пользователя, но `createUserTag` разрешает его в существующий `tag_id`, если тег уже есть в `user_defined_tags`.
+- **Нормализация `tag_id`:** фронтенд (`Home.tsx`) формирует `tag_id` из ввода пользователя (lowercase + замена пробелов на `_`), но `createUserTag` разрешает его в существующий `tag_id`, если тег уже есть в `user_defined_tags`.

@@ -49,7 +49,13 @@ export const TAG_TYPE_LABELS: Record<TagType, string> = {
 export interface TagEnrichment {
   tag_type: TagType;           // company, ticker, sector, etc.
   ticker?: string;             // AAPL, SBER, NVDA (if applicable)
-  website?: string;            // Official website (e.g. https://www.apple.com)
+  website?: string;            // Official website — LEGACY, = websites[0], kept in sync automatically
+  websites?: string[];          // NEW: official site FIRST + related sites (IR, newsroom). 1-5 items.
+  wikipedia_url?: string;     // NEW: Wikipedia article URL (admin-only)
+  country?: string;            // NEW: country name in RUSSIAN (e.g. "Россия", "США"). null for trend/currency/etc.
+  isin?: string;               // NEW: International Securities Identification Number (12 chars)
+  sectors?: string[];          // NEW: industries/sectors in RUSSIAN, 1-5 items, most important FIRST
+  trends?: string[];           // NEW: major trends/themes in RUSSIAN, 0-5 items
   related_entities: string[];  // Related companies/sectors/people
   synonyms_en: string[];       // English synonyms & aliases
   synonyms_ru: string[];       // Russian synonyms & aliases
@@ -95,11 +101,11 @@ Rules:
 1. ALWAYS search the web first using $web_search
 2. Return ONLY valid JSON, no markdown, no extra text
 3. description_ru: Write 2 paragraphs in RUSSIAN. Paragraph 1 = what the company/person/sector is (origin, founding). Paragraph 2 = current status, main activities, stock exchange if applicable. Use \\n\\n between paragraphs.
-4. website: Official company/person website URL starting with https://. null if unknown or not a company/person.
+4. website: Official company/person website URL starting with https://. null if unknown or not a company/person. This is the LEGACY field; it MUST always equal websites[0].
 5. If tag is a person: ticker=null, website=personal site or Wikipedia link, related_entities=their companies, key_products=their initiatives
 6. If tag is a sector/index/trend: ticker=null, website=null, related_entities=major constituents
 7. synonyms_ru must include common Russian transliterations, nicknames, and short forms
-8. All arrays must have at least 3 items, at most 15 items
+8. All arrays must have at least 3 items, at most 15 items, EXCEPT sectors (1-5), trends (0-5), websites (1-5)
 9. tag_type MUST be one of: company, ticker, sector, trend, person, commodity, index, currency
 10. description_ru must be written in natural, fluent Russian (not translated from English)
 11. Use CURRENT data as of 2026 — stock exchange listings, company status, ownership should reflect 2026 reality
@@ -107,12 +113,25 @@ Rules:
 13. If the tag is a Russian company or person, ensure description_ru references Russian context (founded in Russia, Moscow Exchange listing, ruble reporting)
 14. synonyms_ru MUST include common Russian short names, diminutives, and transliterations (e.g., "Сбер", "Газпром", "Яндекс", "Тинькофф" → "Т-Банк")
 15. For Russian banks/fintech: key_products should include Russian product names (e.g., "СберБанк Онлайн", "Тинькофф Инвестиции", "Яндекс.Плюс")
+16. websites: official website FIRST, then key related sites (investor relations, newsroom/press). 1-5 items. All URLs must start with https://. For non-company tags return a single authoritative source or null.
+17. website: ALWAYS equal to websites[0] (legacy field, kept in sync automatically).
+18. wikipedia_url: full URL of the Wikipedia article. Language matches the tag: Russian tag → ru.wikipedia.org, English tag → en.wikipedia.org. null if no article exists.
+19. country: country name in RUSSIAN (e.g. "Россия", "США", "Китай"). For persons — country of primary activity. null for trend/currency/commodity/index tags.
+20. isin: International Securities Identification Number (12 chars, e.g. US0378331005, RU0009029540). null if the tag is not a traded security.
+21. sectors: industries/sectors the entity operates in, in RUSSIAN (e.g. ["Финансы", "Банковское дело"], ["Технологии", "Потребительская электроника"]). 1-5 items, most important FIRST. For pure sector tags return the parent sector. Empty array if not applicable.
+22. trends: major trends/themes the entity is exposed to, in RUSSIAN (e.g. ["Искусственный интеллект", "Цифровизация"]). 0-5 items. Empty array if none.
 
 Return ONLY a JSON object with this exact structure (placeholders only, do not fill with example data):
 {
   "tag_type": "<type>",        // One of: company, ticker, sector, trend, person, commodity, index, currency
   "ticker": "<ticker or null>",             // Stock ticker if applicable, else null
-  "website": "<url or null>",  // Official company website. null if not a company/person, or unknown
+  "website": "<url or null>",  // Official company website. MUST equal websites[0]. null if not a company/person, or unknown
+  "websites": ["<url1>", "<url2>"], // 1-5 URLs, official site FIRST, then IR/press/newsroom. null for non-company tags if unknown
+  "wikipedia_url": "<url or null>", // Full Wikipedia article URL or null
+  "country": "<country or null>", // Country name in RUSSIAN or null
+  "isin": "<ISIN or null>", // 12-char ISIN or null
+  "sectors": ["<sector1>", "<sector2>"], // Industries in RUSSIAN, 1-5 items, most important first. Empty array if not applicable
+  "trends": ["<trend1>", "<trend2>"], // Trends in RUSSIAN, 0-5 items. Empty array if none
   "related_entities": ["<entity1>", "<entity2>"],  // Related companies, sectors, or people (5-10 items)
   "synonyms_en": ["<syn1>", "<syn2>"],  // English synonyms/aliases (5-10 items)
   "synonyms_ru": ["<син1>", "<син2>"],       // Russian synonyms/aliases (5-10 items)
@@ -125,6 +144,12 @@ Example 1 — US company "Apple" (ILLUSTRATION ONLY):
   "tag_type": "company",
   "ticker": "AAPL",
   "website": "https://www.apple.com",
+  "websites": ["https://www.apple.com", "https://investor.apple.com"],
+  "wikipedia_url": "https://en.wikipedia.org/wiki/Apple_Inc.",
+  "country": "США",
+  "isin": "US0378331005",
+  "sectors": ["Технологии", "Потребительская электроника", "Программное обеспечение"],
+  "trends": ["Искусственный интеллект", "Носимые устройства"],
   "related_entities": ["Microsoft", "Google", "Samsung", "Amazon", "TSMC"],
   "synonyms_en": ["Apple Inc", "iPhone maker", "Cupertino"],
   "synonyms_ru": ["Эпл", "эппл", "яблочная компания"],
@@ -137,6 +162,12 @@ Example 2 — Russian company "Сбербанк" (ILLUSTRATION ONLY):
   "tag_type": "company",
   "ticker": "SBER",
   "website": "https://www.sberbank.ru",
+  "websites": ["https://www.sberbank.ru", "https://www.sberbank.com"],
+  "wikipedia_url": "https://ru.wikipedia.org/wiki/Сбербанк_России",
+  "country": "Россия",
+  "isin": "RU0009029540",
+  "sectors": ["Финансы", "Банковское дело", "Финтех"],
+  "trends": ["Искусственный интеллект", "Цифровизация"],
   "related_entities": ["Центральный банк РФ", "Т-Банк", "ВТБ", "Альфа-Банк", "Московская биржа", "Российский фондовый рынок"],
   "synonyms_en": ["Sberbank", "Sber", "Sberbank of Russia"],
   "synonyms_ru": ["Сбер", "Сбербанк России", "ПАО Сбербанк", "сбер"],
@@ -308,7 +339,13 @@ Return ONLY JSON. If not found, use null for optional fields.`;
     const enrichment: TagEnrichment = {
       tag_type: TAG_TYPES.includes(parsed.tag_type) ? parsed.tag_type : 'company',
       ticker: parsed.ticker || undefined,
-      website: parsed.website || undefined,
+      website: parsed.website || (Array.isArray(parsed.websites) && parsed.websites.length > 0 ? parsed.websites[0] : undefined),
+      websites: Array.isArray(parsed.websites) ? parsed.websites : (parsed.website ? [parsed.website] : undefined),
+      wikipedia_url: parsed.wikipedia_url || undefined,
+      country: parsed.country || undefined,
+      isin: parsed.isin || undefined,
+      sectors: Array.isArray(parsed.sectors) ? parsed.sectors : undefined,
+      trends: Array.isArray(parsed.trends) ? parsed.trends : undefined,
       related_entities: Array.isArray(parsed.related_entities) ? parsed.related_entities : [],
       synonyms_en: Array.isArray(parsed.synonyms_en) ? parsed.synonyms_en : [],
       synonyms_ru: Array.isArray(parsed.synonyms_ru) ? parsed.synonyms_ru : [],

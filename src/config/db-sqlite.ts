@@ -71,6 +71,7 @@ export async function query(text: string, params?: any[]): Promise<{ rows: any[]
     .replace(/DEFAULT FALSE/g, 'DEFAULT 0')
     .replace(/SERIAL/g, 'INTEGER')
     .replace(/::text\[\]/g, '')
+    .replace(/::jsonb/g, '')
     .replace(/ON CONFLICT DO NOTHING/g, 'OR IGNORE')
     .replace(/ON CONFLICT \([^)]+\) DO UPDATE SET/g, 'ON CONFLICT DO UPDATE SET')
     .replace(/COALESCE\(/g, 'COALESCE(')

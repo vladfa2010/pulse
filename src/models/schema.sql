@@ -232,6 +232,10 @@ CREATE TABLE IF NOT EXISTS user_defined_tags (
 ALTER TABLE user_defined_tags
   ADD COLUMN IF NOT EXISTS enriched_data JSONB;
 
+-- TZ_TAG_EXTENDED_FIELDS: admin-only verified flag (flat column, survives re-enrichment)
+ALTER TABLE user_defined_tags
+  ADD COLUMN IF NOT EXISTS is_verified BOOLEAN NOT NULL DEFAULT FALSE;
+
 -- Index for fast lookup by tag name (deduplication)
 CREATE INDEX IF NOT EXISTS idx_user_defined_tags_lower_name
 ON user_defined_tags (LOWER(tag_name));

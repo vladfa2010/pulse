@@ -1831,6 +1831,7 @@ app.get('/admin/tags', requireAdmin, async (req, res) => {
         t.tag_name,
         t.tag_type,
         t.keywords,
+        t.is_verified,
         t.created_at,
         COUNT(DISTINCT p.user_id) as subscriber_count,
         COUNT(DISTINCT n.id) FILTER (WHERE n.published_at > NOW() - INTERVAL '${hours} hours') as articles_24h,
@@ -1843,7 +1844,7 @@ app.get('/admin/tags', requireAdmin, async (req, res) => {
       FROM user_defined_tags t
       LEFT JOIN portfolios p ON p.tag_id = t.tag_id
       LEFT JOIN news n ON t.tag_id = ANY(n.matched_tags) AND n.published_at > NOW() - INTERVAL '30 days'
-      GROUP BY t.tag_id, t.tag_name, t.tag_type, t.keywords, t.created_at
+      GROUP BY t.tag_id, t.tag_name, t.tag_type, t.keywords, t.is_verified, t.created_at
       ORDER BY articles_24h DESC, subscriber_count DESC
     `);
 
@@ -1852,6 +1853,7 @@ app.get('/admin/tags', requireAdmin, async (req, res) => {
       tag_name: row.tag_name,
       tag_type: row.tag_type,
       keywords: row.keywords || [],
+      is_verified: row.is_verified === true,
       created_at: row.created_at,
       subscriber_count: parseInt(row.subscriber_count) || 0,
       articles_24h: parseInt(row.articles_24h) || 0,
@@ -1917,6 +1919,7 @@ app.get('/api/tags/search', async (req, res) => {
         OR enriched_data->>'exchange' ILIKE '%' || $1 || '%'
         OR enriched_data->>'trend' ILIKE '%' || $1 || '%'
         OR enriched_data->>'sector' ILIKE '%' || $1 || '%'
+        OR enriched_data->>'isin' ILIKE '%' || $1 || '%'
         OR EXISTS (
           SELECT 1 FROM unnest(keywords) k
           WHERE k ILIKE '%' || $1 || '%'
@@ -1941,6 +1944,16 @@ app.get('/api/tags/search', async (req, res) => {
             COALESCE(enriched_data->'related_entities', '[]'::jsonb)
           ) s WHERE s ILIKE '%' || $1 || '%'
         )
+        OR EXISTS (
+          SELECT 1 FROM jsonb_array_elements_text(
+            COALESCE(enriched_data->'sectors', '[]'::jsonb)
+          ) s WHERE s ILIKE '%' || $1 || '%'
+        )
+        OR EXISTS (
+          SELECT 1 FROM jsonb_array_elements_text(
+            COALESCE(enriched_data->'trends', '[]'::jsonb)
+          ) s WHERE s ILIKE '%' || $1 || '%'
+        )
       LIMIT 10`,
       [q]
     );
@@ -1962,7 +1975,7 @@ app.get('/admin/tags/:tagId', requireAdmin, async (req, res) => {
 
     // Tag info
     const tagResult = await query(`
-      SELECT tag_id, tag_name, tag_type, keywords, enriched_data, created_at
+      SELECT tag_id, tag_name, tag_type, keywords, enriched_data, is_verified, created_at
       FROM user_defined_tags
       WHERE tag_id = $1
     `, [tagId]);
@@ -1984,6 +1997,10 @@ app.get('/admin/tags/:tagId', requireAdmin, async (req, res) => {
     let relatedTags: string[] = [];
     let ticker = null;
     let website = null;
+    let websites: string[] = [];
+    let wikipediaUrl = null;
+    let country = null;
+    let isin = null;
     let description = null;
     let keyProducts: string[] = [];
     let synonymsRu: string[] = [];
@@ -1991,21 +2008,29 @@ app.get('/admin/tags/:tagId', requireAdmin, async (req, res) => {
     let exchange = null;
     let trend = null;
     let sector = null;
+    let sectors: string[] = [];
+    let trends: string[] = [];
     try {
       if (ed.related_tags) {
         relatedTags = ed.related_tags;
       } else if (ed.related_entities) {
         relatedTags = ed.related_entities;
       }
-      ticker    = ed.ticker       || null;
-      website   = ed.website      || null;
+      ticker      = ed.ticker        || null;
+      website     = ed.website       || null;
+      websites    = ed.websites      || (ed.website ? [ed.website] : []);
+      wikipediaUrl = ed.wikipedia_url || null;
+      country     = ed.country       || null;
+      isin        = ed.isin          || null;
       description = ed.description_ru || null;
-      keyProducts = ed.key_products || [];
-      synonymsRu  = ed.synonyms_ru  || [];
-      synonymsEn  = ed.synonyms_en  || [];
-      exchange    = ed.exchange     || null;
-      trend       = ed.trend        || null;
-      sector      = ed.sector       || null;
+      keyProducts = ed.key_products  || [];
+      synonymsRu  = ed.synonyms_ru   || [];
+      synonymsEn  = ed.synonyms_en   || [];
+      exchange    = ed.exchange      || null;
+      trend       = ed.trend         || null;
+      sector      = ed.sector        || null;
+      sectors     = ed.sectors       || (ed.sector ? [ed.sector] : []);
+      trends      = ed.trends        || (ed.trend ? [ed.trend] : []);
     } catch { /* ignore */ }
 
     // Daily stats (30 days)
@@ -2046,9 +2071,14 @@ app.get('/admin/tags/:tagId', requireAdmin, async (req, res) => {
         tag_type: tag.tag_type,
         keywords: tag.keywords || [],
         created_at: tag.created_at,
+        is_verified: tag.is_verified === true,
         related_tags: relatedTags,
         ticker,
         website,
+        websites,
+        wikipedia_url: wikipediaUrl,
+        country,
+        isin,
         description,
         description_ru: description,
         key_products: keyProducts,
@@ -2057,6 +2087,8 @@ app.get('/admin/tags/:tagId', requireAdmin, async (req, res) => {
         exchange,
         trend,
         sector,
+        sectors,
+        trends,
       },
       daily_stats: dailyResult.rows.map((r: any) => ({
         day: r.day,
@@ -2088,6 +2120,10 @@ const TAG_UPDATE_RULES: Record<string, any> = {
   tag_type: { type: 'enum', values: ['company', 'ticker', 'sector', 'trend', 'country', 'commodity', 'index', 'person', 'currency'] },
   ticker: { type: 'string', min: 1, max: 20, pattern: /^[A-Z0-9\.\-]+$/, optional: true },
   website: { type: 'url', max: 500, optional: true },
+  websites: { type: 'array', maxItems: 10, items: { type: 'url', max: 500 }, optional: true },
+  wikipedia_url: { type: 'url', max: 500, optional: true },
+  country: { type: 'string', max: 100, optional: true },
+  isin: { type: 'string', max: 12, pattern: /^[A-Z]{2}[A-Z0-9]{9}[0-9]$/, optional: true },
   description_ru: { type: 'string', max: 5000, optional: true },
   key_products: { type: 'array', maxItems: 20, items: { type: 'string', max: 100 }, optional: true },
   related_tags: { type: 'array', maxItems: 20, items: { type: 'string' }, optional: true },
@@ -2097,6 +2133,9 @@ const TAG_UPDATE_RULES: Record<string, any> = {
   exchange: { type: 'string', max: 50, pattern: /^[A-Z][A-Za-z\.\-]*$/, optional: true },
   trend:    { type: 'string', max: 100, optional: true },
   sector:   { type: 'string', max: 100, optional: true },
+  trends:   { type: 'array', maxItems: 10, items: { type: 'string', max: 100 }, optional: true },
+  sectors:  { type: 'array', maxItems: 10, items: { type: 'string', max: 100 }, optional: true },
+  is_verified: { type: 'boolean' },
 };
 
 function validateField(key: string, value: any): string | null {
@@ -2119,6 +2158,10 @@ function validateField(key: string, value: any): string | null {
     if (rule.pattern && value.length > 0 && !rule.pattern.test(value)) return `${key} invalid format`;
   }
 
+  if (rule.type === 'boolean') {
+    if (typeof value !== 'boolean') return `${key} must be a boolean`;
+  }
+
   if (rule.type === 'url') {
     if (typeof value !== 'string') return `${key} must be a string`;
     if (value.length > (rule.max || 500)) return `${key} max ${rule.max} chars`;
@@ -2137,6 +2180,11 @@ function validateField(key: string, value: any): string | null {
     for (const item of value) {
       if (typeof item !== 'string') return `${key} items must be strings`;
       if (rule.items?.max && item.length > rule.items.max) return `${key} item max ${rule.items.max} chars`;
+      // NEW: validate URL items inside arrays (e.g. websites)
+      if (rule.items?.type === 'url' && item) {
+        const urlToCheck = item.match(/^https?:\/\//) ? item : 'https://' + item;
+        try { new URL(urlToCheck); } catch { return `${key} items must be valid URLs`; }
+      }
     }
   }
 
@@ -2198,7 +2246,7 @@ app.put('/admin/tags/:tagId', requireAdmin, async (req, res) => {
       updates.website = 'https://' + updates.website;
     }
 
-    // Build SET clauses for flat columns AND enriched_data JSONB
+    // Build SET clauses for flat columns
     const setClauses: string[] = [];
     const params: any[] = [tagId];
     let paramIdx = 2;
@@ -2208,39 +2256,82 @@ app.put('/admin/tags/:tagId', requireAdmin, async (req, res) => {
       params.push(updates.tag_type);
     }
 
+    // TZ_TAG_EXTENDED_FIELDS: is_verified is a flat column so it survives re-enrichment
+    if (updates.is_verified !== undefined) {
+      setClauses.push(`is_verified = $${paramIdx++}`);
+      params.push(updates.is_verified);
+    }
+
     // Direct keywords update (admin override)
     if (updates.keywords !== undefined) {
       setClauses.push(`keywords = $${paramIdx++}`);
       params.push(updates.keywords);
     }
 
-    // Build enriched_data JSONB patch
-    const jsonbFields = ['ticker', 'website', 'description_ru', 'key_products', 'related_tags', 'synonyms_ru', 'synonyms_en', 'exchange', 'trend', 'sector'];
+    // Build enriched_data patch in JS (SQLite + PostgreSQL compatible)
+    const jsonbFields = ['ticker', 'website', 'description_ru', 'key_products', 'related_tags', 'synonyms_ru', 'synonyms_en', 'exchange', 'trend', 'sector', 'websites', 'wikipedia_url', 'country', 'isin', 'sectors', 'trends'];
     // Normalize empty strings to null (INC-004: empty string !== null in JSONB)
     for (const f of jsonbFields) {
       if (updates[f] === '') updates[f] = null;
     }
-    const jsonbUpdates: string[] = [];
+    const enrichedPatch: Record<string, any> = {};
     for (const f of jsonbFields) {
       if (updates[f] !== undefined) {
-        jsonbUpdates.push(`'${f}', to_jsonb($${paramIdx++}::text${Array.isArray(updates[f]) ? '[]' : ''})`);
-        params.push(updates[f]);
+        enrichedPatch[f] = updates[f];
       }
     }
-    if (jsonbUpdates.length > 0) {
-      setClauses.push(`enriched_data = COALESCE(enriched_data, '{}') || jsonb_build_object(${jsonbUpdates.join(', ')})`);
+    // Legacy sync: keep single-value fields in sync with the first array item
+    if (updates.websites !== undefined) {
+      enrichedPatch.website = updates.websites[0] || null;
+    }
+    if (updates.sectors !== undefined) {
+      enrichedPatch.sector = updates.sectors[0] || null;
+    }
+    if (updates.trends !== undefined) {
+      enrichedPatch.trend = updates.trends[0] || null;
+    }
+
+    if (Object.keys(enrichedPatch).length > 0) {
+      // Fetch current enriched_data and merge patch in memory
+      const currentResult = await query(
+        `SELECT enriched_data FROM user_defined_tags WHERE tag_id = $1`,
+        [tagId]
+      );
+      if (currentResult.rows.length === 0) {
+        return res.status(404).json({ error: 'Tag not found' });
+      }
+      let currentEnriched: any = currentResult.rows[0].enriched_data;
+      if (typeof currentEnriched === 'string') {
+        try { currentEnriched = JSON.parse(currentEnriched); } catch { currentEnriched = {}; }
+      }
+      if (!currentEnriched || typeof currentEnriched !== 'object') {
+        currentEnriched = {};
+      }
+      const mergedEnriched = { ...currentEnriched, ...enrichedPatch };
+      setClauses.push(`enriched_data = $${paramIdx++}::jsonb`);
+      params.push(JSON.stringify(mergedEnriched));
     }
 
     if (setClauses.length === 0) {
       return res.status(400).json({ error: 'No fields to update' });
     }
 
-    const result = await query(`
+    const updateResult = await query(`
       UPDATE user_defined_tags
       SET ${setClauses.join(', ')}
       WHERE tag_id = $1
-      RETURNING *
     `, params);
+
+    if ((updateResult.rowCount ?? 0) === 0) {
+      return res.status(404).json({ error: 'Tag not found' });
+    }
+
+    // Fetch updated row explicitly (SQLite does not support RETURNING * via db.run)
+    const result = await query(`
+      SELECT tag_id, tag_name, tag_type, keywords, enriched_data, is_verified, created_at
+      FROM user_defined_tags
+      WHERE tag_id = $1
+    `, [tagId]);
 
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Tag not found' });
@@ -2272,8 +2363,15 @@ app.put('/admin/tags/:tagId', requireAdmin, async (req, res) => {
       tag_type: updated.tag_type,
       keywords: updated.keywords || [],
       created_at: updated.created_at,
+      is_verified: updated.is_verified === true,
       ticker: ed.ticker || null,
       website: ed.website || null,
+      websites: ed.websites || (ed.website ? [ed.website] : []),
+      wikipedia_url: ed.wikipedia_url || null,
+      country: ed.country || null,
+      isin: ed.isin || null,
+      sectors: ed.sectors || (ed.sector ? [ed.sector] : []),
+      trends: ed.trends || (ed.trend ? [ed.trend] : []),
       description: ed.description_ru || null,
       description_ru: ed.description_ru || null,
       key_products: ed.key_products || [],
@@ -2360,6 +2458,12 @@ app.post('/admin/tags/:tagId/enrich', requireAdmin, async (req, res) => {
         tag_type: enrichment.tag_type,
         ticker: enrichment.ticker,
         website: enrichment.website,
+        websites: enrichment.websites || [],
+        wikipedia_url: enrichment.wikipedia_url || null,
+        country: enrichment.country || null,
+        isin: enrichment.isin || null,
+        sectors: enrichment.sectors || [],
+        trends: enrichment.trends || [],
         description_ru: enrichment.description_ru,
         key_products: enrichment.key_products,
         synonyms_ru: enrichment.synonyms_ru,
