@@ -1024,6 +1024,16 @@ ${sentimentEmoji} <b>${newsItem.title_ru}</b>
 Событие пользователя → logUserEvent() → notifyAdmins() → sendTelegramMessage()
 ```
 
+### Файлы и зависимости
+
+| Файл | Назначение |
+|------|------------|
+| `src/types/events.ts` | Единый источник типов событий (`UserEventType`, `USER_EVENT_TYPES`). Вынесен, чтобы разорвать циклическую зависимость между `activityLog.ts` и `adminAlerts.ts`. |
+| `src/services/activityLog.ts` | Записывает событие в `user_events` и асинхронно вызывает `notifyAdmins()`. |
+| `src/services/adminAlerts.ts` | Загружает настройки админов из `admin_tg_settings`, фильтрует по `event_types` и отправляет сообщения через `sendTelegramMessage()`. |
+| `src/pages/admin/TgAlertsTab.tsx` | UI настройки алертов в админке. |
+| `src/pages/admin/ActivityFeed.tsx` | Лента событий (polling). |
+
 ### Список событий
 
 | Event Type | Label | Когда триггерится |
@@ -1044,6 +1054,12 @@ ${sentimentEmoji} <b>${newsItem.title_ru}</b>
 | `sentiment_vote` | Прогноз индекса (голос) | Пользователь проголосовал в Sentiment Index |
 | `page_view_plans` | Просмотр тарифов | Пользователь открыл страницу тарифов |
 | `factcheck_ordered` | Заказан фактчек | Пользователь заказал факт-чекинг |
+
+> **Примечание:** типы `channel_connected` / `channel_disconnected` (универсальные) устарели; используются специфичные `telegram_connected` / `telegram_disconnected` / `email_connected` / `email_disconnected`.
+
+### Тестовое сообщение не сбрасывает события
+
+Кнопка **«Отправить тест»** (`POST /admin/tg-alerts/test`) отправляет тестовое сообщение и, при успехе, сохраняет настройки. Важно: она **не затирает** уже выбранные `event_types` — берёт их из текущей записи админа и сохраняет обратно. Раньше из-за бага в `sendTestAlert` вызов `saveAdminTgSettings(..., [], true)` сбрасывал события в пустой массив. После фикса тест безопасен.
 
 ### Просмотр тарифов (`page_view_plans`)
 
@@ -1813,6 +1829,41 @@ const bot = new TelegramBot(TOKEN);
 | Нет Premium в профиле, подписка активна | `subscription_active = 1` (булев баг) | Исправлено на `= TRUE` в v5.2 |
 | Дайджест не приходит | Тихие часы или нет новостей | Проверить настройки в профиле, убедиться что тегам есть новости |
 | 403 Forbidden от Telegram | Пользователь заблокировал бота | Бот автоматически отключает `is_active = FALSE` |
+| **Админские алерты не приходят** | `event_types` сброшен в пустой массив (старый баг теста) или событие не логируется | Проверить `admin_tg_settings.event_types`, повторно сохранить настройки; проверить логи `[ActivityLog]` и `[AdminAlerts]` |
+
+#### Проблема: Админские TG-алерты не приходят
+
+```
+┌──────────────────────────────────────────────────────┐
+│  🔍 Диагностика:                                     │
+│                                                      │
+│  1. Проверить настройки админа:                      │
+│     SELECT * FROM admin_tg_settings                  │
+│     WHERE admin_user_id = '<admin_uuid>';            │
+│     → is_active = TRUE, tg_chat_id заполнен,        │
+│       event_types содержит нужный тип события      │
+│                                                      │
+│  2. Если event_types = '{}':                         │
+│     → Пересохранить настройки во вкладке Alerts.   │
+│     → Старый баг: кнопка «Отправить тест» сбрасы-  │
+│       вала события. Уже исправлен.                  │
+│                                                      │
+│  3. Проверить, что событие логируется:               │
+│     SELECT * FROM user_events                       │
+│     WHERE event_type = 'tag_added'                  │
+│     ORDER BY created_at DESC LIMIT 5;                │
+│                                                      │
+│  4. Проверить логи backend:                          │
+│     [ActivityLog] event logged: ...                │
+│     [AdminAlerts] notifyAdmins called: ...           │
+│     [AdminAlerts] message sent to ...                │
+│                                                      │
+│  5. Для page_view_plans:                             │
+│     → Убедиться, что production frontend задеплоен.  │
+│     → Frontend шлёт POST /api/events/page-view.    │
+│     → Render Static Site требует ручного деплоя.     │
+└──────────────────────────────────────────────────────┘
+```
 
 #### Проблема: Дайджест не приходит
 
