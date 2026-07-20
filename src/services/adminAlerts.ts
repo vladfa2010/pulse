@@ -206,7 +206,10 @@ export async function sendTestAlert(adminUserId: string, chatId: string): Promis
   const text = `🧪 <b>Тестовое уведомление Pulse</b>\n\nЕсли вы видите это сообщение, настройки TG-алертов работают корректно.`;
   const ok = await sendTelegramMessage(chatId, text);
   if (ok) {
-    await saveAdminTgSettings(adminUserId, chatId, [], true);
+    // НЕ сбрасываем выбранные события при успешной отправке теста
+    const existing = await getAdminTgSettings(adminUserId);
+    const eventTypes = existing?.event_types ?? [];
+    await saveAdminTgSettings(adminUserId, chatId, eventTypes, true);
   }
   return ok;
 }
@@ -220,6 +223,7 @@ export async function notifyAdmins(
   userId?: string
 ): Promise<void> {
   try {
+    console.log(`[AdminAlerts] notifyAdmins called: type=${eventType}, userId=${userId ?? 'n/a'}`);
     const settingsResult = await query(
       `SELECT admin_user_id, tg_chat_id, event_types
        FROM admin_tg_settings
@@ -227,6 +231,7 @@ export async function notifyAdmins(
       []
     );
 
+    console.log(`[AdminAlerts] active settings found: ${settingsResult.rows.length}`);
     if (settingsResult.rows.length === 0) return;
 
     const user = userId ? await getUserMini(userId) : null;
@@ -235,8 +240,10 @@ export async function notifyAdmins(
     for (const row of settingsResult.rows) {
       try {
         const types = parseEventTypes(row.event_types);
+        console.log(`[AdminAlerts] admin=${row.admin_user_id}, types=${JSON.stringify(types)}, match=${types.includes(eventType)}`);
         if (!types.includes(eventType)) continue;
         await sendTelegramMessage(row.tg_chat_id, text);
+        console.log(`[AdminAlerts] message sent to ${row.tg_chat_id}`);
       } catch (err) {
         console.error('[AdminAlerts] notifyAdmins per-row failed:', err);
       }

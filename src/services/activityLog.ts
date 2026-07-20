@@ -30,8 +30,11 @@ export async function logUserEvent(
       [userId, eventType, dataJson]
     );
 
+    console.log(`[ActivityLog] event logged: ${eventType} for user ${userId}`);
     // Отправляем TG-алерты админам асинхронно (не ждём)
-    notifyAdmins(eventType, eventData, userId).catch(() => {});
+    notifyAdmins(eventType, eventData, userId).catch((err) => {
+      console.error('[ActivityLog] notifyAdmins failed for event', eventType, err);
+    });
   } catch (err) {
     console.error('[ActivityLog] Failed to log event:', eventType, 'for user', userId, err);
   }
