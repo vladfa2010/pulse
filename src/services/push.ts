@@ -222,11 +222,11 @@ export async function sendNewArticlePush(
     for (const userId of userIds) {
       try {
         const insertResult = await query(
-          `INSERT INTO push_notifications_sent (user_id, news_id)
-           VALUES ($1, $2)
+          `INSERT INTO push_notifications_sent (user_id, news_id, title, source)
+           VALUES ($1, $2, $3, 'fcm')
            ON CONFLICT (user_id, news_id) DO NOTHING
            RETURNING id`,
-          [userId, newsId]
+          [userId, newsId, title]
         );
         if (insertResult.rows.length === 0) {
           console.log(`[Push] Article ${newsId}: already sent to user ${userId}`);
