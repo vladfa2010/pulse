@@ -33,7 +33,7 @@ import userRoutes from './routes/user';
 import translateRoutes from './routes/translate';
 import webhookRoutes from './routes/webhook';
 import adminRoutes from './routes/admin';
-import adminAnalyticsRoutes from './routes/adminAnalytics';
+import adminMetricsRoutes from './routes/adminMetrics';
 import sentimentRoutes from './routes/sentiment';
 import appRoutes from './routes/app';
 import { authMiddleware, AuthRequest } from './middleware/auth';
@@ -4184,8 +4184,8 @@ app.use('/api/user', userRoutes);       // GET/POST/DELETE /api/user/tags
 app.use('/api/translate', translateRoutes);
 app.use('/api/webhook', webhookLimiter, webhookRoutes); // Высокий лимит для YuKassa
 app.use('/api/admin', adminRoutes);     // GET /api/admin/users, /stats
-app.use('/api/admin', adminAnalyticsRoutes); // GET /api/admin/analytics
-app.use('/admin', adminAnalyticsRoutes);     // GET /admin/analytics (frontend adminApi root path)
+app.use('/api/admin', adminMetricsRoutes); // GET /api/admin/metrics?section=...
+app.use('/admin', adminMetricsRoutes);     // GET /admin/metrics?section=... (frontend adminApi root path)
 app.use('/api/sentiment', sentimentRoutes); // Sentiment Index
 app.use('/api/app', appRoutes);            // App version / update info
 
