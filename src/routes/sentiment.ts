@@ -115,7 +115,11 @@ router.post('/vote', authMiddleware, validate(VoteSchema), async (req: AuthReque
   } catch (err: any) {
     console.error('[Sentiment] vote error:', err.message);
     if (err.message === 'Vote cooldown') {
-      return res.status(429).json({ error: 'Too soon. Wait for your personal window.' });
+      const windowRow = await getUserWindow(req.user!.userId);
+      return res.status(429).json({
+        error: 'Too soon. Wait for your personal window.',
+        secondsUntilNext: secondsUntilNextVote(windowRow),
+      });
     }
     if (err.message === 'Invalid vote value') {
       return res.status(400).json({ error: err.message });

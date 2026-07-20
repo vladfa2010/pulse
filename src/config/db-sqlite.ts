@@ -50,11 +50,11 @@ export function saveDb(): void {
 export async function query(text: string, params?: any[]): Promise<{ rows: any[]; rowCount?: number }> {
   if (!db) throw new Error('SQLite not initialized');
 
-  // Convert PostgreSQL $1, $2 → SQLite ?
+  // Convert PostgreSQL $1, $2 → SQLite ?1, ?2 (numbered params to support reuse like $1)
   let sql = text;
   if (params) {
     for (let i = params.length; i >= 1; i--) {
-      sql = sql.replace(new RegExp(`\\$${i}`, 'g'), '?');
+      sql = sql.replace(new RegExp(`\\$${i}`, 'g'), `?${i}`);
     }
   }
 
@@ -105,9 +105,11 @@ export async function query(text: string, params?: any[]): Promise<{ rows: any[]
 
     let result: any[] = [];
 
+    let rowsModified = 0;
     if (isWrite) {
       // Write operation: use run()
       db.run(sql, flatParams);
+      rowsModified = db.getRowsModified();
     } else {
       // Read operation: use prepare + step + getAsObject
       const stmt = db.prepare(sql);
@@ -123,7 +125,7 @@ export async function query(text: string, params?: any[]): Promise<{ rows: any[]
       saveDb();
     }
 
-    return { rows: result, rowCount: isWrite ? db.getRowsModified() : 0 };
+    return { rows: result, rowCount: isWrite ? rowsModified : 0 };
   } catch (err: any) {
     console.error('[SQLite] Query ERROR:', err.message);
     console.error('[SQLite] Failed SQL:', sql.trim().slice(0, 200));

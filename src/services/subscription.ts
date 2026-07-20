@@ -893,6 +893,18 @@ export async function processTrialExpirations(): Promise<{
 
   for (const row of trialUsers.rows) {
     try {
+      // Если автопродление отключено — не пытаемся списывать, сразу даунгрейд
+      if (!row.subscription_auto_renew) {
+        await scheduleDowngrade(row.user_id, 'free');
+        await notifySubscriptionEvent(
+          row.user_id,
+          'grace_1d',
+          'Автопродление отключено. Подписка будет переведена на Free.'
+        );
+        result.processed++;
+        continue;
+      }
+
       const plan = await getPlanById(row.subscription_plan);
       if (!plan || !plan.is_active || plan.deleted_at) {
         await scheduleDowngrade(row.user_id, 'free');

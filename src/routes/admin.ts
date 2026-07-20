@@ -61,6 +61,7 @@ router.get('/users', adminMiddleware, async (_req, res) => {
       ? `SELECT 
            u.id, u.email, u.username, u.is_verified, u.is_admin,
            u.subscription_active, u.subscription_expires_at,
+           u.subscription_auto_renew, u.subscription_plan,
            u.news_count, u.created_at,
            COALESCE(p.total_payments, 0) as total_payments,
            COALESCE(p.total_amount, 0) as total_amount
@@ -77,6 +78,7 @@ router.get('/users', adminMiddleware, async (_req, res) => {
       : `SELECT 
            u.id, u.email, u.username, u.is_verified, u.is_admin,
            u.subscription_active, u.subscription_expires_at,
+           u.subscription_auto_renew, u.subscription_plan,
            u.news_count, u.created_at,
            COALESCE(p.total_payments, 0)::int as total_payments,
            COALESCE(p.total_amount, 0)::float as total_amount
@@ -95,6 +97,7 @@ router.get('/users', adminMiddleware, async (_req, res) => {
 
     const users = result.rows.map((row: any) => ({
       ...row,
+      subscription_auto_renew: row.subscription_auto_renew === true || row.subscription_auto_renew === 1,
       total_payments: Number(row.total_payments ?? 0),
       total_amount: Number(row.total_amount ?? 0),
     }));
@@ -181,24 +184,26 @@ router.get('/plans/:planId/subscribers', adminMiddleware, async (req: AuthReques
            u.id,
            u.email,
            u.username as name,
+           u.subscription_auto_renew as auto_renew,
            u.subscription_expires_at as subscription_end,
            COALESCE(MIN(p.paid_at), u.created_at) as subscription_start
          FROM users u
          LEFT JOIN payments p ON p.user_id = u.id AND p.plan_id = $1 AND p.status = 'completed'
          WHERE u.subscription_plan = $1 AND u.subscription_active = TRUE
-         GROUP BY u.id, u.email, u.username, u.subscription_expires_at, u.created_at
+         GROUP BY u.id, u.email, u.username, u.subscription_auto_renew, u.subscription_expires_at, u.created_at
          ORDER BY subscription_start DESC
          LIMIT 100`
       : `SELECT
            u.id,
            u.email,
            u.username as name,
+           u.subscription_auto_renew as auto_renew,
            u.subscription_expires_at as subscription_end,
            COALESCE(MIN(p.paid_at), u.created_at) as subscription_start
          FROM users u
          LEFT JOIN payments p ON p.user_id = u.id AND p.plan_id = $1 AND p.status = 'completed'
          WHERE u.subscription_plan = $1 AND u.subscription_active = TRUE
-         GROUP BY u.id, u.email, u.username, u.subscription_expires_at, u.created_at
+         GROUP BY u.id, u.email, u.username, u.subscription_auto_renew, u.subscription_expires_at, u.created_at
          ORDER BY subscription_start DESC
          LIMIT 100`;
 
@@ -212,6 +217,7 @@ router.get('/plans/:planId/subscribers', adminMiddleware, async (req: AuthReques
       id: row.id,
       email: row.email,
       name: row.name,
+      auto_renew: row.auto_renew === true || row.auto_renew === 1,
       subscription_start: row.subscription_start,
       subscription_end: row.subscription_end,
     }));

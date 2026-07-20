@@ -9,9 +9,10 @@
  *   - IMOEX для MVP — mock/flat line; сессия 10:00–19:00 МСК.
  */
 
-import { query } from '../config/db';
+import { query, pool } from '../config/db';
 import { getImoex5minForDay, ImoexCandle, extendWithFlatLine } from './imoexAdapter';
 import { logSentimentVote } from './activityLog';
+import crypto from 'crypto';
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 const VOTE_COOLDOWN_MINUTES = 30;
@@ -147,50 +148,98 @@ export async function recordVote(userId: string, value: number): Promise<{
     throw new Error('Invalid vote value');
   }
 
-  const windowRow = await getUserWindow(userId);
-  if (!canVote(windowRow)) {
-    throw new Error('Vote cooldown');
-  }
+  // Гарантируем наличие строки окна до захвата
+  await getUserWindow(userId);
 
   const now = new Date();
-  const beforeIndex = await getCurrentIndex(now);
-  const afterIndex = beforeIndex + value;
+  const nextVoteAt = new Date(now.getTime() + VOTE_COOLDOWN_MINUTES * 60 * 1000);
+  const { start, end } = getMoscowDayBounds(now);
 
   // Тикеры из портфеля на момент голоса (для будущих метрик)
   const portfolio = await query(`SELECT tag_id FROM portfolios WHERE user_id = $1`, [userId]);
   const tickers = portfolio.rows.map(r => r.tag_id);
 
-  await query(
-    `INSERT INTO sentiment_votes (user_id, vote_value, created_at, tickers, index_at_vote)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [userId, value, formatPg(now), JSON.stringify(tickers), beforeIndex]
-  );
+  const CLAIM_SQL = `
+    UPDATE sentiment_user_windows
+    SET last_vote_at = $1,
+        next_vote_at = $2,
+        updated_at = $1
+    WHERE user_id = $3
+      AND (next_vote_at IS NULL OR next_vote_at <= $1)`;
 
-  logSentimentVote(userId, value, beforeIndex).catch(() => {});
+  const COUNTERS_SQL = `
+    UPDATE sentiment_user_windows
+    SET vote_count_today = vote_count_today + 1,
+        total_votes_all_time = total_votes_all_time + 1,
+        total_votes_count = total_votes_count + 1,
+        sync_count = sync_count + $1,
+        impact_sum = impact_sum + $2,
+        updated_at = $3
+    WHERE user_id = $4`;
 
-  const nextVoteAt = new Date(now.getTime() + VOTE_COOLDOWN_MINUTES * 60 * 1000);
+  const INDEX_SQL = `
+    SELECT COALESCE(SUM(vote_value), 0) as idx
+    FROM sentiment_votes
+    WHERE created_at >= $1 AND created_at < $2`;
+
+  const INSERT_SQL = `
+    INSERT INTO sentiment_votes (id, user_id, vote_value, created_at, tickers, index_at_vote)
+    VALUES ($1, $2, $3, $4, $5, $6)`;
+
+  if (pool) {
+    // ── PostgreSQL (production): всё в одной транзакции ──
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // 1. Атомарный захват окна. 0 строк = окно занято параллельным запросом или cooldown.
+      const claim = await client.query(CLAIM_SQL, [formatPg(now), formatPg(nextVoteAt), userId]);
+      if (claim.rowCount === 0) {
+        throw new Error('Vote cooldown');
+      }
+
+      // 2. Индекс до голоса — внутри транзакции, до нашего INSERT
+      const idxRes = await client.query(INDEX_SQL, [formatPg(start), formatPg(end)]);
+      const beforeIndex = parseInt(idxRes.rows[0]?.idx || '0', 10);
+      const afterIndex = beforeIndex + value;
+      const sync = Math.sign(value) === Math.sign(afterIndex);
+
+      // 3. Запись голоса
+      await client.query(INSERT_SQL, [crypto.randomUUID(), userId, value, formatPg(now), JSON.stringify(tickers), beforeIndex]);
+
+      // 4. Счётчики
+      await client.query(COUNTERS_SQL, [sync ? 1 : 0, value, formatPg(now), userId]);
+
+      await client.query('COMMIT');
+
+      logSentimentVote(userId, value, beforeIndex).catch(() => {});
+      return { newIndex: afterIndex, nextVoteAt, secondsUntilNext: VOTE_COOLDOWN_MINUTES * 60, sync };
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  // ── SQLite (dev): pool отсутствует. Одиночный условный UPDATE атомарен
+  // (sqlite3 сериализует statement'ы), поэтому захват защищён и без транзакции.
+  // Консистентность INSERT+UPDATE при сбое посередине в dev-окружении некритична.
+  const claim = await query(CLAIM_SQL, [formatPg(now), formatPg(nextVoteAt), userId]);
+  if ((claim.rowCount ?? 0) === 0) {
+    throw new Error('Vote cooldown');
+  }
+
+  const idxRes = await query(INDEX_SQL, [formatPg(start), formatPg(end)]);
+  const beforeIndex = parseInt(idxRes.rows[0]?.idx || '0', 10);
+  const afterIndex = beforeIndex + value;
   const sync = Math.sign(value) === Math.sign(afterIndex);
 
-  await query(
-    `UPDATE sentiment_user_windows
-     SET last_vote_at = $1,
-         next_vote_at = $2,
-         vote_count_today = vote_count_today + 1,
-         total_votes_all_time = total_votes_all_time + 1,
-         total_votes_count = total_votes_count + 1,
-         sync_count = sync_count + $3,
-         impact_sum = impact_sum + $4,
-         updated_at = $5
-     WHERE user_id = $6`,
-    [formatPg(now), formatPg(nextVoteAt), sync ? 1 : 0, value, formatPg(now), userId]
-  );
+  await query(INSERT_SQL, [crypto.randomUUID(), userId, value, formatPg(now), JSON.stringify(tickers), beforeIndex]);
+  await query(COUNTERS_SQL, [sync ? 1 : 0, value, formatPg(now), userId]);
 
-  return {
-    newIndex: afterIndex,
-    nextVoteAt,
-    secondsUntilNext: VOTE_COOLDOWN_MINUTES * 60,
-    sync,
-  };
+  logSentimentVote(userId, value, beforeIndex).catch(() => {});
+  return { newIndex: afterIndex, nextVoteAt, secondsUntilNext: VOTE_COOLDOWN_MINUTES * 60, sync };
 }
 
 /**
