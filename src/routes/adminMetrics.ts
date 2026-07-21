@@ -433,4 +433,104 @@ router.get('/metrics', adminMiddleware, async (req, res) => {
   }
 });
 
+router.get('/metrics/at-risk-accounts', adminMiddleware, async (req, res) => {
+  try {
+    const type = req.query.type as string;
+    let limit = parseInt(req.query.limit as string) || 50;
+    if (limit < 1) limit = 1;
+    if (limit > 200) limit = 200;
+
+    const labels: Record<string, string> = {
+      dormant_7d: 'Не заходили 7+ дней',
+      dormant_30d: 'Не заходили 30+ дней',
+      no_tags: 'Без тегов',
+      sub_expiring: 'Подписка истекает ≤7 дней',
+    };
+
+    if (!labels[type]) {
+      return res.status(400).json({ error: 'Invalid type', allowed: Object.keys(labels) });
+    }
+
+    let sql: string;
+    if (type === 'dormant_7d') {
+      sql = USE_SQLITE
+        ? `SELECT id, email, username, subscription_active, subscription_expires_at, last_login_at
+           FROM users
+           WHERE (last_login_at < datetime('now', '-7 days') OR last_login_at IS NULL)
+             AND (is_blocked = 0 OR is_blocked IS NULL)
+           ORDER BY last_login_at IS NULL, last_login_at DESC
+           LIMIT ${limit}`
+        : `SELECT id, email, username, subscription_active, subscription_expires_at, last_login_at
+           FROM users
+           WHERE (last_login_at < NOW() - INTERVAL '7 days' OR last_login_at IS NULL)
+             AND (is_blocked = FALSE OR is_blocked IS NULL)
+           ORDER BY last_login_at DESC NULLS LAST
+           LIMIT ${limit}`;
+    } else if (type === 'dormant_30d') {
+      sql = USE_SQLITE
+        ? `SELECT id, email, username, subscription_active, subscription_expires_at, last_login_at
+           FROM users
+           WHERE (last_login_at < datetime('now', '-30 days') OR last_login_at IS NULL)
+             AND (is_blocked = 0 OR is_blocked IS NULL)
+           ORDER BY last_login_at IS NULL, last_login_at DESC
+           LIMIT ${limit}`
+        : `SELECT id, email, username, subscription_active, subscription_expires_at, last_login_at
+           FROM users
+           WHERE (last_login_at < NOW() - INTERVAL '30 days' OR last_login_at IS NULL)
+             AND (is_blocked = FALSE OR is_blocked IS NULL)
+           ORDER BY last_login_at DESC NULLS LAST
+           LIMIT ${limit}`;
+    } else if (type === 'no_tags') {
+      sql = USE_SQLITE
+        ? `SELECT id, email, username, subscription_active, subscription_expires_at, last_login_at
+           FROM users
+           WHERE NOT EXISTS (SELECT 1 FROM portfolios p WHERE p.user_id = users.id)
+           ORDER BY created_at DESC
+           LIMIT ${limit}`
+        : `SELECT id, email, username, subscription_active, subscription_expires_at, last_login_at
+           FROM users
+           WHERE NOT EXISTS (SELECT 1 FROM portfolios p WHERE p.user_id = users.id)
+           ORDER BY created_at DESC
+           LIMIT ${limit}`;
+    } else {
+      // sub_expiring
+      sql = USE_SQLITE
+        ? `SELECT id, email, username, subscription_active, subscription_expires_at, last_login_at
+           FROM users
+           WHERE subscription_active = 1
+             AND subscription_expires_at > datetime('now')
+             AND subscription_expires_at < datetime('now', '+7 days')
+           ORDER BY subscription_expires_at ASC
+           LIMIT ${limit}`
+        : `SELECT id, email, username, subscription_active, subscription_expires_at, last_login_at
+           FROM users
+           WHERE subscription_active = TRUE
+             AND subscription_expires_at > NOW()
+             AND subscription_expires_at < NOW() + INTERVAL '7 days'
+           ORDER BY subscription_expires_at ASC
+           LIMIT ${limit}`;
+    }
+
+    const result = await query(sql);
+    const accounts = (result.rows || []).map((r: any) => ({
+      id: r.id,
+      email: r.email,
+      username: r.username,
+      subscription_active: USE_SQLITE ? Boolean(r.subscription_active) : r.subscription_active,
+      subscription_expires_at: r.subscription_expires_at,
+      last_login_at: r.last_login_at,
+    }));
+
+    res.json({
+      type,
+      label: labels[type],
+      count: accounts.length,
+      accounts,
+    });
+  } catch (err: any) {
+    console.error('[Admin Metrics] At-risk accounts error:', err.message);
+    res.status(500).json({ error: 'Failed to load at-risk accounts', details: err.message });
+  }
+});
+
 export default router;
