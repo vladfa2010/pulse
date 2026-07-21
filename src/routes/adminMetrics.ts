@@ -393,6 +393,285 @@ async function getAdoption() {
   };
 }
 
+async function getOnline(_period: number) {
+  const onlineNow = await safeCount(
+    USE_SQLITE
+      ? `SELECT COUNT(DISTINCT user_id) as c FROM user_sessions WHERE last_connected_at > datetime('now', '-5 minutes')`
+      : `SELECT COUNT(DISTINCT user_id) as c FROM user_sessions WHERE last_connected_at > NOW() - INTERVAL '5 minutes'`,
+    'onlineNow'
+  );
+
+  const historyRows = await safeQuery(
+    USE_SQLITE
+      ? `SELECT
+          strftime('%Y-%m-%d %H:%M', datetime((strftime('%s', last_connected_at) / 1800) * 1800, 'unixepoch')) as slot,
+          COUNT(DISTINCT user_id) as users
+         FROM user_sessions
+         WHERE last_connected_at > datetime('now', '-12 hours')
+         GROUP BY slot
+         ORDER BY slot`
+      : `SELECT
+          DATE_TRUNC('hour', last_connected_at) + INTERVAL '30 min' * (EXTRACT(minute FROM last_connected_at)::int / 30) as slot,
+          COUNT(DISTINCT user_id) as users
+         FROM user_sessions
+         WHERE last_connected_at > NOW() - INTERVAL '12 hours'
+         GROUP BY slot
+         ORDER BY slot`,
+    'onlineHistory'
+  );
+
+  return {
+    online_now: onlineNow,
+    history: historyRows.map((r: any) => ({ slot: r.slot, users: parseInt(r.users) || 0 })),
+  };
+}
+
+async function getPlans(_period: number) {
+  const rows = await safeQuery(
+    USE_SQLITE
+      ? `SELECT sp.id, sp.name, sp.price, sp.plan_level,
+            COUNT(u.id) as subscribers,
+            COALESCE(SUM(sp.price), 0) as revenue
+         FROM subscription_plans sp
+         LEFT JOIN users u ON u.subscription_plan = sp.id AND u.subscription_active = 1
+         WHERE sp.deleted_at IS NULL
+         GROUP BY sp.id, sp.name, sp.price, sp.plan_level
+         ORDER BY sp.plan_level`
+      : `SELECT sp.id, sp.name, sp.price, sp.plan_level,
+            COUNT(u.id) as subscribers,
+            COALESCE(SUM(sp.price), 0) as revenue
+         FROM subscription_plans sp
+         LEFT JOIN users u ON u.subscription_plan = sp.id AND u.subscription_active = TRUE
+         WHERE sp.deleted_at IS NULL
+         GROUP BY sp.id, sp.name, sp.price, sp.plan_level
+         ORDER BY sp.plan_level`,
+    'plans'
+  );
+
+  return {
+    plans: rows.map((r: any) => ({
+      id: r.id,
+      name: r.name,
+      price: parseFloat(r.price) || 0,
+      subscribers: parseInt(r.subscribers) || 0,
+      revenue: parseFloat(r.revenue) || 0,
+    })),
+  };
+}
+
+async function getMRR(_period: number) {
+  const mrr = await safeFloat(
+    USE_SQLITE
+      ? `SELECT COALESCE(SUM(amount * 30.0 / MAX(duration_days, 1)), 0) as c
+         FROM payments
+         WHERE status = 'completed' AND paid_at > datetime('now', '-30 days')`
+      : `SELECT COALESCE(SUM(amount * 30.0 / GREATEST(duration_days, 1)), 0) as c
+         FROM payments
+         WHERE status = 'completed' AND paid_at > NOW() - INTERVAL '30 days'`,
+    'mrr'
+  );
+
+  const trendRows = await safeQuery(
+    USE_SQLITE
+      ? `SELECT strftime('%Y-%m', paid_at) as month,
+            COALESCE(SUM(amount * 30.0 / MAX(duration_days, 1)), 0) as mrr
+         FROM payments
+         WHERE status = 'completed'
+         GROUP BY month
+         ORDER BY month DESC
+         LIMIT 6`
+      : `SELECT DATE_TRUNC('month', paid_at) as month,
+            COALESCE(SUM(amount * 30.0 / GREATEST(duration_days, 1)), 0) as mrr
+         FROM payments
+         WHERE status = 'completed'
+         GROUP BY month
+         ORDER BY month DESC
+         LIMIT 6`,
+    'mrrTrend'
+  );
+
+  return {
+    mrr: Math.round(mrr),
+    arr: Math.round(mrr * 12),
+    trend: trendRows.map((r: any) => ({ month: r.month, mrr: Math.round(parseFloat(r.mrr) || 0) })),
+  };
+}
+
+async function getPromos(_period: number) {
+  const rows = await safeQuery(
+    USE_SQLITE
+      ? `SELECT pc.id, pc.code, pc.discount_value as discount, pc.discount_type,
+            COUNT(DISTINCT pu.user_id) as uses,
+            COUNT(DISTINCT CASE WHEN p.status = 'completed' THEN p.user_id END) as converted_to_paid,
+            COALESCE(SUM(CASE WHEN p.status = 'completed' THEN p.amount ELSE 0 END), 0) as revenue
+         FROM promo_codes pc
+         LEFT JOIN user_promo_uses pu ON pu.promo_code_id = pc.id
+         LEFT JOIN payments p ON p.user_id = pu.user_id AND p.status = 'completed'
+         GROUP BY pc.id, pc.code, pc.discount_value, pc.discount_type
+         ORDER BY uses DESC
+         LIMIT 20`
+      : `SELECT pc.id, pc.code, pc.discount_value as discount, pc.discount_type,
+            COUNT(DISTINCT pu.user_id) as uses,
+            COUNT(DISTINCT CASE WHEN p.status = 'completed' THEN p.user_id END) as converted_to_paid,
+            COALESCE(SUM(CASE WHEN p.status = 'completed' THEN p.amount ELSE 0 END), 0) as revenue
+         FROM promo_codes pc
+         LEFT JOIN user_promo_uses pu ON pu.promo_code_id = pc.id
+         LEFT JOIN payments p ON p.user_id = pu.user_id AND p.status = 'completed'
+         GROUP BY pc.id, pc.code, pc.discount_value, pc.discount_type
+         ORDER BY uses DESC
+         LIMIT 20`,
+    'promos'
+  );
+
+  return {
+    promos: rows.map((r: any) => ({
+      id: r.id,
+      code: r.code,
+      discount: parseInt(r.discount) || 0,
+      discount_type: r.discount_type,
+      uses: parseInt(r.uses) || 0,
+      converted_to_paid: parseInt(r.converted_to_paid) || 0,
+      revenue: parseFloat(r.revenue) || 0,
+    })),
+  };
+}
+
+async function getEngagement(_period: number) {
+  const avgEvents = await safeFloat(
+    USE_SQLITE
+      ? `SELECT COALESCE(AVG(cnt), 0) as c
+         FROM (
+           SELECT user_id, date(created_at) as day, COUNT(*) as cnt
+           FROM user_events
+           WHERE created_at > datetime('now', '-7 days')
+           GROUP BY user_id, date(created_at)
+         ) t`
+      : `SELECT COALESCE(AVG(cnt), 0) as c
+         FROM (
+           SELECT user_id, DATE(created_at) as day, COUNT(*) as cnt
+           FROM user_events
+           WHERE created_at > NOW() - INTERVAL '7 days'
+           GROUP BY user_id, DATE(created_at)
+         ) t`,
+    'avgEvents'
+  );
+
+  const distRows = await safeQuery(
+    USE_SQLITE
+      ? `SELECT CASE
+            WHEN cnt = 1 THEN '1'
+            WHEN cnt <= 5 THEN '2-5'
+            WHEN cnt <= 10 THEN '6-10'
+            WHEN cnt <= 20 THEN '11-20'
+            ELSE '21+'
+          END as bucket,
+          COUNT(*) as users
+         FROM (
+           SELECT user_id, date(created_at) as day, COUNT(*) as cnt
+           FROM user_events
+           WHERE created_at > datetime('now', '-7 days')
+           GROUP BY user_id, date(created_at)
+         ) t
+         GROUP BY bucket
+         ORDER BY MIN(cnt)`
+      : `SELECT CASE
+            WHEN cnt = 1 THEN '1'
+            WHEN cnt <= 5 THEN '2-5'
+            WHEN cnt <= 10 THEN '6-10'
+            WHEN cnt <= 20 THEN '11-20'
+            ELSE '21+'
+          END as bucket,
+          COUNT(*) as users
+         FROM (
+           SELECT user_id, DATE(created_at) as day, COUNT(*) as cnt
+           FROM user_events
+           WHERE created_at > NOW() - INTERVAL '7 days'
+           GROUP BY user_id, DATE(created_at)
+         ) t
+         GROUP BY bucket
+         ORDER BY MIN(cnt)`,
+    'engagementDist'
+  );
+
+  return {
+    avg_events: avgEvents,
+    distribution: distRows.map((r: any) => ({ label: r.bucket, value: parseInt(r.users) || 0 })),
+  };
+}
+
+async function getChurn(_period: number) {
+  const rows = await safeQuery(
+    USE_SQLITE
+      ? `WITH first_payments AS (
+           SELECT user_id, MIN(paid_at) as first_payment
+           FROM payments
+           WHERE status = 'completed'
+           GROUP BY user_id
+         ),
+         cohort_stats AS (
+           SELECT
+             strftime('%Y-%m', fp.first_payment) as cohort,
+             COUNT(DISTINCT fp.user_id) as total_subs,
+             COUNT(DISTINCT CASE WHEN p2.user_id IS NULL THEN fp.user_id END) as churned_30d,
+             COUNT(DISTINCT CASE WHEN p3.user_id IS NULL THEN fp.user_id END) as churned_90d
+           FROM first_payments fp
+           LEFT JOIN payments p2 ON p2.user_id = fp.user_id
+             AND p2.status = 'completed'
+             AND p2.paid_at > datetime(fp.first_payment, '+30 days')
+           LEFT JOIN payments p3 ON p3.user_id = fp.user_id
+             AND p3.status = 'completed'
+             AND p3.paid_at > datetime(fp.first_payment, '+90 days')
+           GROUP BY strftime('%Y-%m', fp.first_payment)
+         )
+         SELECT cohort, total_subs, churned_30d, churned_90d
+         FROM cohort_stats
+         ORDER BY cohort DESC
+         LIMIT 6`
+      : `WITH first_payments AS (
+           SELECT user_id, MIN(paid_at) as first_payment
+           FROM payments
+           WHERE status = 'completed'
+           GROUP BY user_id
+         ),
+         cohort_stats AS (
+           SELECT
+             DATE_TRUNC('month', fp.first_payment) as cohort,
+             COUNT(DISTINCT fp.user_id) as total_subs,
+             COUNT(DISTINCT CASE WHEN p2.user_id IS NULL THEN fp.user_id END) as churned_30d,
+             COUNT(DISTINCT CASE WHEN p3.user_id IS NULL THEN fp.user_id END) as churned_90d
+           FROM first_payments fp
+           LEFT JOIN payments p2 ON p2.user_id = fp.user_id
+             AND p2.status = 'completed'
+             AND p2.paid_at > fp.first_payment + INTERVAL '30 days'
+           LEFT JOIN payments p3 ON p3.user_id = fp.user_id
+             AND p3.status = 'completed'
+             AND p3.paid_at > fp.first_payment + INTERVAL '90 days'
+           GROUP BY DATE_TRUNC('month', fp.first_payment)
+         )
+         SELECT cohort, total_subs, churned_30d, churned_90d
+         FROM cohort_stats
+         ORDER BY cohort DESC
+         LIMIT 6`,
+    'churn'
+  );
+
+  return {
+    cohorts: rows.map((r: any) => {
+      const total = parseInt(r.total_subs) || 0;
+      const c30 = parseInt(r.churned_30d) || 0;
+      const c90 = parseInt(r.churned_90d) || 0;
+      return {
+        month: r.cohort,
+        total_subs: total,
+        churned_30d: c30,
+        churned_90d: c90,
+        churn_rate_30d: total > 0 ? Math.round((c30 / total) * 1000) / 10 : 0,
+        churn_rate_90d: total > 0 ? Math.round((c90 / total) * 1000) / 10 : 0,
+      };
+    }),
+  };
+}
+
 const handlers: Record<string, (period: number) => Promise<any>> = {
   overview: getOverview,
   daily: getDaily,
@@ -402,6 +681,12 @@ const handlers: Record<string, (period: number) => Promise<any>> = {
   tags: getTags,
   revenue: getRevenue,
   adoption: getAdoption,
+  online: getOnline,
+  plans: getPlans,
+  mrr: getMRR,
+  promos: getPromos,
+  engagement: getEngagement,
+  churn: getChurn,
 };
 
 router.get('/metrics', adminMiddleware, async (req, res) => {
