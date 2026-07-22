@@ -617,6 +617,8 @@ ALTER TABLE news ADD COLUMN sentiment_score INTEGER;
 - PostgreSQL `COUNT(*)` защищён транзакцией с `SET LOCAL statement_timeout = '120s'`.
 - Гвард `MAX_TOKENS = 500`: dry-run возвращает 400 если `tokens == 0` или `> 500`.
 - `running` бейдж переходит в `stale` если `started_at` старше 1 часа.
+- **Гонка с NewsProcessor:** NewsProcessor пишет `matched_tags` абсолютным снапшотом из своего SELECT; конкурентный append ретро-скана между SELECT и UPDATE может быть перезаписан. Идемпотентность лечит: повторный «Tag Scan» восстанавливает тег. Окно — миллисекунды, частота — редкая.
+- **Покрытие полей:** ретро-скан использует `COALESCE(title_original, title_ru, summary_original, summary_ru)`, а ingest-матчер — только `title_original`/`summary_original`. Статьи с NULL original и RU-текстом затегируются ретро, но не в потоке — осознанный суперсет, не баг.
 
 ---
 

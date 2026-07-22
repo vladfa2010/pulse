@@ -72,7 +72,7 @@ if (USE_SQLITE) {
   console.log('[DB] Using PostgreSQL via DATABASE_URL');
   // Boot-time check: verify statement_timeout is respected
   poolInstance.query('SHOW statement_timeout').then((res: any) => {
-    console.log('[DB] PostgreSQL statement_timeout:', res.rows[0]?.statement_timeout);
+    console.log('[DB] statement_timeout =', res.rows[0]?.statement_timeout);
   }).catch((err: any) => {
     console.error('[DB] Failed to read statement_timeout:', err.message);
   });
@@ -99,7 +99,7 @@ if (USE_SQLITE) {
   queryFn = (text: string, params?: any[]) => poolInstance.query(text, params);
   console.log('[DB] Using PostgreSQL (individual config)');
   poolInstance.query('SHOW statement_timeout').then((res: any) => {
-    console.log('[DB] PostgreSQL statement_timeout:', res.rows[0]?.statement_timeout);
+    console.log('[DB] statement_timeout =', res.rows[0]?.statement_timeout);
   }).catch((err: any) => {
     console.error('[DB] Failed to read statement_timeout:', err.message);
   });

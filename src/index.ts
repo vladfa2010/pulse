@@ -2569,7 +2569,8 @@ app.post('/admin/tags/:tagId/enrich', requireAdmin, async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 app.post('/admin/tags/:tagId/backfill-matches', requireAdmin, async (req, res) => {
   const tagId = req.params.tagId.toLowerCase();
-  const dryRun = req.body.dryRun !== false; // default dry-run for safety
+  const dryRun = req.body?.dryRun !== false; // default dry-run for safety (защита на экзотические конфигурации)
+  console.log(`[AdminBackfillMatches] tag=${tagId} dryRun=${dryRun}`);
 
   try {
     const { backfillTagMatches, countTagMatches, fetchTag } = await import('./services/tagBackfill');

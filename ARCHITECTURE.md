@@ -405,7 +405,7 @@ Dashboard (`/admin/llm-dashboard`) показывает `keyword_fallback: N` д
 | `summary_ru` | RU summary |
 | `source_type` | `rss` \| `api_search` — для фильтрации |
 | `lang_original` | `en` \| `ru` |
-| `matched_tags` | TEXT[] — tag_id из Finnhub или backfill |
+| `matched_tags` | TEXT[] — tag_id из ingest-матчинга / событийного ретро-скана (tagBackfill) |
 | `needs_translation` | BOOLEAN — маркер "сырой" статьи (TRUE = ждёт News Processor) |
 
 **title_ru — nullable (v9.0 critical fix):**
@@ -543,7 +543,7 @@ ORDER BY published_at DESC LIMIT 50
 |-----|-------------|
 | Тег `nvidia` → tag_id `nvidia` | `matched_tags @> '{nvidia}'` |
 | Finnhub статьи NVDA | `matched_tags = ['nvidia']` при INSERT |
-| Старые RSS-статьи | Backfill по тикеру в title/summary |
+| Старые RSS-статьи | Событийный ретро-скан по keywords с границами слова (tagBackfill) |
 | Frontend | `GET /api/news/tags/${tagId}` → NewsFeed loadArticles(tagId) |
 - Прозрачность: история изменений в git log
 - Trade-off: требует деплоя для каждого изменения

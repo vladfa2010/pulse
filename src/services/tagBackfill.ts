@@ -248,7 +248,7 @@ async function applyChunkPostgres(tagId: string, ids: string[]): Promise<number>
   const result = await withRetry('applyChunkPostgres', () =>
     query(
       `UPDATE news
-       SET matched_tags = COALESCE(matched_tags, '{}'::text[]) || $1::text[]
+       SET matched_tags = COALESCE(matched_tags, '{}'::text[]) || ARRAY[$1]
        WHERE id = ANY($2::uuid[])
          AND (matched_tags IS NULL OR NOT ($1 = ANY(matched_tags)))`,
       [tagId, ids]
