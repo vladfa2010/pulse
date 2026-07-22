@@ -586,15 +586,15 @@ ALTER TABLE news ADD COLUMN sentiment_score INTEGER;
 - Запуск по событию позволяет ограничить concurrency, использовать чанкование и retry.
 
 ### Алгоритм (`services/tagBackfill.ts`)
-1. Получить тег (keywords + ticker из `enriched_data`).
-2. Построить список keywords (lowercase, dedup, сортировка по длине).
+1. Получить тег (stored `keywords`; fallback к динамическим keywords из `enriched_data` только если stored пустые).
+2. Построить список keywords (lowercase, dedup, сортировка по длине). Тикер не добавляется принудительно — он уже входит в stored keywords после обогащения.
 3. Чанками по 5000 статей искать совпадения:
    - **PostgreSQL:** word-boundary regex `\m(keyword1|keyword2)\M` по `title_original + title_ru + summary_original + summary_ru`.
    - **SQLite:** LIKE `%keyword%` fallback (word-boundary не поддерживается).
-4. Пропускать статьи, где тег уже есть в `matched_tags`.
+4. Пропускать статьи, где `matched_tags IS NULL` ИЛИ тега ещё нет в `matched_tags`.
 5. Bulk UPDATE `matched_tags` (PostgreSQL `array` concat; SQLite JSON read-modify-write).
 6. Маркер `_backfill` в `enriched_data`: `{ version, started_at, completed_at, matched_count, status, error? }`.
-7. Telegram admin-alert по завершению/ошибке.
+7. Telegram admin-alert по завершению/ошибке (для `backfill-matches-all` — один summary-алерт, per-tag сканы подавлены).
 
 ### Триггеры
 - `backgroundEnrichTag` → после `wakeUpNoTagsArticles`.
@@ -606,14 +606,16 @@ ALTER TABLE news ADD COLUMN sentiment_score INTEGER;
 - `POST /admin/backfill-matches-all` — one-shot скан всех тегов в фоне (HTTP отвечает сразу, скан продолжается в фоне).
 
 ### UI
-- **TagsTab:** колонка «Scan» показывает статус (`never` / `running` / `N matched` / `failed`).
-- **TagDetailModal:** кнопка «Tag Scan» рядом с «Backfill». Dry-run показывает количество статей; кнопка «Apply Scan» применяет.
+- **TagsTab:** колонка «Scan» показывает статус (`never` / `running` / `stale` / `N matched` / `failed`). `stale` — `running` дольше 1 часа.
+- **TagDetailModal:** кнопка «Tag Scan» рядом с «Backfill». Dry-run показывает количество статей и `tokens`; кнопка «Apply Scan» применяет. Занятый семафор показывается пользовательским сообщением.
 
 ### Ограничения и защита
-- Семафор: ≤ 2 одновременных скана (`runningScans` Map).
+- Семафор: ≤ 2 одновременных скана (`runningScans` Map); отброшенные запросы логируются и возвращаются в UI как `success: false`.
 - Повторный вызов для уже бегущего тега — `skipped: true`.
-- Retry с exponential backoff на каждый чанк (3 попытки).
-- PostgreSQL pool ограничен: `max: 20`, `statement_timeout: 30s`, `idleTimeoutMillis: 30s`, `connectionTimeoutMillis: 2s`.
+- Retry с exponential backoff на каждый чанк (3 попытки); пауза 100мс между чанками.
+- PostgreSQL `COUNT(*)` защищён транзакцией с `SET LOCAL statement_timeout = '120s'`.
+- Гвард `MAX_TOKENS = 500`: dry-run возвращает 400 если `tokens == 0` или `> 500`.
+- `running` бейдж переходит в `stale` если `started_at` старше 1 часа.
 
 ---
 

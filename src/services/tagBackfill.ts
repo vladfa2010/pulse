@@ -16,9 +16,8 @@
  *   - Persists a `_backfill` marker inside tag.enriched_data.
  */
 
-import { query } from '../config/db';
+import { query, pool } from '../config/db';
 import { sendTelegramMessage } from './telegram';
-import { buildEnrichedKeywords } from './tagManager';
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
@@ -26,6 +25,7 @@ const MAX_CONCURRENT_SCANS = 2;
 const DEFAULT_CHUNK_SIZE = 5000;
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 500;
+const MAX_TOKENS = 500;
 
 const runningScans = new Map<string, Promise<BackfillResult>>();
 
@@ -34,6 +34,7 @@ export interface BackfillOptions {
   chunkSize?: number;
   since?: Date; // optional: only scan articles published after
   adminUserId?: string;
+  silent?: boolean; // when true, suppress per-tag success alerts (used by backfillAllTags)
 }
 
 export interface BackfillResult {
@@ -44,6 +45,11 @@ export interface BackfillResult {
   durationMs: number;
   error?: string;
   skipped?: boolean;
+}
+
+interface CountResult {
+  matched: number;
+  tokens: number;
 }
 
 interface ScanRecord {
@@ -83,7 +89,7 @@ function parseJsonb(value: any): any {
   }
 }
 
-async function fetchTag(tagId: string): Promise<{ tag_id: string; tag_name: string; keywords: string[]; enriched_data: any } | null> {
+export async function fetchTag(tagId: string): Promise<{ tag_id: string; tag_name: string; keywords: string[]; enriched_data: any } | null> {
   const result = await query(
     `SELECT tag_id, tag_name, keywords, enriched_data FROM user_defined_tags WHERE tag_id = $1`,
     [tagId.toLowerCase()]
@@ -100,15 +106,33 @@ async function fetchTag(tagId: string): Promise<{ tag_id: string; tag_name: stri
 
 /**
  * Build the final keyword list used for scanning.
- * 1. Stored keywords (already rebuilt from enrichment when available).
- * 2. Ticker from enrichment (if missing from stored keywords).
+ * 1. Stored keywords (admin override / enrichment).
+ * 2. If empty, fall back to dynamically generated keywords from enrichment.
+ * The ticker is intentionally NOT added here — it is already included in stored
+ * keywords when enrichment is saved. Adding it unconditionally would ignore
+ * admin edits that removed the ticker from keywords.
  */
-function buildScanKeywords(tag: { keywords: string[]; enriched_data: any }): string[] {
+async function buildScanKeywords(tag: { tag_id: string; tag_name: string; keywords: string[]; enriched_data: any }): Promise<string[]> {
   const keywords = new Set(tag.keywords.map(k => k.toLowerCase().trim()).filter(k => k.length >= 2));
-  if (tag.enriched_data?.ticker) {
-    const t = String(tag.enriched_data.ticker).toLowerCase().trim();
-    if (t.length >= 1) keywords.add(t);
+  if (keywords.size > 0) {
+    return [...keywords].sort((a, b) => b.length - a.length);
   }
+
+  // Fallback: dynamic keywords from enrichment (breaks the static import cycle
+  // with tagManager by using a dynamic import).
+  if (tag.enriched_data) {
+    try {
+      const { buildEnrichedKeywords } = await import('./tagManager');
+      const generated = buildEnrichedKeywords(tag.tag_id, tag.enriched_data || null);
+      generated.forEach(k => {
+        const norm = k.toLowerCase().trim();
+        if (norm.length >= 2) keywords.add(norm);
+      });
+    } catch (err: any) {
+      console.warn('[TagBackfill] buildEnrichedKeywords fallback failed:', err.message);
+    }
+  }
+
   return [...keywords].sort((a, b) => b.length - a.length);
 }
 
@@ -125,7 +149,7 @@ function buildTextConcat(): string {
 function buildWhereClausePostgres(tagId: string, pattern: string, since?: Date): { sql: string; params: any[] } {
   const params: any[] = [tagId, pattern];
   let sql = `
-    WHERE NOT ($1 = ANY(matched_tags))
+    WHERE (matched_tags IS NULL OR NOT ($1 = ANY(matched_tags)))
       AND ${buildTextConcat()} ~* $2
   `;
   if (since) {
@@ -159,20 +183,40 @@ function buildWhereClauseSqlite(tagId: string, keywords: string[], since?: Date)
   return { sql, params };
 }
 
-async function countMatches(tagId: string, keywords: string[], since?: Date): Promise<number> {
-  if (keywords.length === 0) return 0;
+async function countMatches(tagId: string, keywords: string[], since?: Date): Promise<CountResult> {
+  if (keywords.length === 0) return { matched: 0, tokens: 0 };
+  if (keywords.length > MAX_TOKENS) {
+    throw new Error(`Too many keywords/tokens (${keywords.length} > ${MAX_TOKENS})`);
+  }
 
   if (USE_SQLITE) {
     const { sql, params } = buildWhereClauseSqlite(tagId, keywords, since);
     const result = await query(`SELECT COUNT(*) as count FROM news ${sql}`, params);
-    return parseInt(result.rows[0]?.count) || 0;
+    return { matched: parseInt(result.rows[0]?.count) || 0, tokens: keywords.length };
   }
 
   const pattern = buildPostgresPattern(keywords);
-  if (!pattern) return 0;
+  if (!pattern) return { matched: 0, tokens: 0 };
   const { sql, params } = buildWhereClausePostgres(tagId, pattern, since);
+
+  if (pool) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query("SET LOCAL statement_timeout = '120s'");
+      const result = await client.query(`SELECT COUNT(*) as count FROM news ${sql}`, params);
+      await client.query('COMMIT');
+      return { matched: parseInt(result.rows[0]?.count) || 0, tokens: keywords.length };
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
   const result = await query(`SELECT COUNT(*) as count FROM news ${sql}`, params);
-  return parseInt(result.rows[0]?.count) || 0;
+  return { matched: parseInt(result.rows[0]?.count) || 0, tokens: keywords.length };
 }
 
 async function scanChunkPostgres(
@@ -182,19 +226,21 @@ async function scanChunkPostgres(
   chunkSize: number,
   since?: Date
 ): Promise<string[]> {
-  const { sql, params } = buildWhereClausePostgres(tagId, pattern, since);
-  const idParams = lastId ? [...params, lastId] : params;
-  const idCondition = lastId ? `AND id > $${params.length + 1}` : '';
+  return withRetry('scanChunkPostgres', async () => {
+    const { sql, params } = buildWhereClausePostgres(tagId, pattern, since);
+    const idParams = lastId ? [...params, lastId] : params;
+    const idCondition = lastId ? `AND id > $${params.length + 1}` : '';
 
-  const result = await query(
-    `SELECT id FROM news
-     ${sql}
-     ${idCondition}
-     ORDER BY id
-     LIMIT $${idParams.length + 1}`,
-    [...idParams, chunkSize]
-  );
-  return result.rows.map((r: any) => r.id);
+    const result = await query(
+      `SELECT id FROM news
+       ${sql}
+       ${idCondition}
+       ORDER BY id
+       LIMIT $${idParams.length + 1}`,
+      [...idParams, chunkSize]
+    );
+    return result.rows.map((r: any) => r.id);
+  });
 }
 
 async function applyChunkPostgres(tagId: string, ids: string[]): Promise<number> {
@@ -204,7 +250,7 @@ async function applyChunkPostgres(tagId: string, ids: string[]): Promise<number>
       `UPDATE news
        SET matched_tags = COALESCE(matched_tags, '{}'::text[]) || $1::text[]
        WHERE id = ANY($2::uuid[])
-         AND NOT ($1 = ANY(matched_tags))`,
+         AND (matched_tags IS NULL OR NOT ($1 = ANY(matched_tags)))`,
       [tagId, ids]
     )
   );
@@ -218,19 +264,21 @@ async function scanChunkSqlite(
   chunkSize: number,
   since?: Date
 ): Promise<ScanRecord[]> {
-  const { sql, params } = buildWhereClauseSqlite(tagId, keywords, since);
-  const idParams = lastId ? [...params, lastId] : params;
-  const idCondition = lastId ? `AND id > $${params.length + 1}` : '';
+  return withRetry('scanChunkSqlite', async () => {
+    const { sql, params } = buildWhereClauseSqlite(tagId, keywords, since);
+    const idParams = lastId ? [...params, lastId] : params;
+    const idCondition = lastId ? `AND id > $${params.length + 1}` : '';
 
-  const result = await query(
-    `SELECT id, matched_tags FROM news
-     ${sql}
-     ${idCondition}
-     ORDER BY id
-     LIMIT $${idParams.length + 1}`,
-    [...idParams, chunkSize]
-  );
-  return result.rows;
+    const result = await query(
+      `SELECT id, matched_tags FROM news
+       ${sql}
+       ${idCondition}
+       ORDER BY id
+       LIMIT $${idParams.length + 1}`,
+      [...idParams, chunkSize]
+    );
+    return result.rows;
+  });
 }
 
 async function applyChunkSqlite(tagId: string, rows: ScanRecord[]): Promise<number> {
@@ -291,16 +339,22 @@ async function updateBackfillMarker(
   });
 }
 
-async function sendAdminBackfillAlert(result: BackfillResult): Promise<void> {
+async function sendAdminBackfillAlert(result: BackfillResult, isSummary = false): Promise<void> {
   try {
-    const tag = await fetchTag(result.tagId);
-    const tagName = tag?.tag_name || result.tagId;
+    const tagName = isSummary ? 'All tags' : (await fetchTag(result.tagId))?.tag_name || result.tagId;
     const statusIcon = result.error ? '❌' : '✅';
-    const text = `${statusIcon} <b>Tag backfill ${result.error ? 'failed' : 'completed'}</b>
+    const text = isSummary
+      ? `${statusIcon} <b>Tag backfill all ${result.error ? 'failed' : 'completed'}</b>
+
+🏷 Тегов обработано: ${result.scanned}
+📰 Всего сопоставлено статей: ${result.matched}
+⏱ Длительность: ${result.durationMs}мс
+${result.error ? `⚠️ Ошибка: ${result.error}` : ''}`
+      : `${statusIcon} <b>Tag backfill ${result.error ? 'failed' : 'completed'}</b>
 
 🏷 Тег: <code>${result.tagId}</code> (${tagName})
 📰 Сопоставлено статей: ${result.matched}
-🔍 Просканировано: ${result.scanned}
+🔍 Обработано (совпадений): ${result.scanned}
 ⏱ Длительность: ${result.durationMs}мс
 ${result.error ? `⚠️ Ошибка: ${result.error}` : ''}`;
 
@@ -327,14 +381,17 @@ export async function backfillTagMatches(
 ): Promise<BackfillResult> {
   const tagIdNorm = tagId.toLowerCase();
   const start = Date.now();
+  const startedAtIso = new Date().toISOString();
   const dryRun = options.dryRun ?? false;
   const chunkSize = options.chunkSize || DEFAULT_CHUNK_SIZE;
   const since = options.since;
 
   if (runningScans.has(tagIdNorm)) {
+    console.warn(`[TagBackfill] skipped (already running): ${tagIdNorm}`);
     return { tagId: tagIdNorm, matched: 0, scanned: 0, dryRun, durationMs: 0, skipped: true };
   }
   if (runningScans.size >= MAX_CONCURRENT_SCANS) {
+    console.warn(`[TagBackfill] skipped (concurrency): ${tagIdNorm} — ${runningScans.size} running`);
     return {
       tagId: tagIdNorm,
       matched: 0,
@@ -353,19 +410,22 @@ export async function backfillTagMatches(
         return { tagId: tagIdNorm, matched: 0, scanned: 0, dryRun, durationMs: Date.now() - start, error: 'Tag not found' };
       }
 
-      const keywords = buildScanKeywords(tag);
+      const keywords = await buildScanKeywords(tag);
       if (keywords.length === 0) {
         return { tagId: tagIdNorm, matched: 0, scanned: 0, dryRun, durationMs: Date.now() - start };
       }
+      if (keywords.length > MAX_TOKENS) {
+        return { tagId: tagIdNorm, matched: 0, scanned: 0, dryRun, durationMs: Date.now() - start, error: `Too many keywords (${keywords.length} > ${MAX_TOKENS})` };
+      }
 
       if (dryRun) {
-        const matched = await countMatches(tagIdNorm, keywords, since);
+        const { matched } = await countMatches(tagIdNorm, keywords, since);
         return { tagId: tagIdNorm, matched, scanned: 0, dryRun, durationMs: Date.now() - start };
       }
 
       await updateBackfillMarker(tagIdNorm, {
         version: '1',
-        started_at: new Date().toISOString(),
+        started_at: startedAtIso,
         matched_count: 0,
         status: 'running',
       });
@@ -387,6 +447,7 @@ export async function backfillTagMatches(
           totalScanned += rows.length;
           lastId = rows[rows.length - 1].id;
           if (rows.length < chunkSize) finished = true;
+          await sleep(100);
         }
       } else {
         const pattern = buildPostgresPattern(keywords);
@@ -404,13 +465,15 @@ export async function backfillTagMatches(
           totalScanned += ids.length;
           lastId = ids[ids.length - 1];
           if (ids.length < chunkSize) finished = true;
+          await sleep(100);
         }
       }
 
       const durationMs = Date.now() - start;
+      console.log(`[TagBackfill] DONE tag=${tagIdNorm} matched=${totalMatched} scanned=${totalScanned} in ${durationMs}ms`);
       await updateBackfillMarker(tagIdNorm, {
         version: '1',
-        started_at: new Date().toISOString(),
+        started_at: startedAtIso,
         completed_at: new Date().toISOString(),
         matched_count: totalMatched,
         status: 'completed',
@@ -423,7 +486,7 @@ export async function backfillTagMatches(
         dryRun,
         durationMs,
       };
-      sendAdminBackfillAlert(result).catch(() => {});
+      if (!options.silent) sendAdminBackfillAlert(result).catch(() => {});
       return result;
     } catch (err: any) {
       const durationMs = Date.now() - start;
@@ -437,13 +500,13 @@ export async function backfillTagMatches(
       };
       await updateBackfillMarker(tagIdNorm, {
         version: '1',
-        started_at: new Date().toISOString(),
+        started_at: startedAtIso,
         completed_at: new Date().toISOString(),
         matched_count: 0,
         status: 'failed',
         error: err.message,
       }).catch(() => {});
-      sendAdminBackfillAlert(result).catch(() => {});
+      if (!options.silent || result.error) sendAdminBackfillAlert(result).catch(() => {});
       return result;
     } finally {
       runningScans.delete(tagIdNorm);
@@ -457,17 +520,20 @@ export async function backfillTagMatches(
 /**
  * Dry-run preview: count how many articles would be matched.
  */
-export async function countTagMatches(tagId: string, since?: Date): Promise<number> {
+export async function countTagMatches(tagId: string, since?: Date): Promise<CountResult> {
   const tag = await fetchTag(tagId);
-  if (!tag) return 0;
-  const keywords = buildScanKeywords(tag);
+  if (!tag) return { matched: 0, tokens: 0 };
+  const keywords = await buildScanKeywords(tag);
+  if (keywords.length > MAX_TOKENS) {
+    return { matched: 0, tokens: keywords.length };
+  }
   return countMatches(tag.tag_id, keywords, since);
 }
 
 /**
  * Run backfill for all tags sequentially (one-shot migration / admin action).
  */
-export async function backfillAllTags(adminUserId?: string): Promise<{ processed: number; totalMatched: number; errors: string[] }> {
+export async function backfillAllTags(adminUserId?: string): Promise<{ processed: number; skipped: number; totalMatched: number; errors: string[] }> {
   const result = await query(
     `SELECT tag_id FROM user_defined_tags ORDER BY tag_id`,
     []
@@ -475,19 +541,37 @@ export async function backfillAllTags(adminUserId?: string): Promise<{ processed
   const errors: string[] = [];
   let totalMatched = 0;
   let processed = 0;
+  let skipped = 0;
+  const start = Date.now();
 
   for (const row of result.rows) {
     try {
-      const r = await backfillTagMatches(row.tag_id, { dryRun: false });
+      const r = await backfillTagMatches(row.tag_id, { dryRun: false, silent: true });
       if (r.error && !r.skipped) errors.push(`${row.tag_id}: ${r.error}`);
-      totalMatched += r.matched;
-      processed++;
+      if (r.skipped) {
+        skipped++;
+      } else {
+        totalMatched += r.matched;
+        processed++;
+      }
     } catch (err: any) {
       errors.push(`${row.tag_id}: ${err.message}`);
     }
   }
 
-  return { processed, totalMatched, errors };
+  const durationMs = Date.now() - start;
+  const summary: BackfillResult = {
+    tagId: '(all)',
+    matched: totalMatched,
+    scanned: processed,
+    dryRun: false,
+    durationMs,
+    error: errors.length > 0 ? `${errors.length} errors` : undefined,
+  };
+  await sendAdminBackfillAlert(summary, true).catch(() => {});
+  console.log(`[TagBackfill] DONE all processed=${processed} skipped=${skipped} matched=${totalMatched} errors=${errors.length} in ${durationMs}ms`);
+
+  return { processed, skipped, totalMatched, errors };
 }
 
 /**

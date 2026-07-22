@@ -1879,7 +1879,7 @@ app.get('/admin/tags', requireAdmin, async (req, res) => {
         t.keywords,
         t.is_verified,
         t.created_at,
-        ${USE_SQLITE ? "JSON_EXTRACT(t.enriched_data, '$.backfill')" : "t.enriched_data->'_backfill'"} as backfill,
+        ${USE_SQLITE ? "JSON_EXTRACT(t.enriched_data, '$._backfill')" : "t.enriched_data->'_backfill'"} as backfill,
         COUNT(DISTINCT p.user_id) as subscriber_count,
         COUNT(DISTINCT n.id) FILTER (WHERE n.published_at > NOW() - INTERVAL '${hours} hours') as articles_24h,
         COUNT(DISTINCT n.id) FILTER (WHERE n.published_at > NOW() - INTERVAL '7 days') as articles_7d,
@@ -2378,6 +2378,13 @@ app.put('/admin/tags/:tagId', requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'No fields to update' });
     }
 
+    // Capture pre-update keywords BEFORE the UPDATE so the diff is correct.
+    const preUpdateResult = await query(
+      `SELECT keywords FROM user_defined_tags WHERE tag_id = $1`,
+      [tagId]
+    );
+    const preUpdateKeywords = preUpdateResult.rows[0]?.keywords || [];
+
     const updateResult = await query(`
       UPDATE user_defined_tags
       SET ${setClauses.join(', ')}
@@ -2412,18 +2419,18 @@ app.put('/admin/tags/:tagId', requireAdmin, async (req, res) => {
 
     // Rebuild keywords from enriched_data after any update, UNLESS admin explicitly updated keywords.
     // enriched_data is the single source of truth for matching keywords, but manual override is allowed.
-    const oldKeywords = [...(updated.keywords || [])].sort();
+    const oldKeywords = [...preUpdateKeywords].sort();
     let newKeywords = oldKeywords;
     if (updates.keywords === undefined) {
       const { rebuildKeywordsFromEnrichment } = await import('./services/tagManager');
       newKeywords = await rebuildKeywordsFromEnrichment(tagId);
       updated.keywords = newKeywords;
     } else {
-      newKeywords = updates.keywords;
+      newKeywords = [...updates.keywords].sort();
     }
 
     // If keywords changed, retro-scan existing articles for the updated tag
-    if (JSON.stringify(oldKeywords) !== JSON.stringify([...newKeywords].sort())) {
+    if (JSON.stringify(oldKeywords) !== JSON.stringify(newKeywords)) {
       const { backfillTagMatches } = await import('./services/tagBackfill');
       backfillTagMatches(tagId, { dryRun: false }).catch((err: any) => {
         console.error('[AdminTags] backfillTagMatches error:', err.message);
@@ -2565,13 +2572,26 @@ app.post('/admin/tags/:tagId/backfill-matches', requireAdmin, async (req, res) =
   const dryRun = req.body.dryRun !== false; // default dry-run for safety
 
   try {
-    const { backfillTagMatches, countTagMatches } = await import('./services/tagBackfill');
+    const { backfillTagMatches, countTagMatches, fetchTag } = await import('./services/tagBackfill');
+    const tag = await fetchTag(tagId);
+    if (!tag) {
+      return res.status(404).json({ error: 'Tag not found', tag_id: tagId });
+    }
     if (dryRun) {
-      const matched = await countTagMatches(tagId);
-      return res.json({ success: true, dryRun: true, tag_id: tagId, matched });
+      const { matched, tokens } = await countTagMatches(tagId);
+      if (tokens === 0) {
+        return res.status(400).json({ error: 'No keywords to scan', tag_id: tagId, matched: 0, tokens: 0 });
+      }
+      if (tokens > 500) {
+        return res.status(400).json({ error: 'Too many keywords/tokens', tag_id: tagId, matched, tokens });
+      }
+      return res.json({ success: true, dryRun: true, tag_id: tagId, matched, tokens });
     }
     const result = await backfillTagMatches(tagId, { dryRun: false });
-    return res.json({ success: !result.error, ...result });
+    if (result.error) {
+      return res.json({ success: false, ...result });
+    }
+    return res.json({ success: true, ...result });
   } catch (err: any) {
     console.error(`[AdminBackfillMatches] Error for ${tagId}:`, err.message);
     res.status(500).json({ error: err.message });
