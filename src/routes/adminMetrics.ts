@@ -462,10 +462,26 @@ async function getPlans(_period: number) {
 async function getMRR(_period: number) {
   const mrr = await safeFloat(
     USE_SQLITE
-      ? `SELECT COALESCE(SUM(amount * 30.0 / MAX(duration_days, 1)), 0) as c
+      ? `SELECT COALESCE(SUM(
+           CASE
+             WHEN billing_cycle = 'monthly' THEN amount
+             WHEN billing_cycle = 'yearly' THEN amount / 12.0
+             WHEN billing_cycle = 'quarterly' THEN amount / 3.0
+             WHEN billing_cycle = 'weekly' THEN amount * 30.0 / 7
+             ELSE amount * 30.0 / MAX(duration_days, 1)
+           END
+         ), 0) as c
          FROM payments
          WHERE status = 'completed' AND paid_at > datetime('now', '-30 days')`
-      : `SELECT COALESCE(SUM(amount * 30.0 / GREATEST(duration_days, 1)), 0) as c
+      : `SELECT COALESCE(SUM(
+           CASE
+             WHEN billing_cycle = 'monthly' THEN amount
+             WHEN billing_cycle = 'yearly' THEN amount / 12.0
+             WHEN billing_cycle = 'quarterly' THEN amount / 3.0
+             WHEN billing_cycle = 'weekly' THEN amount * 30.0 / 7
+             ELSE amount * 30.0 / GREATEST(duration_days, 1)
+           END
+         ), 0) as c
          FROM payments
          WHERE status = 'completed' AND paid_at > NOW() - INTERVAL '30 days'`,
     'mrr'
@@ -474,14 +490,30 @@ async function getMRR(_period: number) {
   const trendRows = await safeQuery(
     USE_SQLITE
       ? `SELECT strftime('%Y-%m', paid_at) as month,
-            COALESCE(SUM(amount * 30.0 / MAX(duration_days, 1)), 0) as mrr
+            COALESCE(SUM(
+              CASE
+                WHEN billing_cycle = 'monthly' THEN amount
+                WHEN billing_cycle = 'yearly' THEN amount / 12.0
+                WHEN billing_cycle = 'quarterly' THEN amount / 3.0
+                WHEN billing_cycle = 'weekly' THEN amount * 30.0 / 7
+                ELSE amount * 30.0 / MAX(duration_days, 1)
+              END
+            ), 0) as mrr
          FROM payments
          WHERE status = 'completed'
          GROUP BY month
          ORDER BY month DESC
          LIMIT 6`
       : `SELECT DATE_TRUNC('month', paid_at) as month,
-            COALESCE(SUM(amount * 30.0 / GREATEST(duration_days, 1)), 0) as mrr
+            COALESCE(SUM(
+              CASE
+                WHEN billing_cycle = 'monthly' THEN amount
+                WHEN billing_cycle = 'yearly' THEN amount / 12.0
+                WHEN billing_cycle = 'quarterly' THEN amount / 3.0
+                WHEN billing_cycle = 'weekly' THEN amount * 30.0 / 7
+                ELSE amount * 30.0 / GREATEST(duration_days, 1)
+              END
+            ), 0) as mrr
          FROM payments
          WHERE status = 'completed'
          GROUP BY month
