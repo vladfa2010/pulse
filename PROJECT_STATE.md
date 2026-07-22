@@ -29,7 +29,7 @@
 | БД | PostgreSQL (Render production) / SQLite (local) |
 | LLM API | Kimi API (moonshot-v1-32k, api.moonshot.ai, НЕ .cn) |
 | RSS | 20+ источников (RU + EN), batch по 4, cron каждые 15 мин |
-| Auth | JWT + bcryptjs, cookie-based sessions |
+| Auth | JWT + bcrypt, cookie-based sessions |
 
 ---
 

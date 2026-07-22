@@ -1569,7 +1569,7 @@ app.post('/admin/users/:id/reset-password', requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'Password must be at least 6 characters' });
     }
 
-    const bcrypt = await import('bcryptjs');
+    const bcrypt = await import('bcrypt');
     const hash = await bcrypt.hash(password, 10);
 
     await query(`UPDATE users SET password_hash = $1 WHERE id = $2`, [hash, userId]);

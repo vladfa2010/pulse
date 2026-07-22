@@ -21,7 +21,7 @@
  */
 
 import { Router } from 'express';
-import bcrypt from 'bcryptjs';
+import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { query } from '../config/db';
 import { validate } from '../middleware/validate';

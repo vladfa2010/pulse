@@ -16,7 +16,7 @@
 | Framework | Express |
 | Language | TypeScript |
 | Database | SQLite (sql.js/WASM) — dev / PostgreSQL — prod |
-| Auth | bcryptjs + jsonwebtoken |
+| Auth | bcrypt + jsonwebtoken |
 | Cron | node-cron |
 | HTTP | axios |
 
