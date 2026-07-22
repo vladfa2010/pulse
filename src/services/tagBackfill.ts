@@ -25,7 +25,7 @@ const MAX_CONCURRENT_SCANS = 2;
 const DEFAULT_CHUNK_SIZE = 5000;
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 500;
-const MAX_TOKENS = 500;
+export const MAX_TOKENS = 500;
 
 const runningScans = new Map<string, Promise<BackfillResult>>();
 
@@ -45,11 +45,13 @@ export interface BackfillResult {
   durationMs: number;
   error?: string;
   skipped?: boolean;
+  message?: string;
 }
 
 interface CountResult {
   matched: number;
   tokens: number;
+  error?: string;
 }
 
 interface ScanRecord {
@@ -123,7 +125,7 @@ async function buildScanKeywords(tag: { tag_id: string; tag_name: string; keywor
   if (tag.enriched_data) {
     try {
       const { buildEnrichedKeywords } = await import('./tagManager');
-      const generated = buildEnrichedKeywords(tag.tag_id, tag.enriched_data || null);
+      const generated = buildEnrichedKeywords(tag.tag_name || tag.tag_id, tag.enriched_data || null);
       generated.forEach(k => {
         const norm = k.toLowerCase().trim();
         if (norm.length >= 2) keywords.add(norm);
@@ -186,7 +188,7 @@ function buildWhereClauseSqlite(tagId: string, keywords: string[], since?: Date)
 async function countMatches(tagId: string, keywords: string[], since?: Date): Promise<CountResult> {
   if (keywords.length === 0) return { matched: 0, tokens: 0 };
   if (keywords.length > MAX_TOKENS) {
-    throw new Error(`Too many keywords/tokens (${keywords.length} > ${MAX_TOKENS})`);
+    return { matched: 0, tokens: keywords.length, error: `Too many keywords/tokens (${keywords.length} > ${MAX_TOKENS})` };
   }
 
   if (USE_SQLITE) {
@@ -412,10 +414,29 @@ export async function backfillTagMatches(
 
       const keywords = await buildScanKeywords(tag);
       if (keywords.length === 0) {
+        if (!dryRun) {
+          await updateBackfillMarker(tagIdNorm, {
+            version: '1',
+            started_at: startedAtIso,
+            completed_at: new Date().toISOString(),
+            matched_count: 0,
+            status: 'completed',
+          });
+        }
         return { tagId: tagIdNorm, matched: 0, scanned: 0, dryRun, durationMs: Date.now() - start };
       }
       if (keywords.length > MAX_TOKENS) {
-        return { tagId: tagIdNorm, matched: 0, scanned: 0, dryRun, durationMs: Date.now() - start, error: `Too many keywords (${keywords.length} > ${MAX_TOKENS})` };
+        const errMsg = `Too many keywords (${keywords.length} > ${MAX_TOKENS})`;
+        console.error(`[TagBackfill] ${tagIdNorm}: ${errMsg}`);
+        await updateBackfillMarker(tagIdNorm, {
+          version: '1',
+          started_at: startedAtIso,
+          completed_at: new Date().toISOString(),
+          matched_count: 0,
+          status: 'failed',
+          error: errMsg,
+        });
+        return { tagId: tagIdNorm, matched: 0, scanned: 0, dryRun, durationMs: Date.now() - start, error: errMsg };
       }
 
       if (dryRun) {
@@ -486,7 +507,7 @@ export async function backfillTagMatches(
         dryRun,
         durationMs,
       };
-      if (!options.silent) sendAdminBackfillAlert(result).catch(() => {});
+      if (!options.silent && result.matched > 0) sendAdminBackfillAlert(result).catch(() => {});
       return result;
     } catch (err: any) {
       const durationMs = Date.now() - start;
@@ -525,7 +546,7 @@ export async function countTagMatches(tagId: string, since?: Date): Promise<Coun
   if (!tag) return { matched: 0, tokens: 0 };
   const keywords = await buildScanKeywords(tag);
   if (keywords.length > MAX_TOKENS) {
-    return { matched: 0, tokens: keywords.length };
+    return { matched: 0, tokens: keywords.length, error: `Too many keywords (${keywords.length} > ${MAX_TOKENS})` };
   }
   return countMatches(tag.tag_id, keywords, since);
 }

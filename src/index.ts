@@ -2423,7 +2423,7 @@ app.put('/admin/tags/:tagId', requireAdmin, async (req, res) => {
     let newKeywords = oldKeywords;
     if (updates.keywords === undefined) {
       const { rebuildKeywordsFromEnrichment } = await import('./services/tagManager');
-      newKeywords = await rebuildKeywordsFromEnrichment(tagId);
+      newKeywords = [...(await rebuildKeywordsFromEnrichment(tagId))].sort();
       updated.keywords = newKeywords;
     } else {
       newKeywords = [...updates.keywords].sort();
@@ -2573,7 +2573,7 @@ app.post('/admin/tags/:tagId/backfill-matches', requireAdmin, async (req, res) =
   console.log(`[AdminBackfillMatches] tag=${tagId} dryRun=${dryRun}`);
 
   try {
-    const { backfillTagMatches, countTagMatches, fetchTag } = await import('./services/tagBackfill');
+    const { backfillTagMatches, countTagMatches, fetchTag, MAX_TOKENS } = await import('./services/tagBackfill');
     const tag = await fetchTag(tagId);
     if (!tag) {
       return res.status(404).json({ error: 'Tag not found', tag_id: tagId });
@@ -2581,16 +2581,19 @@ app.post('/admin/tags/:tagId/backfill-matches', requireAdmin, async (req, res) =
     if (dryRun) {
       const { matched, tokens } = await countTagMatches(tagId);
       if (tokens === 0) {
-        return res.status(400).json({ error: 'No keywords to scan', tag_id: tagId, matched: 0, tokens: 0 });
+        return res.status(400).json({ error: 'No keywords to scan', message: 'Нет ключевых слов для сканирования', tag_id: tagId, matched: 0, tokens: 0 });
       }
-      if (tokens > 500) {
-        return res.status(400).json({ error: 'Too many keywords/tokens', tag_id: tagId, matched, tokens });
+      if (tokens > MAX_TOKENS) {
+        return res.status(400).json({ error: 'Too many keywords/tokens', message: 'Слишком много ключевых слов/токенов', tag_id: tagId, matched, tokens });
       }
       return res.json({ success: true, dryRun: true, tag_id: tagId, matched, tokens });
     }
     const result = await backfillTagMatches(tagId, { dryRun: false });
     if (result.error) {
       return res.json({ success: false, ...result });
+    }
+    if (result.skipped) {
+      return res.json({ success: true, skipped: true, message: result.message || 'Сканирование пропущено', ...result });
     }
     return res.json({ success: true, ...result });
   } catch (err: any) {
