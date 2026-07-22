@@ -985,19 +985,20 @@ export async function getAllTagNames(): Promise<string[]> {
  */
 export async function rebuildKeywordsFromEnrichment(tagId: string): Promise<string[]> {
   const result = await query(
-    `SELECT enriched_data FROM user_defined_tags WHERE tag_id = $1`,
+    `SELECT tag_name, enriched_data FROM user_defined_tags WHERE tag_id = $1`,
     [tagId]
   );
   if (result.rows.length === 0) {
     return [];
   }
 
+  const tagName = result.rows[0].tag_name || tagId;
   let enrichment = result.rows[0].enriched_data;
   if (typeof enrichment === 'string') {
     try { enrichment = JSON.parse(enrichment); } catch { enrichment = null; }
   }
 
-  const keywords = buildEnrichedKeywords(tagId, enrichment || null);
+  const keywords = buildEnrichedKeywords(tagName, enrichment || null);
   await query(
     `UPDATE user_defined_tags SET keywords = $1 WHERE tag_id = $2`,
     [keywords, tagId]
