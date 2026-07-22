@@ -12,6 +12,7 @@
 import { query } from '../config/db';
 import axios from 'axios';
 import { invalidateUserTagsCache } from './smartTagMatcher';
+import { backfillTagMatches } from './tagBackfill';
 
 const KIMI_API_KEY = process.env.KIMI_API_KEY;
 const KIMI_MODEL = process.env.KIMI_MODEL || 'moonshot-v1-32k';
@@ -908,6 +909,11 @@ async function backgroundEnrichTag(tagId: string, tagName: string): Promise<void
     invalidateUserTagsCache();
     wakeUpNoTagsArticles().catch((err: any) => {
       console.error('[TagManager] wakeUpNoTagsArticles error:', err.message);
+    });
+
+    // Запустить ретро-скан существующих новостей по новым keywords
+    backfillTagMatches(tagId, { dryRun: false }).catch((err: any) => {
+      console.error('[TagManager] backfillTagMatches error:', err.message);
     });
 
     console.log(`[TagEnrich] Background enrichment completed for "${tagName}" (${tagId}): type=${finalType}, keywords=${allKeywords.length}`);

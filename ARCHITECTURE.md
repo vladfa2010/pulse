@@ -221,7 +221,6 @@ export const RSS_SOURCES: RssSource[] = [
 ```
 NewsSourceManager.run()
 │
-│  0. Backfill: UPDATE news SET matched_tags по тикерам (title/summary ILIKE '%TICKER%')
 │  1. SELECT * FROM news_sources WHERE enabled = true
 │  2. Для каждого source:
 │     ├── RSS: fetchAllRSS() → saveArticles()
@@ -231,12 +230,44 @@ NewsSourceManager.run()
 │  3. Catch-up: если last_fetch_at > 2ч → запуск
 ```
 
-**v9.4 изменения:**
-- `last_fetch_at` обновляется **только при реальном fetch**, не при skip
-  - Предотвращает: infinite skip loop (0 статей → skip → last_fetch_at свежий → снова skip)
-- First run определяется по `source_id = 'finnhub'` (не `source_type`)
-  - Предотвращает: first run пропущен когда другие `api_search` источники есть в базе
-- **Streaming**: fetch→save→discard по чанкам. Нет накопления статей в памяти.
+**v10.2 изменения:**
+- Убран синхронный backfill по тикерам из цикла (ранее шаг 0).
+- Ретро-скан теперь выполняется событийно: при создании тега, LLM-обогащении, ручном редактировании keywords или явном вызове админом.
+- Сервис отвечающий за ретро-скан: `tagBackfill.ts` (`backfillTagMatches`, `countTagMatches`, `backfillAllTags`).
+- NewsSourceManager отвечает только за fetch и сохранение сырых статей; tagging — отдельный этап.
+
+### Tag Backfill Service (`tagBackfill.ts`) — v10.2
+
+> Запускается по требованию / событию, не в цикле fetching.
+
+**Алгоритм:**
+1. Получить тег из `user_defined_tags` (keywords + enriched_data.ticker).
+2. Построить список keywords для матчинга (нижний регистр, дедупликация, сортировка по длине).
+3. Чанками по `id` сканировать таблицу `news`:
+   - PostgreSQL: word-boundary regex `\m(keyword1|keyword2)\M` по `title_original + title_ru + summary_original + summary_ru`.
+   - SQLite: LIKE `%keyword%` fallback (word-boundary не поддерживается).
+4. Пропускать уже размеченные статьи (`tag_id = ANY(matched_tags)` / `matched_tags LIKE '%"tag_id"%'`).
+5. Bulk UPDATE `matched_tags`:
+   - PostgreSQL: `matched_tags = COALESCE(matched_tags, '{}') || ARRAY[tag_id]` для набора id.
+   - SQLite: read-modify-write JSON-массива построчно.
+6. Семафор: максимум 2 одновременных скана; повторный вызов для уже бегущего тега — skipped.
+7. Retry с экспоненциальной задержкой на каждый чанк.
+8. Маркер `_backfill` в `enriched_data` тега: `{ version, started_at, completed_at, matched_count, status }`.
+9. Telegram admin-alert по завершению/ошибке.
+
+**API endpoints:**
+
+| Method | Path | Описание |
+|--------|------|----------|
+| POST | `/admin/tags/:tagId/backfill-matches` | Dry-run (default) или apply. Body: `{ dryRun?: boolean }`. |
+| POST | `/admin/backfill-matches-all` | One-shot скан всех тегов в фоне. |
+
+**Триггеры:**
+- `backgroundEnrichTag` → после `wakeUpNoTagsArticles`.
+- `POST /admin/tags/:tagId/enrich` → после обновления keywords.
+- `PUT /admin/tags/:tagId` → если keywords изменились после `rebuildKeywordsFromEnrichment`.
+
+### Таблица news_sources
 
 ### Таблица news_sources
 

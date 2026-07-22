@@ -463,12 +463,14 @@ CREATE TABLE news (
 
 | Метод | Endpoint | Описание |
 |-------|----------|----------|
-| `GET` | `/admin/tags` | Все теги с агрегатами (подписчики, статьи за 24ч/7д/30д) |
+| `GET` | `/admin/tags` | Все теги с агрегатами (подписчики, статьи за 24ч/7д/30д, маркер `_backfill`) |
 | `GET` | `/admin/tags/:tagId` | Детали тега |
-| `POST` | `/admin/tags/:tagId/enrich` | Принудительное LLM-обогащение тега из админки |
-| `PUT` | `/admin/tags/:tagId` | Ручное редактирование enriched-полей, `tag_type` и flat-колонки `keywords` |
+| `POST` | `/admin/tags/:tagId/enrich` | Принудительное LLM-обогащение тега из админки + запуск ретро-скана |
+| `PUT` | `/admin/tags/:tagId` | Ручное редактирование enriched-полей, `tag_type` и flat-колонки `keywords` (+ ретро-скан при изменении keywords) |
 | `DELETE` | `/admin/tags/:tagId` | Каскадное удаление тега (PostgreSQL ONLY) |
 | `GET` | `/admin/tags/:tagId/delete-preview` | Статистика для модалки подтверждения удаления |
+| `POST` | `/admin/tags/:tagId/backfill-matches` | Ретро-скан существующих новостей по keywords тега (dry-run / apply) |
+| `POST` | `/admin/backfill-matches-all` | One-shot ретро-скан всех тегов в фоне |
 
 ### Пример: автоопределение типа
 
@@ -570,6 +572,48 @@ ALTER TABLE news ADD COLUMN sentiment_score INTEGER;
 | `GET /sentiment-stats` | `userId`, `days` | Дельта по тегам |
 | `GET /sentiment-total` | `days` | Общая дельта всех новостей |
 | `GET /source-stats` | — | Новости по источникам |
+
+---
+
+## 16. Tag Backfill / Retro Scan (v10.2)
+
+> Ретро-скан существующих новостей по keywords тега.
+> Заменяет синхронный backfill, ранее выполнявшийся внутри `NewsSourceManager`.
+
+### Почему событийный подход
+- Backfill по всем тегам в цикле fetching блокировал ingestion и вызывал тормоза.
+- Ретро-скан нужен только когда keywords тега изменились (создание, обогащение, ручное редактирование).
+- Запуск по событию позволяет ограничить concurrency, использовать чанкование и retry.
+
+### Алгоритм (`services/tagBackfill.ts`)
+1. Получить тег (keywords + ticker из `enriched_data`).
+2. Построить список keywords (lowercase, dedup, сортировка по длине).
+3. Чанками по 5000 статей искать совпадения:
+   - **PostgreSQL:** word-boundary regex `\m(keyword1|keyword2)\M` по `title_original + title_ru + summary_original + summary_ru`.
+   - **SQLite:** LIKE `%keyword%` fallback (word-boundary не поддерживается).
+4. Пропускать статьи, где тег уже есть в `matched_tags`.
+5. Bulk UPDATE `matched_tags` (PostgreSQL `array` concat; SQLite JSON read-modify-write).
+6. Маркер `_backfill` в `enriched_data`: `{ version, started_at, completed_at, matched_count, status, error? }`.
+7. Telegram admin-alert по завершению/ошибке.
+
+### Триггеры
+- `backgroundEnrichTag` → после `wakeUpNoTagsArticles`.
+- `POST /admin/tags/:tagId/enrich` → после обновления keywords.
+- `PUT /admin/tags/:tagId` → если keywords изменились после `rebuildKeywordsFromEnrichment`.
+
+### Ручное управление
+- `POST /admin/tags/:tagId/backfill-matches` — dry-run preview (`dryRun: true` по умолчанию) или apply (`dryRun: false`).
+- `POST /admin/backfill-matches-all` — one-shot скан всех тегов в фоне (HTTP отвечает сразу, скан продолжается в фоне).
+
+### UI
+- **TagsTab:** колонка «Scan» показывает статус (`never` / `running` / `N matched` / `failed`).
+- **TagDetailModal:** кнопка «Tag Scan» рядом с «Backfill». Dry-run показывает количество статей; кнопка «Apply Scan» применяет.
+
+### Ограничения и защита
+- Семафор: ≤ 2 одновременных скана (`runningScans` Map).
+- Повторный вызов для уже бегущего тега — `skipped: true`.
+- Retry с exponential backoff на каждый чанк (3 попытки).
+- PostgreSQL pool ограничен: `max: 20`, `statement_timeout: 30s`, `idleTimeoutMillis: 30s`, `connectionTimeoutMillis: 2s`.
 
 ---
 

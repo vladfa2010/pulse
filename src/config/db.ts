@@ -60,12 +60,22 @@ if (USE_SQLITE) {
   poolInstance = new Pool({
     connectionString: DATABASE_URL,
     ssl: { rejectUnauthorized: false },
+    max: 20,
+    statement_timeout: 30000,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 2000,
   });
   poolInstance.on('error', (err: any) => {
     console.error('PostgreSQL pool error:', err);
   });
   queryFn = (text: string, params?: any[]) => poolInstance.query(text, params);
   console.log('[DB] Using PostgreSQL via DATABASE_URL');
+  // Boot-time check: verify statement_timeout is respected
+  poolInstance.query('SHOW statement_timeout').then((res: any) => {
+    console.log('[DB] PostgreSQL statement_timeout:', res.rows[0]?.statement_timeout);
+  }).catch((err: any) => {
+    console.error('[DB] Failed to read statement_timeout:', err.message);
+  });
 
 // ═══════════════════════════════════════════════════════════════════════════
 // РЕЖИМ 3: PostgreSQL через отдельные параметры (резервный вариант)
@@ -78,12 +88,21 @@ if (USE_SQLITE) {
     database: process.env.DB_NAME || 'pulse',
     user: process.env.DB_USER || 'pulse_user',
     password: process.env.DB_PASSWORD || '',
+    max: 20,
+    statement_timeout: 30000,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 2000,
   });
   poolInstance.on('error', (err: any) => {
     console.error('PostgreSQL pool error:', err);
   });
   queryFn = (text: string, params?: any[]) => poolInstance.query(text, params);
   console.log('[DB] Using PostgreSQL (individual config)');
+  poolInstance.query('SHOW statement_timeout').then((res: any) => {
+    console.log('[DB] PostgreSQL statement_timeout:', res.rows[0]?.statement_timeout);
+  }).catch((err: any) => {
+    console.error('[DB] Failed to read statement_timeout:', err.message);
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

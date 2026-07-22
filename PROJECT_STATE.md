@@ -104,6 +104,12 @@ Phase 3c: BATCH TAG IMPACT (v7.14) — 10 статей/LLM-запрос, impact 
 Phase 4: Save (INSERT ON CONFLICT content_hash) → SSE `refresh` broadcast
 ```
 
+**v10.2 изменения:**
+- Убран синхронный backfill по тикерам из `NewsSourceManager.run()` (ранее Phase 0).
+- Ретро-скан статей по keywords теперь запускается событийно (создание тега, обогащение, правка keywords, ручной вызов).
+- Сервис: `tagBackfill.ts` (`backfillTagMatches`, `countTagMatches`, `backfillAllTags`).
+- Базовые настройки пула PostgreSQL: `max: 20`, `statement_timeout: 30s`, `idleTimeoutMillis: 30s`, `connectionTimeoutMillis: 2s`.
+
 **Batch Processing (v7.13-7.14):**
 | Фаза | Было (v7.12) | Стало (v7.14) | Ускорение |
 |------|-------------|---------------|-----------|
@@ -249,7 +255,17 @@ Flow создания:
 - `getAllUserDefinedTags` предпочитает `buildEnrichedKeywords(enriched_data)`; если enriched_data отсутствует или не парсится — fallback на сохранённые `keywords[]` (или `[tag_id]`).
 - `related_entities` используются только в UI, НЕ участвуют в matching (чтобы избежать false positives).
 
-**Лимиты тегов:**
+**Tag Backfill (v10.2):**
+- Ретро-скан существующих новостей по keywords тега — запускается событийно, а не в цикле fetching.
+- Триггеры:
+  - `backgroundEnrichTag` → после `wakeUpNoTagsArticles`.
+  - `POST /admin/tags/:tagId/enrich` → после обновления keywords.
+  - `PUT /admin/tags/:tagId` → если keywords изменились после `rebuildKeywordsFromEnrichment`.
+- Ручной запуск: `POST /admin/tags/:tagId/backfill-matches` (dry-run по умолчанию, `dryRun: false` для применения).
+- Массовый one-shot: `POST /admin/backfill-matches-all` — скан всех тегов в фоне.
+- Маркер `_backfill` в `enriched_data` тега: `{ version, started_at, completed_at, matched_count, status }`.
+- Админ UI: колонка «Scan» в таблице тегов и кнопка «Tag Scan» в TagDetailModal с dry-run preview.
+- Ограничения: семафор ≤ 2 одновременных скана, чанки по 5000 статей, retry по каждому чанку.
 - Бесплатный пользователь: до 3 тегов (`maxTags = 3`).
 - Premium: до 25 тегов (`maxTags = 25`).
 - Проверка выполняется и на фронтенде (`Home.tsx`), и в `POST /api/user/tags`.

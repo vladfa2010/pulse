@@ -33,34 +33,6 @@ export class NewsSourceManager {
     try {
       console.log('[NewsSourceManager] Starting cycle...');
 
-      // 0. Backfill: обновить matched_tags для существующих статей по тикерам
-      try {
-        const backfillResult = await query(`
-          UPDATE news n
-          SET matched_tags = (
-            SELECT array_agg(DISTINCT x)
-            FROM unnest(array_cat(COALESCE(n.matched_tags, '{}'::text[]), ARRAY[t.tag_id])) AS t(x)
-          )
-          FROM (
-            SELECT DISTINCT t.tag_id, UPPER(t.enriched_data->>'ticker') as ticker
-            FROM user_defined_tags t
-            WHERE t.enriched_data->>'exchange' = 'USA'
-              AND t.enriched_data->>'ticker' IS NOT NULL
-          ) t
-          WHERE (
-            COALESCE(n.title_original, n.title_ru, '') ILIKE '%' || t.ticker || '%'
-            OR COALESCE(n.summary_original, n.summary_ru, '') ILIKE '%' || t.ticker || '%'
-          )
-          AND (n.matched_tags IS NULL OR NOT (t.tag_id = ANY(n.matched_tags)))
-        `);
-        const rowCount = backfillResult.rowCount || 0;
-        if (rowCount > 0) {
-          console.log(`[NSM] Backfill: updated ${rowCount} articles with matched_tags`);
-        }
-      } catch (e: any) {
-        console.error('[NSM] Backfill error:', e.message);
-      }
-
       // 1. Загрузить enabled источники
       const result = await query(`
         SELECT id, name, display_name, type, config, enabled, last_fetch_at

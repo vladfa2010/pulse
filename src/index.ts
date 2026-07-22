@@ -1879,6 +1879,7 @@ app.get('/admin/tags', requireAdmin, async (req, res) => {
         t.keywords,
         t.is_verified,
         t.created_at,
+        ${USE_SQLITE ? "JSON_EXTRACT(t.enriched_data, '$.backfill')" : "t.enriched_data->'_backfill'"} as backfill,
         COUNT(DISTINCT p.user_id) as subscriber_count,
         COUNT(DISTINCT n.id) FILTER (WHERE n.published_at > NOW() - INTERVAL '${hours} hours') as articles_24h,
         COUNT(DISTINCT n.id) FILTER (WHERE n.published_at > NOW() - INTERVAL '7 days') as articles_7d,
@@ -1890,7 +1891,7 @@ app.get('/admin/tags', requireAdmin, async (req, res) => {
       FROM user_defined_tags t
       LEFT JOIN portfolios p ON p.tag_id = t.tag_id
       LEFT JOIN news n ON t.tag_id = ANY(n.matched_tags) AND n.published_at > NOW() - INTERVAL '30 days'
-      GROUP BY t.tag_id, t.tag_name, t.tag_type, t.keywords, t.is_verified, t.created_at
+      GROUP BY t.tag_id, t.tag_name, t.tag_type, t.keywords, t.is_verified, t.created_at, t.enriched_data
       ORDER BY articles_24h DESC, subscriber_count DESC
     `);
 
@@ -1901,6 +1902,13 @@ app.get('/admin/tags', requireAdmin, async (req, res) => {
       keywords: row.keywords || [],
       is_verified: row.is_verified === true || row.is_verified === 1,
       created_at: row.created_at,
+      backfill: (() => {
+        if (!row.backfill) return null;
+        if (typeof row.backfill === 'string') {
+          try { return JSON.parse(row.backfill); } catch { return null; }
+        }
+        return row.backfill;
+      })(),
       subscriber_count: parseInt(row.subscriber_count) || 0,
       articles_24h: parseInt(row.articles_24h) || 0,
       articles_7d: parseInt(row.articles_7d) || 0,
@@ -2404,10 +2412,22 @@ app.put('/admin/tags/:tagId', requireAdmin, async (req, res) => {
 
     // Rebuild keywords from enriched_data after any update, UNLESS admin explicitly updated keywords.
     // enriched_data is the single source of truth for matching keywords, but manual override is allowed.
+    const oldKeywords = [...(updated.keywords || [])].sort();
+    let newKeywords = oldKeywords;
     if (updates.keywords === undefined) {
       const { rebuildKeywordsFromEnrichment } = await import('./services/tagManager');
-      const newKeywords = await rebuildKeywordsFromEnrichment(tagId);
+      newKeywords = await rebuildKeywordsFromEnrichment(tagId);
       updated.keywords = newKeywords;
+    } else {
+      newKeywords = updates.keywords;
+    }
+
+    // If keywords changed, retro-scan existing articles for the updated tag
+    if (JSON.stringify(oldKeywords) !== JSON.stringify([...newKeywords].sort())) {
+      const { backfillTagMatches } = await import('./services/tagBackfill');
+      backfillTagMatches(tagId, { dryRun: false }).catch((err: any) => {
+        console.error('[AdminTags] backfillTagMatches error:', err.message);
+      });
     }
 
     // Build tag response — always include ticker/exchange/trend/sector (frontend expects them)
@@ -2503,6 +2523,12 @@ app.post('/admin/tags/:tagId/enrich', requireAdmin, async (req, res) => {
       console.error('[AdminEnrich] wakeUpNoTagsArticles error:', err.message);
     });
 
+    // Ретро-скан существующих новостей по обновлённым keywords
+    const { backfillTagMatches } = await import('./services/tagBackfill');
+    backfillTagMatches(tagId, { dryRun: false }).catch((err: any) => {
+      console.error('[AdminEnrich] backfillTagMatches error:', err.message);
+    });
+
     console.log(`[AdminEnrich] Enriched "${tag.tag_name}": type=${enrichment.tag_type}, ticker=${enrichment.ticker || 'none'}, keywords=${allKeywords.length}`);
 
     res.json({
@@ -2527,6 +2553,47 @@ app.post('/admin/tags/:tagId/enrich', requireAdmin, async (req, res) => {
     });
   } catch (err: any) {
     console.error(`[AdminEnrich] Error for ${tagId}:`, err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// POST /admin/tags/:tagId/backfill-matches — dry-run preview or apply retro scan
+// ═══════════════════════════════════════════════════════════════════════════
+app.post('/admin/tags/:tagId/backfill-matches', requireAdmin, async (req, res) => {
+  const tagId = req.params.tagId.toLowerCase();
+  const dryRun = req.body.dryRun !== false; // default dry-run for safety
+
+  try {
+    const { backfillTagMatches, countTagMatches } = await import('./services/tagBackfill');
+    if (dryRun) {
+      const matched = await countTagMatches(tagId);
+      return res.json({ success: true, dryRun: true, tag_id: tagId, matched });
+    }
+    const result = await backfillTagMatches(tagId, { dryRun: false });
+    return res.json({ success: !result.error, ...result });
+  } catch (err: any) {
+    console.error(`[AdminBackfillMatches] Error for ${tagId}:`, err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// POST /admin/backfill-matches-all — one-shot retro scan for all tags
+// ═══════════════════════════════════════════════════════════════════════════
+app.post('/admin/backfill-matches-all', requireAdmin, async (req, res) => {
+  try {
+    const { backfillAllTags } = await import('./services/tagBackfill');
+    const adminUserId = (req as any).user?.userId;
+    // Run in background so the HTTP request doesn't time out
+    backfillAllTags(adminUserId).then(result => {
+      console.log('[AdminBackfillAll] completed:', result);
+    }).catch(err => {
+      console.error('[AdminBackfillAll] failed:', err.message);
+    });
+    res.json({ success: true, message: 'Backfill all started in background' });
+  } catch (err: any) {
+    console.error('[AdminBackfillAll] Error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
