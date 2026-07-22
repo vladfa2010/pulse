@@ -588,14 +588,15 @@ ALTER TABLE news ADD COLUMN sentiment_score INTEGER;
 
 ### Алгоритм (`services/tagBackfill.ts`)
 1. Получить тег (stored `keywords`; fallback к динамическим keywords из `enriched_data` только если stored пустые).
-2. Построить список keywords (lowercase, dedup, сортировка по длине). Тикер не добавляется принудительно — он уже входит в stored keywords после обогащения.
-3. Чанками по 5000 статей искать совпадения:
+2. Построить список keywords (lowercase, dedup, сортировка по длине). Тикер не добавляется принудительно — он уже входит в stored keywords после обогащения. При пересборке keywords из `enriched_data` используется `tag_name`, а не `tag_id`, чтобы синонимы/продукты формировались от человекочитаемого имени.
+3. Чанками по `BACKFILL_CHUNK_SIZE` (по умолчанию `5000`) статей искать совпадения:
    - **PostgreSQL:** word-boundary regex `\m(keyword1|keyword2)\M` по `title_original + title_ru + summary_original + summary_ru`.
    - **SQLite:** LIKE `%keyword%` fallback (word-boundary не поддерживается).
 4. Пропускать статьи, где `matched_tags IS NULL` ИЛИ тега ещё нет в `matched_tags`.
 5. Bulk UPDATE `matched_tags` (PostgreSQL `array` concat; SQLite JSON read-modify-write).
-6. Маркер `_backfill` в `enriched_data`: `{ version, started_at, completed_at, matched_count, status, error? }`.
-7. Telegram admin-alert по завершению/ошибке (для `backfill-matches-all` — один summary-алерт, per-tag сканы подавлены).
+6. Маркер `_backfill` в `enriched_data`: `{ version, started_at, completed_at, matched_count, status, error? }`. Для пустого списка keywords маркер пишется `completed` с `matched_count: 0`.
+7. Telegram admin-alert по завершению/ошибке только если `matched > 0` (для `backfill-matches-all` — один summary-алерт, per-tag сканы подавлены).
+8. Rerun queue: если запрос пришёл во время выполнения скана того же тега, он ставится в `pendingRerun` и автоматически запускается после завершения текущего.
 
 ### Триггеры
 - `backgroundEnrichTag` → после `wakeUpNoTagsArticles`.
@@ -612,10 +613,11 @@ ALTER TABLE news ADD COLUMN sentiment_score INTEGER;
 
 ### Ограничения и защита
 - Семафор: ≤ 2 одновременных скана (`runningScans` Map); отброшенные запросы логируются и возвращаются в UI как `success: false`.
-- Повторный вызов для уже бегущего тега — `skipped: true`.
+- Повторный вызов для уже бегущего тега — ставится в `pendingRerun` и запускается автоматически после завершения текущего скана.
 - Retry с exponential backoff на каждый чанк (3 попытки); пауза 100мс между чанками.
-- PostgreSQL `COUNT(*)` защищён транзакцией с `SET LOCAL statement_timeout = '120s'`.
-- Гвард `MAX_TOKENS = 500`: dry-run возвращает 400 если `tokens == 0` или `> 500`.
+- PostgreSQL scan-чанки защищены транзакцией с `SET LOCAL statement_timeout = 'BACKFILL_QUERY_TIMEOUT_MS'` (по умолчанию `60s`) через `queryWithTimeout`.
+- SQLite scan-чанки используют `queryWithTimeout` с `Promise.race` и тем же таймаутом.
+- Гвард `MAX_TOKENS = 500`: пустые keywords или `tokens > 500` не сканируются; маркер пишется `completed`/`failed` с `matched_count: 0`.
 - `running` бейдж переходит в `stale` если `started_at` старше 1 часа.
 - **Гонка с NewsProcessor:** NewsProcessor пишет `matched_tags` абсолютным снапшотом из своего SELECT; конкурентный append ретро-скана между SELECT и UPDATE может быть перезаписан. Идемпотентность лечит: повторный «Tag Scan» восстанавливает тег. Окно — миллисекунды, частота — редкая.
 - **Покрытие полей:** ретро-скан использует `COALESCE(title_original, title_ru, summary_original, summary_ru)`, а ingest-матчер — только `title_original`/`summary_original`. Статьи с NULL original и RU-текстом затегируются ретро, но не в потоке — осознанный суперсет, не баг.

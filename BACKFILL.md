@@ -1,7 +1,7 @@
 # PULSE — Tag Backfill (Retro Scan)
 
 > Ретро-сканирование существующих новостей по keywords тега.  
-> Статус: актуально для коммитов `cfcd1c4` (backend) / `3f91b30` (frontend).  
+> Статус: актуально для коммитов `7f75034` (A), `61d4e15` (B) и последующих (C) — см. `TZ_TICKER_BACKFILL_FIX5.md`.  
 > Файлы: `pulse-backend/src/services/tagBackfill.ts`, `pulse-backend/src/index.ts`, `pulse-frontend/src/pages/admin/TagsTab.tsx`, `pulse-frontend/src/pages/admin/TagDetailModal.tsx`.
 
 ---
@@ -116,12 +116,14 @@ AND (
 
 SQLite не поддерживает word-boundary regex, поэтому используется LIKE.
 
-### 4.3 Чанкирование
+### 4.3 Чанкирование и таймауты
 
-- Размер чанка: `5000` статей (константа `DEFAULT_CHUNK_SIZE`).
+- Размер чанка: `DEFAULT_CHUNK_SIZE` (env `BACKFILL_CHUNK_SIZE`, по умолчанию `5000`) статей.
 - Keyset-пагинация по `id` (не `OFFSET`).
 - Между чанками пауза `100 мс`.
 - Каждый чанк обёрнут в retry: до 3 повторных попыток с паузой `500 * attempt` мс.
+- PostgreSQL: каждый scan-чанк выполняется в транзакции с `SET LOCAL statement_timeout = '60s'` (env `BACKFILL_QUERY_TIMEOUT_MS`, по умолчанию `60000` мс) через `queryWithTimeout`, чтобы не упереться в pool-wide `statement_timeout = 30s`.
+- SQLite: `queryWithTimeout` использует `Promise.race` с тем же таймаутом.
 
 ### 4.4 Обновление
 
@@ -149,17 +151,19 @@ UPDATE news SET matched_tags = $json_array WHERE id = $id
 | Лимит | Значение | Почему |
 |-------|----------|--------|
 | `MAX_CONCURRENT_SCANS` | 2 | Не нагружать БД одновременными сканами. |
-| `DEFAULT_CHUNK_SIZE` | 5000 | Короткие транзакции, не блокируют таблицу. |
-| `MAX_TOKENS` | 500 | Аномально длинный список keywords = что-то сломалось; не сканируем. |
+| `DEFAULT_CHUNK_SIZE` | `5000` (env `BACKFILL_CHUNK_SIZE`) | Короткие транзакции, не блокируют таблицу. |
+| `DEFAULT_QUERY_TIMEOUT_MS` | `60000` (env `BACKFILL_QUERY_TIMEOUT_MS`) | Защита scan-запросов от pool-wide `statement_timeout`. |
+| `MAX_TOKENS` | `500` | Аномально длинный список keywords = что-то сломалось; не сканируем. |
 | `MAX_RETRIES` | 3 | Retry при транзиентных ошибках PG. |
 | dry-run timeout | 120 сек (`SET LOCAL`) | `COUNT(*)` по большой таблице может быть долгим; pool-wide `statement_timeout = 30s` его убьёт. |
 
-### Семафор
+### Семафор + rerun queue
 
 - `runningScans` — `Map<string, Promise<BackfillResult>>`.
-- Если для тега уже идёт скан — возвращаем `skipped: true`.
-- Если уже 2 скана работают — возвращаем `error: 'Too many concurrent scans...'`.
-- Все отброшенные запросы логируются `console.warn`.
+- `pendingRerun` — `Set<string>` тегов, для которых пришёл повторный запрос во время выполнения.
+- Если для тега уже идёт скан — запрос ставится в `pendingRerun`, а ответ возвращает `skipped: true` с `message: 'Сканирование уже выполняется, будет запущено повторно'`.
+- Когда текущий скан завершается, `finally` проверяет `pendingRerun`; если тег там есть — он удаляется из сета и запускается новый скан с теми же опциями (fire-and-forget).
+- Если уже 2 скана работают — возвращаем `error: 'Too many concurrent scans...'` без постановки в rerun-очередь.
 
 ### Маркер `_backfill`
 
@@ -220,7 +224,23 @@ POST /admin/tags/:tagId/backfill-matches
 }
 ```
 
-**Если семафор занят:**
+**Если скан уже выполняется:**
+
+```json
+200 OK
+{
+  "success": true,
+  "tagId": "sber",
+  "matched": 0,
+  "scanned": 0,
+  "dryRun": false,
+  "durationMs": 0,
+  "skipped": true,
+  "message": "Сканирование уже выполняется, будет запущено повторно"
+}
+```
+
+**Если семафор заполнен:**
 
 ```json
 200 OK
@@ -238,7 +258,7 @@ POST /admin/tags/:tagId/backfill-matches
 
 **Ошибки:**
 - `404` — тег не найден.
-- `400` — `tokens == 0` или `tokens > 500`.
+- `400` — `tokens == 0` или `tokens > 500`. Ответ содержит `message` на русском.
 
 ### `POST /admin/backfill-matches-all`
 
@@ -274,8 +294,9 @@ POST /admin/backfill-matches-all
 
 1. **Tag Scan** — dry-run, показывает `matched` и `tokens`.
 2. **Apply Scan** — применяет скан.
-3. Если семафор занят — показывает сообщение «Сейчас идут 2 других скана. Подождите и попробуйте снова.» вместо фейкового «Scan complete: 0».
-4. После успешного apply вызывается `load()` — данные тега обновляются.
+3. Если скан для этого тега уже идёт — показывает сообщение «Сканирование уже выполняется, будет запущено повторно»; rerun запускается автоматически после завершения текущего скана.
+4. Если уже 2 скана работают — показывает сообщение «Сейчас идут 2 других скана. Подождите и попробуйте снова.»
+5. После успешного apply вызывается `load()` — данные тега обновляются.
 
 ---
 
@@ -292,10 +313,19 @@ POST /admin/backfill-matches-all
 
 1. Открыть `TagsTab` — у целевого тега должен появиться статус `running`, затем `N matched`.
 2. В логах Render искать строки:
+   - `[TagBackfill] queued for rerun (already running): ...` — запрос поставлен в rerun-очередь.
+   - `[TagBackfill] rerunning ... after previous completion` — автоматический rerun.
    - `[TagBackfill] skipped (concurrency): ...` — отброшенные запросы.
    - `[TagBackfill] DONE tag=... matched=... scanned=... in ...ms` — успешное завершение.
    - `[TagBackfill] DONE all processed=... skipped=... matched=...` — массовый скан.
 3. Для dry-run проверить, что `GET /admin/tags` возвращает корректный маркер в SQLite (путь `$._backfill`).
+
+### Переменные окружения
+
+| Переменная | Значение по умолчанию | Описание |
+|------------|----------------------|----------|
+| `BACKFILL_CHUNK_SIZE` | `5000` | Размер чанка при ретро-скане. |
+| `BACKFILL_QUERY_TIMEOUT_MS` | `60000` | `statement_timeout` для scan-чанков PostgreSQL и `Promise.race` для SQLite. |
 
 ### Если `running` завис
 

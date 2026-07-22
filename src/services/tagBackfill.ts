@@ -22,12 +22,14 @@ import { sendTelegramMessage } from './telegram';
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
 const MAX_CONCURRENT_SCANS = 2;
-const DEFAULT_CHUNK_SIZE = 5000;
+const DEFAULT_CHUNK_SIZE = parseInt(process.env.BACKFILL_CHUNK_SIZE || '5000', 10);
+const DEFAULT_QUERY_TIMEOUT_MS = parseInt(process.env.BACKFILL_QUERY_TIMEOUT_MS || '60000', 10);
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 500;
 export const MAX_TOKENS = 500;
 
 const runningScans = new Map<string, Promise<BackfillResult>>();
+const pendingRerun = new Set<string>();
 
 export interface BackfillOptions {
   dryRun?: boolean;
@@ -61,6 +63,35 @@ interface ScanRecord {
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function queryWithTimeout<T>(
+  label: string,
+  sql: string,
+  params: any[],
+  timeoutMs: number = DEFAULT_QUERY_TIMEOUT_MS
+): Promise<T> {
+  if (USE_SQLITE) {
+    return Promise.race([
+      query(sql, params) as Promise<T>,
+      new Promise<T>((_, reject) =>
+        setTimeout(() => reject(new Error(`${label} timeout after ${timeoutMs}ms`)), timeoutMs)
+      ),
+    ]);
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(`SET LOCAL statement_timeout = '${timeoutMs}ms'`);
+    const result = await client.query(sql, params);
+    await client.query('COMMIT');
+    return result as T;
+  } catch (err: any) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 async function withRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
@@ -233,28 +264,27 @@ async function scanChunkPostgres(
     const idParams = lastId ? [...params, lastId] : params;
     const idCondition = lastId ? `AND id > $${params.length + 1}` : '';
 
-    const result = await query(
-      `SELECT id FROM news
+    const fullSql = `SELECT id FROM news
        ${sql}
        ${idCondition}
        ORDER BY id
-       LIMIT $${idParams.length + 1}`,
-      [...idParams, chunkSize]
-    );
+       LIMIT $${idParams.length + 1}`;
+    const fullParams = [...idParams, chunkSize];
+
+    const result = await queryWithTimeout<any>('scanChunkPostgres', fullSql, fullParams);
     return result.rows.map((r: any) => r.id);
   });
 }
 
 async function applyChunkPostgres(tagId: string, ids: string[]): Promise<number> {
   if (ids.length === 0) return 0;
-  const result = await withRetry('applyChunkPostgres', () =>
-    query(
-      `UPDATE news
+  const sql = `UPDATE news
        SET matched_tags = COALESCE(matched_tags, '{}'::text[]) || ARRAY[$1]
        WHERE id = ANY($2::uuid[])
-         AND (matched_tags IS NULL OR NOT ($1 = ANY(matched_tags)))`,
-      [tagId, ids]
-    )
+         AND (matched_tags IS NULL OR NOT ($1 = ANY(matched_tags)))`;
+  const params = [tagId, ids];
+  const result = await withRetry('applyChunkPostgres', () =>
+    queryWithTimeout<any>('applyChunkPostgres', sql, params)
   );
   return result.rowCount || 0;
 }
@@ -271,14 +301,14 @@ async function scanChunkSqlite(
     const idParams = lastId ? [...params, lastId] : params;
     const idCondition = lastId ? `AND id > $${params.length + 1}` : '';
 
-    const result = await query(
-      `SELECT id, matched_tags FROM news
+    const fullSql = `SELECT id, matched_tags FROM news
        ${sql}
        ${idCondition}
        ORDER BY id
-       LIMIT $${idParams.length + 1}`,
-      [...idParams, chunkSize]
-    );
+       LIMIT $${idParams.length + 1}`;
+    const fullParams = [...idParams, chunkSize];
+
+    const result = await queryWithTimeout<any>('scanChunkSqlite', fullSql, fullParams);
     return result.rows;
   });
 }
@@ -389,8 +419,9 @@ export async function backfillTagMatches(
   const since = options.since;
 
   if (runningScans.has(tagIdNorm)) {
-    console.warn(`[TagBackfill] skipped (already running): ${tagIdNorm}`);
-    return { tagId: tagIdNorm, matched: 0, scanned: 0, dryRun, durationMs: 0, skipped: true };
+    console.warn(`[TagBackfill] queued for rerun (already running): ${tagIdNorm}`);
+    pendingRerun.add(tagIdNorm);
+    return { tagId: tagIdNorm, matched: 0, scanned: 0, dryRun, durationMs: 0, skipped: true, message: 'Сканирование уже выполняется, будет запущено повторно' };
   }
   if (runningScans.size >= MAX_CONCURRENT_SCANS) {
     console.warn(`[TagBackfill] skipped (concurrency): ${tagIdNorm} — ${runningScans.size} running`);
@@ -531,6 +562,13 @@ export async function backfillTagMatches(
       return result;
     } finally {
       runningScans.delete(tagIdNorm);
+      if (pendingRerun.has(tagIdNorm)) {
+        pendingRerun.delete(tagIdNorm);
+        console.log(`[TagBackfill] rerunning ${tagIdNorm} after previous completion`);
+        backfillTagMatches(tagIdNorm, options).catch((err: any) => {
+          console.error(`[TagBackfill] rerun error for ${tagIdNorm}:`, err.message);
+        });
+      }
     }
   })();
 
