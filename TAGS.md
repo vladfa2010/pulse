@@ -579,6 +579,7 @@ ALTER TABLE news ADD COLUMN sentiment_score INTEGER;
 
 > Ретро-скан существующих новостей по keywords тега.
 > Заменяет синхронный backfill, ранее выполнявшийся внутри `NewsSourceManager`.
+> Подробная документация: [`BACKFILL.md`](BACKFILL.md).
 
 ### Почему событийный подход
 - Backfill по всем тегам в цикле fetching блокировал ingestion и вызывал тормоза.
