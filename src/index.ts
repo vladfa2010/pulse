@@ -2593,7 +2593,7 @@ app.post('/admin/tags/:tagId/backfill-matches', requireAdmin, async (req, res) =
       return res.json({ success: false, ...result });
     }
     if (result.skipped) {
-      return res.json({ success: true, skipped: true, message: result.message || 'Сканирование пропущено', ...result });
+      return res.json({ success: true, skipped: true, message: 'Скан по этому тегу уже идёт — дождись зелёного бейджа', ...result });
     }
     return res.json({ success: true, ...result });
   } catch (err: any) {

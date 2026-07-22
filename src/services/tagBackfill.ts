@@ -22,8 +22,8 @@ import { sendTelegramMessage } from './telegram';
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
 const MAX_CONCURRENT_SCANS = 2;
-const DEFAULT_CHUNK_SIZE = parseInt(process.env.BACKFILL_CHUNK_SIZE || '5000', 10);
-const DEFAULT_QUERY_TIMEOUT_MS = parseInt(process.env.BACKFILL_QUERY_TIMEOUT_MS || '60000', 10);
+const DEFAULT_CHUNK_SIZE = parseInt(process.env.TAG_BACKFILL_CHUNK_SIZE || '5000', 10);
+const DEFAULT_QUERY_TIMEOUT_MS = parseInt(process.env.TAG_BACKFILL_QUERY_TIMEOUT_MS || '120000', 10);
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 500;
 export const MAX_TOKENS = 500;
@@ -466,7 +466,7 @@ export async function backfillTagMatches(
           matched_count: 0,
           status: 'failed',
           error: errMsg,
-        });
+        }).catch(() => {});
         return { tagId: tagIdNorm, matched: 0, scanned: 0, dryRun, durationMs: Date.now() - start, error: errMsg };
       }
 
