@@ -8,6 +8,7 @@
 > ✅ Telegram-дайджест: разбиение на 1-3 сообщения (3900 символов), хвост «…и ещё K статей — на сайте», `sendDigestToUserNow` → `sent | empty | error`, `last_digest_sent` обновляется только после полной отправки.
 > ✅ Docs: `TELEGRAM_NOTIFICATIONS.md` v2.3 — подробная логика разбиения, troubleshooting, flow-диаграммы.
 > ✅ Fix: `processScheduledDowngrades` — убран двойной usage параметра `$1`, активность вычисляется до запроса; пул PostgreSQL — `connectionTimeoutMillis` 2с → 10с, `idleTimeoutMillis` 30с → 60с, `keepAlive: true`.
+> ✅ Graphify: полная семантическая индексация проекта (`graphify-out/graph.json`: 3529 узлов, 5530 рёбер, 230 сообществ), обновлены `community_name` и перегенерирован `pulse-kode-callflow.html`.
 
 ---
 
@@ -492,6 +493,28 @@ frontend/src/
 
 **Требования @BotFather:**
 - Домен сайта (`pulse.inside-trade.ru`) должен быть добавлен через `/setdomain` для работы официального Login Widget.
+
+---
+
+## 20. Graphify / Knowledge Graph
+
+Полная семантическая индексация проекта для навигации по кодовой базе и документации.
+
+**Артефакты:**
+- `graphify-out/graph.json` — основной граф (3529 nodes, 5530 links, 230 communities).
+- `graphify-out/GRAPH_REPORT.md` — текстовый отчёт с community hubs, god nodes, surprising connections, suggested questions.
+- `graphify-out/pulse-kode-callflow.html` — интерактивный HTML-отчёт: сворачиваемые секции по сообществам, Mermaid-диаграммы, таблицы узлов.
+- `graphify-out/manifest.json` — манифест проиндексированных файлов.
+- `graphify-out/cost.json` — затраты токенов на индексацию.
+
+**Особенности:**
+- Узлы: `code` (функции, классы, endpoints), `concept` (сущности, endpoint paths), `document` (markdown), `rationale` (пояснения).
+- Связи: `calls`, `imports`, `imports_from`, `contains`, `references`, `conceptually_related_to`, `rationale_for` и др.
+- `community_name` генерируются автоматически по топ-3 самым связанным узлам в сообществе (например, `Community 0 — rssFetcher + finnhubAdapter + newsSourceManager`).
+
+**Генерация:**
+- Скрипт слияния семантических чанков: `graphify-out/merge_semantic.py`.
+- Скрипт генерации HTML-отчёта: `graphify-out/generate_callflow_html.py`.
 
 ---
 

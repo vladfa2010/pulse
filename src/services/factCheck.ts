@@ -829,7 +829,22 @@ async function processFactCheckQueue(): Promise<void> {
   isProcessing = true;
   try {
     for (let i = 0; i < MAX_CONCURRENT_JOBS; i++) {
-      const job = await getNextQueuedJob();
+      let job: any | null = null;
+      let attempts = 0;
+      const maxAttempts = 3;
+      while (attempts < maxAttempts && job === null) {
+        try {
+          job = await getNextQueuedJob();
+          break;
+        } catch (err: any) {
+          attempts++;
+          if (attempts >= maxAttempts) {
+            throw err;
+          }
+          console.warn(`[FactCheckWorker] getNextQueuedJob failed (attempt ${attempts}/${maxAttempts}): ${err.message?.slice(0, 100)}`);
+          await new Promise(r => setTimeout(r, 500));
+        }
+      }
       if (!job) break;
       console.log(`[FactCheckWorker] Processing job ${job.id} for news ${job.news_id}`);
       await processFactCheckJob(job.id);
