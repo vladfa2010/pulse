@@ -3,7 +3,7 @@
 > Дата: 2026-06-18
 > Файлы: `smartTagMatcher.ts`, `tagManager.ts`, `routes/user.ts`, `index.ts`
 > Статус: ✅ Пользовательские теги + асинхронное LLM-обогащение + дедупликация по транслиту + поддержка российских компаний + принудительный веб-поиск + гео-поля в карточке тега (v8.7+).
-> Последнее обновление: v8.6.7+ — async enrichment, translit dedup, Russian companies prompt, always-on $web_search
+> Последнее обновление: v8.7+ — extended tag fields (websites, wikipedia_url, country, isin, is_verified, sectors, trends, geo_*), legacy sync, расширенный /api/tags/search (15 полей)
 
 ---
 
@@ -107,6 +107,27 @@ function generateTagKeywords(tagName: string): string[]
 - **Кэш:** in-memory, TTL 1 минута
 - **Инвариант:** повторное добавление существующего тега в портфель не изменяет `user_defined_tags` (не перезаписывает `enriched_data`, `keywords`, `tag_type`, `created_by`, `is_verified`). Создание ищет тег как по `tag_id`, так и по `LOWER(tag_name)`; при совпадении по названию пользователь подписывается на существующий `tag_id`.
 - **Дедупликация по транслиту:** третий уровень поиска проверяет варианты названия в латинице и кириллице (`getTranslitVariants`). Это предотвращает дубли `sberbank` / `сбербанк`, `gazprom` / `газпром`, `yandex` / `яндекс`. Фонетические варианты (`apple` / `эппл`) не покрываются — известное ограничение.
+
+### 2.3.1 Legacy sync (v8.7+)
+
+Четыре поля-строки стали производными от массивов. При каждом `PUT /admin/tags/:tagId`
+и при LLM-обогащении первый элемент массива копируется в legacy-строку:
+
+| Массив (источник истины) | Legacy-строка | Кто читает legacy |
+|--------------------------|---------------|-------------------|
+| `websites` | `website = websites[0]` | Публичный `/user/tags/:tagName/enrichment`, `TagEnrichment.tsx` |
+| `sectors` | `sector = sectors[0]` | `/api/tags/search` |
+| `trends` | `trend = trends[0]` | `/api/tags/search` |
+| `geo_countries` | `country = geo_countries[0]` | Отображение primary-страны |
+
+Правила:
+- Порядок массива функционален: «главное — первым» (официальный сайт, HQ-страна,
+  основной сектор). Промпт обогащения и UI это соблюдают.
+- Legacy-поля принимаются в PUT для обратной совместимости, но sync массива
+  перезаписывает их в том же запросе (sync применяется последним).
+- Обратная совместимость чтения: старый тег без массива разворачивается на чтении —
+  `websites = [website]`, `sectors = [sector]`, `geo_countries = [country]` и т.д.
+- Очистка массива (`[]`) обнуляет legacy-строку (`null`).
 
 ### 2.4 Почему нет хардкод тегов
 
@@ -466,7 +487,16 @@ CREATE TABLE news (
 | `GET` | `/api/user/tags/detect-type?tagName={name}` | Preview типа тега через LLM |
 | `GET` | `/api/user/tags/related?tag={tagId}` | Связанные теги через LLM |
 | `GET` | `/api/user/tags/:tagName/enrichment` | Enriched-данные тега (public) |
-| `GET` | `/api/tags/search?q={query}` | Поиск тегов по названию / ticker / synonyms / keywords |
+| `GET` | `/api/tags/search?q={query}` | Поиск тегов (substring ILIKE, min 3 / max 50 символов, LIMIT 10) — см. матрицу полей ниже |
+
+#### Поля, по которым работает /api/tags/search
+
+| Группа | Поля |
+|--------|------|
+| Основные | `tag_name`, `ticker`, `exchange`, `trend` (legacy), `sector` (legacy), `isin` |
+| Keywords | `keywords` (TEXT[]) |
+| JSONB-массивы | `synonyms_en`, `synonyms_ru`, `key_products`, `related_entities`, `sectors`, `trends`, `geo_countries`, `geo_regions`, `geo_cities` |
+| **Не участвуют** | `website`/`websites`, `wikipedia_url`, `country` (покрывается `geo_countries`), `description_ru` |
 
 ### Администрирование тегов
 
