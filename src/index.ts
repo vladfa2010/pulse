@@ -2008,6 +2008,21 @@ app.get('/api/tags/search', async (req, res) => {
             COALESCE(enriched_data->'trends', '[]'::jsonb)
           ) s WHERE s ILIKE '%' || $1 || '%'
         )
+        OR EXISTS (
+          SELECT 1 FROM jsonb_array_elements_text(
+            COALESCE(enriched_data->'geo_countries', '[]'::jsonb)
+          ) s WHERE s ILIKE '%' || $1 || '%'
+        )
+        OR EXISTS (
+          SELECT 1 FROM jsonb_array_elements_text(
+            COALESCE(enriched_data->'geo_regions', '[]'::jsonb)
+          ) s WHERE s ILIKE '%' || $1 || '%'
+        )
+        OR EXISTS (
+          SELECT 1 FROM jsonb_array_elements_text(
+            COALESCE(enriched_data->'geo_cities', '[]'::jsonb)
+          ) s WHERE s ILIKE '%' || $1 || '%'
+        )
       LIMIT 10`,
       [q]
     );
@@ -2064,6 +2079,9 @@ app.get('/admin/tags/:tagId', requireAdmin, async (req, res) => {
     let sector = null;
     let sectors: string[] = [];
     let trends: string[] = [];
+    let geoCountries: string[] = [];
+    let geoRegions: string[] = [];
+    let geoCities: string[] = [];
     try {
       if (ed.related_tags) {
         relatedTags = ed.related_tags;
@@ -2085,6 +2103,9 @@ app.get('/admin/tags/:tagId', requireAdmin, async (req, res) => {
       sector      = ed.sector        || null;
       sectors     = ed.sectors       || (ed.sector ? [ed.sector] : []);
       trends      = ed.trends        || (ed.trend ? [ed.trend] : []);
+      geoCountries = ed.geo_countries || (ed.country ? [ed.country] : []);
+      geoRegions  = ed.geo_regions   || [];
+      geoCities   = ed.geo_cities    || [];
     } catch { /* ignore */ }
 
     // Daily stats (30 days)
@@ -2143,6 +2164,9 @@ app.get('/admin/tags/:tagId', requireAdmin, async (req, res) => {
         sector,
         sectors,
         trends,
+        geo_countries: geoCountries,
+        geo_regions: geoRegions,
+        geo_cities: geoCities,
       },
       daily_stats: dailyResult.rows.map((r: any) => ({
         day: r.day,
@@ -2189,6 +2213,9 @@ const TAG_UPDATE_RULES: Record<string, any> = {
   sector:   { type: 'string', max: 100, optional: true },
   trends:   { type: 'array', maxItems: 10, items: { type: 'string', max: 100 }, optional: true },
   sectors:  { type: 'array', maxItems: 10, items: { type: 'string', max: 100 }, optional: true },
+  geo_countries: { type: 'array', maxItems: 10, items: { type: 'string', max: 100 }, optional: true },
+  geo_regions:   { type: 'array', maxItems: 10, items: { type: 'string', max: 100 }, optional: true },
+  geo_cities:    { type: 'array', maxItems: 10, items: { type: 'string', max: 100 }, optional: true },
   is_verified: { type: 'boolean' },
 };
 
@@ -2331,7 +2358,7 @@ app.put('/admin/tags/:tagId', requireAdmin, async (req, res) => {
     }
 
     // Build enriched_data patch in JS (SQLite + PostgreSQL compatible)
-    const jsonbFields = ['ticker', 'website', 'description_ru', 'key_products', 'related_tags', 'synonyms_ru', 'synonyms_en', 'exchange', 'trend', 'sector', 'websites', 'wikipedia_url', 'country', 'isin', 'sectors', 'trends'];
+    const jsonbFields = ['ticker', 'website', 'description_ru', 'key_products', 'related_tags', 'synonyms_ru', 'synonyms_en', 'exchange', 'trend', 'sector', 'websites', 'wikipedia_url', 'country', 'isin', 'sectors', 'trends', 'geo_countries', 'geo_regions', 'geo_cities'];
     // Normalize empty strings to null (INC-004: empty string !== null in JSONB)
     for (const f of jsonbFields) {
       if (updates[f] === '') updates[f] = null;
@@ -2351,6 +2378,9 @@ app.put('/admin/tags/:tagId', requireAdmin, async (req, res) => {
     }
     if (updates.trends !== undefined) {
       enrichedPatch.trend = updates.trends[0] || null;
+    }
+    if (updates.geo_countries !== undefined) {
+      enrichedPatch.country = updates.geo_countries[0] || null;
     }
 
     if (Object.keys(enrichedPatch).length > 0) {
@@ -2462,6 +2492,9 @@ app.put('/admin/tags/:tagId', requireAdmin, async (req, res) => {
       exchange: ed.exchange || null,
       trend: ed.trend || null,
       sector: ed.sector || null,
+      geo_countries: ed.geo_countries || (ed.country ? [ed.country] : []),
+      geo_regions: ed.geo_regions || [],
+      geo_cities: ed.geo_cities || [],
     };
 
     // Any successful tag update may affect matching keywords.
