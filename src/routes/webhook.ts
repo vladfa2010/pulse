@@ -512,12 +512,15 @@ async function handleDigestNow(chatId: string): Promise<void> {
 
   try {
     const { sendDigestToUserNow } = await import('../services/digest');
-    const sent = await sendDigestToUserNow(userId);
-    if (!sent) {
+    const result = await sendDigestToUserNow(userId);
+    if (result === 'empty') {
       await sendMessageWithButtons(chatId, '📭 Нет новых непрочитанных новостей по вашим тегам.', [
         [{ text: '📰 Обновить', callback_data: 'digest_now' }],
       ]);
+    } else if (result === 'error') {
+      await sendMessage(chatId, '❌ Ошибка отправки дайджеста. Попробуйте позже.');
     }
+    // result === 'sent' — digest already delivered
   } catch (err: any) {
     console.error('[TG Bot] digest_now error:', err.message);
     await sendMessage(chatId, '❌ Ошибка формирования дайджеста.');

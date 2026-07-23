@@ -122,28 +122,89 @@ async function buildDigest(userId: string, maxTags: number | null, lastDigestSen
   return articles;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Format digest as Telegram HTML
-// ═══════════════════════════════════════════════════════════════════════════
-function formatDigest(articles: DigestArticle[], frequency: string = '1h'): string {
-  if (articles.length === 0) return '';
+const MAX_MESSAGE_LENGTH = 3900;
+const MAX_DIGEST_MESSAGES = 3;
+const SITE_URL = 'https://pulse.inside-trade.ru';
 
-  let text = `🔔 <b>PULSE — непрочитанные новости</b>\n`;
-  text += `<i>${articles.length} новых</i>\n\n`;
+// ═══════════════════════════════════════════════════════════════════════════
+// Format digest as Telegram HTML (split into 1-3 messages)
+// ═══════════════════════════════════════════════════════════════════════════
+function declineWord(count: number, one: string, few: string, many: string): string {
+  const mod10 = count % 10;
+  const mod100 = count % 100;
+  if (mod10 === 1 && mod100 !== 11) return one;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few;
+  return many;
+}
 
-  for (let i = 0; i < articles.length; i++) {
-    const a = articles[i];
+function tailForRemaining(remaining: number): string {
+  return `<i>…и ещё ${remaining} ${declineWord(remaining, 'статья', 'статьи', 'статей')} — <a href="${SITE_URL}">на сайте</a></i>\n\n`;
+}
+
+function formatDigestMessages(articles: DigestArticle[], frequency: string = '1h'): string[] {
+  if (articles.length === 0) return [];
+
+  const total = articles.length;
+  const header = `🔔 <b>PULSE — непрочитанные новости</b>\n<i>${total} ${declineWord(total, 'новая', 'новые', 'новых')}</i>\n\n`;
+  const footer = `━━━\n<a href="${SITE_URL}">Открыть PULSE →</a>\n<i>⏰ Следующая подборка — ${FREQUENCY_LABELS[frequency] || 'по расписанию'}</i>`;
+
+  const blocks = articles.map((a, idx) => {
     const emoji = a.sentiment === 'positive' ? '🟢' : a.sentiment === 'negative' ? '🔴' : '⚪';
-    text += `${i + 1}. ${emoji} <b>${escapeHtml(a.title)}</b>\n`;
-    text += `   📎 <a href="${a.url}">Читать на сайте</a> · <i>${escapeHtml(a.source)}</i>\n`;
-    text += `   🏷 ${escapeHtml(a.tag)}\n\n`;
+    return `${idx + 1}. ${emoji} <b>${escapeHtml(a.title)}</b>\n   📎 <a href="${a.url}">Читать на сайте</a> · <i>${escapeHtml(a.source)}</i>\n   🏷 ${escapeHtml(a.tag)}\n\n`;
+  });
+
+  // Everything fits in one message
+  const full = header + blocks.join('') + footer;
+  if (full.length <= MAX_MESSAGE_LENGTH) {
+    return [full];
   }
 
-  text += `━━━\n`;
-  text += `<a href="https://pulse-frontend-jt53.onrender.com">Открыть PULSE →</a>\n`;
-  text += `<i>⏰ Следующая подборка — ${FREQUENCY_LABELS[frequency] || 'по расписанию'}</i>`;
+  function splitMessages(startIdx: number, maxMessages: number, isFirst: boolean): string[] | null {
+    if (maxMessages === 0) return null;
+    const prefix = isFirst ? header : '';
+    const remaining = blocks.slice(startIdx).join('');
 
-  return text;
+    // All remaining blocks + footer fit in this message — this is the last one
+    if (prefix.length + remaining.length + footer.length <= MAX_MESSAGE_LENGTH) {
+      return [prefix + remaining + footer];
+    }
+
+    if (maxMessages === 1) {
+      // Last possible message: as many as possible, then tail + footer
+      let current = prefix;
+      let idx = startIdx;
+      while (idx < blocks.length) {
+        const tail = tailForRemaining(blocks.length - idx - 1);
+        if (current.length + blocks[idx].length + tail.length + footer.length > MAX_MESSAGE_LENGTH) break;
+        current += blocks[idx];
+        idx++;
+      }
+      const leftover = blocks.length - idx;
+      if (leftover > 0) current += tailForRemaining(leftover);
+      current += footer;
+      return [current];
+    }
+
+    // Not the last message: fill greedily without footer
+    let current = prefix;
+    let idx = startIdx;
+    while (idx < blocks.length) {
+      if (current.length + blocks[idx].length > MAX_MESSAGE_LENGTH) break;
+      current += blocks[idx];
+      idx++;
+    }
+    if (idx === startIdx) return null;
+
+    const rest = splitMessages(idx, maxMessages - 1, false);
+    if (rest) return [current, ...rest];
+    return null;
+  }
+
+  const result = splitMessages(0, MAX_DIGEST_MESSAGES, true);
+  if (result) return result;
+
+  // Fallback safety (should never be reached with 3 messages)
+  return [header + tailForRemaining(blocks.length) + footer];
 }
 
 function escapeHtml(text: string | null): string {
@@ -195,7 +256,19 @@ async function isPremium(userId: string): Promise<boolean> {
 // ═══════════════════════════════════════════════════════════════════════════
 // Send digest to a single user
 // ═══════════════════════════════════════════════════════════════════════════
-export async function sendDigestToUser(userId: string): Promise<boolean> {
+async function sendAllDigestMessages(chatId: string, messages: string[]): Promise<boolean> {
+  for (let i = 0; i < messages.length; i++) {
+    const ok = await sendTelegramMessage(chatId, messages[i]);
+    if (!ok) {
+      console.error(`[Digest] Failed to send part ${i + 1}/${messages.length} to chat ${chatId}`);
+      return false;
+    }
+    if (i < messages.length - 1) await sleep(200);
+  }
+  return true;
+}
+
+export async function sendDigestToUser(userId: string): Promise<'sent' | 'empty' | 'error'> {
   try {
     // Get user's digest settings
     const settingsResult = await query(
@@ -207,12 +280,12 @@ export async function sendDigestToUser(userId: string): Promise<boolean> {
     );
 
     const settings = settingsResult.rows[0];
-    if (!settings || !settings.tg_digest_enabled) return false;
+    if (!settings || !settings.tg_digest_enabled) return 'empty';
 
     // Check quiet hours
     if (settings.quiet_hours_enabled && isQuietHours(settings.quiet_hours_start, settings.quiet_hours_end)) {
       console.log(`[Digest] Quiet hours for user ${userId}, skipping`);
-      return false;
+      return 'empty';
     }
 
     // Check frequency
@@ -222,7 +295,7 @@ export async function sendDigestToUser(userId: string): Promise<boolean> {
       const hoursSince = (Date.now() - lastSent.getTime()) / (60 * 60 * 1000);
       if (hoursSince < freqHours) {
         console.log(`[Digest] Too early for user ${userId} (${hoursSince.toFixed(1)}h < ${freqHours}h)`);
-        return false;
+        return 'empty';
       }
     }
 
@@ -235,7 +308,7 @@ export async function sendDigestToUser(userId: string): Promise<boolean> {
     const articles = await buildDigest(userId, maxTags, lastDigestSent, 'scheduled');
     if (articles.length === 0) {
       console.log(`[Digest:scheduled] No articles for user ${userId}`);
-      return false;
+      return 'empty';
     }
 
     // Get chat_id
@@ -243,46 +316,46 @@ export async function sendDigestToUser(userId: string): Promise<boolean> {
       `SELECT target FROM user_channels WHERE user_id = $1 AND channel = 'telegram' AND is_active = TRUE`,
       [userId]
     );
-    if (chatResult.rows.length === 0) return false;
+    if (chatResult.rows.length === 0) return 'empty';
     const chatId = chatResult.rows[0].target;
 
-    // Format and send
-    const text = formatDigest(articles, settings.digest_frequency);
-    const ok = await sendTelegramMessage(chatId, text);
+    // Format and send all parts
+    const messages = formatDigestMessages(articles, settings.digest_frequency);
+    const ok = await sendAllDigestMessages(chatId, messages);
 
-    if (ok) {
-      // Update last_digest_sent
-      await query(
-        `UPDATE notification_settings SET last_digest_sent = NOW() WHERE user_id = $1`,
-        [userId]
+    if (!ok) return 'error';
+
+    // Update last_digest_sent only after all parts are sent
+    await query(
+      `UPDATE notification_settings SET last_digest_sent = NOW() WHERE user_id = $1`,
+      [userId]
+    );
+    console.log(`[Digest] Sent ${articles.length} articles to user ${userId} in ${messages.length} part(s) (${premium ? 'premium' : 'free'}, ${maxTags} tag${maxTags > 1 ? 's' : ''})`);
+
+    // Also send push notification if enabled
+    if (settings.push_enabled) {
+      const pushBody = articles.length === 1
+        ? '1 новая статья по вашим тегам'
+        : `${articles.length} новых статьи по вашим тегам`;
+      await sendPushNotification(
+        userId,
+        'PULSE — непрочитанные новости',
+        pushBody,
+        { type: 'digest', count: articles.length.toString() }
       );
-      console.log(`[Digest] Sent ${articles.length} articles to user ${userId} (${premium ? 'premium' : 'free'}, ${maxTags} tag${maxTags > 1 ? 's' : ''})`);
-
-      // Also send push notification if enabled
-      if (settings.push_enabled) {
-        const pushBody = articles.length === 1
-          ? '1 новая статья по вашим тегам'
-          : `${articles.length} новых статьи по вашим тегам`;
-        await sendPushNotification(
-          userId,
-          'PULSE — непрочитанные новости',
-          pushBody,
-          { type: 'digest', count: articles.length.toString() }
-        );
-      }
     }
 
-    return ok;
+    return 'sent';
   } catch (err) {
     console.error(`[Digest] Failed for user ${userId}:`, err);
-    return false;
+    return 'error';
   }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Send digest NOW (manual request via /now — bypasses timing check)
 // ═══════════════════════════════════════════════════════════════════════════
-export async function sendDigestToUserNow(userId: string): Promise<boolean> {
+export async function sendDigestToUserNow(userId: string): Promise<'sent' | 'empty' | 'error'> {
   try {
     console.log(`[Digest:manual] Manual digest request for user ${userId}`);
 
@@ -293,7 +366,7 @@ export async function sendDigestToUserNow(userId: string): Promise<boolean> {
     const articles = await buildDigest(userId, null, null, 'manual');
     if (articles.length === 0) {
       console.log(`[Digest:manual] No articles for user ${userId}`);
-      return false;
+      return 'empty';
     }
 
     // Get chat_id
@@ -301,26 +374,26 @@ export async function sendDigestToUserNow(userId: string): Promise<boolean> {
       `SELECT target FROM user_channels WHERE user_id = $1 AND channel = 'telegram' AND is_active = TRUE`,
       [userId]
     );
-    if (chatResult.rows.length === 0) return false;
+    if (chatResult.rows.length === 0) return 'empty';
     const chatId = chatResult.rows[0].target;
 
-    // Format and send
-    const text = formatDigest(articles);
-    const ok = await sendTelegramMessage(chatId, text);
+    // Format and send all parts
+    const messages = formatDigestMessages(articles);
+    const ok = await sendAllDigestMessages(chatId, messages);
 
-    if (ok) {
-      // Update last_digest_sent
-      await query(
-        `UPDATE notification_settings SET last_digest_sent = NOW() WHERE user_id = $1`,
-        [userId]
-      );
-      console.log(`[Digest:manual] Sent ${articles.length} articles to user ${userId}`);
-    }
+    if (!ok) return 'error';
 
-    return ok;
+    // Update last_digest_sent only after all parts are sent
+    await query(
+      `UPDATE notification_settings SET last_digest_sent = NOW() WHERE user_id = $1`,
+      [userId]
+    );
+    console.log(`[Digest:manual] Sent ${articles.length} articles to user ${userId} in ${messages.length} part(s)`);
+
+    return 'sent';
   } catch (err) {
     console.error(`[Digest] Manual digest failed for ${userId}:`, err);
-    return false;
+    return 'error';
   }
 }
 
@@ -371,22 +444,24 @@ export async function sendAllDigests(): Promise<void> {
 
   let sent = 0;
   let skipped = 0;
+  let errors = 0;
 
   for (const user of usersResult.rows) {
-    const ok = await sendDigestToUser(user.id);
-    if (ok) sent++;
+    const result = await sendDigestToUser(user.id);
+    if (result === 'sent') sent++;
+    else if (result === 'error') errors++;
     else skipped++;
     // Rate limit
     await sleep(300);
   }
 
-  console.log(`[Digest] Done: ${sent} sent, ${skipped} skipped/empty`);
+  console.log(`[Digest] Done: ${sent} sent, ${skipped} skipped/empty, ${errors} errors`);
 
   // Audit log — finish
   try {
     await query(
       `UPDATE cron_log SET finished_at = NOW(), status = 'completed', articles_fetched = $1, articles_saved = $2 WHERE task_name = 'digest'`,
-      [sent + skipped, sent]
+      [sent + skipped + errors, sent]
     );
   } catch { /* ignore cron_log errors */ }
 }

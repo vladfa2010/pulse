@@ -1,8 +1,8 @@
 # Telegram Notifications — PULSE Bot (@Insidepulse_bot)
 
 > Полная техническая документация логики уведомлений Telegram-бота проекта PULSE.
-> Версия документа: **2.2** | Бот: `@Insidepulse_bot` | Обновлено: июль 2026
-> Последние правки: ручной `/now` использует все теги пользователя; RSS fallback 24h; логирование digest.
+> Версия документа: **2.3** | Бот: `@Insidepulse_bot` | Обновлено: июль 2026
+> Последние правки: ручной `/now` использует все теги пользователя; RSS fallback 24h; дайджест разбивается на 1-3 сообщения по бюджету 3900 символов; `sendDigestToUserNow` возвращает `sent | empty | error`; `last_digest_sent` обновляется только после успешной отправки всех частей.
 
 ---
 
@@ -734,9 +734,22 @@ LIMIT 20;
 
 ### Формат сообщения Digest
 
+Дайджест форматируется в HTML и **разбивается на 1–3 сообщения** по бюджету **3900 символов** на сообщение (лимит Telegram 4096, оставлен запас на служебные символы). Если статьи не помещаются, в последнем сообщении добавляется хвост:
+
+```
+…и ещё K статей — <a href="https://pulse.inside-trade.ru">на сайте</a>
+```
+
+Правила разбиения:
+- Заголовок (`🔔 PULSE — непрочитанные новости`) и footer (`Открыть PULSE →`, `Следующая подборка`) находятся в первом и последнем сообщениях соответственно.
+- Нумерация статей сохраняется сквозь все сообщения.
+- `last_digest_sent` обновляется **только после успешной отправки всех частей**. Если любая часть не дошла, вся рассылка считается ошибкой.
+
+Пример при большом пуле (2 сообщения):
+
 ```
 🔔 <b>PULSE — непрочитанные новости</b>
-<i>5 новых</i>
+<i>12 новых</i>
 
 1. 🟢 <b>Компания X запустила новый продукт</b>
    📎 <a href="https://example.com/news/1">Читать на сайте</a> · <i>TechCrunch</i>
@@ -749,6 +762,16 @@ LIMIT 20;
 3. ⚪ <b>Новый закон о цифровых активах</b>
    📎 <a href="https://example.com/news/3">Читать на сайте</a> · <i>РБК</i>
    🏷 #crypto
+
+…(остальные статьи в следующем сообщении)…
+```
+
+```
+4. ⚪ <b>ЦБ оставил ставку без изменений</b>
+   📎 <a href="https://example.com/news/4">Читать на сайте</a> · <i>РБК</i>
+   🏷 #finance
+
+…и ещё 8 статей — <a href="https://pulse.inside-trade.ru">на сайте</a>
 
 ━━━
 <a href="https://pulse.inside-trade.ru">Открыть PULSE →</a>
@@ -777,8 +800,10 @@ LIMIT 20;
 | **COALESCE title** | `COALESCE(title_ru, title_original)` — EN заголовок вместо null для Finnhub |
 | **escapeHtml guard** | `escapeHtml(text: string \| null)` — защита от `null.replace()` TypeError |
 | **fetched_at INSERT** | `finnhubAdapter.ts` + `rssFetcher.ts` — `fetched_at` в INSERT + `ON CONFLICT UPDATE` |
-| **Индекс** | `CREATE INDEX idx_news_fetched_at ON news(fetched_at DESC)` — perf |
-
+| **Разбиение дайджеста на 1–3 сообщения** | Бюджет 3900 символов на сообщение; хвост «…и ещё K статей — на сайте»; footer и ссылка на PULSE только в последнем сообщении |
+| **Тип возвращаемого значения `sendDigestToUserNow`** | `boolean` → `'sent' \| 'empty' \| 'error'`; `handleDigestNow` различает пустой пул и ошибку отправки |
+| **Обновление `last_digest_sent`** | Только после успешной отправки всех частей; при ошибке любой части дайджест не считается доставленным |
+| **Лог Telegram API** | В `sendTelegramMessage` добавлены статус, `error_code`, `description` и тело ответа для диагностики `MESSAGE_TOO_LONG` и других ошибок |
 ### Cron log deduplication
 
 `sendAllDigests()` ведёт аудит-лог в таблице `cron_log`. Чтобы избежать дублей строк при каждом запуске:
@@ -825,7 +850,9 @@ LIMIT 20;
 | Количество тегов | 1 (free) / 25 (premium) | **Все теги** |
 | RSS-окно | с `last_digest_sent` | fallback 24 часа |
 | Лимит статей | 20 | 20 |
-| Обновляет `last_digest_sent` | Да | Да (при успешной отправке) |
+| Обновляет `last_digest_sent` | Да — только после успешной отправки **всех** частей | Да — только после успешной отправки **всех** частей |
+| Максимальное число сообщений | 3 | 3 |
+| Бюджет на одно сообщение | 3900 символов | 3900 символов |
 
 ## 5. Weekly Report — детальная логика
 
@@ -1261,14 +1288,18 @@ app.post('/webhook/telegram', async (req, res) => {
 4. Игнорировать тихие часы и проверку частоты
 5. Использовать ВСЕ теги пользователя (не тарифный лимит)
 6. RSS fallback: published_at за 24 часа (вместо 3)
-7. Отправить дайджест
+7. Разбить дайджест на 1-3 сообщения по бюджету 3900 символов
+8. Отправить все части последовательно с задержкой 200 мс
 
-Ответ:
-🔔 <b>PULSE — непрочитанные новости</b>
-<i>N новых</i>
-...
-или
-📭 <i>Нет новых непрочитанных новостей</i>
+Возвращаемое значение:
+- 'sent'   — все части дайджеста успешно отправлены, last_digest_sent обновлен
+- 'empty'  — нет непрочитанных новостей или пользователь/канал не найден
+- 'error'  — Telegram API вернул ошибку (например, MESSAGE_TOO_LONG) или упал sendAllDigestMessages
+
+Ответ пользователю:
+- 'sent':   дайджест приходит в чат (возможно, несколькими сообщениями)
+- 'empty':  📭 Нет новых непрочитанных новостей по вашим тегам.
+- 'error':  ❌ Ошибка отправки дайджеста. Попробуйте позже.
 ```
 
 #### `/stop` — Отключение уведомлений ✅
@@ -1514,7 +1545,10 @@ async function sendDigestToAllUsers(): Promise<void> {
   const users = await getDigestEnabledUsers();
 
   for (const user of users) {
-    await sendDigestToUser(user.id, user.chatId);
+    const result = await sendDigestToUser(user.id);
+    if (result === 'sent') sent++;
+    else if (result === 'error') errors++;
+    else skipped++;
     await sleep(300); // Rate limit: 300ms
   }
 }
@@ -2140,23 +2174,30 @@ ORDER BY unread_count DESC;
 +====================================================================+
 |  STEP 7: Форматирование сообщения (HTML)                           |
 |                                                                    |
-|  const message = formatDigest(news, user.settings);                |
+|  const messages = formatDigestMessages(news, user.settings);       |
 |                                                                    |
 |  Пример вывода:                                                    |
-|  "🔔 <b>PULSE — непрочитанные новости</b>\n<i>5 новых</i>\n\n    |
-|  1. 🟢 <b>Заголовок</b>..."                                       |
+|  [                                                                  |
+|  |  "🔔 <b>PULSE — непрочитанные новости</b>\\n<i>12 новых</i>...", |
+|  |  "...и ещё 8 статей — <a href=...>на сайте</a>..."              |
+|  ]                                                                  |
+|  Бюджет: 3900 символов на сообщение, максимум 3 сообщения.        |
 +==============================+=======================================+
                                │
                                ▼
 +====================================================================+
 |  STEP 8: Отправка через Telegram API                               |
 |                                                                    |
-|  await bot.sendMessage(user.chatId, message, {                     |
-|    parse_mode: 'HTML',                                             |
-|    disable_web_page_preview: false                                 |
-|  });                                                               |
+|  for (const msg of messages) {                                      |
+|    await bot.sendMessage(user.chatId, msg, {                       |
+|      parse_mode: 'HTML',                                           |
+|      disable_web_page_preview: false                                 |
+|    });                                                             |
+|    await sleep(200); // pause between parts                        |
+|  }                                                                  |
 |                                                                    |
 |  Обновить last_digest_sent в notification_settings                 |
+|  ТОЛЬКО если все части отправлены успешно.                         |
 +====================================================================+
 ```
 

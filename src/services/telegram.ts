@@ -60,7 +60,7 @@ export async function sendTelegramMessage(
       }
     }
 
-    console.error('[Telegram] Send failed:', (err as Error).message);
+    console.error('[Telegram] Send failed:', err.response?.status, errorCode, description, (err as Error).message, '— data:', JSON.stringify(err.response?.data ?? {}));
     return false;
   }
 }

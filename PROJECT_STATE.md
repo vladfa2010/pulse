@@ -1,11 +1,11 @@
 # PULSE — Project State (Session Resume)
 
 > **Файл для быстрого входа в контекст после сброса.**
-> **Дата:** 2026-06-18
-> **Версия API:** 10.1
-> **Актуальные коммиты:** backend `eb73d9f`, frontend `b385c38`
+> **Дата:** 2026-07-23
+> **Версия API:** 10.2
+> **Актуальные коммиты:** backend *pending*, frontend *pending*
 >
-> ✅ Batch sentiment + batch tag impact + retry logic + job lock + tag protection + VoteToast confetti layering fix + Frost Appear + FLIP shift for carousels 2 & 3
+> ✅ Telegram-дайджест: разбиение на 1-3 сообщения (3900 символов), хвост «…и ещё K статей — на сайте», `sendDigestToUserNow` → `sent | empty | error`, `last_digest_sent` обновляется только после полной отправки.
 
 ---
 
