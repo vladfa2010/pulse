@@ -61,8 +61,8 @@ async function buildDigest(userId: string, maxTags: number, lastDigestSent: Date
 
   // TZ_TG_DIGEST_V3: hybrid filter — fetched_at for API sources, published_at for RSS
   // For scheduled digests: RSS window starts from last_digest_sent so no unread article is lost.
-  // Fallback to 3 hours for manual /now or first-time users.
-  const rssFallbackSince = new Date(Date.now() - 3 * 60 * 60 * 1000);
+  // Fallback to 24 hours for manual /now or first-time users (was 3h — too narrow for "all unread").
+  const rssFallbackSince = new Date(Date.now() - 24 * 60 * 60 * 1000);
   const rssSince = lastDigestSent ? lastDigestSent : rssFallbackSince;
   const sinceFetched   = new Date(Date.now() - 24 * 60 * 60 * 1000);
   const maxAge         = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
