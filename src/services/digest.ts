@@ -45,14 +45,19 @@ interface DigestArticle {
   tag: string;
 }
 
-async function buildDigest(userId: string, maxTags: number, lastDigestSent: Date | null): Promise<DigestArticle[]> {
-  // Get user's tags (limited by tariff)
+async function buildDigest(userId: string, maxTags: number | null, lastDigestSent: Date | null, context: string = 'scheduled'): Promise<DigestArticle[]> {
+  // Get user's tags (limited by tariff unless maxTags is null — manual /now uses all tags)
+  const limitClause = maxTags !== null ? `LIMIT $2` : '';
+  const limitParams = maxTags !== null ? [userId, maxTags] : [userId];
   const portfolioResult = await query(
-    `SELECT tag_id, tag_name FROM portfolios WHERE user_id = $1 LIMIT $2`,
-    [userId, maxTags]
+    `SELECT tag_id, tag_name FROM portfolios WHERE user_id = $1 ${limitClause} ORDER BY created_at ASC`,
+    limitParams
   );
 
-  if (portfolioResult.rows.length === 0) return [];
+  if (portfolioResult.rows.length === 0) {
+    console.log(`[Digest:${context}] No tags for user ${userId}`);
+    return [];
+  }
 
   const tagRows = portfolioResult.rows;
   const tagIds = tagRows.map(r => r.tag_id);
@@ -66,6 +71,8 @@ async function buildDigest(userId: string, maxTags: number, lastDigestSent: Date
   const rssSince = lastDigestSent ? lastDigestSent : rssFallbackSince;
   const sinceFetched   = new Date(Date.now() - 24 * 60 * 60 * 1000);
   const maxAge         = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+  console.log(`[Digest:${context}] user=${userId} maxTags=${maxTags ?? 'all'} tagCount=${tagIds.length} tags=[${tagIds.join(',')}] lastDigestSent=${lastDigestSent?.toISOString() ?? 'null'} rssSince=${rssSince.toISOString()} sinceFetched=${sinceFetched.toISOString()} maxAge=${maxAge.toISOString()}`);
 
   let articlesResult;
   if (USE_SQLITE) {
@@ -95,6 +102,8 @@ async function buildDigest(userId: string, maxTags: number, lastDigestSent: Date
       [tagIds, sinceFetched.toISOString(), rssSince.toISOString(), maxAge.toISOString(), userId]
     );
   }
+
+  console.log(`[Digest:${context}] user=${userId} candidateCount=${articlesResult.rows.length}`);
 
   const articles: DigestArticle[] = [];
   for (const row of articlesResult.rows) {
@@ -223,9 +232,9 @@ export async function sendDigestToUser(userId: string): Promise<boolean> {
 
     // Build digest (use last_digest_sent for RSS window so nothing is lost)
     const lastDigestSent = settings.last_digest_sent ? new Date(settings.last_digest_sent) : null;
-    const articles = await buildDigest(userId, maxTags, lastDigestSent);
+    const articles = await buildDigest(userId, maxTags, lastDigestSent, 'scheduled');
     if (articles.length === 0) {
-      console.log(`[Digest] No articles for user ${userId}`);
+      console.log(`[Digest:scheduled] No articles for user ${userId}`);
       return false;
     }
 
@@ -275,16 +284,15 @@ export async function sendDigestToUser(userId: string): Promise<boolean> {
 // ═══════════════════════════════════════════════════════════════════════════
 export async function sendDigestToUserNow(userId: string): Promise<boolean> {
   try {
-    console.log(`[Digest] Manual digest for user ${userId}`);
+    console.log(`[Digest:manual] Manual digest request for user ${userId}`);
 
-    // Check tariff
     const premium = await isPremium(userId);
-    const maxTags = premium ? 25 : 1;
+    console.log(`[Digest:manual] user=${userId} premium=${premium}`);
 
-    // Build digest (manual digest uses fixed 3h RSS window)
-    const articles = await buildDigest(userId, maxTags, null);
+    // Build digest (manual /now uses ALL user tags like the site feed, not tariff limit)
+    const articles = await buildDigest(userId, null, null, 'manual');
     if (articles.length === 0) {
-      console.log(`[Digest] No articles for user ${userId}`);
+      console.log(`[Digest:manual] No articles for user ${userId}`);
       return false;
     }
 
@@ -306,7 +314,7 @@ export async function sendDigestToUserNow(userId: string): Promise<boolean> {
         `UPDATE notification_settings SET last_digest_sent = NOW() WHERE user_id = $1`,
         [userId]
       );
-      console.log(`[Digest] Manual digest sent: ${articles.length} articles to user ${userId}`);
+      console.log(`[Digest:manual] Sent ${articles.length} articles to user ${userId}`);
     }
 
     return ok;
