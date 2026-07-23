@@ -3,10 +3,11 @@
 > **Файл для быстрого входа в контекст после сброса.**
 > **Дата:** 2026-07-23
 > **Версия API:** 10.2
-> **Актуальные коммиты:** backend `739470b`, frontend `b385c38`
+> **Актуальные коммиты:** backend `e95ebef`, frontend `b385c38`
 >
 > ✅ Telegram-дайджест: разбиение на 1-3 сообщения (3900 символов), хвост «…и ещё K статей — на сайте», `sendDigestToUserNow` → `sent | empty | error`, `last_digest_sent` обновляется только после полной отправки.
 > ✅ Docs: `TELEGRAM_NOTIFICATIONS.md` v2.3 — подробная логика разбиения, troubleshooting, flow-диаграммы.
+> ✅ Fix: `processScheduledDowngrades` — убран двойной usage параметра `$1`, активность вычисляется до запроса; пул PostgreSQL — `connectionTimeoutMillis` 2с → 10с, `idleTimeoutMillis` 30с → 60с, `keepAlive: true`.
 
 ---
 
