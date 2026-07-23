@@ -62,8 +62,9 @@ if (USE_SQLITE) {
     ssl: { rejectUnauthorized: false },
     max: 20,
     statement_timeout: 30000,
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 2000,
+    idleTimeoutMillis: 60000,
+    connectionTimeoutMillis: 10000,
+    keepAlive: true,
   });
   poolInstance.on('error', (err: any) => {
     console.error('PostgreSQL pool error:', err);
@@ -90,8 +91,9 @@ if (USE_SQLITE) {
     password: process.env.DB_PASSWORD || '',
     max: 20,
     statement_timeout: 30000,
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 2000,
+    idleTimeoutMillis: 60000,
+    connectionTimeoutMillis: 10000,
+    keepAlive: true,
   });
   poolInstance.on('error', (err: any) => {
     console.error('PostgreSQL pool error:', err);

@@ -685,13 +685,14 @@ export async function processScheduledDowngrades(): Promise<number> {
   let processed = 0;
   for (const row of result.rows) {
     const targetPlan = row.scheduled_plan_downgrade;
+    const keepActive = targetPlan !== 'free';
     await query(
       `UPDATE users
        SET subscription_plan = $1,
            scheduled_plan_downgrade = NULL,
-           subscription_active = CASE WHEN $1 = 'free' THEN FALSE ELSE subscription_active END
-       WHERE id = $2`,
-      [targetPlan, row.id]
+           subscription_active = $2
+       WHERE id = $3`,
+      [targetPlan, keepActive, row.id]
     );
     await freezeExcessTags(row.id, targetPlan);
     processed++;
