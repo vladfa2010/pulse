@@ -110,7 +110,7 @@ Phase 4: Save (INSERT ON CONFLICT content_hash) → SSE `refresh` broadcast
 - Убран синхронный backfill по тикерам из `NewsSourceManager.run()` (ранее Phase 0).
 - Ретро-скан статей по keywords теперь запускается событийно (создание тега, обогащение, правка keywords, ручной вызов).
 - Сервис: `tagBackfill.ts` (`backfillTagMatches`, `countTagMatches`, `backfillAllTags`).
-- Базовые настройки пула PostgreSQL: `max: 20`, `statement_timeout: 30s`, `idleTimeoutMillis: 30s`, `connectionTimeoutMillis: 2s`.
+- Базовые настройки пула PostgreSQL: `max: 20`, `statement_timeout: 30s`, `idleTimeoutMillis: 60s`, `connectionTimeoutMillis: 10s`, `keepAlive: true`.
 
 **Batch Processing (v7.13-7.14):**
 | Фаза | Было (v7.12) | Стало (v7.14) | Ускорение |

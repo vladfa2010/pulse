@@ -595,11 +595,26 @@ Cron `sendSubscriptionReminders` запускается ежедневно в 10
 
 ### Cron даунгрейда
 
-В том же ежедневном cron выполняется `processScheduledDowngrades()`:
+Каждые **5 минут** выполняется `processScheduledDowngrades()`:
 
 - Находит пользователей с `scheduled_plan_downgrade IS NOT NULL` и `subscription_expires_at < NOW()`.
-- Меняет `subscription_plan` на целевой.
-- Замораживает теги сверх лимита.
+- Меняет `subscription_plan` на целевой план.
+- Сбрасывает `scheduled_plan_downgrade = NULL`.
+- Устанавливает `subscription_active`:
+  - `FALSE` — если целевой план `'free'`.
+  - `TRUE` — для любого другого платного плана.
+- Замораживает теги сверх лимита нового плана (`freezeExcessTags`).
+
+**Важно:** в UPDATE запросе параметр `$1` используется **только один раз** (для `subscription_plan`). Логика `subscription_active` вычисляется до выполнения запроса, чтобы избежать ошибки PostgreSQL `inconsistent types deduced for parameter $1`.
+
+```sql
+-- Пример для даунгрейда в free
+UPDATE users
+SET subscription_plan = 'free',
+    scheduled_plan_downgrade = NULL,
+    subscription_active = FALSE
+WHERE id = '<user_id>';
+```
 
 ---
 
