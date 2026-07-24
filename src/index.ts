@@ -5278,25 +5278,24 @@ async function start() {
       DECLARE
         constraint_name TEXT;
       BEGIN
-        -- Найти FK constraint на created_by через system catalog
+        -- Ищем FK по исходному столбцу (created_by) через key_column_usage,
+        -- а не constraint_column_usage, который относится к целевой таблице.
         SELECT tc.constraint_name INTO constraint_name
         FROM information_schema.table_constraints tc
-        JOIN information_schema.constraint_column_usage ccu
-          ON tc.constraint_name = ccu.constraint_name
+        JOIN information_schema.key_column_usage kcu
+          ON tc.constraint_name = kcu.constraint_name
+          AND tc.table_schema = kcu.table_schema
         WHERE tc.table_name = 'user_defined_tags'
           AND tc.constraint_type = 'FOREIGN KEY'
-          AND ccu.column_name = 'created_by';
+          AND kcu.column_name = 'created_by';
 
         IF constraint_name IS NOT NULL THEN
-          -- Удалить старый FK (без ON DELETE)
-          EXECUTE format('ALTER TABLE user_defined_tags DROP CONSTRAINT %I', constraint_name);
+          EXECUTE format('ALTER TABLE user_defined_tags DROP CONSTRAINT IF EXISTS %I', constraint_name);
         END IF;
 
-        -- Создать новый FK с ON DELETE SET NULL
-        ALTER TABLE user_defined_tags
-          ADD CONSTRAINT user_defined_tags_created_by_fkey
-          FOREIGN KEY (created_by) REFERENCES users(id)
-          ON DELETE SET NULL;
+        EXECUTE format(
+          'ALTER TABLE user_defined_tags ADD CONSTRAINT user_defined_tags_created_by_fkey FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL'
+        );
       END $$;
     `);
     console.log('[DB] Migration: user_defined_tags.created_by → ON DELETE SET NULL');

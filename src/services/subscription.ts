@@ -571,7 +571,7 @@ export async function getUserMonthlyStats(userId: string): Promise<UserMonthlySt
 
   // Total news in the last month
   const totalResult = await query(
-    `SELECT COUNT(*) as cnt FROM news WHERE created_at > $1`,
+    `SELECT COUNT(*) as cnt FROM news WHERE published_at > $1`,
     [sinceIso]
   );
   const totalNews = Number(totalResult.rows[0]?.cnt || 0);
@@ -582,7 +582,7 @@ export async function getUserMonthlyStats(userId: string): Promise<UserMonthlySt
      FROM news n
      JOIN news_tag_links l ON l.news_id = n.id
      JOIN portfolios p ON p.tag_id = l.tag_id
-     WHERE p.user_id = $1 AND n.created_at > $2`,
+     WHERE p.user_id = $1 AND n.published_at > $2`,
     [userId, sinceIso]
   );
   const filteredNews = Number(filteredResult.rows[0]?.cnt || 0);

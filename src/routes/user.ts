@@ -136,7 +136,7 @@ router.get('/tags', authMiddleware, async (req: AuthRequest, res) => {
          p.is_frozen,
          p.created_at,
          CASE WHEN udt.enriched_data IS NOT NULL THEN TRUE ELSE FALSE END AS enriched,
-         COUNT(DISTINCT CASE WHEN n.created_at > $2 THEN ntl.news_id END) AS news_per_month
+         COUNT(DISTINCT CASE WHEN n.published_at > $2 THEN ntl.news_id END) AS news_per_month
        FROM portfolios p
        LEFT JOIN user_defined_tags udt ON udt.tag_id = p.tag_id
        LEFT JOIN news_tag_links ntl ON ntl.tag_id = p.tag_id
@@ -1047,22 +1047,25 @@ router.get('/tag-status', authMiddleware, async (req: AuthRequest, res) => {
          p.tag_name,
          p.tag_type,
          p.is_frozen,
-         COUNT(DISTINCT CASE WHEN n.created_at > $2 THEN ntl.news_id END) AS news_count_30d
+         COUNT(DISTINCT CASE WHEN n.published_at > $2 THEN ntl.news_id END) AS news_count_30d
        FROM portfolios p
        LEFT JOIN news_tag_links ntl ON ntl.tag_id = p.tag_id
        LEFT JOIN news n ON n.id = ntl.news_id
-       WHERE p.user_id = $1 AND p.is_frozen = FALSE
+       WHERE p.user_id = $1
        GROUP BY p.id, p.tag_id, p.tag_name, p.tag_type, p.is_frozen, p.created_at
        ORDER BY p.created_at DESC`,
       [userId, since.toISOString()]
     );
 
-    const activeTags = tagsResult.rows.length;
-    const frozenResult = await query(
-      `SELECT COUNT(*)::int as cnt FROM portfolios WHERE user_id = $1 AND is_frozen = TRUE`,
+    const countsResult = await query(
+      `SELECT
+         SUM(CASE WHEN is_frozen THEN 1 ELSE 0 END) AS frozen,
+         SUM(CASE WHEN is_frozen THEN 0 ELSE 1 END) AS active
+       FROM portfolios WHERE user_id = $1`,
       [userId]
     );
-    const frozenTags = Number(frozenResult.rows[0]?.cnt || 0);
+    const activeTags = Number(countsResult.rows[0]?.active || 0);
+    const frozenTags = Number(countsResult.rows[0]?.frozen || 0);
 
     const toRemove = limit < 0 ? 0 : Math.max(0, activeTags - limit);
 
