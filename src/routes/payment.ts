@@ -130,6 +130,7 @@ router.post('/create', authMiddleware, validate(CreatePaymentSchema), async (req
     let finalAmount = fullPrice;
     let appliedPromo: { code: string; discount_type: string; discount_value: number } | null = null;
     let trialDays: number | undefined;
+    let discountApplied = 0;
     let savePaymentMethod = 'true';
     let metadata: Record<string, string> = {};
 
@@ -139,11 +140,13 @@ router.post('/create', authMiddleware, validate(CreatePaymentSchema), async (req
         return res.status(400).json({ error: 'Invalid promo code', reason: promoResult.reason });
       }
       const promo = promoResult.promo!;
-      const computed = promo.discount_type === 'trial'
-        ? { finalAmount: 1.0, trialDays: promo.discount_value, discountApplied: 0 }
-        : { finalAmount: Math.max(1.0, Math.round(fullPrice * (1 - promo.discount_value / 100) * 100) / 100), trialDays: undefined, discountApplied: Math.round((fullPrice - Math.max(1.0, fullPrice * (1 - promo.discount_value / 100))) * 100) / 100 };
-      finalAmount = computed.finalAmount;
-      trialDays = computed.trialDays;
+      if (promo.discount_type === 'trial') {
+        finalAmount = 1.0;
+        trialDays = promo.discount_value;
+      } else {
+        finalAmount = Math.max(1.0, Math.round(fullPrice * (1 - promo.discount_value / 100) * 100) / 100);
+        discountApplied = Math.round((fullPrice - finalAmount) * 100) / 100;
+      }
       appliedPromo = {
         code: promo.code,
         discount_type: promo.discount_type,
@@ -179,15 +182,19 @@ router.post('/create', authMiddleware, validate(CreatePaymentSchema), async (req
     await query(
       `INSERT INTO payments (id, user_id, amount, base_amount, discount, method, status, plan_id, billing_cycle, duration_days, is_upgrade)
        VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9, $10)`,
-      [paymentId, userId, finalAmount, fullPrice, plan.yearly_discount, method, planId, billingCycle, durationDays, isUpgrade]
+      [paymentId, userId, finalAmount, fullPrice, discountApplied, method, planId, billingCycle, durationDays, isUpgrade]
     );
 
-    // Apply promo with real payment id
+    // Apply promo with real payment id (не блокируем создание платежа при ошибке промокода)
     if (appliedPromo) {
-      const promo = await getPromoByCode(appliedPromo.code);
-      if (promo) {
-        await applyPromoToPayment(paymentId, promo, userId, planId, billingCycle, fullPrice);
-        await incrementPromoUsage(promo.id);
+      try {
+        const promo = await getPromoByCode(appliedPromo.code);
+        if (promo) {
+          await applyPromoToPayment(paymentId, promo, userId, planId, billingCycle, fullPrice);
+          await incrementPromoUsage(promo.id);
+        }
+      } catch (e: any) {
+        console.error('[Payment] Failed to apply promo usage:', e.message);
       }
     }
 
