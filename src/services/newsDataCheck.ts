@@ -66,12 +66,7 @@ export async function logNewsDataCheck(): Promise<void> {
        LIMIT 10`,
       [sinceIso]
     );
-    if (personalResult.rows.length === 0) {
-      hasError = true;
-      console.error('[DeployCheck] Error counting personal news: query returned no rows');
-    } else {
-      topUsers = personalResult.rows;
-    }
+    topUsers = personalResult.rows;
   } catch (e: any) {
     hasError = true;
     console.error('[DeployCheck] Error counting personal news:', e.message);

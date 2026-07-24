@@ -5020,7 +5020,7 @@ async function start() {
     { sql: `CREATE INDEX IF NOT EXISTS idx_sentiment_vote_push_sent_user_id ON sentiment_vote_push_sent(user_id)`, name: 'idx_sentiment_vote_push_sent_user_id' },
     { sql: `CREATE INDEX IF NOT EXISTS idx_sentiment_vote_push_sent_date ON sentiment_vote_push_sent(sent_date)`, name: 'idx_sentiment_vote_push_sent_date' },
     // Subscription plans v2
-    { sql: `CREATE TABLE IF NOT EXISTS subscription_plans (id VARCHAR(20) PRIMARY KEY, name VARCHAR(50) NOT NULL, price_monthly DECIMAL(10,2) NOT NULL, price_yearly DECIMAL(10,2) NOT NULL, yearly_discount INTEGER DEFAULT 20, tag_limit INTEGER NOT NULL, features JSONB NOT NULL DEFAULT '{}', display_order INTEGER NOT NULL DEFAULT 0, is_active BOOLEAN DEFAULT TRUE, coming_soon_label VARCHAR(50) DEFAULT NULL, created_at TIMESTAMP DEFAULT ${_SQL_NOW})`, name: 'subscription_plans' },
+    { sql: `CREATE TABLE IF NOT EXISTS subscription_plans (id VARCHAR(20) PRIMARY KEY, name VARCHAR(50) NOT NULL, price_monthly DECIMAL(10,2) DEFAULT NULL, price_yearly DECIMAL(10,2) DEFAULT NULL, yearly_discount INTEGER DEFAULT 20, tag_limit INTEGER NOT NULL, features JSONB NOT NULL DEFAULT '{}', display_order INTEGER NOT NULL DEFAULT 0, is_active BOOLEAN DEFAULT TRUE, coming_soon_label VARCHAR(50) DEFAULT NULL, created_at TIMESTAMP DEFAULT ${_SQL_NOW})`, name: 'subscription_plans' },
     { sql: `ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_plan VARCHAR(20) DEFAULT 'free'`, name: 'users_subscription_plan' },
     { sql: `ALTER TABLE users ADD COLUMN IF NOT EXISTS scheduled_plan_downgrade VARCHAR(20)`, name: 'users_scheduled_downgrade' },
     { sql: `ALTER TABLE payments ADD COLUMN IF NOT EXISTS plan_id VARCHAR(20)`, name: 'payments_plan_id' },
