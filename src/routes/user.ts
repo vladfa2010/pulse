@@ -1111,8 +1111,8 @@ router.post('/select-active-tags', authMiddleware, async (req: AuthRequest, res)
     }
 
     const limit = plan.tag_limit;
-    if (limit >= 0 && activeTagIds.length !== limit) {
-      return res.status(400).json({ error: `Must select exactly ${limit} tags` });
+    if (limit >= 0 && activeTagIds.length > limit) {
+      return res.status(400).json({ error: `Cannot select more than ${limit} tags` });
     }
 
     if (activeTagIds.length > 0) {
