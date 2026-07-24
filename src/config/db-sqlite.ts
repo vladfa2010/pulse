@@ -150,6 +150,7 @@ export async function initSQLiteSchema(): Promise<void> {
       subscription_auto_renew INTEGER DEFAULT 1,
       auto_renew_failures INTEGER DEFAULT 0,
       scheduled_plan_downgrade TEXT,
+      expiry_notified TEXT DEFAULT '{}',
       is_blocked INTEGER DEFAULT 0,
       last_login_at TEXT,
       login_count INTEGER DEFAULT 0,

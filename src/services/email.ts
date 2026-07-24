@@ -9,6 +9,7 @@
 import axios from 'axios';
 // @ts-ignore — nodemailer types not installed
 import nodemailer from 'nodemailer';
+import type { LostFeatures, UserMonthlyStats } from './subscription';
 
 const EMAIL_PROVIDER = process.env.EMAIL_PROVIDER || 'none';
 const EMAIL_FROM = process.env.EMAIL_FROM || 'noreply@pulse.app';
@@ -287,4 +288,153 @@ export async function sendAlertEmail(
 </div></body></html>`;
 
   return sendEmail(to, `${sentimentEmoji} ${article.title_ru.slice(0, 60)}`, html);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Subscription Expiry Emails (inline dark/glass PULSE style)
+// ═══════════════════════════════════════════════════════════════════════════
+const PULSE_EMAIL_CTA = (text: string, url: string) =>
+  `<a href="${escapeHtml(url)}" style="display:inline-block;background:linear-gradient(135deg,#00D4FF,#0099CC);color:#060606;text-decoration:none;padding:12px 24px;border-radius:8px;font-weight:600;font-size:14px;">${escapeHtml(text)}</a>`;
+
+const PULSE_EMAIL_HEADER = (title: string, subtitle: string) =>
+  `<div style="background:linear-gradient(135deg,#00D4FF,#0099CC);padding:28px;text-align:center;">
+     <h1 style="color:#060606;margin:0;font-size:22px;font-weight:700;">${escapeHtml(title)}</h1>
+     <p style="color:rgba(6,6,6,0.75);margin:6px 0 0;font-size:13px;">${escapeHtml(subtitle)}</p>
+   </div>`;
+
+const PULSE_EMAIL_WRAPPER = (header: string, body: string, footer?: string) =>
+  `<!DOCTYPE html>
+<html><head><meta charset="utf-8"></head>
+<body style="font-family:Arial,sans-serif;background:#0a0a0a;margin:0;padding:20px;color:#e5e5e5;">
+<div style="max-width:480px;margin:0 auto;background:#111111;border-radius:16px;overflow:hidden;border:1px solid #222222;">
+${header}
+<div style="padding:28px;">${body}</div>
+${footer || `<div style="text-align:center;padding:18px;border-top:1px solid #222222;font-size:12px;color:#555;">© PULSE</div>`}
+</div></body></html>`;
+
+function formatDateRu(date: string | Date): string {
+  const d = typeof date === 'string' ? new Date(date) : date;
+  return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
+}
+
+function formatPrice(amount: number): string {
+  return `${amount.toLocaleString('ru-RU')} ₽`;
+}
+
+export async function sendExpiry4DaysAuto(
+  to: string,
+  data: { name: string; planName: string; expiresAt: string | Date; price: number; profileUrl: string }
+): Promise<boolean> {
+  const html = PULSE_EMAIL_WRAPPER(
+    PULSE_EMAIL_HEADER('Подписка продлится автоматически', `PULSE ${escapeHtml(data.planName)}`),
+    `<p style="font-size:15px;line-height:1.5;margin:0 0 20px;">Привет, <strong>${escapeHtml(data.name)}</strong>!</p>
+     <p style="font-size:15px;line-height:1.5;margin:0 0 20px;">Ваша подписка <strong>PULSE ${escapeHtml(data.planName)}</strong> активна до <strong>${formatDateRu(data.expiresAt)}</strong>. У вас включено автопродление — списание <strong>${formatPrice(data.price)}</strong> пройдёт автоматически.</p>
+     <p style="font-size:15px;line-height:1.5;margin:0 0 24px;">Ничего делать не нужно.</p>
+     <div style="text-align:center;margin:24px 0;">${PULSE_EMAIL_CTA('Управление подпиской', data.profileUrl)}</div>
+     <p style="font-size:13px;color:#888;line-height:1.5;margin:0;">Если вы хотите отключить автопродление, нажмите кнопку выше.</p>`
+  );
+  return sendEmail(to, `PULSE — подписка ${data.planName} продлится автоматически`, html);
+}
+
+export async function sendExpiry4DaysManual(
+  to: string,
+  data: { name: string; planName: string; expiresAt: string | Date; price: number; profileUrl: string; lostFeatures: string[] }
+): Promise<boolean> {
+  const html = PULSE_EMAIL_WRAPPER(
+    PULSE_EMAIL_HEADER('Подписка истекает через 4 дня', `PULSE ${escapeHtml(data.planName)}`),
+    `<p style="font-size:15px;line-height:1.5;margin:0 0 20px;">Привет, <strong>${escapeHtml(data.name)}</strong>!</p>
+     <p style="font-size:15px;line-height:1.5;margin:0 0 20px;">Ваша подписка <strong>PULSE ${escapeHtml(data.planName)}</strong> заканчивается <strong>${formatDateRu(data.expiresAt)}</strong>. Автопродление отключено — подписка не продлится автоматически.</p>
+     <div style="text-align:center;margin:24px 0;">${PULSE_EMAIL_CTA('Продлить подписку', data.profileUrl)}</div>
+     <p style="font-size:14px;line-height:1.5;margin:24px 0 12px;color:#c9d1d9;">После ${formatDateRu(data.expiresAt)} вы перейдёте на Free и потеряете:</p>
+     ${data.lostFeatures.map(f => `<div style="margin-bottom:10px;border-left:3px solid #00D4FF;padding-left:12px;color:#aaa;">${escapeHtml(f)}</div>`).join('')}`
+  );
+  return sendEmail(to, `PULSE — подписка ${data.planName} истекает через 4 дня`, html);
+}
+
+export async function sendExpiry1DayAuto(
+  to: string,
+  data: { name: string; planName: string; expiresAt: string | Date; price: number; profileUrl: string }
+): Promise<boolean> {
+  const html = PULSE_EMAIL_WRAPPER(
+    PULSE_EMAIL_HEADER('Напоминание: завтра списание', `PULSE ${escapeHtml(data.planName)}`),
+    `<p style="font-size:15px;line-height:1.5;margin:0 0 20px;">Привет, <strong>${escapeHtml(data.name)}</strong>!</p>
+     <p style="font-size:15px;line-height:1.5;margin:0 0 20px;">Завтра, <strong>${formatDateRu(data.expiresAt)}</strong>, будет автоматическое списание <strong>${formatPrice(data.price)}</strong> за продление подписки PULSE ${escapeHtml(data.planName)}.</p>
+     <p style="font-size:15px;line-height:1.5;margin:0 0 24px;">Убедитесь, что на карте достаточно средств.</p>
+     <div style="text-align:center;margin:24px 0;">${PULSE_EMAIL_CTA('Отключить автопродление', data.profileUrl)}</div>`
+  );
+  return sendEmail(to, `PULSE — завтра списание ${formatPrice(data.price)} за ${data.planName}`, html);
+}
+
+export async function sendExpiry1DayManual(
+  to: string,
+  data: { name: string; planName: string; expiresAt: string | Date; price: number; profileUrl: string; lostFeatures: string[] }
+): Promise<boolean> {
+  const html = PULSE_EMAIL_WRAPPER(
+    PULSE_EMAIL_HEADER('Завтра подписка истекает', `PULSE ${escapeHtml(data.planName)}`),
+    `<p style="font-size:15px;line-height:1.5;margin:0 0 20px;">Привет, <strong>${escapeHtml(data.name)}</strong>!</p>
+     <p style="font-size:15px;line-height:1.5;margin:0 0 20px;">Завтра, <strong>${formatDateRu(data.expiresAt)}</strong>, подписка <strong>PULSE ${escapeHtml(data.planName)}</strong> закончится.</p>
+     <div style="text-align:center;margin:24px 0;">${PULSE_EMAIL_CTA('Срочно продлить — ' + formatPrice(data.price), data.profileUrl)}</div>
+     <p style="font-size:14px;line-height:1.5;margin:24px 0 12px;color:#c9d1d9;">Что вы потеряете:</p>
+     ${data.lostFeatures.map(f => `<div style="margin-bottom:10px;border-left:3px solid #00D4FF;padding-left:12px;color:#aaa;">${escapeHtml(f)}</div>`).join('')}`
+  );
+  return sendEmail(to, `PULSE — завтра истекает подписка ${data.planName}`, html);
+}
+
+export async function sendExpiredPaymentFailed(
+  to: string,
+  data: { name: string; planName: string; price: number; profileUrl: string }
+): Promise<boolean> {
+  const html = PULSE_EMAIL_WRAPPER(
+    PULSE_EMAIL_HEADER('Мы заботимся о вашем доступе', 'Проверьте способ оплаты'),
+    `<p style="font-size:15px;line-height:1.5;margin:0 0 20px;">Привет, <strong>${escapeHtml(data.name)}</strong>!</p>
+     <p style="font-size:15px;line-height:1.5;margin:0 0 20px;">Мы попытались продлить вашу подписку <strong>PULSE ${escapeHtml(data.planName)}</strong> автоматически, но списание не прошло.</p>
+     <p style="font-size:14px;line-height:1.5;margin:0 0 16px;color:#c9d1d9;">Возможные причины:</p>
+     <div style="margin-bottom:10px;border-left:3px solid #EF4444;padding-left:12px;color:#aaa;">Недостаточно средств на карте</div>
+     <div style="margin-bottom:10px;border-left:3px solid #EF4444;padding-left:12px;color:#aaa;">Карта истекла</div>
+     <div style="margin-bottom:10px;border-left:3px solid #EF4444;padding-left:12px;color:#aaa;">Банк заблокировал операцию</div>
+     <p style="font-size:15px;line-height:1.5;margin:24px 0 20px;">Мы <strong>не отключаем</strong> вашу подписку. У вас есть 3 дня, чтобы обновить способ оплаты.</p>
+     <div style="text-align:center;margin:24px 0;">${PULSE_EMAIL_CTA('Обновить карту', data.profileUrl)}</div>
+     <p style="font-size:13px;color:#888;line-height:1.5;margin:0;">После обновления мы снова попробуем списать ${formatPrice(data.price)} и продлить подписку автоматически.</p>`
+  );
+  return sendEmail(to, `PULSE — проверьте способ оплаты для ${data.planName}`, html);
+}
+
+export async function sendExpiredToday(
+  to: string,
+  data: {
+    name: string;
+    planName: string;
+    profileUrl: string;
+    lostFeatures: LostFeatures;
+    stats: UserMonthlyStats;
+  }
+): Promise<boolean> {
+  const statsRows = [
+    ['Всего новостей в мире', data.stats.totalNews.toLocaleString('ru-RU')],
+    ['Отфильтровано по вашим тегам', `${data.stats.filteredNews.toLocaleString('ru-RU')} (${data.stats.noisePercent}% шума)`],
+    ['AI-саммари сгенерировано', data.stats.aiSummaries.toLocaleString('ru-RU')],
+    ['Sentiment-алерты сработали', data.stats.alertsCount.toLocaleString('ru-RU')],
+    ['Экономия вашего времени', `~${data.stats.hoursSaved} часов`],
+  ];
+
+  const statsHtml = `<table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #222222;border-radius:8px;overflow:hidden;margin:20px 0;">
+${statsRows.map(([label, value], i) =>
+  `<tr style="background:${i % 2 === 0 ? '#161616' : '#111111'};">
+     <td style="padding:12px 16px;font-size:13px;color:#aaa;border-bottom:1px solid #222222;">${escapeHtml(label)}</td>
+     <td style="padding:12px 16px;font-size:14px;color:#00D4FF;font-weight:600;text-align:right;border-bottom:1px solid #222222;">${escapeHtml(value)}</td>
+   </tr>`).join('')}
+</table>`;
+
+  const html = PULSE_EMAIL_WRAPPER(
+    PULSE_EMAIL_HEADER('Подписка истекла', 'Вот что вы потеряли и что мы сделали'),
+    `<p style="font-size:15px;line-height:1.5;margin:0 0 20px;">Привет, <strong>${escapeHtml(data.name)}</strong>!</p>
+     <p style="font-size:15px;line-height:1.5;margin:0 0 20px;">Сегодня подписка <strong>PULSE ${escapeHtml(data.planName)}</strong> закончилась. Вы перешли на Free.</p>
+     <p style="font-size:14px;line-height:1.5;margin:0 0 12px;color:#c9d1d9;">Вот что мы для вас сделали за последний месяц:</p>
+     ${statsHtml}
+     <p style="font-size:14px;line-height:1.5;margin:24px 0 12px;color:#c9d1d9;">Сейчас недоступно:</p>
+     ${data.lostFeatures.features.map(f => `<div style="margin-bottom:10px;border-left:3px solid #00D4FF;padding-left:12px;color:#aaa;">${escapeHtml(f)}</div>`).join('')}
+     <p style="font-size:15px;line-height:1.5;margin:24px 0 20px;"><strong>${data.lostFeatures.frozenCount}</strong> из <strong>${data.lostFeatures.tagCount}</strong> тегов заморожены — только 3 будут обновляться.</p>
+     <div style="text-align:center;margin:24px 0;">${PULSE_EMAIL_CTA('Восстановить Premium', data.profileUrl)}</div>`
+  );
+  return sendEmail(to, `PULSE — подписка ${data.planName} истекла`, html);
 }

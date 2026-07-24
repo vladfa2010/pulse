@@ -17,6 +17,14 @@ import { sendPushNotification } from './push';
 import { sendWebPushToUser } from './webPush';
 import axios from 'axios';
 import { logSubscriptionActivated } from './activityLog';
+import {
+  sendExpiry4DaysAuto,
+  sendExpiry4DaysManual,
+  sendExpiry1DayAuto,
+  sendExpiry1DayManual,
+  sendExpiredPaymentFailed,
+  sendExpiredToday,
+} from './email';
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
@@ -450,6 +458,98 @@ export async function unfreezeTagsUpToLimit(userId: string, planId: string): Pro
   return unfrozen;
 }
 
+// ─── Expiry helpers ────────────────────────────────────────────────────────
+export interface LostFeatures {
+  features: string[];
+  tagCount: number;
+  frozenCount: number;
+}
+
+export async function getLostFeatures(userId: string, planId: string): Promise<LostFeatures> {
+  const planResult = await query(
+    `SELECT features FROM subscription_plans WHERE id = $1`,
+    [planId]
+  );
+  const planFeatures = parseDbJson<Record<string, any>>(planResult.rows[0]?.features) || {};
+
+  const freeResult = await query(
+    `SELECT features FROM subscription_plans WHERE id = 'free'`
+  );
+  const freeFeatures = parseDbJson<Record<string, any>>(freeResult.rows[0]?.features) || {};
+
+  const registryResult = await query(
+    `SELECT id, label FROM features_registry WHERE is_active = TRUE`
+  );
+  const registry = Object.fromEntries(registryResult.rows.map((r) => [r.id, r.label]));
+
+  const lost = Object.entries(planFeatures)
+    .filter(([key, val]) => val === true && !freeFeatures[key])
+    .map(([key]) => registry[key] || key);
+
+  const tagsResult = await query(
+    `SELECT COUNT(*) as cnt FROM portfolios WHERE user_id = $1`,
+    [userId]
+  );
+  const tagCount = Number(tagsResult.rows[0]?.cnt || 0);
+
+  const frozenResult = await query(
+    `SELECT COUNT(*) as cnt FROM portfolios WHERE user_id = $1 AND is_frozen = TRUE`,
+    [userId]
+  );
+  const frozenCount = Number(frozenResult.rows[0]?.cnt || 0);
+
+  return { features: lost, tagCount, frozenCount };
+}
+
+export interface UserMonthlyStats {
+  totalNews: number;
+  filteredNews: number;
+  aiSummaries: number;
+  alertsCount: number;
+  hoursSaved: number;
+  noisePercent: number;
+}
+
+export async function getUserMonthlyStats(userId: string): Promise<UserMonthlyStats> {
+  const since = new Date();
+  since.setMonth(since.getMonth() - 1);
+  const sinceIso = since.toISOString();
+
+  // Total news in the last month
+  const totalResult = await query(
+    `SELECT COUNT(*) as cnt FROM news WHERE created_at > $1`,
+    [sinceIso]
+  );
+  const totalNews = Number(totalResult.rows[0]?.cnt || 0);
+
+  // News linked to user's tags (via news_tag_links) in the last month
+  const filteredResult = await query(
+    `SELECT COUNT(DISTINCT n.id) as cnt
+     FROM news n
+     JOIN news_tag_links l ON l.news_id = n.id
+     JOIN portfolios p ON p.tag_id = l.tag_id
+     WHERE p.user_id = $1 AND n.created_at > $2`,
+    [userId, sinceIso]
+  );
+  const filteredNews = Number(filteredResult.rows[0]?.cnt || 0);
+
+  // AI summaries and alerts tables are not currently present — fallback to 0
+  const aiSummaries = 0;
+  const alertsCount = 0;
+
+  const hoursSaved = Math.round(filteredNews * 2 / 60);
+  const noisePercent = totalNews > 0 ? Math.round((1 - filteredNews / totalNews) * 100) : 0;
+
+  return {
+    totalNews,
+    filteredNews,
+    aiSummaries,
+    alertsCount,
+    hoursSaved,
+    noisePercent,
+  };
+}
+
 // ─── Payment methods ───────────────────────────────────────────────────────
 export async function savePaymentMethod(userId: string, pm: any): Promise<void> {
   if (!pm || !pm.id) return;
@@ -810,6 +910,196 @@ function nowSqlPlusDays(days: number): string {
   return USE_SQLITE
     ? `datetime('now', '${days >= 0 ? '+' : ''}${days} days')`
     : `NOW() + INTERVAL '${days} days'`;
+}
+
+function dateSql(): string {
+  return USE_SQLITE ? "date('now')" : 'CURRENT_DATE';
+}
+
+function dateSqlPlusDays(days: number): string {
+  return USE_SQLITE
+    ? `date('now', '${days >= 0 ? '+' : ''}${days} days')`
+    : `DATE(CURRENT_DATE + INTERVAL '${days} days')`;
+}
+
+// ─── Email expiry notifications (T-4, T-1, T-0) ────────────────────────────
+export async function sendExpiryNotifications(): Promise<{
+  sent: number;
+  skipped: number;
+  errors: number;
+}> {
+  const result = { sent: 0, skipped: 0, errors: 0 };
+  const frontendUrl = process.env.FRONTEND_URL || 'https://pulse.inside-trade.ru';
+
+  try {
+    // T-4 days
+    const fourDays = await query(
+      `SELECT u.id, u.email, u.username, u.subscription_plan, u.subscription_expires_at,
+              u.subscription_auto_renew, u.auto_renew_failures, u.expiry_notified,
+              sp.name as plan_name, sp.price
+       FROM users u
+       JOIN subscription_plans sp ON sp.id = u.subscription_plan
+       WHERE u.subscription_plan IN ('base','premium','club','pro')
+         AND u.subscription_active = TRUE
+         AND date(u.subscription_expires_at) = ${dateSqlPlusDays(4)}`,
+      []
+    );
+
+    for (const row of fourDays.rows) {
+      const notified = parseDbJson<Record<string, boolean>>(row.expiry_notified) || {};
+      if (notified['4d']) {
+        result.skipped++;
+        continue;
+      }
+      try {
+        const profileUrl = `${frontendUrl}/profile`;
+        const ok = row.subscription_auto_renew
+          ? await sendExpiry4DaysAuto(row.email, {
+              name: row.username || row.email,
+              planName: row.plan_name,
+              expiresAt: row.subscription_expires_at,
+              price: Number(row.price || 0),
+              profileUrl,
+            })
+          : await sendExpiry4DaysManual(row.email, {
+              name: row.username || row.email,
+              planName: row.plan_name,
+              expiresAt: row.subscription_expires_at,
+              price: Number(row.price || 0),
+              profileUrl,
+              lostFeatures: (await getLostFeatures(row.id, row.subscription_plan)).features,
+            });
+        if (ok) {
+          notified['4d'] = true;
+          await query(`UPDATE users SET expiry_notified = $1 WHERE id = $2`, [
+            JSON.stringify(notified),
+            row.id,
+          ]);
+          result.sent++;
+        } else {
+          result.errors++;
+        }
+      } catch (e: any) {
+        console.error('[ExpiryNotify] T-4 failed for user', row.id, e.message);
+        result.errors++;
+      }
+    }
+
+    // T-1 day
+    const oneDay = await query(
+      `SELECT u.id, u.email, u.username, u.subscription_plan, u.subscription_expires_at,
+              u.subscription_auto_renew, u.auto_renew_failures, u.expiry_notified,
+              sp.name as plan_name, sp.price
+       FROM users u
+       JOIN subscription_plans sp ON sp.id = u.subscription_plan
+       WHERE u.subscription_plan IN ('base','premium','club','pro')
+         AND u.subscription_active = TRUE
+         AND date(u.subscription_expires_at) = ${dateSqlPlusDays(1)}`,
+      []
+    );
+
+    for (const row of oneDay.rows) {
+      const notified = parseDbJson<Record<string, boolean>>(row.expiry_notified) || {};
+      if (notified['1d']) {
+        result.skipped++;
+        continue;
+      }
+      try {
+        const profileUrl = `${frontendUrl}/profile`;
+        const ok = row.subscription_auto_renew
+          ? await sendExpiry1DayAuto(row.email, {
+              name: row.username || row.email,
+              planName: row.plan_name,
+              expiresAt: row.subscription_expires_at,
+              price: Number(row.price || 0),
+              profileUrl,
+            })
+          : await sendExpiry1DayManual(row.email, {
+              name: row.username || row.email,
+              planName: row.plan_name,
+              expiresAt: row.subscription_expires_at,
+              price: Number(row.price || 0),
+              profileUrl,
+              lostFeatures: (await getLostFeatures(row.id, row.subscription_plan)).features,
+            });
+        if (ok) {
+          notified['1d'] = true;
+          await query(`UPDATE users SET expiry_notified = $1 WHERE id = $2`, [
+            JSON.stringify(notified),
+            row.id,
+          ]);
+          result.sent++;
+        } else {
+          result.errors++;
+        }
+      } catch (e: any) {
+        console.error('[ExpiryNotify] T-1 failed for user', row.id, e.message);
+        result.errors++;
+      }
+    }
+
+    // T-0: expired today
+    const expiredToday = await query(
+      `SELECT u.id, u.email, u.username, u.subscription_plan, u.subscription_expires_at,
+              u.subscription_auto_renew, u.auto_renew_failures, u.expiry_notified,
+              sp.name as plan_name, sp.price
+       FROM users u
+       JOIN subscription_plans sp ON sp.id = u.subscription_plan
+       WHERE u.subscription_plan IN ('base','premium','club','pro')
+         AND u.subscription_active = TRUE
+         AND date(u.subscription_expires_at) <= ${dateSql()}`,
+      []
+    );
+
+    for (const row of expiredToday.rows) {
+      const notified = parseDbJson<Record<string, boolean>>(row.expiry_notified) || {};
+      if (notified['expired']) {
+        result.skipped++;
+        continue;
+      }
+      try {
+        const profileUrl = `${frontendUrl}/profile`;
+        let ok = false;
+        if (row.subscription_auto_renew) {
+          ok = await sendExpiredPaymentFailed(row.email, {
+            name: row.username || row.email,
+            planName: row.plan_name,
+            price: Number(row.price || 0),
+            profileUrl,
+          });
+        } else {
+          const lost = await getLostFeatures(row.id, row.subscription_plan);
+          const stats = await getUserMonthlyStats(row.id);
+          ok = await sendExpiredToday(row.email, {
+            name: row.username || row.email,
+            planName: row.plan_name,
+            profileUrl,
+            lostFeatures: lost,
+            stats,
+          });
+        }
+        if (ok) {
+          notified['expired'] = true;
+          await query(`UPDATE users SET expiry_notified = $1 WHERE id = $2`, [
+            JSON.stringify(notified),
+            row.id,
+          ]);
+          result.sent++;
+        } else {
+          result.errors++;
+        }
+      } catch (e: any) {
+        console.error('[ExpiryNotify] T-0 failed for user', row.id, e.message);
+        result.errors++;
+      }
+    }
+  } catch (e: any) {
+    console.error('[ExpiryNotify] Fatal error:', e.message);
+    result.errors++;
+  }
+
+  console.log('[ExpiryNotify] sent:', result.sent, 'skipped:', result.skipped, 'errors:', result.errors);
+  return result;
 }
 
 // ─── Feature registry cache ────────────────────────────────────────────────

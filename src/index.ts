@@ -44,7 +44,7 @@ import { startDigestCron, sendAllDigests } from './services/digest'; // ← TG �
 import cron from 'node-cron';
 import { resetDailyWindows, refreshImoexCache } from './services/sentimentIndex';
 import { sendSentimentVotePush } from './services/push';
-import { processScheduledDowngrades, processAutoRenewals, processTrialExpirations, getPlanById } from './services/subscription';
+import { processScheduledDowngrades, processAutoRenewals, processTrialExpirations, getPlanById, sendExpiryNotifications } from './services/subscription';
 import { isUserEventType } from './types/events';
 import { logPageViewPlans } from './services/activityLog';
 import { getAdminTgSettings, saveAdminTgSettings, sendTestAlert, ALERT_EVENT_TYPES } from './services/adminAlerts';
@@ -5105,6 +5105,7 @@ async function start() {
     { sql: `CREATE INDEX IF NOT EXISTS idx_user_logins_device_type ON user_logins(device_type)`, name: 'idx_user_logins_device_type' },
     { sql: `CREATE INDEX IF NOT EXISTS idx_user_logins_country ON user_logins(country)`, name: 'idx_user_logins_country' },
     { sql: `ALTER TABLE push_notifications_sent ADD COLUMN IF NOT EXISTS title VARCHAR(255)`, name: 'push_notifications_sent_title' },
+    { sql: `ALTER TABLE users ADD COLUMN IF NOT EXISTS expiry_notified JSONB DEFAULT '{}'`, name: 'users_expiry_notified' },
     { sql: `ALTER TABLE push_notifications_sent ADD COLUMN IF NOT EXISTS source VARCHAR(50)`, name: 'push_notifications_sent_source' },
   ];
   for (const m of migrations) {
@@ -5439,6 +5440,14 @@ async function start() {
         .catch((e: any) => console.error('[Cron] Auto-renew failed:', e.message));
     });
     console.log('[Cron] Auto-renew scheduled daily at 09:00 UTC');
+
+    // Expiry email notifications — daily at 09:00 UTC (12:00 MSK)
+    cron.schedule('0 9 * * *', () => {
+      sendExpiryNotifications()
+        .then((result) => console.log('[Cron] Expiry notifications:', result))
+        .catch((e: any) => console.error('[Cron] Expiry notifications failed:', e.message));
+    });
+    console.log('[Cron] Expiry notifications scheduled daily at 09:00 UTC');
 
     // Trial expirations — every 6 hours
     cron.schedule('0 */6 * * *', () => {
