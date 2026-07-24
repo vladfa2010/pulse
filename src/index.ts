@@ -48,6 +48,7 @@ import { processScheduledDowngrades, processAutoRenewals, processTrialExpiration
 import { isUserEventType } from './types/events';
 import { logPageViewPlans } from './services/activityLog';
 import { getAdminTgSettings, saveAdminTgSettings, sendTestAlert, ALERT_EVENT_TYPES } from './services/adminAlerts';
+import { logNewsDataCheck } from './services/newsDataCheck';
 import { setupYookassaWebhook } from './routes/payment'; // ← Auto-setup YuKassa webhook
 import { addSubscriber, getSubscriberCount, addSentimentSubscriber } from './services/sse'; // ← Real-time news stream
 
@@ -5117,6 +5118,13 @@ async function start() {
     } catch (e: any) {
       console.log(`[DB] Migration warning for ${m.name}:`, e.message);
     }
+  }
+
+  // ─── Деплой-проверка новостных данных ─────────────────────────────────
+  try {
+    await logNewsDataCheck();
+  } catch (e: any) {
+    console.error('[DeployCheck] Startup check failed:', e.message);
   }
 
   // Backfill missing news slugs on startup (one-time / after migration)
