@@ -35,25 +35,79 @@ export const UpdatePlanSchema = z.object({
 });
 
 export const CreatePromoCodeSchema = z.object({
-  code: z.string().regex(/^[A-Z0-9_-]+$/).max(50),
-  description: z.string().max(255).optional(),
-  discount_type: z.enum(['percent', 'trial']),
-  discount_value: z.number().int().min(1).max(365),
-  applicable_plans: z.array(z.string().max(20)).optional(),
-  max_uses: z.number().int().min(1).optional(),
-  valid_from: z.string().datetime().optional(),
-  expires_at: z.string().datetime().optional(),
+  code: z.string()
+    .min(1, 'Code is required.')
+    .regex(/^[A-Z0-9_]+$/, 'Code: only uppercase A-Z, 0-9, _')
+    .max(50, 'Maximum 50 characters.'),
+  description: z.string().max(255, 'Maximum 255 characters.').optional().or(z.literal('')),
+  discount_type: z.enum(['percent', 'trial'], { required_error: 'Select a type.' }),
+  discount_value: z.number({ required_error: 'Enter a value.', invalid_type_error: 'Enter a value.' })
+    .int('Enter an integer.')
+    .min(1, 'Minimum 1.'),
+  applicable_plans: z.array(z.string().max(20)).optional().nullable(),
+  max_uses: z.number().int().min(1, 'Must be at least 1 or empty.').optional().nullable().or(z.literal('')),
+  valid_from: z.string({ required_error: 'Select a start date.' }).datetime({ message: 'Invalid date.' }),
+  expires_at: z.string({ required_error: 'Select an end date.' }).datetime({ message: 'Invalid date.' }),
+}).superRefine((data, ctx) => {
+  const maxValue = data.discount_type === 'percent' ? 100 : 365;
+  const valueMsg = data.discount_type === 'percent' ? 'Enter 1-100.' : 'Enter 1-365 days.';
+  if (data.discount_value > maxValue) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.too_big,
+      maximum: maxValue,
+      type: 'number',
+      inclusive: true,
+      message: valueMsg,
+      path: ['discount_value'],
+    });
+  }
+
+  const validFromDate = new Date(data.valid_from);
+  const expiresAtDate = new Date(data.expires_at);
+  if (expiresAtDate <= validFromDate) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Must be after Valid From.',
+      path: ['expires_at'],
+    });
+  }
 });
 
 export const UpdatePromoCodeSchema = z.object({
-  description: z.string().max(255).optional(),
-  discount_type: z.enum(['percent', 'trial']).optional(),
-  discount_value: z.number().int().min(1).max(365).optional(),
-  applicable_plans: z.array(z.string().max(20)).optional(),
-  max_uses: z.number().int().min(1).optional(),
-  valid_from: z.string().datetime().optional(),
-  expires_at: z.string().datetime().optional(),
+  description: z.string().max(255, 'Maximum 255 characters.').optional().or(z.literal('')),
+  discount_type: z.enum(['percent', 'trial'], { required_error: 'Select a type.' }).optional(),
+  discount_value: z.number({ invalid_type_error: 'Enter a value.' }).int('Enter an integer.').min(1, 'Minimum 1.').optional(),
+  applicable_plans: z.array(z.string().max(20)).optional().nullable(),
+  max_uses: z.number().int().min(1, 'Must be at least 1 or empty.').optional().nullable().or(z.literal('')),
+  valid_from: z.string().datetime({ message: 'Invalid date.' }).optional(),
+  expires_at: z.string().datetime({ message: 'Invalid date.' }).optional(),
   is_active: z.boolean().optional(),
+}).superRefine((data, ctx) => {
+  if (data.discount_type && data.discount_value !== undefined && data.discount_value !== null) {
+    const maxValue = data.discount_type === 'percent' ? 100 : 365;
+    const valueMsg = data.discount_type === 'percent' ? 'Enter 1-100.' : 'Enter 1-365 days.';
+    if (data.discount_value > maxValue) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.too_big,
+        maximum: maxValue,
+        type: 'number',
+        inclusive: true,
+        message: valueMsg,
+        path: ['discount_value'],
+      });
+    }
+  }
+  if (data.valid_from && data.expires_at) {
+    const validFromDate = new Date(data.valid_from);
+    const expiresAtDate = new Date(data.expires_at);
+    if (expiresAtDate <= validFromDate) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Must be after Valid From.',
+        path: ['expires_at'],
+      });
+    }
+  }
 });
 
 export const ValidatePromoQuerySchema = z.object({
