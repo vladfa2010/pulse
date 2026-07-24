@@ -1047,13 +1047,16 @@ router.get('/tag-status', authMiddleware, async (req: AuthRequest, res) => {
          p.tag_name,
          p.tag_type,
          p.is_frozen,
-         COUNT(DISTINCT CASE WHEN n.published_at > $2 THEN ntl.news_id END) AS news_count_30d
+         (
+           SELECT COUNT(DISTINCT ntl.news_id)
+           FROM news_tag_links ntl
+           JOIN news n ON n.id = ntl.news_id
+           WHERE ntl.tag_id = p.tag_id
+             AND n.published_at > $2
+         ) AS news_count_30d
        FROM portfolios p
-       LEFT JOIN news_tag_links ntl ON ntl.tag_id = p.tag_id
-       LEFT JOIN news n ON n.id = ntl.news_id
        WHERE p.user_id = $1
-       GROUP BY p.id, p.tag_id, p.tag_name, p.tag_type, p.is_frozen, p.created_at
-       ORDER BY p.created_at DESC`,
+       ORDER BY news_count_30d DESC, p.created_at DESC`,
       [userId, since.toISOString()]
     );
 

@@ -570,29 +570,62 @@ export async function getUserMonthlyStats(userId: string): Promise<UserMonthlySt
   const sinceIso = since.toISOString();
 
   // Total news in the last month
-  const totalResult = await query(
-    `SELECT COUNT(*) as cnt FROM news WHERE published_at > $1`,
-    [sinceIso]
-  );
-  const totalNews = Number(totalResult.rows[0]?.cnt || 0);
+  let totalNews = 0;
+  try {
+    const totalResult = await query(
+      `SELECT COUNT(*) as cnt FROM news WHERE published_at > $1`,
+      [sinceIso]
+    );
+    totalNews = Number(totalResult.rows[0]?.cnt || 0);
+  } catch (e: any) {
+    console.error('[Stats] Error counting total news:', e.message);
+  }
 
-  // News linked to user's tags (via news_tag_links) in the last month
-  const filteredResult = await query(
-    `SELECT COUNT(DISTINCT n.id) as cnt
-     FROM news n
-     JOIN news_tag_links l ON l.news_id = n.id
-     JOIN portfolios p ON p.tag_id = l.tag_id
-     WHERE p.user_id = $1 AND n.published_at > $2`,
-    [userId, sinceIso]
-  );
-  const filteredNews = Number(filteredResult.rows[0]?.cnt || 0);
+  // News linked to user's active tags (via news_tag_links) in the last month
+  let filteredNews = 0;
+  try {
+    const filteredResult = await query(
+      `SELECT COUNT(DISTINCT n.id) as cnt
+       FROM news n
+       JOIN news_tag_links l ON l.news_id = n.id
+       JOIN portfolios p ON p.tag_id = l.tag_id
+       WHERE p.user_id = $1 AND n.published_at > $2 AND p.is_frozen = FALSE`,
+      [userId, sinceIso]
+    );
+    filteredNews = Number(filteredResult.rows[0]?.cnt || 0);
+  } catch (e: any) {
+    console.error('[Stats] Error counting personal news:', e.message);
+  }
 
-  // AI summaries and alerts tables are not currently present — fallback to 0
-  const aiSummaries = 0;
-  const alertsCount = 0;
+  // AI summaries and alerts tables may not exist yet — try/catch with fallback to 0
+  let aiSummaries = 0;
+  try {
+    const aiResult = await query(
+      `SELECT COUNT(*) as cnt FROM ai_summaries WHERE user_id = $1 AND created_at > $2`,
+      [userId, sinceIso]
+    );
+    aiSummaries = parseInt(aiResult.rows[0]?.cnt || '0', 10);
+  } catch (e: any) {
+    console.warn('[Stats] ai_summaries table not found or error:', e.message);
+  }
+
+  let alertsCount = 0;
+  try {
+    const alertsResult = await query(
+      `SELECT COUNT(*) as cnt FROM alerts WHERE user_id = $1 AND created_at > $2`,
+      [userId, sinceIso]
+    );
+    alertsCount = parseInt(alertsResult.rows[0]?.cnt || '0', 10);
+  } catch (e: any) {
+    console.warn('[Stats] alerts table not found or error:', e.message);
+  }
 
   const hoursSaved = Math.round(filteredNews * 2 / 60);
   const noisePercent = totalNews > 0 ? Math.round((1 - filteredNews / totalNews) * 100) : 0;
+
+  if (totalNews === 0 && filteredNews === 0) {
+    console.error(`[Stats] All zeros for user ${userId}: check news table, news_tag_links, date range`);
+  }
 
   return {
     totalNews,

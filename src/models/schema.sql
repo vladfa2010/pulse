@@ -112,6 +112,8 @@ CREATE TABLE IF NOT EXISTS portfolios (
   UNIQUE(user_id, tag_id)
 );
 
+CREATE INDEX IF NOT EXISTS idx_portfolios_user_frozen ON portfolios(user_id, is_frozen);
+
 -- ============================================================
 -- 3. payments (КРИТИЧНО)
 -- ============================================================
