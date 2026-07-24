@@ -1070,7 +1070,7 @@ router.get('/tag-status', authMiddleware, async (req: AuthRequest, res) => {
     const activeTags = Number(countsResult.rows[0]?.active || 0);
     const frozenTags = Number(countsResult.rows[0]?.frozen || 0);
 
-    const toRemove = limit < 0 ? 0 : Math.max(0, activeTags - limit);
+    const toRemove = limit < 0 ? 0 : Math.max(0, activeTags + frozenTags - limit);
 
     res.json({
       current_plan: plan.id,
