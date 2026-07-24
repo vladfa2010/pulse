@@ -458,6 +458,60 @@ export async function unfreezeTagsUpToLimit(userId: string, planId: string): Pro
   return unfrozen;
 }
 
+// ─── Manual tag selection: keep only specific tags active, freeze the rest ──
+export async function setActiveTags(userId: string, keepTagIds: string[]): Promise<{ kept: number; frozen: number; unfrozen: number }> {
+  if (keepTagIds.length === 0) {
+    const freezeResult = await query(
+      `UPDATE portfolios SET is_frozen = TRUE WHERE user_id = $1 AND is_frozen = FALSE RETURNING id`,
+      [userId]
+    );
+    await syncFrozenTagsAudit(userId);
+    return { kept: 0, frozen: freezeResult.rows.length, unfrozen: 0 };
+  }
+
+  const placeholders = keepTagIds.map((_, i) => `$${i + 2}`).join(',');
+  const params = [userId, ...keepTagIds];
+
+  const unfreezeResult = await query(
+    `UPDATE portfolios SET is_frozen = FALSE WHERE user_id = $1 AND id IN (${placeholders}) RETURNING id`,
+    params
+  );
+  const freezeResult = await query(
+    `UPDATE portfolios SET is_frozen = TRUE WHERE user_id = $1 AND is_frozen = FALSE AND id NOT IN (${placeholders}) RETURNING id`,
+    params
+  );
+
+  await syncFrozenTagsAudit(userId);
+
+  return { kept: keepTagIds.length, frozen: freezeResult.rows.length, unfrozen: unfreezeResult.rows.length };
+}
+
+async function syncFrozenTagsAudit(userId: string): Promise<void> {
+  const now = nowSql();
+  const frozen = await query(
+    `SELECT tag_id, tag_name, tag_type FROM portfolios WHERE user_id = $1 AND is_frozen = TRUE`,
+    [userId]
+  );
+  for (const tag of frozen.rows) {
+    await query(
+      `INSERT INTO frozen_tags (user_id, tag_id, tag_name, tag_type)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (user_id, tag_id) DO UPDATE SET frozen_at = ${now}, unfrozen_at = NULL`,
+      [userId, tag.tag_id, tag.tag_name, tag.tag_type]
+    );
+  }
+  const unfrozen = await query(
+    `SELECT tag_id FROM portfolios WHERE user_id = $1 AND is_frozen = FALSE`,
+    [userId]
+  );
+  for (const tag of unfrozen.rows) {
+    await query(
+      `UPDATE frozen_tags SET unfrozen_at = ${now} WHERE user_id = $1 AND tag_id = $2 AND unfrozen_at IS NULL`,
+      [userId, tag.tag_id]
+    );
+  }
+}
+
 // ─── Expiry helpers ────────────────────────────────────────────────────────
 export interface LostFeatures {
   features: string[];

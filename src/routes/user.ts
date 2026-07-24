@@ -8,7 +8,7 @@ import { createUserTag, getAllTagNames, detectTagTypeViaLLM, TAG_TYPE_LABELS } f
 import {
   getPlanById, getUserSubscription, buildSubscriptionStatus,
   scheduleDowngrade, cancelScheduledDowngrade, requireMinPlan,
-  getExcessTagsForDowngrade, parseDbJson,
+  getExcessTagsForDowngrade, parseDbJson, setActiveTags,
 } from '../services/subscription';
 import type { TagType, TagEnrichment } from '../services/tagManager';
 import axios from 'axios';
@@ -1019,6 +1019,112 @@ router.get('/tariff-status', authMiddleware, async (req: AuthRequest, res) => {
   } catch (err) {
     console.error('[TariffStatus] Error:', err);
     res.status(500).json({ error: 'Failed to fetch tariff status' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Freeze tag banner state — current plan limit + active tags with counts
+// ═══════════════════════════════════════════════════════════════════════════
+
+// GET /api/user/tag-status — snapshot for the FreezeTagsBanner
+router.get('/tag-status', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.userId;
+    const sub = await getUserSubscription(userId);
+    const plan = await getPlanById(sub.plan);
+    if (!plan) {
+      return res.status(500).json({ error: 'Plan not configured', planId: sub.plan });
+    }
+
+    const limit = plan.tag_limit;
+    const since = new Date();
+    since.setMonth(since.getMonth() - 1);
+
+    const tagsResult = await query(
+      `SELECT
+         p.id,
+         p.tag_id,
+         p.tag_name,
+         p.tag_type,
+         p.is_frozen,
+         COUNT(DISTINCT CASE WHEN n.created_at > $2 THEN ntl.news_id END) AS news_count_30d
+       FROM portfolios p
+       LEFT JOIN news_tag_links ntl ON ntl.tag_id = p.tag_id
+       LEFT JOIN news n ON n.id = ntl.news_id
+       WHERE p.user_id = $1 AND p.is_frozen = FALSE
+       GROUP BY p.id, p.tag_id, p.tag_name, p.tag_type, p.is_frozen, p.created_at
+       ORDER BY p.created_at DESC`,
+      [userId, since.toISOString()]
+    );
+
+    const activeTags = tagsResult.rows.length;
+    const frozenResult = await query(
+      `SELECT COUNT(*)::int as cnt FROM portfolios WHERE user_id = $1 AND is_frozen = TRUE`,
+      [userId]
+    );
+    const frozenTags = Number(frozenResult.rows[0]?.cnt || 0);
+
+    const toRemove = limit < 0 ? 0 : Math.max(0, activeTags - limit);
+
+    res.json({
+      current_plan: plan.id,
+      plan_name: plan.name,
+      tag_limit: limit,
+      total_tags: activeTags + frozenTags,
+      active_tags: activeTags,
+      frozen_tags: frozenTags,
+      to_remove: toRemove,
+      tags: tagsResult.rows.map((r) => ({
+        id: r.id,
+        tag_id: r.tag_id,
+        name: r.tag_name,
+        tag_type: r.tag_type,
+        is_frozen: USE_SQLITE ? Boolean(r.is_frozen) : r.is_frozen,
+        news_count_30d: parseInt(r.news_count_30d || 0, 10),
+      })),
+    });
+  } catch (err) {
+    console.error('[TagStatus] Error:', err);
+    res.status(500).json({ error: 'Failed to fetch tag status' });
+  }
+});
+
+// POST /api/user/select-active-tags — pick exactly tag_limit tags, freeze the rest
+router.post('/select-active-tags', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.userId;
+    const { activeTagIds } = req.body;
+    if (!Array.isArray(activeTagIds) || activeTagIds.some((id) => typeof id !== 'string')) {
+      return res.status(400).json({ error: 'activeTagIds must be an array of strings' });
+    }
+
+    const sub = await getUserSubscription(userId);
+    const plan = await getPlanById(sub.plan);
+    if (!plan) {
+      return res.status(500).json({ error: 'Plan not configured' });
+    }
+
+    const limit = plan.tag_limit;
+    if (limit >= 0 && activeTagIds.length !== limit) {
+      return res.status(400).json({ error: `Must select exactly ${limit} tags` });
+    }
+
+    if (activeTagIds.length > 0) {
+      const placeholders = activeTagIds.map((_, i) => `$${i + 2}`).join(',');
+      const idsResult = await query(
+        `SELECT id FROM portfolios WHERE user_id = $1 AND id IN (${placeholders})`,
+        [userId, ...activeTagIds]
+      );
+      if (idsResult.rows.length !== activeTagIds.length) {
+        return res.status(400).json({ error: 'Some tag IDs do not belong to user' });
+      }
+    }
+
+    const result = await setActiveTags(userId, activeTagIds);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('[SelectActiveTags] Error:', err);
+    res.status(500).json({ error: 'Failed to select active tags' });
   }
 });
 
