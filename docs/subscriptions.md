@@ -44,6 +44,42 @@ downgrade→ `scheduled_plan_downgrade` → `processScheduledDowngrades()` → �
 3. Замороженные теги не участвуют в новостных рассылках и алертах.
 4. При апгрейде `unfreezeTagsUpToLimit()` размораживает теги в пределах лимита.
 
+## Баннер "Лишние теги" (FreezeTagsBanner)
+
+**Правило показа:** баннер виден **только если активных тегов больше, чем позволяет тариф**.
+
+```
+active_tags > tag_limit  → баннер виден ("Удалите N тегов")
+active_tags <= tag_limit → баннер скрыт (в т.ч. при 0 тегов или только замороженных)
+```
+
+**API:**
+
+- `GET /api/user/tag-status` — возвращает `active_tags`, `frozen_tags`, `tag_limit`, `to_remove`.
+- `to_remove` считается как `max(0, active_tags - tag_limit)`. Замороженные теги не учитываются.
+- `GET /api/user/tags` — возвращает только активные теги (`is_frozen = FALSE`). Замороженные теги не отображаются в портфеле на главной и не участвуют в ленте новостей.
+- `POST /api/user/select-active-tags` — принимает список активных тегов. Переданные размораживаются, непереданные замораживаются.
+
+**Логика кнопки "Сохранить":**
+
+- Кнопка активна только когда `to_remove === 0` (все теги влезают в лимит).
+- При нажатии передаются **все** теги из `tag-status` (включая замороженные), что приводит к их разморозке, если они влезают в лимит.
+
+**Примеры:**
+
+| Сценарий | active | frozen | limit | to_remove | Баннер |
+|----------|--------|--------|-------|-----------|--------|
+| Free, 5 тегов | 5 | 0 | 3 | 2 | **Да** |
+| Free, 3 тега | 3 | 0 | 3 | 0 | **Нет** |
+| Free, 0 тегов | 0 | 0 | 3 | 0 | **Нет** |
+| Base, 15 тегов | 15 | 0 | 10 | 5 | **Да** |
+| Base, 9 тегов | 9 | 0 | 10 | 0 | **Нет** |
+| Base, 5 активных + 4 замор. | 5 | 4 | 10 | 0 | **Нет** |
+
+**Файлы:**
+- Frontend: `pulse-frontend/src/components/FreezeTagsBanner.tsx`
+- Backend: `pulse-backend/src/routes/user.ts` (`GET /api/user/tag-status`, `GET /api/user/tags`)
+
 ## Email-шаблоны
 
 Файл `src/services/email.ts`:
@@ -65,7 +101,7 @@ downgrade→ `scheduled_plan_downgrade` → `processScheduledDowngrades()` → �
 
 ### `GET /api/user/tags`
 
-Возвращает портфель с полями:
+Возвращает **активный** портфель (только теги с `is_frozen = FALSE`):
 
 ```json
 {
