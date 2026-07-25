@@ -1070,6 +1070,82 @@ router.get('/tag-status', authMiddleware, async (req: AuthRequest, res) => {
     const activeTags = Number(countsResult.rows[0]?.active || 0);
     const frozenTags = Number(countsResult.rows[0]?.frozen || 0);
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // EMERGENCY UNFREEZE (TZ_EMERGENCY_UNFREEZE)
+    // Если замороженные теги влезают в лимит текущего тарифа — размораживаем.
+    // Лечит trial expiration → downgrade free → все теги frozen, баннер скрыт.
+    // ═══════════════════════════════════════════════════════════════════════
+    if (limit >= 0 && frozenTags > 0 && activeTags <= limit) {
+      await query(
+        `UPDATE portfolios SET is_frozen = FALSE WHERE user_id = $1 AND is_frozen = TRUE`,
+        [userId]
+      );
+      // Синхронизируем audit-таблицу
+      await query(
+        `UPDATE frozen_tags ft
+         SET unfrozen_at = NOW()
+         WHERE ft.user_id = $1
+           AND ft.unfrozen_at IS NULL
+           AND NOT EXISTS (
+             SELECT 1 FROM portfolios p
+             WHERE p.user_id = ft.user_id AND p.tag_id = ft.tag_id AND p.is_frozen = TRUE
+           )`,
+        [userId]
+      );
+      console.log(`[EmergencyUnfreeze] user=${userId} plan=${plan.id} limit=${limit} active=${activeTags} frozen=${frozenTags} — all unfrozen`);
+
+      // Перезагружаем теги и счётчики после разморозки
+      const recheckCounts = await query(
+        `SELECT
+           SUM(CASE WHEN is_frozen THEN 1 ELSE 0 END) AS frozen,
+           SUM(CASE WHEN is_frozen THEN 0 ELSE 1 END) AS active
+         FROM portfolios WHERE user_id = $1`,
+        [userId]
+      );
+      const recheckTags = await query(
+        `SELECT
+           p.id,
+           p.tag_id,
+           p.tag_name,
+           p.tag_type,
+           p.is_frozen,
+           (
+             SELECT COUNT(DISTINCT ntl.news_id)
+             FROM news_tag_links ntl
+             JOIN news n ON n.id = ntl.news_id
+             WHERE ntl.tag_id = p.tag_id
+               AND n.published_at > $2
+           ) AS news_count_30d
+         FROM portfolios p
+         WHERE p.user_id = $1
+         ORDER BY news_count_30d DESC, p.created_at DESC`,
+        [userId, since.toISOString()]
+      );
+
+      const newActive = Number(recheckCounts.rows[0]?.active || 0);
+      const newFrozen = Number(recheckCounts.rows[0]?.frozen || 0);
+      const newToRemove = limit < 0 ? 0 : Math.max(0, newActive - limit);
+
+      res.json({
+        current_plan: plan.id,
+        plan_name: plan.name,
+        tag_limit: limit,
+        total_tags: newActive + newFrozen,
+        active_tags: newActive,
+        frozen_tags: newFrozen,
+        to_remove: newToRemove,
+        tags: recheckTags.rows.map((r) => ({
+          id: r.id,
+          tag_id: r.tag_id,
+          name: r.tag_name,
+          tag_type: r.tag_type,
+          is_frozen: USE_SQLITE ? Boolean(r.is_frozen) : r.is_frozen,
+          news_count_30d: parseInt(r.news_count_30d || 0, 10),
+        })),
+      });
+      return;
+    }
+
     const toRemove = limit < 0 ? 0 : Math.max(0, activeTags - limit);
 
     res.json({
