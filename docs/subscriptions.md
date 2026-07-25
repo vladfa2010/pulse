@@ -152,6 +152,36 @@ export function applyPercentDiscount(basePrice: number, discountValue: number): 
 - Valid Until: строго позже Valid From.
 - Applicable Plans: список тарифов или пустой массив (= все тарифы).
 
+### Проверка промокода пользователем
+
+`GET /api/promo/validate?code=START50&planId=premium`
+
+**Ответ при ошибке:**
+```json
+{ "valid": false, "reason": "expired" }
+```
+
+Для `not_started` backend дополнительно возвращает `starts_at`:
+```json
+{ "valid": false, "reason": "not_started", "starts_at": "2026-08-01" }
+```
+
+**Reason-коды и сообщения на странице тарифов (`Pricing.tsx`):**
+
+| Reason | Сообщение | Цвет |
+|--------|-----------|------|
+| `not_found` | "Промокод не найден. Проверьте правильность ввода." | Красный |
+| `inactive` | "Промокод деактивирован." | Красный |
+| `expired` | "Срок действия промокода истёк." | Красный |
+| `exhausted` | "Лимит активаций исчерпан." | Красный |
+| `not_applicable` | "Промокод не применим к выбранному тарифу." | Жёлтый |
+| `already_used` | "Вы уже использовали этот промокод." | Жёлтый |
+| `not_started` | "Промокод ещё не действует. Начало: {date}." | Жёлтый |
+
+**Успешное применение:**
+- `percent` — зелёное сообщение "Скидка {value}% применена! Цена: {price} ₽".
+- `trial` — зелёное сообщение "{value} дней бесплатно! Списание 1 ₽ для проверки карты — вернём сразу."
+
 ## Функции статистики
 
 `src/services/subscription.ts`:
