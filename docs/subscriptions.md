@@ -184,7 +184,7 @@ export function applyPercentDiscount(basePrice: number, discountValue: number): 
 - Description: max 255.
 - Type: `percent` или `trial`.
 - Value: `percent` 1–100, `trial` 1–365.
-- Max Uses: ≥1 или пусто/не задано (`null` = безлимитные использования). Значение `0` отклоняется.
+- Max Uses: ≥1 или пусто/не задано (`null` = безлимит). Это **единственный** лимит: одна и та же учётная запись может активировать промокод многократно, пока не исчерпан `uses_count`.
 - Valid Until: строго позже Valid From.
 - Applicable Plans: список тарифов или пустой массив (= все тарифы).
 
@@ -211,7 +211,6 @@ export function applyPercentDiscount(basePrice: number, discountValue: number): 
 | `expired` | "Срок действия промокода истёк." | Красный |
 | `exhausted` | "Лимит активаций исчерпан." | Красный |
 | `not_applicable` | "Промокод не применим к выбранному тарифу." | Жёлтый |
-| `already_used` | "Вы уже использовали этот промокод." | Жёлтый |
 | `not_started` | "Промокод ещё не действует. Начало: {date}." | Жёлтый |
 
 **Успешное применение:**
