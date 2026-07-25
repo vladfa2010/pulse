@@ -410,6 +410,14 @@ CREATE TABLE IF NOT EXISTS frozen_tags (
 CREATE INDEX IF NOT EXISTS idx_frozen_tags_user_id ON frozen_tags(user_id);
 
 -- ============================================================
+-- 7e1. cron_locks (SQLite dev race-condition protection)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS cron_locks (
+  lock_key   TEXT PRIMARY KEY,
+  locked_at  TIMESTAMP NOT NULL
+);
+
+-- ============================================================
 -- 7f. push_subscriptions (web push VAPID)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS push_subscriptions (

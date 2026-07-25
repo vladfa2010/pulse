@@ -5377,6 +5377,14 @@ async function start() {
     console.log('[DB] Migration: user_news_reads unique constraint added');
   } catch { /* ignore */ }
 
+  // TZ_CRON_RACE_CONDITION: cron_locks для SQLite dev-режима
+  try {
+    await query(`CREATE TABLE IF NOT EXISTS cron_locks (lock_key TEXT PRIMARY KEY, locked_at TIMESTAMP NOT NULL)`);
+    console.log('[DB] Migration: cron_locks table ensured');
+  } catch (e: any) {
+    console.log('[DB] Migration cron_locks warning:', e.message);
+  }
+
   // ─── Шаг 3: Проверка подключения ──────────────────────────────────────
   try {
     const testResult = await query('SELECT NOW() as time');

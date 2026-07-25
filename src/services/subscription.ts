@@ -11,7 +11,7 @@
  *   - scheduled downgrade processing
  */
 
-import { query } from '../config/db';
+import { query, pool } from '../config/db';
 import { sendTelegramMessage } from './telegram';
 import { sendPushNotification } from './push';
 import { sendWebPushToUser } from './webPush';
@@ -697,6 +697,70 @@ export async function savePaymentMethod(userId: string, pm: any): Promise<void> 
 }
 
 // ─── Auto-renewal ──────────────────────────────────────────────────────────
+// ─── Cron race-condition protection ─────────────────────────────────────────
+
+function oneHourAgoSql(): string {
+  return USE_SQLITE ? "datetime('now', '-1 hour')" : "NOW() - INTERVAL '1 hour'";
+}
+
+async function hasRecentPendingPayment(userId: string): Promise<boolean> {
+  const existing = await query(
+    `SELECT 1 FROM payments
+     WHERE user_id = $1 AND status = 'pending'
+       AND created_at > ${oneHourAgoSql()}
+     LIMIT 1`,
+    [userId]
+  );
+  return existing.rows.length > 0;
+}
+
+async function withPostgresUserLock<T>(userId: string, fn: () => Promise<T>): Promise<T> {
+  const lockKey = `cron:user:${userId}`;
+  const client = await pool.connect();
+  try {
+    await client.query('SELECT pg_advisory_lock(hashtext($1))', [lockKey]);
+    try {
+      return await fn();
+    } finally {
+      await client.query('SELECT pg_advisory_unlock(hashtext($1))', [lockKey]).catch(() => {});
+    }
+  } finally {
+    client.release();
+  }
+}
+
+async function withSQLiteUserLock<T>(userId: string, fn: () => Promise<T>): Promise<T> {
+  const lockKey = `cron:user:${userId}`;
+  try {
+    await query(
+      `INSERT INTO cron_locks (lock_key, locked_at) VALUES ($1, datetime('now'))`,
+      [lockKey]
+    );
+  } catch (err: any) {
+    if (err.message?.includes('UNIQUE constraint')) {
+      throw new Error(`Lock already held for user ${userId}`);
+    }
+    throw err;
+  }
+  try {
+    return await fn();
+  } finally {
+    await query(`DELETE FROM cron_locks WHERE lock_key = $1`, [lockKey]).catch(() => {});
+  }
+}
+
+/**
+ * Гарантирует, что для одного пользователя одновременно работает только один cron-процесс.
+ * PostgreSQL: pg_advisory_lock / pg_advisory_unlock.
+ * SQLite: таблица cron_locks (UNIQUE lock_key).
+ */
+export async function withUserLock<T>(userId: string, fn: () => Promise<T>): Promise<T> {
+  if (USE_SQLITE) {
+    return withSQLiteUserLock(userId, fn);
+  }
+  return withPostgresUserLock(userId, fn);
+}
+
 export async function processAutoRenewals(): Promise<{
   processed: number;
   errors: number;
@@ -734,98 +798,108 @@ export async function processAutoRenewals(): Promise<{
 
   for (const row of dueUsers.rows) {
     try {
-      const plan = await getPlanById(row.subscription_plan);
-      if (!plan || !plan.is_active || plan.deleted_at) {
-        console.warn(`[AutoRenew] Plan ${row.subscription_plan} not available (deleted=${plan?.deleted_at || 'N/A'}, active=${plan?.is_active})`);
-        continue;
-      }
-
-      // Prefer default card, otherwise the most recently saved active card
-      const pmResult = await query(
-        `SELECT payment_method_id, card_last4
-         FROM user_payment_methods
-         WHERE user_id = $1 AND is_active = TRUE
-         ORDER BY is_default DESC, created_at DESC
-         LIMIT 1`,
-        [row.user_id]
-      );
-      if (pmResult.rows.length === 0) {
-        console.warn(`[AutoRenew] No active payment method for user ${row.user_id}`);
-        continue;
-      }
-      const paymentMethod = pmResult.rows[0];
-
-      const billingCycle = plan.billing_frequency || 'monthly';
-      const amount = Number(plan.price);
-      const durationDays = PLAN_BILLING_DAYS[billingCycle] || 30;
-      const paymentId = uuidv4();
-
-      await query(
-        `INSERT INTO payments
-           (id, user_id, amount, base_amount, discount, method, status, plan_id, billing_cycle, duration_days, is_upgrade)
-         VALUES ($1, $2, $3, $4, 0, 'bank_card', 'pending', $5, $6, $7, FALSE)`,
-        [paymentId, row.user_id, amount, amount, row.subscription_plan, billingCycle, durationDays]
-      );
-
-      const yookassaRes = await axios.post(
-        'https://api.yookassa.ru/v3/payments',
-        {
-          amount: { value: amount.toFixed(2), currency: 'RUB' },
-          payment_method_id: paymentMethod.payment_method_id,
-          capture: true,
-          description: `PULSE Auto-renew ${plan.name}`.slice(0, 128),
-          metadata: {
-            payment_id: paymentId,
-            user_id: row.user_id,
-            plan_id: row.subscription_plan,
-            billing_cycle: billingCycle,
-            duration_days: String(durationDays),
-            is_upgrade: 'false',
-            auto_renew: 'true',
-          },
-          receipt: {
-            customer: { email: row.email },
-            items: [{
-              description: `Подписка PULSE ${plan.name} (автопродление)`.slice(0, 128),
-              quantity: '1.00',
-              amount: { value: amount.toFixed(2), currency: 'RUB' },
-              vat_code: 1,
-              payment_subject: 'service',
-              payment_mode: 'full_payment',
-            }],
-          },
-        },
-        {
-          headers: {
-            Authorization: yookassaAuth(),
-            'Idempotence-Key': `auto-renew-${paymentId}`,
-            'Content-Type': 'application/json',
-          },
-          timeout: 15000,
+      await withUserLock(row.user_id, async () => {
+        if (await hasRecentPendingPayment(row.user_id)) {
+          console.log(`[AutoRenew] User ${row.user_id} already has a recent pending payment, skipping`);
+          return;
         }
-      );
 
-      await query(
-        `UPDATE payments SET provider_ref = $1 WHERE id = $2`,
-        [yookassaRes.data.id, paymentId]
-      );
+        const plan = await getPlanById(row.subscription_plan);
+        if (!plan || !plan.is_active || plan.deleted_at) {
+          console.warn(`[AutoRenew] Plan ${row.subscription_plan} not available (deleted=${plan?.deleted_at || 'N/A'}, active=${plan?.is_active})`);
+          return;
+        }
 
-      if (yookassaRes.data.status === 'succeeded') {
-        await query(
-          `UPDATE payments SET status = 'completed', paid_at = ${nowSql()} WHERE id = $1`,
-          [paymentId]
+        // Prefer default card, otherwise the most recently saved active card
+        const pmResult = await query(
+          `SELECT payment_method_id, card_last4
+           FROM user_payment_methods
+           WHERE user_id = $1 AND is_active = TRUE
+           ORDER BY is_default DESC, created_at DESC
+           LIMIT 1`,
+          [row.user_id]
         );
-        await activateSubscription(row.user_id, row.subscription_plan, durationDays, paymentId, false);
-        await query(`UPDATE users SET auto_renew_failures = 0 WHERE id = $1`, [row.user_id]);
-        console.log(`[AutoRenew] Success: user ${row.user_id}, ${amount} RUB, card *${paymentMethod.card_last4 || '****'}`);
-        result.processed++;
-      } else if (yookassaRes.data.status === 'canceled') {
-        await query(`UPDATE payments SET status = 'failed' WHERE id = $1`, [paymentId]);
-        await handleAutoRenewFailure(row.user_id, result);
-        result.errors++;
-      }
-      // pending / waiting_for_capture → webhook will finish the job
+        if (pmResult.rows.length === 0) {
+          console.warn(`[AutoRenew] No active payment method for user ${row.user_id}`);
+          return;
+        }
+        const paymentMethod = pmResult.rows[0];
+
+        const billingCycle = plan.billing_frequency || 'monthly';
+        const amount = Number(plan.price);
+        const durationDays = PLAN_BILLING_DAYS[billingCycle] || 30;
+        const paymentId = uuidv4();
+
+        await query(
+          `INSERT INTO payments
+             (id, user_id, amount, base_amount, discount, method, status, plan_id, billing_cycle, duration_days, is_upgrade)
+           VALUES ($1, $2, $3, $4, 0, 'bank_card', 'pending', $5, $6, $7, FALSE)`,
+          [paymentId, row.user_id, amount, amount, row.subscription_plan, billingCycle, durationDays]
+        );
+
+        const yookassaRes = await axios.post(
+          'https://api.yookassa.ru/v3/payments',
+          {
+            amount: { value: amount.toFixed(2), currency: 'RUB' },
+            payment_method_id: paymentMethod.payment_method_id,
+            capture: true,
+            description: `PULSE Auto-renew ${plan.name}`.slice(0, 128),
+            metadata: {
+              payment_id: paymentId,
+              user_id: row.user_id,
+              plan_id: row.subscription_plan,
+              billing_cycle: billingCycle,
+              duration_days: String(durationDays),
+              is_upgrade: 'false',
+              auto_renew: 'true',
+            },
+            receipt: {
+              customer: { email: row.email },
+              items: [{
+                description: `Подписка PULSE ${plan.name} (автопродление)`.slice(0, 128),
+                quantity: '1.00',
+                amount: { value: amount.toFixed(2), currency: 'RUB' },
+                vat_code: 1,
+                payment_subject: 'service',
+                payment_mode: 'full_payment',
+              }],
+            },
+          },
+          {
+            headers: {
+              Authorization: yookassaAuth(),
+              'Idempotence-Key': `auto-renew-${paymentId}`,
+              'Content-Type': 'application/json',
+            },
+            timeout: 15000,
+          }
+        );
+
+        await query(
+          `UPDATE payments SET provider_ref = $1 WHERE id = $2`,
+          [yookassaRes.data.id, paymentId]
+        );
+
+        if (yookassaRes.data.status === 'succeeded') {
+          const activated = await activatePaymentIfNeeded(paymentId);
+          if (activated) {
+            console.log(`[AutoRenew] Success: user ${row.user_id}, ${amount} RUB, card *${paymentMethod.card_last4 || '****'}`);
+          } else {
+            console.log(`[AutoRenew] Payment ${paymentId} already activated by webhook`);
+          }
+          result.processed++;
+        } else if (yookassaRes.data.status === 'canceled') {
+          await query(`UPDATE payments SET status = 'failed' WHERE id = $1`, [paymentId]);
+          await handleAutoRenewFailure(row.user_id, result);
+          result.errors++;
+        }
+        // pending / waiting_for_capture → webhook will finish the job
+      });
     } catch (err: any) {
+      if (err.message?.includes('Lock already held')) {
+        console.log(`[AutoRenew] User ${row.user_id} is locked by another process, skipping`);
+        continue;
+      }
       console.error(`[AutoRenew] Failed for user ${row.user_id}:`, err.response?.data || err.message);
       await handleAutoRenewFailure(row.user_id, result);
       result.errors++;
@@ -1313,129 +1387,143 @@ export async function processTrialExpirations(): Promise<{
 
   for (const row of trialUsers.rows) {
     try {
-      // Если автопродление отключено — не пытаемся списывать, сразу даунгрейд
-      if (!row.subscription_auto_renew) {
-        await scheduleDowngrade(row.user_id, 'free');
-        await notifySubscriptionEvent(
-          row.user_id,
-          'grace_1d',
-          'Автопродление отключено. Подписка будет переведена на Free.'
-        );
-        result.processed++;
-        continue;
-      }
-
-      const plan = await getPlanById(row.subscription_plan);
-      if (!plan || !plan.is_active || plan.deleted_at) {
-        await scheduleDowngrade(row.user_id, 'free');
-        await notifySubscriptionEvent(
-          row.user_id,
-          'grace_1d',
-          `Тариф ${plan?.name || row.subscription_plan} больше не доступен. Подписка будет переведена на Free.`
-        );
-        result.processed++;
-        continue;
-      }
-
-      if (!IS_YOOKASSA_CONFIGURED) {
-        // DEMO mode: grace period then downgrade
-        await scheduleDowngrade(row.user_id, 'free');
-        await notifySubscriptionEvent(
-          row.user_id,
-          'grace_1d',
-          'Ваш пробный период закончился. Оформите подписку для продолжения.'
-        );
-        result.processed++;
-        continue;
-      }
-
-      const pmResult = await query(
-        `SELECT payment_method_id, card_last4
-         FROM user_payment_methods
-         WHERE user_id = $1 AND is_active = TRUE
-         ORDER BY is_default DESC, created_at DESC
-         LIMIT 1`,
-        [row.user_id]
-      );
-      if (pmResult.rows.length === 0) {
-        await scheduleDowngrade(row.user_id, 'free');
-        await notifySubscriptionEvent(
-          row.user_id,
-          'grace_1d',
-          'Ваш пробный период закончился. Привяжите карту для продолжения подписки.'
-        );
-        result.processed++;
-        continue;
-      }
-      const paymentMethod = pmResult.rows[0];
-
-      const amount = Number(plan.price);
-      const paymentId = uuidv4();
-
-      await query(
-        `INSERT INTO payments
-           (id, user_id, amount, base_amount, discount, method, status, plan_id, billing_cycle, duration_days, is_upgrade)
-         VALUES ($1, $2, $3, $4, 0, 'bank_card', 'pending', $5, 'monthly', 30, FALSE)`,
-        [paymentId, row.user_id, amount, amount, row.subscription_plan]
-      );
-
-      const yookassaRes = await axios.post(
-        'https://api.yookassa.ru/v3/payments',
-        {
-          amount: { value: amount.toFixed(2), currency: 'RUB' },
-          payment_method_id: paymentMethod.payment_method_id,
-          capture: true,
-          description: `PULSE ${plan.name} — продление после trial`.slice(0, 128),
-          metadata: {
-            payment_id: paymentId,
-            user_id: row.user_id,
-            plan_id: row.subscription_plan,
-            billing_cycle: 'monthly',
-            duration_days: '30',
-            is_upgrade: 'false',
-            auto_renew: 'true',
-          },
-          receipt: {
-            customer: { email: row.email },
-            items: [{
-              description: `Подписка PULSE ${plan.name} (продление после trial)`.slice(0, 128),
-              quantity: '1.00',
-              amount: { value: amount.toFixed(2), currency: 'RUB' },
-              vat_code: 1,
-              payment_subject: 'service',
-              payment_mode: 'full_payment',
-            }],
-          },
-        },
-        {
-          headers: {
-            Authorization: yookassaAuth(),
-            'Idempotence-Key': `trial-renew-${paymentId}`,
-            'Content-Type': 'application/json',
-          },
-          timeout: 15000,
+      await withUserLock(row.user_id, async () => {
+        if (await hasRecentPendingPayment(row.user_id)) {
+          console.log(`[TrialExpiration] User ${row.user_id} already has a recent pending payment, skipping`);
+          return;
         }
-      );
 
-      await query(`UPDATE payments SET provider_ref = $1 WHERE id = $2`, [yookassaRes.data.id, paymentId]);
+        // Если автопродление отключено — не пытаемся списывать, сразу даунгрейд
+        if (!row.subscription_auto_renew) {
+          await scheduleDowngrade(row.user_id, 'free');
+          await notifySubscriptionEvent(
+            row.user_id,
+            'grace_1d',
+            'Автопродление отключено. Подписка будет переведена на Free.'
+          );
+          result.processed++;
+          return;
+        }
 
-      if (yookassaRes.data.status === 'succeeded') {
-        await query(`UPDATE payments SET status = 'completed', paid_at = ${nowSql()} WHERE id = $1`, [paymentId]);
-        await activateSubscription(row.user_id, row.subscription_plan, 30, paymentId, false);
-        await query(`UPDATE users SET auto_renew_failures = 0 WHERE id = $1`, [row.user_id]);
-        result.processed++;
-      } else if (yookassaRes.data.status === 'canceled') {
-        await query(`UPDATE payments SET status = 'failed' WHERE id = $1`, [paymentId]);
-        await scheduleDowngrade(row.user_id, 'free');
-        await notifySubscriptionEvent(
-          row.user_id,
-          'grace_1d',
-          'Ваш пробный период закончился. Привяжите новую карту для продолжения подписки.'
+        const plan = await getPlanById(row.subscription_plan);
+        if (!plan || !plan.is_active || plan.deleted_at) {
+          await scheduleDowngrade(row.user_id, 'free');
+          await notifySubscriptionEvent(
+            row.user_id,
+            'grace_1d',
+            `Тариф ${plan?.name || row.subscription_plan} больше не доступен. Подписка будет переведена на Free.`
+          );
+          result.processed++;
+          return;
+        }
+
+        if (!IS_YOOKASSA_CONFIGURED) {
+          // DEMO mode: grace period then downgrade
+          await scheduleDowngrade(row.user_id, 'free');
+          await notifySubscriptionEvent(
+            row.user_id,
+            'grace_1d',
+            'Ваш пробный период закончился. Оформите подписку для продолжения.'
+          );
+          result.processed++;
+          return;
+        }
+
+        const pmResult = await query(
+          `SELECT payment_method_id, card_last4
+           FROM user_payment_methods
+           WHERE user_id = $1 AND is_active = TRUE
+           ORDER BY is_default DESC, created_at DESC
+           LIMIT 1`,
+          [row.user_id]
         );
-        result.failed++;
-      }
-      // pending / waiting_for_capture → webhook will finish the job
+        if (pmResult.rows.length === 0) {
+          await scheduleDowngrade(row.user_id, 'free');
+          await notifySubscriptionEvent(
+            row.user_id,
+            'grace_1d',
+            'Ваш пробный период закончился. Привяжите карту для продолжения подписки.'
+          );
+          result.processed++;
+          return;
+        }
+        const paymentMethod = pmResult.rows[0];
+
+        const amount = Number(plan.price);
+        const paymentId = uuidv4();
+
+        await query(
+          `INSERT INTO payments
+             (id, user_id, amount, base_amount, discount, method, status, plan_id, billing_cycle, duration_days, is_upgrade)
+           VALUES ($1, $2, $3, $4, 0, 'bank_card', 'pending', $5, 'monthly', 30, FALSE)`,
+          [paymentId, row.user_id, amount, amount, row.subscription_plan]
+        );
+
+        const yookassaRes = await axios.post(
+          'https://api.yookassa.ru/v3/payments',
+          {
+            amount: { value: amount.toFixed(2), currency: 'RUB' },
+            payment_method_id: paymentMethod.payment_method_id,
+            capture: true,
+            description: `PULSE ${plan.name} — продление после trial`.slice(0, 128),
+            metadata: {
+              payment_id: paymentId,
+              user_id: row.user_id,
+              plan_id: row.subscription_plan,
+              billing_cycle: 'monthly',
+              duration_days: '30',
+              is_upgrade: 'false',
+              auto_renew: 'true',
+            },
+            receipt: {
+              customer: { email: row.email },
+              items: [{
+                description: `Подписка PULSE ${plan.name} (продление после trial)`.slice(0, 128),
+                quantity: '1.00',
+                amount: { value: amount.toFixed(2), currency: 'RUB' },
+                vat_code: 1,
+                payment_subject: 'service',
+                payment_mode: 'full_payment',
+              }],
+            },
+          },
+          {
+            headers: {
+              Authorization: yookassaAuth(),
+              'Idempotence-Key': `trial-renew-${paymentId}`,
+              'Content-Type': 'application/json',
+            },
+            timeout: 15000,
+          }
+        );
+
+        await query(`UPDATE payments SET provider_ref = $1 WHERE id = $2`, [yookassaRes.data.id, paymentId]);
+
+        if (yookassaRes.data.status === 'succeeded') {
+          const activated = await activatePaymentIfNeeded(paymentId);
+          if (activated) {
+            console.log(`[TrialExpiration] Success: user ${row.user_id}, ${amount} RUB, card *${paymentMethod.card_last4 || '****'}`);
+          } else {
+            console.log(`[TrialExpiration] Payment ${paymentId} already activated by webhook`);
+          }
+          result.processed++;
+        } else if (yookassaRes.data.status === 'canceled') {
+          await query(`UPDATE payments SET status = 'failed' WHERE id = $1`, [paymentId]);
+          await scheduleDowngrade(row.user_id, 'free');
+          await notifySubscriptionEvent(
+            row.user_id,
+            'grace_1d',
+            'Ваш пробный период закончился. Привяжите новую карту для продолжения подписки.'
+          );
+          result.failed++;
+        }
+        // pending / waiting_for_capture → webhook will finish the job
+      });
     } catch (err: any) {
+      if (err.message?.includes('Lock already held')) {
+        console.log(`[TrialExpiration] User ${row.user_id} is locked by another process, skipping`);
+        continue;
+      }
       console.error(`[TrialExpiration] Failed for user ${row.user_id}:`, err.response?.data || err.message);
       try {
         await scheduleDowngrade(row.user_id, 'free');
