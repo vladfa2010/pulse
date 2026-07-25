@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS users (
   subscription_plan      VARCHAR(20) DEFAULT 'free' REFERENCES subscription_plans(id),
   subscription_expires_at TIMESTAMP,
   subscription_auto_renew BOOLEAN DEFAULT TRUE,
+  subscription_billing_cycle VARCHAR(20) DEFAULT 'monthly',
   auto_renew_failures    INTEGER DEFAULT 0,
   scheduled_plan_downgrade VARCHAR(20),
   is_blocked             BOOLEAN DEFAULT FALSE,

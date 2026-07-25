@@ -318,7 +318,8 @@ export async function activateSubscription(
   planId: string,
   durationDays: number,
   paymentId?: string,
-  isUpgrade?: boolean
+  isUpgrade?: boolean,
+  billingCycle: BillingCycle = 'monthly'
 ): Promise<void> {
   const now = new Date();
 
@@ -338,9 +339,10 @@ export async function activateSubscription(
      SET subscription_active = TRUE,
          subscription_plan = $1,
          subscription_expires_at = $2,
+         subscription_billing_cycle = $5,
          scheduled_plan_downgrade = CASE WHEN $4 = TRUE THEN NULL ELSE scheduled_plan_downgrade END
      WHERE id = $3`,
-    [planId, newExpires.toISOString(), userId, isUpgrade || false]
+    [planId, newExpires.toISOString(), userId, isUpgrade || false, billingCycle]
   );
 
   logSubscriptionActivated(userId, planId, newExpires.toISOString()).catch(() => {});
@@ -381,7 +383,7 @@ export async function activatePaymentIfNeeded(paymentId: string): Promise<boolea
          paid_at = ${nowSql()}
      WHERE id = $1
        AND status = 'pending'
-     RETURNING user_id, plan_id, duration_days, is_upgrade, amount, method`,
+     RETURNING user_id, plan_id, duration_days, is_upgrade, amount, method, billing_cycle`,
     [paymentId]
   );
 
@@ -397,7 +399,8 @@ export async function activatePaymentIfNeeded(paymentId: string): Promise<boolea
     p.plan_id,
     p.duration_days || 30,
     paymentId,
-    p.is_upgrade === true
+    p.is_upgrade === true,
+    p.billing_cycle || 'monthly'
   );
 
   // Сброс счётчика неудач авто-продления
@@ -819,16 +822,23 @@ export async function processAutoRenewals(): Promise<{
         }
         const paymentMethod = pmResult.rows[0];
 
-        const billingCycle = plan.billing_frequency || 'monthly';
-        const amount = Number(plan.price);
-        const durationDays = PLAN_BILLING_DAYS[billingCycle] || 30;
+        // Billing cycle пользователя из последнего успешного платежа (или плана по умолчанию)
+        const lastPayment = await query(
+          `SELECT billing_cycle FROM payments
+           WHERE user_id = $1 AND status = 'completed'
+           ORDER BY paid_at DESC LIMIT 1`,
+          [row.user_id]
+        );
+        const userBillingCycle: BillingCycle = (lastPayment.rows[0]?.billing_cycle as BillingCycle) || plan.billing_frequency || 'monthly';
+        const amount = computePlanPrice(plan, userBillingCycle);
+        const durationDays = PLAN_BILLING_DAYS[userBillingCycle] || 30;
         const paymentId = uuidv4();
 
         await query(
           `INSERT INTO payments
              (id, user_id, amount, base_amount, discount, method, status, plan_id, billing_cycle, duration_days, is_upgrade)
            VALUES ($1, $2, $3, $4, 0, 'bank_card', 'pending', $5, $6, $7, FALSE)`,
-          [paymentId, row.user_id, amount, amount, row.subscription_plan, billingCycle, durationDays]
+          [paymentId, row.user_id, amount, amount, row.subscription_plan, userBillingCycle, durationDays]
         );
 
         const yookassaRes = await axios.post(
@@ -842,7 +852,7 @@ export async function processAutoRenewals(): Promise<{
               payment_id: paymentId,
               user_id: row.user_id,
               plan_id: row.subscription_plan,
-              billing_cycle: billingCycle,
+              billing_cycle: userBillingCycle,
               duration_days: String(durationDays),
               is_upgrade: 'false',
               auto_renew: 'true',
@@ -1446,14 +1456,16 @@ export async function processTrialExpirations(): Promise<{
         }
         const paymentMethod = pmResult.rows[0];
 
-        const amount = Number(plan.price);
+        const trialBillingCycle: BillingCycle = plan.billing_frequency || 'monthly';
+        const trialDurationDays = PLAN_BILLING_DAYS[trialBillingCycle] || 30;
+        const amount = computePlanPrice(plan, trialBillingCycle);
         const paymentId = uuidv4();
 
         await query(
           `INSERT INTO payments
              (id, user_id, amount, base_amount, discount, method, status, plan_id, billing_cycle, duration_days, is_upgrade)
-           VALUES ($1, $2, $3, $4, 0, 'bank_card', 'pending', $5, 'monthly', 30, FALSE)`,
-          [paymentId, row.user_id, amount, amount, row.subscription_plan]
+           VALUES ($1, $2, $3, $4, 0, 'bank_card', 'pending', $5, $6, $7, FALSE)`,
+          [paymentId, row.user_id, amount, amount, row.subscription_plan, trialBillingCycle, trialDurationDays]
         );
 
         const yookassaRes = await axios.post(
@@ -1467,8 +1479,8 @@ export async function processTrialExpirations(): Promise<{
               payment_id: paymentId,
               user_id: row.user_id,
               plan_id: row.subscription_plan,
-              billing_cycle: 'monthly',
-              duration_days: '30',
+              billing_cycle: trialBillingCycle,
+              duration_days: String(trialDurationDays),
               is_upgrade: 'false',
               auto_renew: 'true',
             },

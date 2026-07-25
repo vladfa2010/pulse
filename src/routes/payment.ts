@@ -169,7 +169,7 @@ router.post('/create', authMiddleware, validate(CreatePaymentSchema), async (req
 
     if (finalAmount <= 0) {
       // Free switch (e.g., same price) — activate immediately
-      await activateSubscription(userId, planId, durationDays, undefined, isUpgrade);
+      await activateSubscription(userId, planId, durationDays, undefined, isUpgrade, billingCycle);
       return res.json({ success: true, activated: true, planId, billingCycle });
     }
 
