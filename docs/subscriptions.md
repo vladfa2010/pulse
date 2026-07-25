@@ -119,6 +119,39 @@ export function applyPercentDiscount(basePrice: number, discountValue: number): 
 
 **Trial-промокоды:** при `discount_type === 'trial'` сумма платежа = 1 ₽ (авторизация карты), а длительность подписки берётся из `discount_value` (дней).
 
+### Формат дат в промокодах
+
+- Backend (`CreatePromoCodeSchema` / `UpdatePromoCodeSchema`) ожидает даты в формате `YYYY-MM-DD`:
+  ```typescript
+  valid_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format (YYYY-MM-DD).')
+  expires_at: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format (YYYY-MM-DD).')
+  ```
+- Frontend (`PromoCodesSubTab.tsx`) использует `type="date"` input, который уже возвращает `YYYY-MM-DD`.
+- Даты отправляются на backend как есть, без `new Date().toISOString()`.
+- PostgreSQL приводит строку `YYYY-MM-DD` к `TIMESTAMP` (`2026-07-25 00:00:00 UTC`).
+
+**Пример body:**
+```json
+{
+  "code": "START50",
+  "discount_type": "percent",
+  "discount_value": 50,
+  "valid_from": "2026-07-25",
+  "expires_at": "2026-08-25",
+  "applicable_plans": ["premium"]
+}
+```
+
+### Валидация формы создания промокода
+
+- Code: `A-Z`, `0-9`, `_`, max 50, auto-uppercase.
+- Description: max 255.
+- Type: `percent` или `trial`.
+- Value: `percent` 1–100, `trial` 1–365.
+- Max Uses: ≥1 или пусто/не задано.
+- Valid Until: строго позже Valid From.
+- Applicable Plans: список тарифов или пустой массив (= все тарифы).
+
 ## Функции статистики
 
 `src/services/subscription.ts`:
