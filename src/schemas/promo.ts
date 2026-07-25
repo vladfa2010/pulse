@@ -45,7 +45,11 @@ export const CreatePromoCodeSchema = z.object({
     .int('Enter an integer.')
     .min(1, 'Minimum 1.'),
   applicable_plans: z.array(z.string().max(20)).optional().nullable(),
-  max_uses: z.number().int().min(1, 'Must be at least 1 or empty.').optional().nullable().or(z.literal('')),
+  max_uses: z.union([
+    z.number().int().min(1, 'Must be at least 1 or empty.'),
+    z.null(),
+    z.literal(''),
+  ]).optional(),
   valid_from: z.string({ required_error: 'Select a start date.' }).regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format (YYYY-MM-DD).'),
   expires_at: z.string({ required_error: 'Select an end date.' }).regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format (YYYY-MM-DD).'),
 }).superRefine((data, ctx) => {
@@ -78,7 +82,11 @@ export const UpdatePromoCodeSchema = z.object({
   discount_type: z.enum(['percent', 'trial'], { required_error: 'Select a type.' }).optional(),
   discount_value: z.number({ invalid_type_error: 'Enter a value.' }).int('Enter an integer.').min(1, 'Minimum 1.').optional(),
   applicable_plans: z.array(z.string().max(20)).optional().nullable(),
-  max_uses: z.number().int().min(1, 'Must be at least 1 or empty.').optional().nullable().or(z.literal('')),
+  max_uses: z.union([
+    z.number().int().min(1, 'Must be at least 1 or empty.'),
+    z.null(),
+    z.literal(''),
+  ]).optional(),
   valid_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format (YYYY-MM-DD).').optional(),
   expires_at: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format (YYYY-MM-DD).').optional(),
   is_active: z.boolean().optional(),
