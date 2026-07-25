@@ -89,6 +89,36 @@ downgrade→ `scheduled_plan_downgrade` → `processScheduledDowngrades()` → �
 
 Hard delete тега из портфеля. Используется в баннере заморозки.
 
+### Промокоды и округление цены
+
+**Endpoint'ы:**
+
+- `GET /api/promo/validate?code=START50&planId=premium` — публичная проверка кода.
+- `POST /api/payment/create` — создание платежа с промокодом.
+
+**Правило расчёта:** цены без копеек, округление в меньшую сторону (`Math.floor`), минимум — 1 ₽.
+
+```typescript
+// src/services/promo.ts
+export function applyPercentDiscount(basePrice: number, discountValue: number): number {
+  const discounted = basePrice * (1 - discountValue / 100);
+  return Math.max(1, Math.floor(discounted));
+}
+```
+
+Примеры:
+
+| Базовая цена | Скидка | Итог |
+|--------------|--------|------|
+| 990 ₽ | 50 % | 495 ₽ |
+| 990 ₽ | 33 % | 326 ₽ |
+| 2990 ₽ | 15 % | 448 ₽ |
+| 490 ₽ | 100 % | 1 ₽ (минимум) |
+
+**Сохранение:** `user_promo_uses.discount_applied` хранится как целое число рублей (`INTEGER`), чтобы избежать ошибок PostgreSQL с дробными значениями.
+
+**Trial-промокоды:** при `discount_type === 'trial'` сумма платежа = 1 ₽ (авторизация карты), а длительность подписки берётся из `discount_value` (дней).
+
 ## Функции статистики
 
 `src/services/subscription.ts`:
