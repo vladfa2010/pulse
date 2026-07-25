@@ -141,7 +141,7 @@ router.get('/tags', authMiddleware, async (req: AuthRequest, res) => {
        LEFT JOIN user_defined_tags udt ON udt.tag_id = p.tag_id
        LEFT JOIN news_tag_links ntl ON ntl.tag_id = p.tag_id
        LEFT JOIN news n ON n.id = ntl.news_id
-       WHERE p.user_id = $1
+       WHERE p.user_id = $1 AND p.is_frozen = FALSE
        GROUP BY p.id, p.tag_id, p.tag_name, p.tag_type, p.is_frozen, p.created_at, udt.enriched_data
        ORDER BY p.created_at DESC`,
       [userId, since.toISOString()]
@@ -1070,7 +1070,7 @@ router.get('/tag-status', authMiddleware, async (req: AuthRequest, res) => {
     const activeTags = Number(countsResult.rows[0]?.active || 0);
     const frozenTags = Number(countsResult.rows[0]?.frozen || 0);
 
-    const toRemove = limit < 0 ? 0 : Math.max(0, activeTags + frozenTags - limit);
+    const toRemove = limit < 0 ? 0 : Math.max(0, activeTags - limit);
 
     res.json({
       current_plan: plan.id,
