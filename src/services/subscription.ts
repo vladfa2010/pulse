@@ -338,9 +338,9 @@ export async function activateSubscription(
      SET subscription_active = TRUE,
          subscription_plan = $1,
          subscription_expires_at = $2,
-         scheduled_plan_downgrade = NULL
+         scheduled_plan_downgrade = CASE WHEN $4 = TRUE THEN NULL ELSE scheduled_plan_downgrade END
      WHERE id = $3`,
-    [planId, newExpires.toISOString(), userId]
+    [planId, newExpires.toISOString(), userId, isUpgrade || false]
   );
 
   logSubscriptionActivated(userId, planId, newExpires.toISOString()).catch(() => {});
@@ -785,6 +785,7 @@ export async function processAutoRenewals(): Promise<{
        AND u.subscription_expires_at > ${windowStart}
        AND u.subscription_expires_at < ${windowEnd}
        AND COALESCE(u.auto_renew_failures, 0) < 3
+       AND u.scheduled_plan_downgrade IS NULL
      ORDER BY u.subscription_expires_at ASC`,
     []
   );
@@ -953,7 +954,10 @@ export async function scheduleDowngrade(
   targetPlanId: string
 ): Promise<void> {
   await query(
-    `UPDATE users SET scheduled_plan_downgrade = $1 WHERE id = $2`,
+    `UPDATE users
+     SET scheduled_plan_downgrade = $1,
+         subscription_auto_renew = FALSE
+     WHERE id = $2`,
     [targetPlanId, userId]
   );
 }
