@@ -432,21 +432,7 @@ export async function freezeExcessTags(userId: string, planId: string): Promise<
     frozen++;
   }
 
-  // Audit log
-  if (frozen > 0) {
-    const tags = await query(
-      `SELECT tag_id, tag_name, tag_type FROM portfolios WHERE user_id = $1 AND is_frozen = TRUE`,
-      [userId]
-    );
-    for (const tag of tags.rows) {
-      await query(
-        `INSERT INTO frozen_tags (user_id, tag_id, tag_name, tag_type)
-         VALUES ($1, $2, $3, $4)
-         ON CONFLICT (user_id, tag_id) DO UPDATE SET frozen_at = ${nowSql()}, unfrozen_at = NULL`,
-        [userId, tag.tag_id, tag.tag_name, tag.tag_type]
-      );
-    }
-  }
+  await reconcileFrozenTags(userId);
 
   return frozen;
 }
@@ -459,12 +445,7 @@ export async function unfreezeTagsUpToLimit(userId: string, planId: string): Pro
       `UPDATE portfolios SET is_frozen = FALSE WHERE user_id = $1 AND is_frozen = TRUE RETURNING id`,
       [userId]
     );
-    if (result.rows.length > 0) {
-      await query(
-        `UPDATE frozen_tags SET unfrozen_at = ${nowSql()} WHERE user_id = $1 AND unfrozen_at IS NULL`,
-        [userId]
-      );
-    }
+    await reconcileFrozenTags(userId);
     return result.rows.length;
   }
 
@@ -488,12 +469,9 @@ export async function unfreezeTagsUpToLimit(userId: string, planId: string): Pro
   let unfrozen = 0;
   for (const row of toUnfreeze.rows) {
     await query(`UPDATE portfolios SET is_frozen = FALSE WHERE id = $1`, [row.id]);
-    await query(
-      `UPDATE frozen_tags SET unfrozen_at = ${nowSql()} WHERE user_id = $1 AND tag_id = $2 AND unfrozen_at IS NULL`,
-      [userId, row.tag_id]
-    );
     unfrozen++;
   }
+  await reconcileFrozenTags(userId);
   return unfrozen;
 }
 
@@ -504,7 +482,7 @@ export async function setActiveTags(userId: string, keepTagIds: string[]): Promi
       `UPDATE portfolios SET is_frozen = TRUE WHERE user_id = $1 AND is_frozen = FALSE RETURNING id`,
       [userId]
     );
-    await syncFrozenTagsAudit(userId);
+    await reconcileFrozenTags(userId);
     return { kept: 0, frozen: freezeResult.rows.length, unfrozen: 0 };
   }
 
@@ -520,35 +498,56 @@ export async function setActiveTags(userId: string, keepTagIds: string[]): Promi
     params
   );
 
-  await syncFrozenTagsAudit(userId);
+  await reconcileFrozenTags(userId);
 
   return { kept: keepTagIds.length, frozen: freezeResult.rows.length, unfrozen: unfreezeResult.rows.length };
 }
 
-async function syncFrozenTagsAudit(userId: string): Promise<void> {
+/**
+ * Единый реконсилятор: синхронизирует audit-таблицу frozen_tags
+ * с актуальным состоянием portfolios.is_frozen.
+ * Вызывать после ЛЮБОГО изменения is_frozen.
+ */
+export async function reconcileFrozenTags(userId: string): Promise<void> {
   const now = nowSql();
-  const frozen = await query(
-    `SELECT tag_id, tag_name, tag_type FROM portfolios WHERE user_id = $1 AND is_frozen = TRUE`,
+
+  // 1. Добавить/обновить записи для тегов, которые СЕЙЧАС frozen
+  await query(
+    `INSERT INTO frozen_tags (user_id, tag_id, tag_name, tag_type, frozen_at, unfrozen_at)
+     SELECT p.user_id, p.tag_id, p.tag_name, p.tag_type, ${now}, NULL
+     FROM portfolios p
+     WHERE p.user_id = $1 AND p.is_frozen
+     ON CONFLICT (user_id, tag_id) DO UPDATE SET
+       frozen_at = ${now},
+       unfrozen_at = NULL,
+       tag_name = EXCLUDED.tag_name,
+       tag_type = EXCLUDED.tag_type`,
     [userId]
   );
-  for (const tag of frozen.rows) {
-    await query(
-      `INSERT INTO frozen_tags (user_id, tag_id, tag_name, tag_type)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (user_id, tag_id) DO UPDATE SET frozen_at = ${now}, unfrozen_at = NULL`,
-      [userId, tag.tag_id, tag.tag_name, tag.tag_type]
-    );
-  }
-  const unfrozen = await query(
-    `SELECT tag_id FROM portfolios WHERE user_id = $1 AND is_frozen = FALSE`,
+
+  // 2. Пометить unfrozen для тегов, которые СЕЙЧАС активны
+  await query(
+    `UPDATE frozen_tags
+     SET unfrozen_at = ${now}
+     WHERE user_id = $1
+       AND unfrozen_at IS NULL
+       AND tag_id IN (
+         SELECT tag_id FROM portfolios
+         WHERE user_id = $1 AND NOT is_frozen
+       )`,
     [userId]
   );
-  for (const tag of unfrozen.rows) {
-    await query(
-      `UPDATE frozen_tags SET unfrozen_at = ${now} WHERE user_id = $1 AND tag_id = $2 AND unfrozen_at IS NULL`,
-      [userId, tag.tag_id]
-    );
-  }
+
+  // 3. Удалить записи для удалённых тегов (нет в portfolios)
+  await query(
+    `DELETE FROM frozen_tags ft
+     WHERE ft.user_id = $1
+       AND NOT EXISTS (
+         SELECT 1 FROM portfolios p
+         WHERE p.user_id = ft.user_id AND p.tag_id = ft.tag_id
+       )`,
+    [userId]
+  );
 }
 
 // ─── Expiry helpers ────────────────────────────────────────────────────────
@@ -979,8 +978,8 @@ export async function cancelScheduledDowngrade(userId: string): Promise<void> {
     [userId]
   );
   // Unfreeze all tags — user cancelled the downgrade
-  await query(`DELETE FROM frozen_tags WHERE user_id = $1`, [userId]);
   await query(`UPDATE portfolios SET is_frozen = FALSE WHERE user_id = $1`, [userId]);
+  await reconcileFrozenTags(userId);
   await notifySubscriptionEvent(userId, 'downgrade_cancelled', 'Даунгрейд отменён, все теги разморожены');
 }
 

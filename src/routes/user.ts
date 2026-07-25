@@ -8,7 +8,7 @@ import { createUserTag, getAllTagNames, detectTagTypeViaLLM, TAG_TYPE_LABELS } f
 import {
   getPlanById, getUserSubscription, buildSubscriptionStatus,
   scheduleDowngrade, cancelScheduledDowngrade, requireMinPlan,
-  getExcessTagsForDowngrade, parseDbJson, setActiveTags,
+  getExcessTagsForDowngrade, parseDbJson, setActiveTags, reconcileFrozenTags,
 } from '../services/subscription';
 import type { TagType, TagEnrichment } from '../services/tagManager';
 import axios from 'axios';
@@ -1088,18 +1088,7 @@ router.get('/tag-status', authMiddleware, async (req: AuthRequest, res) => {
          )`,
         [userId, toUnfreeze]
       );
-      // Синхронизируем audit-таблицу
-      await query(
-        `UPDATE frozen_tags ft
-         SET unfrozen_at = ${nowSql()}
-         WHERE ft.user_id = $1
-           AND ft.unfrozen_at IS NULL
-           AND NOT EXISTS (
-             SELECT 1 FROM portfolios p
-             WHERE p.user_id = ft.user_id AND p.tag_id = ft.tag_id AND p.is_frozen
-           )`,
-        [userId]
-      );
+      await reconcileFrozenTags(userId);
       console.log(`[EmergencyUnfreeze] user=${userId} plan=${plan.id} limit=${limit} active=${activeTags} frozen=${frozenTags} — unfrozen ${toUnfreeze} up to limit`);
 
       // Перезагружаем теги и счётчики после разморозки
