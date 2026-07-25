@@ -1071,28 +1071,36 @@ router.get('/tag-status', authMiddleware, async (req: AuthRequest, res) => {
     const frozenTags = Number(countsResult.rows[0]?.frozen || 0);
 
     // ═══════════════════════════════════════════════════════════════════════
-    // EMERGENCY UNFREEZE (TZ_EMERGENCY_UNFREEZE)
-    // Если замороженные теги влезают в лимит текущего тарифа — размораживаем.
-    // Лечит trial expiration → downgrade free → все теги frozen, баннер скрыт.
+    // EMERGENCY UNFREEZE v2 (TZ_EMERGENCY_UNFREEZE_V2)
+    // Размораживаем только столько frozen-тегов, чтобы заполнить слоты до лимита.
+    // active=3, limit=3, frozen=5 → размораживаем 0, баннер остаётся скрыт.
+    // active=2, limit=3, frozen=5 → размораживаем 1, баннер скрыт.
     // ═══════════════════════════════════════════════════════════════════════
-    if (limit >= 0 && frozenTags > 0 && activeTags <= limit) {
+    if (limit >= 0 && frozenTags > 0 && activeTags < limit) {
+      const toUnfreeze = limit - activeTags;
       await query(
-        `UPDATE portfolios SET is_frozen = FALSE WHERE user_id = $1 AND is_frozen = TRUE`,
-        [userId]
+        `UPDATE portfolios SET is_frozen = FALSE
+         WHERE id IN (
+           SELECT id FROM portfolios
+           WHERE user_id = $1 AND is_frozen = TRUE
+           ORDER BY created_at ASC
+           LIMIT $2
+         )`,
+        [userId, toUnfreeze]
       );
       // Синхронизируем audit-таблицу
       await query(
         `UPDATE frozen_tags ft
-         SET unfrozen_at = NOW()
+         SET unfrozen_at = ${nowSql()}
          WHERE ft.user_id = $1
            AND ft.unfrozen_at IS NULL
            AND NOT EXISTS (
              SELECT 1 FROM portfolios p
-             WHERE p.user_id = ft.user_id AND p.tag_id = ft.tag_id AND p.is_frozen = TRUE
+             WHERE p.user_id = ft.user_id AND p.tag_id = ft.tag_id AND p.is_frozen
            )`,
         [userId]
       );
-      console.log(`[EmergencyUnfreeze] user=${userId} plan=${plan.id} limit=${limit} active=${activeTags} frozen=${frozenTags} — all unfrozen`);
+      console.log(`[EmergencyUnfreeze] user=${userId} plan=${plan.id} limit=${limit} active=${activeTags} frozen=${frozenTags} — unfrozen ${toUnfreeze} up to limit`);
 
       // Перезагружаем теги и счётчики после разморозки
       const recheckCounts = await query(
