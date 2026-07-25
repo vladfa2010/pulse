@@ -35,6 +35,35 @@ downgrade→ `scheduled_plan_downgrade` → `processScheduledDowngrades()` → �
 - Каждые 6 часов — `processTrialExpirations()`.
 - Каждые 5 минут — `processScheduledDowngrades()`.
 
+## Архивированные тарифы
+
+Архивированный тариф — это запись в `subscription_plans` с `deleted_at IS NOT NULL`. Он исчезает из публичного каталога, но остаётся в БД.
+
+### Автопродление по архивированному тарифу
+
+- `processAutoRenewals()` больше не проверяет `plan.deleted_at`. Он сверяется только с `plan.is_active`.
+- Если тариф архивирован, но `is_active = TRUE`, автопродление продолжается: успешная оплата продлевает подписку и накапливает дни.
+- Если админ полностью деактивировал тариф (`is_active = FALSE`), автопродление у подписчиков принудительно отключается (`subscription_auto_renew = FALSE`).
+
+### Истечение срока без оплаты
+
+Если по архивированному тарифу не удалось списать деньги (3 неудачи / auto-renew OFF) и подписка стала неактивной:
+
+- `processScheduledDowngrades()` дополнительно выбирает пользователей:
+  ```sql
+  subscription_plan IN (SELECT id FROM subscription_plans WHERE deleted_at IS NOT NULL)
+  AND subscription_active = FALSE
+  AND subscription_expires_at < NOW()
+  ```
+- Для них `targetPlan = 'free'`, `subscription_active = FALSE`.
+- Вызывается `freezeExcessTags(userId, 'free')` — лишние теги замораживаются.
+
+### Trial на архивированном тарифе
+
+- `processTrialExpirations()` также убрал проверку `plan.deleted_at`.
+- Если тариф архивирован, но активен, trial продлевается через регулярный платёж по `plan.billing_frequency`.
+- Если `is_active = FALSE`, trial-юзер получает `scheduleDowngrade(..., 'free')`.
+
 ## Заморозка тегов
 
 При понижении до тарифа с меньшим `tag_limit`:
