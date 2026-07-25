@@ -322,23 +322,16 @@ export async function activateSubscription(
 ): Promise<void> {
   const now = new Date();
 
-  // Portable expiry calculation
-  let newExpires: Date;
-  if (isUpgrade) {
-    // Баг 1: при апгрейде обнуляем период (ТЗ раздел 4.5)
-    newExpires = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
-  } else {
-    // Обычное продление — накопление дней
-    const currentResult = await query(
-      `SELECT subscription_expires_at FROM users WHERE id = $1`,
-      [userId]
-    );
-    const currentExpires = currentResult.rows[0]?.subscription_expires_at
-      ? new Date(currentResult.rows[0].subscription_expires_at)
-      : null;
-    const base = currentExpires && currentExpires.getTime() > now.getTime() ? currentExpires : now;
-    newExpires = new Date(base.getTime() + durationDays * 24 * 60 * 60 * 1000);
-  }
+  // Универсальная логика: накапливаем дни от max(currentExpires, NOW())
+  const currentResult = await query(
+    `SELECT subscription_expires_at FROM users WHERE id = $1`,
+    [userId]
+  );
+  const currentExpires = currentResult.rows[0]?.subscription_expires_at
+    ? new Date(currentResult.rows[0].subscription_expires_at)
+    : null;
+  const base = currentExpires && currentExpires.getTime() > now.getTime() ? currentExpires : now;
+  const newExpires = new Date(base.getTime() + durationDays * 24 * 60 * 60 * 1000);
 
   await query(
     `UPDATE users
