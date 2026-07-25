@@ -144,8 +144,8 @@ router.post('/create', authMiddleware, validate(CreatePaymentSchema), async (req
         finalAmount = 1.0;
         trialDays = promo.discount_value;
       } else {
-        finalAmount = Math.max(1.0, Math.round(fullPrice * (1 - promo.discount_value / 100) * 100) / 100);
-        discountApplied = Math.round((fullPrice - finalAmount) * 100) / 100;
+        finalAmount = Math.max(1, Math.floor(fullPrice * (1 - promo.discount_value / 100)));
+        discountApplied = Math.floor(fullPrice - finalAmount);
       }
       appliedPromo = {
         code: promo.code,

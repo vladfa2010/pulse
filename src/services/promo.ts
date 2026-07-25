@@ -102,7 +102,7 @@ export async function validatePromoCode(
 
 export function applyPercentDiscount(basePrice: number, discountValue: number): number {
   const discounted = basePrice * (1 - discountValue / 100);
-  return Math.max(1.0, Math.round(discounted * 100) / 100);
+  return Math.max(1, Math.floor(discounted));
 }
 
 export async function applyPromoToPayment(
@@ -134,7 +134,7 @@ export async function applyPromoToPayment(
   }
 
   const finalAmount = applyPercentDiscount(basePrice, promo.discount_value);
-  const discountApplied = Math.round((basePrice - finalAmount) * 100) / 100;
+  const discountApplied = Math.floor(basePrice - finalAmount);
 
   await query(
     `UPDATE payments SET
