@@ -25,7 +25,11 @@ router.get('/', validate(ValidatePromoQuerySchema), async (req, res) => {
 
     const result = await validatePromoCode(code, planId);
     if (!result.valid) {
-      return res.json({ valid: false, reason: result.reason });
+      const response: any = { valid: false, reason: result.reason };
+      if (result.reason === 'not_started' && result.startsAt) {
+        response.starts_at = result.startsAt;
+      }
+      return res.json(response);
     }
 
     const promo = result.promo!;

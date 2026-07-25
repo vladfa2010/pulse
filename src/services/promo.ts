@@ -28,7 +28,8 @@ export interface PromoValidationResult {
   promo?: PromoCode;
   finalPrice?: number;
   trialDays?: number;
-  reason?: string;
+  reason?: 'not_found' | 'inactive' | 'not_started' | 'expired' | 'exhausted' | 'not_applicable' | 'already_used';
+  startsAt?: string;
 }
 
 function normalizeApplicablePlans(value: unknown): string[] | null {
@@ -74,7 +75,7 @@ export async function validatePromoCode(
   const expiresAt = promo.expires_at ? new Date(promo.expires_at) : null;
 
   if (validFrom && now < validFrom) {
-    return { valid: false, reason: 'not_started' };
+    return { valid: false, reason: 'not_started', startsAt: promo.valid_from };
   }
   if (expiresAt && now >= expiresAt) {
     return { valid: false, reason: 'expired' };
