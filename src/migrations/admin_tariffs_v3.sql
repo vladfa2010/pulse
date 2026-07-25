@@ -83,9 +83,9 @@ CREATE TABLE IF NOT EXISTS user_promo_uses (
   trial_days_used INTEGER DEFAULT NULL,
   expected_renewal_price DECIMAL(10,2) DEFAULT NULL,
   payment_id      UUID REFERENCES payments(id),
-  created_at      TIMESTAMP DEFAULT NOW(),
-  UNIQUE(user_id, promo_code_id)
+  created_at      TIMESTAMP DEFAULT NOW()
 );
+ALTER TABLE user_promo_uses DROP CONSTRAINT IF EXISTS user_promo_uses_user_id_promo_code_id_key;
 CREATE INDEX IF NOT EXISTS idx_user_promo_uses_user ON user_promo_uses(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_promo_uses_promo ON user_promo_uses(promo_code_id);
 

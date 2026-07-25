@@ -276,9 +276,10 @@ export async function initSQLiteSchema(): Promise<void> {
       trial_days_used INTEGER DEFAULT NULL,
       expected_renewal_price REAL DEFAULT NULL,
       payment_id TEXT REFERENCES payments(id),
-      created_at TEXT DEFAULT (datetime('now')),
-      UNIQUE(user_id, promo_code_id)
+      created_at TEXT DEFAULT (datetime('now'))
     );
+
+    DROP INDEX IF EXISTS sqlite_autoindex_user_promo_uses_1;
 
     CREATE INDEX IF NOT EXISTS idx_user_promo_uses_user ON user_promo_uses(user_id);
     CREATE INDEX IF NOT EXISTS idx_user_promo_uses_promo ON user_promo_uses(promo_code_id);

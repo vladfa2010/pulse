@@ -28,7 +28,7 @@ export interface PromoValidationResult {
   promo?: PromoCode;
   finalPrice?: number;
   trialDays?: number;
-  reason?: 'not_found' | 'inactive' | 'not_started' | 'expired' | 'exhausted' | 'not_applicable' | 'already_used';
+  reason?: 'not_found' | 'inactive' | 'not_started' | 'expired' | 'exhausted' | 'not_applicable';
   startsAt?: string;
 }
 
@@ -87,17 +87,6 @@ export async function validatePromoCode(
     return { valid: false, reason: 'not_applicable' };
   }
 
-  if (userId) {
-    const used = await query(
-      `SELECT 1 FROM user_promo_uses
-       WHERE user_id = $1 AND promo_code_id = $2 LIMIT 1`,
-      [userId, promo.id]
-    );
-    if (used.rows.length > 0) {
-      return { valid: false, reason: 'already_used' };
-    }
-  }
-
   return { valid: true, promo };
 }
 
@@ -127,8 +116,7 @@ export async function applyPromoToPayment(
     await query(
       `INSERT INTO user_promo_uses
          (user_id, promo_code_id, plan_id, billing_cycle, trial_days_used, payment_id)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       ON CONFLICT (user_id, promo_code_id) DO NOTHING`,
+       VALUES ($1, $2, $3, $4, $5, $6)`,
       [userId, promo.id, planId, billingCycle, trialDays, paymentId]
     );
     return { finalAmount: 1.0, trialDays, discountApplied: 0 };
@@ -148,8 +136,7 @@ export async function applyPromoToPayment(
   await query(
     `INSERT INTO user_promo_uses
        (user_id, promo_code_id, plan_id, billing_cycle, discount_applied, payment_id)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     ON CONFLICT (user_id, promo_code_id) DO NOTHING`,
+     VALUES ($1, $2, $3, $4, $5, $6)`,
     [userId, promo.id, planId, billingCycle, discountApplied, paymentId]
   );
   return { finalAmount, discountApplied };
