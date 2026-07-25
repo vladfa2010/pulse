@@ -287,12 +287,16 @@ router.post('/confirm', authMiddleware, validate(ConfirmPaymentSchema), async (r
 
     const { plan_id, duration_days, is_upgrade } = paymentResult.rows[0];
 
+    if (!plan_id) {
+      return res.status(400).json({ error: 'No plan associated with this payment' });
+    }
+
     await query(
       `UPDATE payments SET status = 'completed', paid_at = ${nowSql()} WHERE id = $1`,
       [paymentId]
     );
 
-    await activateSubscription(userId, plan_id || 'premium', duration_days || 30, paymentId, is_upgrade === true);
+    await activateSubscription(userId, plan_id, duration_days || 30, paymentId, is_upgrade === true);
 
     const completedPayment = await query(
       `SELECT id, amount, plan_id, billing_cycle, duration_days, status, method FROM payments WHERE id = $1`,
@@ -347,13 +351,17 @@ router.get('/status/:id', authMiddleware, async (req: AuthRequest, res) => {
             `UPDATE payments SET status = 'completed', paid_at = ${nowSql()} WHERE id = $1`,
             [id]
           );
-          await activateSubscription(
-            userId,
-            payment.plan_id || 'premium',
-            payment.duration_days || 30,
-            id,
-            payment.is_upgrade === true
-          );
+          if (!payment.plan_id) {
+            console.log(`[Payment Status] Card binding succeeded for ${id}, no subscription activation`);
+          } else {
+            await activateSubscription(
+              userId,
+              payment.plan_id,
+              payment.duration_days || 30,
+              id,
+              payment.is_upgrade === true
+            );
+          }
           payment.status = 'completed';
           payment.paid_at = new Date().toISOString();
         } else if (yookassaStatus === 'canceled') {
@@ -429,9 +437,13 @@ router.post('/force-check', authMiddleware, async (req: AuthRequest, res) => {
         `UPDATE payments SET status = 'completed', paid_at = ${nowSql()} WHERE id = $1`,
         [paymentId]
       );
+      if (!payment.plan_id) {
+        console.log(`[Payment Force-Check] Card binding succeeded for ${paymentId}, no subscription activation`);
+        return res.json({ status: 'completed', message: 'Card bound successfully' });
+      }
       await activateSubscription(
         userId,
-        payment.plan_id || 'premium',
+        payment.plan_id,
         payment.duration_days || 30,
         paymentId,
         payment.is_upgrade === true

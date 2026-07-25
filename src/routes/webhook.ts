@@ -190,8 +190,14 @@ router.post('/yookassa', async (req, res) => {
       await savePaymentMethod(payment.user_id, object.payment_method);
     }
 
-    // Refund 1₽ for trial or 100% promo authorization
+    // Guard: привязка карты — без plan_id, не активируем подписку
     const meta = object.metadata || {};
+    if (!payment.plan_id || meta.update_payment_method === 'true') {
+      console.log(`[Webhook] Card binding for user ${payment.user_id}, no subscription activation`);
+      return res.status(200).json({ received: true, card_bound: true });
+    }
+
+    // Refund 1₽ for trial or 100% promo authorization
     if (meta.trial_days || meta.promo_100_percent_refund) {
       try {
         const auth = 'Basic ' + Buffer.from(`${process.env.YOOKASSA_SHOP_ID}:${process.env.YOOKASSA_SECRET_KEY}`).toString('base64');
