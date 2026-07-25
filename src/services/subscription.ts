@@ -802,8 +802,10 @@ export async function processAutoRenewals(): Promise<{
         }
 
         const plan = await getPlanById(row.subscription_plan);
-        if (!plan || !plan.is_active || plan.deleted_at) {
-          console.warn(`[AutoRenew] Plan ${row.subscription_plan} not available (deleted=${plan?.deleted_at || 'N/A'}, active=${plan?.is_active})`);
+        if (!plan || !plan.is_active) {
+          // План полностью деактивирован (не архивирован) — отключаем auto-renew
+          await query(`UPDATE users SET subscription_auto_renew = FALSE WHERE id = $1`, [row.user_id]);
+          console.warn(`[AutoRenew] Plan ${row.subscription_plan} deactivated (active=${plan?.is_active}), disabling auto-renew for user ${row.user_id}`);
           return;
         }
 
@@ -986,15 +988,21 @@ export async function cancelScheduledDowngrade(userId: string): Promise<void> {
 export async function processScheduledDowngrades(): Promise<number> {
   const now = nowSql();
   const result = await query(
-    `SELECT id, scheduled_plan_downgrade FROM users
-     WHERE scheduled_plan_downgrade IS NOT NULL
-       AND subscription_expires_at < ${now}`,
+    `SELECT id, scheduled_plan_downgrade, subscription_plan, subscription_active
+     FROM users
+     WHERE (scheduled_plan_downgrade IS NOT NULL
+            AND subscription_expires_at < ${now})
+        OR (subscription_plan IN (
+              SELECT id FROM subscription_plans WHERE deleted_at IS NOT NULL
+            )
+            AND subscription_active = FALSE
+            AND subscription_expires_at < ${now})`,
     []
   );
 
   let processed = 0;
   for (const row of result.rows) {
-    const targetPlan = row.scheduled_plan_downgrade;
+    const targetPlan = row.scheduled_plan_downgrade || 'free';
     const keepActive = targetPlan !== 'free';
     await query(
       `UPDATE users
@@ -1413,7 +1421,7 @@ export async function processTrialExpirations(): Promise<{
         }
 
         const plan = await getPlanById(row.subscription_plan);
-        if (!plan || !plan.is_active || plan.deleted_at) {
+        if (!plan || !plan.is_active) {
           await scheduleDowngrade(row.user_id, 'free');
           await notifySubscriptionEvent(
             row.user_id,
