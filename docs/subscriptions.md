@@ -148,7 +148,7 @@ export function applyPercentDiscount(basePrice: number, discountValue: number): 
 - Description: max 255.
 - Type: `percent` или `trial`.
 - Value: `percent` 1–100, `trial` 1–365.
-- Max Uses: ≥1 или пусто/не задано.
+- Max Uses: ≥1 или пусто/не задано (`null` = безлимитные использования). Значение `0` отклоняется.
 - Valid Until: строго позже Valid From.
 - Applicable Plans: список тарифов или пустой массив (= все тарифы).
 
