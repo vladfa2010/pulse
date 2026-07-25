@@ -25,6 +25,7 @@ import {
   sendExpiredPaymentFailed,
   sendExpiredToday,
 } from './email';
+import { logPaymentCompleted } from './activityLog';
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
@@ -371,6 +372,47 @@ export async function activateSubscription(
       [userId, planId, now.toISOString(), newExpires.toISOString(), paymentId]
     );
   }
+}
+
+// ─── Atomic payment activation (prevents double-charge / double-activation) ─
+
+/**
+ * Атомарная активация платежа.
+ * UPDATE ... WHERE status = 'pending' гарантирует что только 1 вызов пройдёт.
+ * @returns true — активировали, false — уже был активирован (idempotent)
+ */
+export async function activatePaymentIfNeeded(paymentId: string): Promise<boolean> {
+  const result = await query(
+    `UPDATE payments
+     SET status = 'completed',
+         paid_at = ${nowSql()}
+     WHERE id = $1
+       AND status = 'pending'
+     RETURNING user_id, plan_id, duration_days, is_upgrade, amount, method`,
+    [paymentId]
+  );
+
+  if (result.rows.length === 0) {
+    // Уже активирован — idempotent, не ошибка
+    return false;
+  }
+
+  const p = result.rows[0];
+
+  await activateSubscription(
+    p.user_id,
+    p.plan_id,
+    p.duration_days || 30,
+    paymentId,
+    p.is_upgrade === true
+  );
+
+  // Сброс счётчика неудач авто-продления
+  await query(`UPDATE users SET auto_renew_failures = 0 WHERE id = $1`, [p.user_id]);
+
+  logPaymentCompleted(p.user_id, Number(p.amount), p.plan_id, p.method || 'yookassa').catch(() => {});
+
+  return true;
 }
 
 // ─── Tag freeze / unfreeze ─────────────────────────────────────────────────

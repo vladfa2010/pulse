@@ -2,9 +2,8 @@ import { Router } from 'express';
 import { query } from '../config/db';
 import axios from 'axios';
 import { isYookassaIp, getClientIp } from '../services/ipCheck';
-import { activateSubscription, savePaymentMethod, getPlanById, scheduleDowngrade, notifySubscriptionEvent } from '../services/subscription';
+import { savePaymentMethod, getPlanById, scheduleDowngrade, notifySubscriptionEvent, activatePaymentIfNeeded } from '../services/subscription';
 import {
-  logPaymentCompleted,
   logSubscriptionCancelled,
   logTelegramConnected,
   logTelegramDisconnected,
@@ -180,11 +179,6 @@ router.post('/yookassa', async (req, res) => {
     }
 
     // payment.succeeded
-    await query(
-      `UPDATE payments SET status = 'completed', paid_at = ${nowSql()} WHERE id = $1`,
-      [payment.id]
-    );
-
     // #Y7 save payment method for future auto-renew
     if (object.payment_method?.saved && object.payment_method?.id) {
       await savePaymentMethod(payment.user_id, object.payment_method);
@@ -222,19 +216,17 @@ router.post('/yookassa', async (req, res) => {
       }
     }
 
+    // Atomic activation: prevents double-charge / double-activation across webhook, status, force-check, confirm
+    const activated = await activatePaymentIfNeeded(payment.id);
+    if (!activated) {
+      return res.status(200).json({ received: true, idempotent: true });
+    }
+
     // Handle plan deleted after payment creation
     const plan = payment.plan_id ? await getPlanById(payment.plan_id) : null;
-    const durationDays = meta.trial_days ? Number(meta.trial_days) : (payment.duration_days || 30);
-
     if (plan?.deleted_at) {
-      await activateSubscription(
-        payment.user_id,
-        payment.plan_id || 'premium',
-        durationDays,
-        payment.id,
-        payment.is_upgrade === true
-      );
       await scheduleDowngrade(payment.user_id, 'free');
+      const durationDays = meta.trial_days ? Number(meta.trial_days) : (payment.duration_days || 30);
       const expiresAt = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000).toISOString();
       await notifySubscriptionEvent(
         payment.user_id,
@@ -244,25 +236,9 @@ router.post('/yookassa', async (req, res) => {
       return res.status(200).json({ received: true });
     }
 
-    await activateSubscription(
-      payment.user_id,
-      payment.plan_id || 'premium',
-      durationDays,
-      payment.id,
-      payment.is_upgrade === true
-    );
-
     if (meta.auto_renew === 'true') {
       console.log(`[AutoRenew] Webhook confirmed for user ${payment.user_id}`);
-      await query(`UPDATE users SET auto_renew_failures = 0 WHERE id = $1`, [payment.user_id]);
     }
-
-    logPaymentCompleted(
-      payment.user_id,
-      Number(payment.amount),
-      payment.plan_id || 'premium',
-      'yookassa'
-    ).catch(() => {});
 
     console.log(`[YooKassa] Subscription activated for user ${payment.user_id}, plan ${payment.plan_id}`);
 

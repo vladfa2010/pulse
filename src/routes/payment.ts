@@ -27,6 +27,7 @@ import { CreatePaymentSchema, ConfirmPaymentSchema, UpgradePreviewSchema } from 
 import axios from 'axios';
 import {
   activateSubscription,
+  activatePaymentIfNeeded,
   calculateUpgradePrice,
   getPlanById,
   getUserSubscription,
@@ -36,7 +37,6 @@ import {
   BillingCycle,
 } from '../services/subscription';
 import { validatePromoCode, applyPromoToPayment, incrementPromoUsage, getPromoByCode } from '../services/promo';
-import { logPaymentCompleted } from '../services/activityLog';
 
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
@@ -55,10 +55,6 @@ function uuidv4(): string {
     const v = c === 'x' ? r : (r & 0x3 | 0x8);
     return v.toString(16);
   });
-}
-
-function nowSql(): string {
-  return USE_SQLITE ? "datetime('now')" : 'NOW()';
 }
 
 function yookassaAuth(): string {
@@ -291,22 +287,15 @@ router.post('/confirm', authMiddleware, validate(ConfirmPaymentSchema), async (r
       return res.status(400).json({ error: 'No plan associated with this payment' });
     }
 
-    await query(
-      `UPDATE payments SET status = 'completed', paid_at = ${nowSql()} WHERE id = $1`,
-      [paymentId]
-    );
-
-    await activateSubscription(userId, plan_id, duration_days || 30, paymentId, is_upgrade === true);
+    const activated = await activatePaymentIfNeeded(paymentId);
+    if (!activated) {
+      return res.json({ success: true, message: 'Payment already processed' });
+    }
 
     const completedPayment = await query(
       `SELECT id, amount, plan_id, billing_cycle, duration_days, status, method FROM payments WHERE id = $1`,
       [paymentId]
     );
-
-    const p = completedPayment.rows[0];
-    if (p) {
-      logPaymentCompleted(userId, Number(p.amount), p.plan_id || 'premium', p.method || 'demo').catch(() => {});
-    }
 
     res.json({
       success: true,
@@ -347,21 +336,7 @@ router.get('/status/:id', authMiddleware, async (req: AuthRequest, res) => {
         const yookassaStatus = yookassaRes.data.status;
 
         if (yookassaStatus === 'succeeded') {
-          await query(
-            `UPDATE payments SET status = 'completed', paid_at = ${nowSql()} WHERE id = $1`,
-            [id]
-          );
-          if (!payment.plan_id) {
-            console.log(`[Payment Status] Card binding succeeded for ${id}, no subscription activation`);
-          } else {
-            await activateSubscription(
-              userId,
-              payment.plan_id,
-              payment.duration_days || 30,
-              id,
-              payment.is_upgrade === true
-            );
-          }
+          await activatePaymentIfNeeded(id);
           payment.status = 'completed';
           payment.paid_at = new Date().toISOString();
         } else if (yookassaStatus === 'canceled') {
@@ -433,22 +408,12 @@ router.post('/force-check', authMiddleware, async (req: AuthRequest, res) => {
     const yookassaStatus = yookassaRes.data.status;
 
     if (yookassaStatus === 'succeeded') {
-      await query(
-        `UPDATE payments SET status = 'completed', paid_at = ${nowSql()} WHERE id = $1`,
-        [paymentId]
-      );
-      if (!payment.plan_id) {
-        console.log(`[Payment Force-Check] Card binding succeeded for ${paymentId}, no subscription activation`);
-        return res.json({ status: 'completed', message: 'Card bound successfully' });
-      }
-      await activateSubscription(
-        userId,
-        payment.plan_id,
-        payment.duration_days || 30,
-        paymentId,
-        payment.is_upgrade === true
-      );
-      return res.json({ status: 'completed', message: 'Payment confirmed, subscription activated' });
+      const activated = await activatePaymentIfNeeded(paymentId);
+      return res.json({
+        status: 'completed',
+        activated,
+        message: activated ? 'Payment confirmed, subscription activated' : 'Payment already processed',
+      });
     } else if (yookassaStatus === 'canceled') {
       await query(`UPDATE payments SET status = 'failed' WHERE id = $1`, [paymentId]);
       return res.json({ status: 'failed', message: 'Payment was canceled' });
