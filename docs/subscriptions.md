@@ -95,6 +95,22 @@ WHERE subscription_active = TRUE
 - отчётам/дайджестам (`sendAllWeeklyReports`, `sendAllDigests`);
 - `hasFeature`.
 
+## Защита от race condition при scheduled downgrade
+
+`processScheduledDowngrades()` обрабатывает каждого пользователя внутри `withUserLock`, а `UPDATE` дополнительно проверяет, что подписка всё ещё истекла:
+
+```sql
+UPDATE users
+SET subscription_plan = $1,
+    scheduled_plan_downgrade = NULL,
+    subscription_active = $2
+WHERE id = $3
+  AND subscription_expires_at < NOW()
+RETURNING id
+```
+
+Если между `SELECT` и `UPDATE` webhook/force-check продлил подписку, `UPDATE` не изменит строку (`RETURNING` вернёт 0 строк) и `freezeExcessTags` не вызовется. Это предотвращает случайную перезапись активной продлённой подписки.
+
 ## Заморозка тегов
 
 При понижении до тарифа с меньшим `tag_limit`:

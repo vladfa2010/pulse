@@ -1032,18 +1032,31 @@ export async function processScheduledDowngrades(): Promise<number> {
   );
 
   for (const row of result.rows) {
-    const targetPlan = row.scheduled_plan_downgrade || 'free';
-    const keepActive = targetPlan !== 'free';
-    await query(
-      `UPDATE users
-       SET subscription_plan = $1,
-           scheduled_plan_downgrade = NULL,
-           subscription_active = $2
-       WHERE id = $3`,
-      [targetPlan, keepActive, row.id]
-    );
-    await freezeExcessTags(row.id, targetPlan);
-    processed++;
+    await withUserLock(row.id, async () => {
+      const targetPlan = row.scheduled_plan_downgrade || 'free';
+      const keepActive = targetPlan !== 'free';
+
+      // TZ_DOWNGRADE_RACE: atomic UPDATE with expires_at check so a just-renewed
+      // subscription is not overwritten by the cron.
+      const updateResult = await query(
+        `UPDATE users
+         SET subscription_plan = $1,
+             scheduled_plan_downgrade = NULL,
+             subscription_active = $2
+         WHERE id = $3
+           AND subscription_expires_at < ${now}
+         RETURNING id`,
+        [targetPlan, keepActive, row.id]
+      );
+
+      if (updateResult.rows.length === 0) {
+        console.log(`[ScheduledDowngrade] User ${row.id} subscription was renewed, skipping downgrade`);
+        return;
+      }
+
+      await freezeExcessTags(row.id, targetPlan);
+      processed++;
+    });
   }
   return processed;
 }
