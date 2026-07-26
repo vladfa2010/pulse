@@ -853,7 +853,36 @@ export async function processAutoRenewals(): Promise<{
           [row.user_id]
         );
         if (pmResult.rows.length === 0) {
-          console.warn(`[AutoRenew] No active payment method for user ${row.user_id}`);
+          console.warn(`[AutoRenew] No active payment method for user ${row.user_id}, counting as failure`);
+
+          // TZ_NO_CARD_NOTIFY: count as a failure and notify the user
+          const failRes = await query(
+            `UPDATE users
+             SET auto_renew_failures = COALESCE(auto_renew_failures, 0) + 1,
+                 updated_at = ${nowSql()}
+             WHERE id = $1
+             RETURNING auto_renew_failures`,
+            [row.user_id]
+          );
+          const failures = Number(failRes.rows[0]?.auto_renew_failures || 0);
+
+          await notifySubscriptionEvent(
+            row.user_id,
+            'grace_1d',
+            'Автопродление подписки невозможно: не привязана карта. Привяжите карту в профиле, чтобы избежать перевода на Free.'
+          );
+
+          if (failures >= 3) {
+            await query(`UPDATE users SET subscription_auto_renew = FALSE WHERE id = $1`, [row.user_id]);
+            await notifySubscriptionEvent(
+              row.user_id,
+              'downgrade_done',
+              'Автопродление отключено после 3 неудач. Подписка будет переведена на Free по истечении срока.'
+            );
+            result.disabled++;
+          }
+
+          result.errors++;
           return;
         }
         const paymentMethod = pmResult.rows[0];

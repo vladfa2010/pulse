@@ -44,6 +44,7 @@ downgrade→ `scheduled_plan_downgrade` → `processScheduledDowngrades()` → �
 ## Cron
 
 - `0 9 * * * UTC` — `processAutoRenewals()` (попытка списания).
+  - Если у пользователя нет привязанной активной карты, попытка считается неудачей: `auto_renew_failures++`, уведомление "Привяжите карту" и, после 3 неудач, отключение `subscription_auto_renew`.
 - `0 9 * * * UTC` — `sendExpiryNotifications()` (email-напоминания, 12:00 МСК).
 - Каждые 6 часов — `processTrialExpirations()`.
 - Каждые 5 минут — `processScheduledDowngrades()`.
