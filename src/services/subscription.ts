@@ -1417,18 +1417,34 @@ export async function processTrialExpirations(): Promise<{
     ? "datetime('now', '-7 days')"
     : "NOW() - INTERVAL '7 days'";
 
-  const trialUsers = await query(
-    `SELECT u.id as user_id, u.email, u.subscription_plan, u.subscription_expires_at,
-            uup.trial_days_used, uup.promo_code_id, uup.expected_renewal_price
-     FROM users u
-     JOIN user_promo_uses uup ON uup.user_id = u.id
-     WHERE uup.trial_days_used IS NOT NULL
-       AND u.subscription_expires_at < ${nowSql()}
-       AND u.subscription_expires_at > ${since}
-       AND u.subscription_active = TRUE
-       AND u.scheduled_plan_downgrade IS NULL`,
-    []
-  );
+  // TZ_TRIAL_DISTINCT: eliminate duplicate rows when a user has multiple
+  // user_promo_uses records. DISTINCT ON works on PostgreSQL; SQLite uses GROUP BY.
+  const trialSql = USE_SQLITE
+    ? `SELECT u.id as user_id, u.email, u.subscription_plan, u.subscription_expires_at,
+              MAX(uup.trial_days_used) as trial_days_used,
+              MAX(uup.promo_code_id) as promo_code_id,
+              MAX(uup.expected_renewal_price) as expected_renewal_price
+       FROM users u
+       JOIN user_promo_uses uup ON uup.user_id = u.id
+       WHERE uup.trial_days_used IS NOT NULL
+         AND u.subscription_expires_at < ${nowSql()}
+         AND u.subscription_expires_at > ${since}
+         AND u.subscription_active = TRUE
+         AND u.scheduled_plan_downgrade IS NULL
+       GROUP BY u.id, u.email, u.subscription_plan, u.subscription_expires_at`
+    : `SELECT DISTINCT ON (u.id)
+              u.id as user_id, u.email, u.subscription_plan, u.subscription_expires_at,
+              uup.trial_days_used, uup.promo_code_id, uup.expected_renewal_price
+       FROM users u
+       JOIN user_promo_uses uup ON uup.user_id = u.id
+       WHERE uup.trial_days_used IS NOT NULL
+         AND u.subscription_expires_at < ${nowSql()}
+         AND u.subscription_expires_at > ${since}
+         AND u.subscription_active = TRUE
+         AND u.scheduled_plan_downgrade IS NULL
+       ORDER BY u.id, uup.created_at DESC`;
+
+  const trialUsers = await query(trialSql, []);
 
   for (const row of trialUsers.rows) {
     try {
