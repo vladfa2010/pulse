@@ -13,6 +13,7 @@ import { query } from '../config/db';
 import axios from 'axios';
 import { invalidateUserTagsCache } from './smartTagMatcher';
 import { backfillTagMatches } from './tagBackfill';
+import { getPlanById } from './subscription';
 
 const KIMI_API_KEY = process.env.KIMI_API_KEY;
 const KIMI_MODEL = process.env.KIMI_MODEL || 'moonshot-v1-32k';
@@ -715,7 +716,7 @@ export function getTranslitVariants(name: string): string[] {
 // Создать пользовательский тег
 // Если tagType = 'auto' или пустой — тип определяется эвристически, обогащение идёт в фоне.
 // При добавлении существующего тега user_defined_tags НЕ модифицируется.
-export async function createUserTag(userId: string, tagId: string, tagName: string, tagType: string): Promise<{ success: boolean; finalTagId?: string; resolvedTagName?: string; detectedType?: TagType; enrichment?: TagEnrichment; enriched?: boolean; backgroundEnrichmentStarted?: boolean; alreadySubscribed?: boolean }> {
+export async function createUserTag(userId: string, tagId: string, tagName: string, tagType: string): Promise<{ success: boolean; finalTagId?: string; resolvedTagName?: string; detectedType?: TagType; enrichment?: TagEnrichment; enriched?: boolean; backgroundEnrichmentStarted?: boolean; alreadySubscribed?: boolean; limitReached?: boolean; currentCount?: number; maxTags?: number; error?: string }> {
   try {
     // 1. Точное совпадение по tag_id (например, при клике по конкретной карточке)
     let existingResult = await query(
@@ -863,7 +864,36 @@ export async function createUserTag(userId: string, tagId: string, tagName: stri
       };
     }
 
-    // 6. Подписка в портфель (используем каноническое resolvedTagName)
+    // 6. Проверка лимита тегов по тарифу (TZ_BOT_TAG_LIMIT)
+    const subResult = await query(
+      `SELECT subscription_plan FROM users WHERE id = $1`,
+      [userId]
+    );
+    const planId = subResult.rows[0]?.subscription_plan || 'free';
+    const plan = await getPlanById(planId);
+    if (!plan) {
+      console.error(`[TagManager] Plan not found: ${planId}`);
+      return { success: false, error: 'Plan not configured' };
+    }
+    const maxTags = plan.tag_limit;
+
+    const countResult = await query(
+      'SELECT COUNT(*) as count FROM portfolios WHERE user_id = $1 AND is_frozen = FALSE',
+      [userId]
+    );
+    const tagCount = parseInt(countResult.rows[0].count, 10);
+
+    if (maxTags >= 0 && tagCount >= maxTags) {
+      return {
+        success: false,
+        error: `Tag limit reached (${maxTags}). Upgrade your plan for more.`,
+        limitReached: true,
+        currentCount: tagCount,
+        maxTags,
+      };
+    }
+
+    // 7. Подписка в портфель (используем каноническое resolvedTagName)
     await query(
       `INSERT INTO portfolios (user_id, tag_id, tag_name, tag_type)
        VALUES ($1, $2, $3, $4)
