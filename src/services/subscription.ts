@@ -332,7 +332,7 @@ export async function activateSubscription(
 ): Promise<void> {
   const now = new Date();
 
-  // Универсальная логика: накапливаем дни от max(currentExpires, NOW())
+  // TZ_UPGRADE_DAYS: при апгрейде и продлении накапливаем дни от max(currentExpires, NOW())
   const currentResult = await query(
     `SELECT subscription_expires_at FROM users WHERE id = $1`,
     [userId]
