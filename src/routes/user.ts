@@ -9,6 +9,7 @@ import {
   getPlanById, getUserSubscription, buildSubscriptionStatus,
   scheduleDowngrade, cancelScheduledDowngrade, requireMinPlan,
   getExcessTagsForDowngrade, parseDbJson, setActiveTags, reconcileFrozenTags,
+  planLevel, planLevelOf,
 } from '../services/subscription';
 import type { TagType, TagEnrichment } from '../services/tagManager';
 import axios from 'axios';
@@ -1279,11 +1280,32 @@ router.post('/downgrade', authMiddleware, async (req: AuthRequest, res) => {
   try {
     const userId = req.user!.userId;
     const { targetPlan } = req.body;
-    if (!targetPlan) {
+    if (!targetPlan || typeof targetPlan !== 'string' || targetPlan.trim() === '') {
       return res.status(400).json({ error: 'targetPlan required' });
     }
-    await scheduleDowngrade(userId, targetPlan);
-    res.json({ success: true, scheduledPlan: targetPlan });
+
+    // TZ_DOWNGRADE_VALIDATE: validate target plan
+    const trimmedPlan = targetPlan.trim();
+    const target = await getPlanById(trimmedPlan);
+    if (!target) {
+      return res.status(400).json({ error: 'Target plan does not exist' });
+    }
+    if (!target.is_active || target.deleted_at) {
+      return res.status(400).json({ error: 'Target plan is not active' });
+    }
+    const sub = await getUserSubscription(userId);
+    const currentLevel = await planLevel(sub.plan);
+    const targetLevel = planLevelOf(target);
+    if (targetLevel >= currentLevel) {
+      return res.status(400).json({
+        error: 'Downgrade target must be cheaper than current plan',
+        current: sub.plan,
+        target: trimmedPlan,
+      });
+    }
+
+    await scheduleDowngrade(userId, trimmedPlan);
+    res.json({ success: true, scheduledPlan: trimmedPlan });
   } catch (err) {
     res.status(500).json({ error: 'Failed to schedule downgrade' });
   }

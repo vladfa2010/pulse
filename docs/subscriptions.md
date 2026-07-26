@@ -111,6 +111,18 @@ RETURNING id
 
 Если между `SELECT` и `UPDATE` webhook/force-check продлил подписку, `UPDATE` не изменит строку (`RETURNING` вернёт 0 строк) и `freezeExcessTags` не вызовется. Это предотвращает случайную перезапись активной продлённой подписки.
 
+## Запланированный downgrade
+
+Пользователь может запросить понижение тарифа через `POST /api/user/downgrade`.
+
+**Валидация `targetPlan` (TZ_DOWNGRADE_VALIDATE):**
+- `targetPlan` должен быть непустой строкой.
+- Тариф должен существовать (`getPlanById`).
+- Тариф должен быть активным (`is_active = TRUE` и `deleted_at IS NULL`).
+- `plan_level` целевого тарифа должен быть **строго меньше** текущего (downgrade — только на более дешёвый тариф).
+
+При успешной валидации в `users.scheduled_plan_downgrade` записывается целевой тариф, а текущий тариф продолжает действовать до `subscription_expires_at`. После истечения срока `processScheduledDowngrades` выполняет переход и заморозку лишних тегов.
+
 ## Заморозка тегов
 
 При понижении до тарифа с меньшим `tag_limit`:
