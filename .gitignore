@@ -31,3 +31,10 @@ Thumbs.db
 postgres_data/
 redis_data/
 *.db
+
+# Graphify intermediate outputs (keep graph.html, graph.json, GRAPH_REPORT.md, manifests, and flow diagrams)
+graphify-out/cache/
+graphify-out/20*/
+graphify-out/.chunk_*
+graphify-out/.graphify_*
+graphify-out/.semantic_merge_summary.json
