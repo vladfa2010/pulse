@@ -818,7 +818,7 @@ export async function processAutoRenewals(): Promise<{
             u.auto_renew_failures
      FROM users u
      WHERE u.subscription_auto_renew = TRUE
-       AND u.subscription_plan IN ('base','premium','club','pro')
+       AND u.subscription_plan IN (SELECT id FROM subscription_plans WHERE plan_level >= 1)
        AND u.subscription_expires_at > ${windowStart}
        AND u.subscription_expires_at < ${windowEnd}
        AND COALESCE(u.auto_renew_failures, 0) < 3
@@ -1091,7 +1091,7 @@ export async function sendSubscriptionReminders(): Promise<{
     `SELECT id, subscription_plan, subscription_expires_at,
             scheduled_plan_downgrade
      FROM users
-     WHERE subscription_plan IN ('base','premium','club','pro')
+     WHERE subscription_plan IN (SELECT id FROM subscription_plans WHERE plan_level >= 1)
        AND subscription_expires_at > ${now}
        AND subscription_expires_at < ${nowSqlPlusDays(4)}`,
     []
@@ -1127,7 +1127,7 @@ export async function sendSubscriptionReminders(): Promise<{
     `SELECT id, subscription_plan, subscription_expires_at,
             scheduled_plan_downgrade
      FROM users
-     WHERE subscription_plan IN ('base','premium','club','pro')
+     WHERE subscription_plan IN (SELECT id FROM subscription_plans WHERE plan_level >= 1)
        AND subscription_expires_at < ${now}
        AND subscription_expires_at > ${nowSqlPlusDays(-3)}`,
     []
@@ -1187,7 +1187,7 @@ export async function sendExpiryNotifications(): Promise<{
               sp.name as plan_name, sp.price
        FROM users u
        JOIN subscription_plans sp ON sp.id = u.subscription_plan
-       WHERE u.subscription_plan IN ('base','premium','club','pro')
+       WHERE u.subscription_plan IN (SELECT id FROM subscription_plans WHERE plan_level >= 1)
          AND u.subscription_active = TRUE
          AND date(u.subscription_expires_at) = ${dateSqlPlusDays(4)}`,
       []
@@ -1240,7 +1240,7 @@ export async function sendExpiryNotifications(): Promise<{
               sp.name as plan_name, sp.price
        FROM users u
        JOIN subscription_plans sp ON sp.id = u.subscription_plan
-       WHERE u.subscription_plan IN ('base','premium','club','pro')
+       WHERE u.subscription_plan IN (SELECT id FROM subscription_plans WHERE plan_level >= 1)
          AND u.subscription_active = TRUE
          AND date(u.subscription_expires_at) = ${dateSqlPlusDays(1)}`,
       []
@@ -1293,7 +1293,7 @@ export async function sendExpiryNotifications(): Promise<{
               sp.name as plan_name, sp.price
        FROM users u
        JOIN subscription_plans sp ON sp.id = u.subscription_plan
-       WHERE u.subscription_plan IN ('base','premium','club','pro')
+       WHERE u.subscription_plan IN (SELECT id FROM subscription_plans WHERE plan_level >= 1)
          AND u.subscription_active = TRUE
          AND date(u.subscription_expires_at) <= ${dateSql()}`,
       []

@@ -16,6 +16,19 @@
 
 Дедупликация напоминаний в Telegram/Push/Web уже ведётся через `subscription_notifications_sent`, поэтому email-уведомления используют отдельное поле `expiry_notified`.
 
+## Платные тарифы
+
+- `plan_level = 0` — бесплатный тариф (`free`).
+- `plan_level >= 1` — платные тарифы (`base`, `premium`, `club`, `pro`, а также любые новые).
+
+Все cron-задачи, работающие с платными подписками, определяют их через подзапрос:
+
+```sql
+subscription_plan IN (SELECT id FROM subscription_plans WHERE plan_level >= 1)
+```
+
+Раньше в коде был хардкод `IN ('base','premium','club','pro')`, который игнорировал любой новый тариф.
+
 ## Жизненный цикл
 
 ```
