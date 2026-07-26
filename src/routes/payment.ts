@@ -36,7 +36,7 @@ import {
   computePlanPrice,
   BillingCycle,
 } from '../services/subscription';
-import { validatePromoCode, applyPromoToPayment, incrementPromoUsage, getPromoByCode } from '../services/promo';
+import { validatePromoCode, applyPromoToPayment, getPromoByCode } from '../services/promo';
 
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
@@ -187,7 +187,7 @@ router.post('/create', authMiddleware, validate(CreatePaymentSchema), async (req
         const promo = await getPromoByCode(appliedPromo.code);
         if (promo) {
           await applyPromoToPayment(paymentId, promo, userId, planId, billingCycle, fullPrice);
-          await incrementPromoUsage(promo.id);
+          // TZ_PROMO_ATOMIC: uses_count инкрементируется только после успешной оплаты
         }
       } catch (e: any) {
         console.error('[Payment] Failed to apply promo usage:', e.message);

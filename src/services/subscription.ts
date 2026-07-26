@@ -407,9 +407,43 @@ export async function activatePaymentIfNeeded(paymentId: string): Promise<boolea
   // Сброс счётчика неудач авто-продления
   await query(`UPDATE users SET auto_renew_failures = 0 WHERE id = $1`, [p.user_id]);
 
+  // TZ_PROMO_ATOMIC: атомарный инкремент uses_count только при успешной оплате
+  await incrementPromoUsageAtomic(paymentId);
+
   logPaymentCompleted(p.user_id, Number(p.amount), p.plan_id, p.method || 'yookassa').catch(() => {});
 
   return true;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Promo usage — atomic increment only after successful payment
+// ═════════════════════════════════════════════════════════════════════════════
+export async function incrementPromoUsageAtomic(paymentId: string): Promise<void> {
+  const result = await query(
+    `SELECT p.promo_code, pc.id as promo_id
+     FROM payments p
+     JOIN promo_codes pc ON pc.code = p.promo_code
+     WHERE p.id = $1 AND p.promo_code IS NOT NULL`,
+    [paymentId]
+  );
+  if (result.rows.length === 0) return;
+
+  const { promo_id } = result.rows[0];
+  const updateResult = await query(
+    `UPDATE promo_codes
+     SET uses_count = uses_count + 1
+     WHERE id = $1
+       AND (max_uses IS NULL OR uses_count < max_uses)
+     RETURNING uses_count, max_uses`,
+    [promo_id]
+  );
+
+  if (updateResult.rows.length > 0) {
+    const row = updateResult.rows[0];
+    console.log(`[Promo] Atomic increment: ${row.uses_count}/${row.max_uses || '∞'}`);
+  } else {
+    console.warn(`[Promo] Could not atomic increment promo usage for payment ${paymentId}: limit reached`);
+  }
 }
 
 // ─── Tag freeze / unfreeze ─────────────────────────────────────────────────

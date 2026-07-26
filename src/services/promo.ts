@@ -142,11 +142,4 @@ export async function applyPromoToPayment(
   return { finalAmount, discountApplied };
 }
 
-export async function incrementPromoUsage(promoId: string): Promise<void> {
-  await query(
-    `UPDATE promo_codes SET uses_count = uses_count + 1, updated_at = ${
-      process.env.USE_SQLITE === 'true' ? "datetime('now')" : 'NOW()'
-    } WHERE id = $1`,
-    [promoId]
-  );
-}
+
