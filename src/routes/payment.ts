@@ -336,9 +336,20 @@ router.get('/status/:id', authMiddleware, async (req: AuthRequest, res) => {
         const yookassaStatus = yookassaRes.data.status;
 
         if (yookassaStatus === 'succeeded') {
-          await activatePaymentIfNeeded(id);
-          payment.status = 'completed';
-          payment.paid_at = new Date().toISOString();
+          if (!payment.plan_id) {
+            // TZ_CARD_STATUS_FORCECHECK: card binding payment has no plan — do not activate subscription
+            console.log(`[Payment Status] Card binding payment ${id}, skipping subscription activation`);
+            await query(
+              `UPDATE payments SET status = 'completed', paid_at = $1 WHERE id = $2`,
+              [new Date().toISOString(), id]
+            );
+            payment.status = 'completed';
+            payment.paid_at = new Date().toISOString();
+          } else {
+            await activatePaymentIfNeeded(id);
+            payment.status = 'completed';
+            payment.paid_at = new Date().toISOString();
+          }
         } else if (yookassaStatus === 'canceled') {
           await query(`UPDATE payments SET status = 'failed' WHERE id = $1`, [id]);
           payment.status = 'failed';
@@ -408,6 +419,15 @@ router.post('/force-check', authMiddleware, async (req: AuthRequest, res) => {
     const yookassaStatus = yookassaRes.data.status;
 
     if (yookassaStatus === 'succeeded') {
+      if (!payment.plan_id) {
+        // TZ_CARD_STATUS_FORCECHECK: card binding payment has no plan — do not activate subscription
+        console.log(`[Payment ForceCheck] Card binding payment ${paymentId}, skipping subscription activation`);
+        await query(
+          `UPDATE payments SET status = 'completed', paid_at = $1 WHERE id = $2`,
+          [new Date().toISOString(), paymentId]
+        );
+        return res.json({ status: 'completed', message: 'Card binding confirmed, no subscription' });
+      }
       const activated = await activatePaymentIfNeeded(paymentId);
       return res.json({
         status: 'completed',
