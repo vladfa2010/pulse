@@ -988,10 +988,11 @@ export async function cancelScheduledDowngrade(userId: string): Promise<void> {
     `UPDATE users SET scheduled_plan_downgrade = NULL WHERE id = $1`,
     [userId]
   );
-  // Unfreeze all tags — user cancelled the downgrade
-  await query(`UPDATE portfolios SET is_frozen = FALSE WHERE user_id = $1`, [userId]);
+  // TZ_CANCEL_DOWNGRADE_LIMIT: unfreeze only up to the current plan limit instead of all tags
+  const sub = await getUserSubscription(userId);
+  await unfreezeTagsUpToLimit(userId, sub.plan);
   await reconcileFrozenTags(userId);
-  await notifySubscriptionEvent(userId, 'downgrade_cancelled', 'Даунгрейд отменён, все теги разморожены');
+  await notifySubscriptionEvent(userId, 'downgrade_cancelled', 'Даунгрейд отменён, теги разморожены в пределах лимита тарифа');
 }
 
 export async function processScheduledDowngrades(): Promise<number> {
