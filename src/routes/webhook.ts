@@ -161,9 +161,28 @@ router.post('/yookassa', async (req, res) => {
       logSubscriptionCancelled(payment.user_id, payment.plan_id || 'premium').catch(() => {});
 
       if (object.metadata?.auto_renew === 'true') {
+        // TZ_DOUBLE_INCREMENT: webhook is the single source of truth for failure counting.
+        // Guard against duplicate webhook/cron race: skip if failures were already incremented
+        // for this user within the last minute.
+        const recentCheck = await query(
+          `SELECT auto_renew_failures, updated_at FROM users WHERE id = $1`,
+          [payment.user_id]
+        );
+        const recentRow = recentCheck.rows[0];
+        if (
+          recentRow &&
+          recentRow.auto_renew_failures > 0 &&
+          recentRow.updated_at &&
+          Date.now() - new Date(recentRow.updated_at).getTime() < 60_000
+        ) {
+          console.log(`[Webhook] Failure already counted for user ${payment.user_id}, skipping`);
+          return res.status(200).json({ received: true, idempotent: true });
+        }
+
         const failRes = await query(
           `UPDATE users
-           SET auto_renew_failures = COALESCE(auto_renew_failures, 0) + 1
+           SET auto_renew_failures = COALESCE(auto_renew_failures, 0) + 1,
+               updated_at = ${nowSql()}
            WHERE id = $1
            RETURNING auto_renew_failures`,
           [payment.user_id]

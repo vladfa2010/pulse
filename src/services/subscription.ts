@@ -896,7 +896,8 @@ export async function processAutoRenewals(): Promise<{
           result.processed++;
         } else if (yookassaRes.data.status === 'canceled') {
           await query(`UPDATE payments SET status = 'failed' WHERE id = $1`, [paymentId]);
-          await handleAutoRenewFailure(row.user_id, result);
+          // TZ_DOUBLE_INCREMENT: webhook is the single source of truth for counting failures
+          console.log(`[AutoRenew] Payment ${paymentId} canceled, waiting for webhook to count failure`);
           result.errors++;
         }
         // pending / waiting_for_capture → webhook will finish the job
@@ -907,38 +908,12 @@ export async function processAutoRenewals(): Promise<{
         continue;
       }
       console.error(`[AutoRenew] Failed for user ${row.user_id}:`, err.response?.data || err.message);
-      await handleAutoRenewFailure(row.user_id, result);
+      // TZ_DOUBLE_INCREMENT: do not increment here; webhook handles failure counting
       result.errors++;
     }
   }
 
   return result;
-}
-
-async function handleAutoRenewFailure(
-  userId: string,
-  result: { processed: number; errors: number; disabled: number }
-): Promise<void> {
-  try {
-    const failRes = await query(
-      `UPDATE users
-       SET auto_renew_failures = COALESCE(auto_renew_failures, 0) + 1
-       WHERE id = $1
-       RETURNING auto_renew_failures`,
-      [userId]
-    );
-    const failures = Number(failRes.rows[0]?.auto_renew_failures || 0);
-    if (failures >= 3) {
-      await query(
-        `UPDATE users SET subscription_auto_renew = FALSE WHERE id = $1`,
-        [userId]
-      );
-      result.disabled++;
-      console.warn(`[AutoRenew] Disabled auto-renew for user ${userId} after ${failures} failures`);
-    }
-  } catch (e: any) {
-    console.error(`[AutoRenew] Failure tracking error for user ${userId}:`, e.message);
-  }
 }
 
 // ─── Downgrade preview ─────────────────────────────────────────────────────
