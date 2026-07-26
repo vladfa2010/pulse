@@ -1105,20 +1105,38 @@ export async function notifySubscriptionEvent(
     [userId, type]
   );
 
-  // Telegram
-  const tgResult = await query(
-    `SELECT target FROM user_channels WHERE user_id = $1 AND channel = 'telegram' AND is_active = TRUE`,
+  // TZ_NOTIFICATION_SETTINGS: respect user notification preferences
+  const settingsResult = await query(
+    `SELECT tg_enabled, push_enabled, web_push_enabled
+     FROM notification_settings WHERE user_id = $1`,
     [userId]
   );
-  for (const row of tgResult.rows) {
-    await sendTelegramMessage(row.target, message);
+  const settings = settingsResult.rows[0] || {
+    tg_enabled: true,
+    push_enabled: true,
+    web_push_enabled: true,
+  };
+
+  // Telegram
+  if (settings.tg_enabled !== false) {
+    const tgResult = await query(
+      `SELECT target FROM user_channels WHERE user_id = $1 AND channel = 'telegram' AND is_active = TRUE`,
+      [userId]
+    );
+    for (const row of tgResult.rows) {
+      await sendTelegramMessage(row.target, message);
+    }
   }
 
   // Push (Firebase/FCM)
-  await sendPushNotification(userId, 'PULSE', message, { type });
+  if (settings.push_enabled !== false) {
+    await sendPushNotification(userId, 'PULSE', message, { type });
+  }
 
   // Web Push (VAPID)
-  await sendWebPushToUser(userId, 'PULSE', message, { type });
+  if (settings.web_push_enabled !== false) {
+    await sendWebPushToUser(userId, 'PULSE', message, { type });
+  }
 }
 
 export async function sendSubscriptionReminders(): Promise<{

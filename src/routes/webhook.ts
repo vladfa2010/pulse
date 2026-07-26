@@ -158,7 +158,7 @@ router.post('/yookassa', async (req, res) => {
     if (event === 'payment.canceled') {
       await query(`UPDATE payments SET status = 'failed' WHERE id = $1`, [payment.id]);
 
-      logSubscriptionCancelled(payment.user_id, payment.plan_id || 'premium').catch(() => {});
+      logSubscriptionCancelled(payment.user_id, payment.plan_id).catch(() => {});
 
       if (object.metadata?.auto_renew === 'true') {
         // TZ_DOUBLE_INCREMENT: webhook is the single source of truth for failure counting.

@@ -49,6 +49,18 @@ downgrade→ `scheduled_plan_downgrade` → `processScheduledDowngrades()` → �
 - Каждые 6 часов — `processTrialExpirations()`.
 - Каждые 5 минут — `processScheduledDowngrades()`.
 
+## Настройки уведомлений
+
+`notifySubscriptionEvent` (Telegram, Push, Web Push) проверяет `notification_settings` перед отправкой:
+
+| Канал | Поле в `notification_settings` | Поведение при `FALSE` |
+|-------|--------------------------------|------------------------|
+| Telegram | `tg_enabled` | Не отправлять Telegram-уведомления |
+| Push (FCM) | `push_enabled` | Не отправлять push-уведомления |
+| Web Push (VAPID) | `web_push_enabled` | Не отправлять web-push |
+
+Если у пользователя нет записи в `notification_settings`, по умолчанию все каналы включены (`TRUE`). Дедупликация по `subscription_notifications_sent` работает независимо от настроек.
+
 ## Архивированные тарифы
 
 Архивированный тариф — это запись в `subscription_plans` с `deleted_at IS NOT NULL`. Он исчезает из публичного каталога, но остаётся в БД.
