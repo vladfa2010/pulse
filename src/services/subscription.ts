@@ -175,6 +175,15 @@ export function computePlanPrice(plan: Plan, billingCycle: BillingCycle): number
   if (billingCycle === 'weekly' && plan.billing_frequency !== 'weekly') {
     return Math.round(base / 4);
   }
+
+  // TZ_YEARLY_TO_MONTHLY: convert yearly/quarterly base price to monthly
+  if (billingCycle === 'monthly' && plan.billing_frequency === 'yearly') {
+    return Math.round(base / 12);
+  }
+  if (billingCycle === 'monthly' && plan.billing_frequency === 'quarterly') {
+    return Math.round(base / 3);
+  }
+
   return base;
 }
 
