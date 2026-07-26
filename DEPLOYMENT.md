@@ -213,6 +213,77 @@ git push origin main
 
 ---
 
+## Graphify — knowledge graph проекта
+
+В проекте используется **Graphify** для построения интерактивного графа кодовой базы и документации. Это часть нашего технологического стека: с помощью графа можно исследовать архитектуру, находить связи между модулями и проводить аудит.
+
+### Расположение
+
+- `pulse-backend/graphify-out/` — основная папка с артефактами графа, версионируется в git.
+- В корне проекта есть symlink: `graphify-out -> pulse-backend/graphify-out`, чтобы запускать команды из корня.
+
+### Что хранится в git
+
+Полезные артефакты:
+- `graph.json`, `graph.html`, `GRAPH_REPORT.md` — основной граф и отчёт.
+- `manifest.json`, `cost.json` — метаданные сборки.
+- `pulse-kode-callflow.html` — callflow-визуализация.
+- `*-flow.html`, `*-flow.mmd`, `*-flow.svg` — диаграммы отдельных фич.
+- `generate_callflow_html.py`, `merge_semantic.py`, `update_manifest_cost.py` — вспомогательные скрипты.
+
+Игнорируются git-ом (но остаются локально):
+- `cache/` — AST-кэш.
+- `.chunk_*` — промежуточные чанки.
+- `.graphify_*`, `.semantic_merge_summary.json` — служебные файлы.
+- `20*/` — датированные снапшоты.
+
+### Автообновление после коммита
+
+В `.git/hooks/post-commit` и `.git/hooks/post-checkout` настроены хуки для `pulse-backend` и `pulse-frontend`:
+
+```bash
+graphify update .
+```
+
+После каждого коммита локально пересобирается кодовый граф:
+- Обновляются `graph.json`, `graph.html`, `GRAPH_REPORT.md`, `pulse-kode-callflow.html`.
+- Названия коммьюнити сохраняются.
+- Документы (`TZ_*.md` и пр.) **автоматически не пересобираются** — для этого нужен полный `graphify extract .`.
+
+### Основные команды
+
+```bash
+# Инкрементальное обновление кодового графа
+graphify update .
+
+# Полнная перестройка с семантической экстракцией документов
+graphify extract .
+
+# Задать вопрос графу
+graphify query "как работает апгрейд подписки?"
+
+# Кратчайший путь между двумя сущностями
+graphify path "activateSubscription" "YooKassa"
+
+# Объяснить узел
+graphify explain "processAutoRenewals"
+
+# Что затрагивает изменение
+graphify affected "activateSubscription" --relation calls
+```
+
+### Когда коммитить граф
+
+Обычный коммит с кодом **не включает** изменения графа. Хук только пересобирает файлы локально. Чтобы отправить обновлённый граф в git, нужен отдельный коммит:
+
+```bash
+git add graphify-out/
+git commit -m "chore(graphify): update graph"
+git push
+```
+
+---
+
 ## Проблемы и решения
 
 ### Frontend: белая страница
