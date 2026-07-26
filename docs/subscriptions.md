@@ -64,6 +64,24 @@ downgrade→ `scheduled_plan_downgrade` → `processScheduledDowngrades()` → �
 - Если тариф архивирован, но активен, trial продлевается через регулярный платёж по `plan.billing_frequency`.
 - Если `is_active = FALSE`, trial-юзер получает `scheduleDowngrade(..., 'free')`.
 
+## Сброс `subscription_active` при истечении
+
+`processScheduledDowngrades()` (каждые 5 минут) в начале работы деактивирует истёкшие paid-подписки, у которых нет запланированного даунгрейда:
+
+```sql
+UPDATE users
+SET subscription_active = FALSE
+WHERE subscription_active = TRUE
+  AND subscription_expires_at < NOW()
+  AND subscription_plan IN (SELECT id FROM subscription_plans WHERE plan_level >= 1)
+  AND scheduled_plan_downgrade IS NULL
+```
+
+Это закрывает дыру, при которой `subscription_active` оставался `TRUE` навсегда, и позволяет корректно работать:
+- архивированным тарифам (downgrade на Free);
+- отчётам/дайджестам (`sendAllWeeklyReports`, `sendAllDigests`);
+- `hasFeature`.
+
 ## Заморозка тегов
 
 При понижении до тарифа с меньшим `tag_limit`:

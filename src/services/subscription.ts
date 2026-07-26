@@ -987,6 +987,28 @@ export async function cancelScheduledDowngrade(userId: string): Promise<void> {
 
 export async function processScheduledDowngrades(): Promise<number> {
   const now = nowSql();
+  let processed = 0;
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TZ_SUBSCRIPTION_EXPIRE: deactivate expired paid subscriptions that have
+  // no scheduled downgrade. Without this step subscription_active stays TRUE
+  // forever and the archived-plan downgrade branch never runs.
+  // ═══════════════════════════════════════════════════════════════════════════
+  const expiredResult = await query(
+    `UPDATE users
+     SET subscription_active = FALSE
+     WHERE subscription_active = TRUE
+       AND subscription_expires_at < ${now}
+       AND subscription_plan IN (SELECT id FROM subscription_plans WHERE plan_level >= 1)
+       AND scheduled_plan_downgrade IS NULL
+     RETURNING id, subscription_plan`,
+    []
+  );
+  processed += expiredResult.rows.length;
+  for (const row of expiredResult.rows) {
+    console.log(`[SubscriptionExpire] Deactivated expired subscription: user=${row.id}, plan=${row.subscription_plan}`);
+  }
+
   const result = await query(
     `SELECT id, scheduled_plan_downgrade, subscription_plan, subscription_active
      FROM users
@@ -1000,7 +1022,6 @@ export async function processScheduledDowngrades(): Promise<number> {
     []
   );
 
-  let processed = 0;
   for (const row of result.rows) {
     const targetPlan = row.scheduled_plan_downgrade || 'free';
     const keepActive = targetPlan !== 'free';
