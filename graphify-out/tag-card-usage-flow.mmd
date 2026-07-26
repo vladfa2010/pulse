@@ -1,0 +1,51 @@
+flowchart TD
+    Admin(["Админ"])
+    TagsTab["TagsTab.tsx<br/>Список тегов"]
+    AdminPage["Admin.tsx<br/>Страница админки"]
+    TagCard["TagDetailModal.tsx<br/>Карточка тега"]
+    
+    GET_LIST["GET /admin/tags<br/>index.ts:1870"]
+    GET_DETAIL["GET /admin/tags/:tagId<br/>index.ts:2041"]
+    PUT_TAG["PUT /admin/tags/:tagId<br/>index.ts:2287"]
+    ENRICH["POST /admin/tags/:tagId/enrich<br/>index.ts:2522"]
+    SCAN["POST /admin/tags/:tagId/backfill-matches<br/>index.ts:2603"]
+    DELETE["DELETE /admin/tags/:tagId<br/>index.ts:2659"]
+    BACKFILL["POST /admin/backfill<br/>index.ts:?"]
+    
+    DB[("user_defined_tags<br/>+ enriched_data JSONB")]
+    News[("news<br/>matched_tags")]
+    
+    Admin -->|"1. Открыть Tags"| TagsTab
+    TagsTab -->|"2. Загрузить список"| GET_LIST
+    GET_LIST --> DB
+    GET_LIST -->|"список тегов"| TagsTab
+    
+    TagsTab -->|"3. onSelectTag(tagId)"| AdminPage
+    AdminPage -->|"4. Открыть модалку"| TagCard
+    TagCard -->|"5. GET /admin/tags/:tagId"| GET_DETAIL
+    GET_DETAIL --> DB
+    GET_DETAIL -->|"TagDetailResponse"| TagCard
+    
+    TagCard -->|"Редактировать поле<br/>→ handleSave"| PUT_TAG
+    PUT_TAG --> DB
+    PUT_TAG -->|"updated_fields"| TagCard
+    
+    TagCard -->|"Verified toggle"| PUT_TAG
+    TagCard -->|"dispatch tag:verified"| TagsTab
+    
+    TagCard -->|"Enrich Tag"| ENRICH
+    ENRICH -->|"LLM + поиск"| DB
+    ENRICH -->|"перезагрузить"| TagCard
+    
+    TagCard -->|"Scan Preview / Run"| SCAN
+    SCAN -->|"матчинг по keywords"| News
+    SCAN -->|"результат"| TagCard
+    
+    TagCard -->|"Backfill"| BACKFILL
+    BACKFILL -->|"перепривязать статьи"| News
+    BACKFILL -->|"result"| TagCard
+    
+    TagCard -->|"Delete Tag"| DELETE
+    DELETE --> DB
+    DELETE -->|"dispatch tag:deleted"| TagsTab
+    DELETE -->|"onClose"| AdminPage

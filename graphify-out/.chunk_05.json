@@ -1,0 +1,3479 @@
+{
+  "nodes": [
+    {
+      "id": "tz_tag_protection_doc",
+      "label": "TZ_tag_protection.md",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_protection.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_translit_dedup_doc",
+      "label": "TZ_tag_translit_dedup.md",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_translit_dedup.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_web_search_forced_doc",
+      "label": "TZ_web_search_forced.md",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_web_search_forced.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_metriks_bugfix_doc",
+      "label": "TZ_метрикс_BUGFIX.md",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_метрикс_BUGFIX.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "activities_list_doc",
+      "label": "activities-list.md",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/activities-list.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "carousel_flip_fixed_v2_doc",
+      "label": "carousel-flip-fixed-v2.html",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/carousel-flip-fixed-v2.html",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact_check_five_engines_tz_doc",
+      "label": "fact-check--five-engines-tz.md",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check--five-engines-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact_check_bugfix_tz_doc",
+      "label": "fact-check-bugfix-tz.md",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-bugfix-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact_check_tg_email_doc",
+      "label": "fact-check-tg email.md",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-tg email.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact_check_tz_v3_doc",
+      "label": "fact-check-tz-v3.md",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-tz-v3.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact_check_v4_final_impl_tz_doc",
+      "label": "fact-check-v4-final-impl-tz.md",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v4-final-impl-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact_check_v5_impl_tz_doc",
+      "label": "fact-check-v5-impl-tz.md",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v5-impl-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact10_check_logs_tz_doc",
+      "label": "fact10-check-logs-tz.md",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact10-check-logs-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact11_check_remove_min_tz_doc",
+      "label": "fact11-check-remove-min-tz.md",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact11-check-remove-min-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact12_check_websearch_loop_fix_tz_doc",
+      "label": "fact12-check-websearch-loop-fix-tz.md",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact12-check-websearch-loop-fix-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact13_check_e2e_tz_doc",
+      "label": "fact13-check-e2e-tz.md",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact13-check-e2e-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact2_check_bugfix_tz_doc",
+      "label": "fact2-check-bugfix-tz.md",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact2-check-bugfix-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact20_check_e2e_v2_tz_doc",
+      "label": "fact20-check-e2e-v2-tz.md",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact20-check-e2e-v2-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact21_check_status_fix_tz_doc",
+      "label": "fact21-check-status-fix-tz.md",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact21-check-status-fix-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact3_check_debug_tz_doc",
+      "label": "fact3-check-debug-tz.md",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact3-check-debug-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact30_check_v3_pipeline_tz_doc",
+      "label": "fact30-check-v3-pipeline-tz.md",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact30-check-v3-pipeline-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact31_check_news_enrich_tz_doc",
+      "label": "fact31-check-news-enrich-tz.md",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact31-check-news-enrich-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_protection_createuser_tag",
+      "label": "createUserTag function",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_protection.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_protection_user_defined_tags",
+      "label": "user_defined_tags table",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_protection.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_protection_portfolios",
+      "label": "portfolios table",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_protection.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_protection_enrich_tag_via_llm",
+      "label": "enrichTagViaLLM function",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_protection.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_protection_build_enriched_keywords",
+      "label": "buildEnrichedKeywords function",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_protection.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_protection_generate_tag_keywords",
+      "label": "generateTagKeywords function",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_protection.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_protection_heuristic_tag_type",
+      "label": "heuristicTagType function",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_protection.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_protection_on_conflict_update",
+      "label": "INSERT ON CONFLICT UPDATE pattern",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_protection.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_protection_tag_id_normalization",
+      "label": "tag_id normalization",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_protection.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_protection_race_condition_23505",
+      "label": "race condition 23505 handling",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_protection.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_protection_admin_tag_edit",
+      "label": "PUT /admin/tags/:tagId endpoint",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_protection.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_translit_dedup_transliteration_deduplication",
+      "label": "transliteration deduplication",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_translit_dedup.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_translit_dedup_get_translit_variants",
+      "label": "getTranslitVariants function",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_translit_dedup.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_translit_dedup_to_latin",
+      "label": "toLatin function",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_translit_dedup.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_translit_dedup_to_cyrillic",
+      "label": "toCyrillic function",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_translit_dedup.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_translit_dedup_three_level_check",
+      "label": "three-level tag check",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_translit_dedup.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_translit_dedup_phonetic_limitation",
+      "label": "phonetic transliteration limitation",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_translit_dedup.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_translit_dedup_hardcoded_aliases",
+      "label": "hardcoded aliases for top tags",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_translit_dedup.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_web_search_forced_tool_choice_forced",
+      "label": "tool_choice forced $web_search",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_web_search_forced.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_web_search_forced_tag_enrich_search",
+      "label": "TagEnrichSearch round",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_web_search_forced.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_web_search_forced_moonshot_api",
+      "label": "Moonshot/Kimi API",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_web_search_forced.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_metriks_bugfix_toggle_admin",
+      "label": "POST /admin/users/:id/toggle-admin",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_метрикс_BUGFIX.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_metriks_bugfix_toggle_block",
+      "label": "POST /admin/users/:id/toggle-block",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_метрикс_BUGFIX.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_metriks_bugfix_reset_password",
+      "label": "POST /admin/users/:id/reset-password",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_метрикс_BUGFIX.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_metriks_bugfix_users_is_blocked",
+      "label": "users.is_blocked column",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_метрикс_BUGFIX.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_metriks_bugfix_users_last_login_at",
+      "label": "users.last_login_at column",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_метрикс_BUGFIX.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_metriks_bugfix_push_notification_columns",
+      "label": "push_notifications_sent title/source columns",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_метрикс_BUGFIX.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_metriks_bugfix_admin_metrics",
+      "label": "GET /admin/metrics endpoint",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_метрикс_BUGFIX.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_metriks_bugfix_product_metrics_tab",
+      "label": "ProductMetricsTab component",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_метрикс_BUGFIX.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_metriks_bugfix_login_source",
+      "label": "login source platform detection",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_метрикс_BUGFIX.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "activities_list_user_events_table",
+      "label": "user_events table",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/activities-list.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "activities_list_activity_log_service",
+      "label": "activityLog service",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/activities-list.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "activities_list_admin_events_endpoint",
+      "label": "GET /admin/events endpoint",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/activities-list.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "activities_list_admin_events_stats_endpoint",
+      "label": "GET /admin/events/stats endpoint",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/activities-list.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "activities_list_users_tab_search",
+      "label": "UsersTab search filter",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/activities-list.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "activities_list_activity_feed",
+      "label": "ActivityFeed component",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/activities-list.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "activities_list_tg_alerts_tab",
+      "label": "TgAlertsTab component",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/activities-list.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "activities_list_page_view_plans",
+      "label": "page_view_plans event",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/activities-list.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "carousel_flip_fixed_v2_flip_animation",
+      "label": "FLIP carousel animation",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/carousel-flip-fixed-v2.html",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "carousel_flip_fixed_v2_frost_effect",
+      "label": "frost overlay effect",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/carousel-flip-fixed-v2.html",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "carousel_flip_fixed_v2_card_states",
+      "label": "positive/negative/neutral card states",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/carousel-flip-fixed-v2.html",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact_check_tz_v3_fact_check_pipeline",
+      "label": "on-demand fact-check pipeline",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-tz-v3.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact_check_tz_v3_fact_check_jobs",
+      "label": "fact_check_jobs table",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-tz-v3.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact_check_tz_v3_fact_check_status",
+      "label": "news.fact_check_status",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-tz-v3.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact_check_tz_v3_fact_check_result",
+      "label": "news.fact_check_result JSON",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-tz-v3.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact_check_tz_v3_post_fact_check",
+      "label": "POST /api/news/:id/fact-check",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-tz-v3.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact_check_tz_v3_get_fact_check",
+      "label": "GET /api/news/:id/fact-check",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-tz-v3.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact_check_tz_v3_retry_fact_check",
+      "label": "POST /api/news/:id/fact-check/retry",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-tz-v3.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact_check_tz_v3_rate_limit",
+      "label": "fact-check rate limit 10/30 per hour",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-tz-v3.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact_check_tz_v3_premium_access",
+      "label": "Premium/Club/Pro fact-check access",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-tz-v3.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact_check_tz_v3_ttl_24h",
+      "label": "fact-check result TTL 24h",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-tz-v3.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact_check_tz_v3_polling",
+      "label": "frontend polling 2s",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-tz-v3.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact_check_v4_final_impl_tz_yandex_search",
+      "label": "Yandex Search API",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v4-final-impl-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact_check_v4_final_impl_tz_fast_xml_parser",
+      "label": "fast-xml-parser dependency",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v4-final-impl-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact_check_v4_final_impl_tz_dual_search",
+      "label": "Kimi + Yandex dual search",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v4-final-impl-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact_check_v4_final_impl_tz_step2_analysis",
+      "label": "Step 2 analysis",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v4-final-impl-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact_check_v4_final_impl_tz_step3_sources",
+      "label": "Step 3 sources extraction",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v4-final-impl-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact_check_v4_final_impl_tz_step4_assessment",
+      "label": "Step 4 assessment",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v4-final-impl-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact_check_v4_final_impl_tz_dedup_by_url",
+      "label": "dedup by URL",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v4-final-impl-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact_check_v4_final_impl_tz_progress_panel",
+      "label": "ProgressPanel UI",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v4-final-impl-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact_check_v4_final_impl_tz_source_card_badge",
+      "label": "SourceCard engine badge",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v4-final-impl-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact_check_v4_final_impl_tz_assessment_panel",
+      "label": "AssessmentPanel donut score",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v4-final-impl-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact_check_v4_final_impl_tz_public_result",
+      "label": "fact-check result visible to all",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v4-final-impl-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact_check_five_engines_tz_serper_search",
+      "label": "Serper News API",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check--five-engines-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact_check_five_engines_tz_five_engine_search",
+      "label": "five-engine search (Kimi/Yandex/Serper)",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check--five-engines-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact_check_five_engines_tz_result_tabs_filter",
+      "label": "ResultTabs engine filter",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check--five-engines-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact_check_five_engines_tz_fact_check_notifications",
+      "label": "fact-check email/Telegram notifications",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check--five-engines-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact_check_v5_impl_tz_engine_badge_fix",
+      "label": "engine badge fix (URL/domain fallback)",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v5-impl-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact_check_v5_impl_tz_yandex_api_key_env",
+      "label": "YANDEX_API_KEY env fallback fix",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v5-impl-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact_check_v5_impl_tz_analysis_shared_context",
+      "label": "analysis in shared context",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v5-impl-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact_check_v5_impl_tz_normalize_source_engine",
+      "label": "normalizeSource preserve engine",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v5-impl-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact_check_bugfix_tz_run_web_search_loop",
+      "label": "runWebSearchLoop",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-bugfix-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact_check_bugfix_tz_json_stringify_bug",
+      "label": "JSON.stringify tool arguments bug",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-bugfix-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact2_check_bugfix_tz_tool_choice_invalid",
+      "label": "tool_choice builtin_function invalid",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact2-check-bugfix-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact2_check_bugfix_tz_thinking_disabled",
+      "label": "thinking disabled for web_search",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact2-check-bugfix-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact2_check_bugfix_tz_round_trip",
+      "label": "JSON parse/stringify round-trip",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact2-check-bugfix-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact3_check_debug_tz_conditional_thinking",
+      "label": "conditional thinking parameter",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact3-check-debug-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact3_check_debug_tz_request_response_logging",
+      "label": "request/response logging",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact3-check-debug-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact10_check_logs_tz_pipeline_logging",
+      "label": "pipeline logging (claims/search/verdict)",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact10-check-logs-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact11_check_remove_min_tz_remove_min_length",
+      "label": "remove 50-char minimum length",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact11-check-remove-min-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact12_check_websearch_loop_fix_tz_always_tools",
+      "label": "always pass tools in web_search loop",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact12-check-websearch-loop-fix-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact12_check_websearch_loop_fix_tz_web_search_timeout",
+      "label": "120s vs 300s timeout",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact12-check-websearch-loop-fix-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact13_check_e2e_tz_end_to_end_single_call",
+      "label": "end-to-end single LLM call",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact13-check-e2e-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact13_check_e2e_tz_search_cache",
+      "label": "search_cache table",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact13-check-e2e-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact20_check_e2e_v2_tz_openai_sdk",
+      "label": "OpenAI SDK for Kimi",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact20-check-e2e-v2-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact20_check_e2e_v2_tz_echo_pattern",
+      "label": "echo tool arguments pattern",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact20-check-e2e-v2-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact21_check_status_fix_tz_jobs_constraint",
+      "label": "fact_check_jobs status constraint fix",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact21-check-status-fix-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact30_check_v3_pipeline_tz_sessions_table",
+      "label": "fact_check_sessions table",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact30-check-v3-pipeline-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact30_check_v3_pipeline_tz_sse_endpoint",
+      "label": "SSE /api/news/:id/fact-check/stream",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact30-check-v3-pipeline-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact30_check_v3_pipeline_tz_use_fact_check_sse",
+      "label": "useFactCheckSSE hook",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact30-check-v3-pipeline-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact30_check_v3_pipeline_tz_fact_check_progress",
+      "label": "FactCheckProgress component",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact30-check-v3-pipeline-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact30_check_v3_pipeline_tz_run_pipeline_generator",
+      "label": "runFactCheckPipeline generator",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact30-check-v3-pipeline-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact30_check_v3_pipeline_tz_fetch_tool",
+      "label": "$fetch builtin tool",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact30-check-v3-pipeline-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact31_check_news_enrich_tz_update_news_fact_check",
+      "label": "updateNewsFactCheck function",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact31-check-news-enrich-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact31_check_news_enrich_tz_public_visibility",
+      "label": "fact-check result public visibility",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact31-check-news-enrich-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_protection_rationale_separate_creation",
+      "label": "Separate tag creation from portfolio subscription",
+      "file_type": "rationale",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_protection.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_protection_rationale_preserve_enriched",
+      "label": "Preserve enriched_data and keywords on resubscribe",
+      "file_type": "rationale",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_protection.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_translit_dedup_rationale_avoid_duplicates",
+      "label": "Avoid duplicate tags for latin/cyrillic variants",
+      "file_type": "rationale",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_translit_dedup.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_web_search_forced_rationale_fresh_data",
+      "label": "Force web search to use fresh internet data",
+      "file_type": "rationale",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_web_search_forced.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_metriks_bugfix_rationale_admin_endpoints",
+      "label": "Add missing admin endpoints to match frontend",
+      "file_type": "rationale",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_метрикс_BUGFIX.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "activities_list_rationale_no_retention",
+      "label": "Never delete user events, keep all data",
+      "file_type": "rationale",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/activities-list.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "carousel_flip_fixed_v2_rationale_reset_inline",
+      "label": "Reset inline styles before FLIP measurement",
+      "file_type": "rationale",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/carousel-flip-fixed-v2.html",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact_check_five_engines_tz_rationale_coverage",
+      "label": "Five engines improve source coverage",
+      "file_type": "rationale",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check--five-engines-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact_check_v4_final_impl_tz_rationale_public_trust",
+      "label": "Show fact-check result to all users for trust",
+      "file_type": "rationale",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v4-final-impl-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact_check_v5_impl_tz_rationale_badge_accuracy",
+      "label": "Fix engine badges to reflect true source engine",
+      "file_type": "rationale",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v5-impl-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact_check_bugfix_tz_rationale_no_double_stringify",
+      "label": "Do not double-stringify tool arguments",
+      "file_type": "rationale",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-bugfix-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact2_check_bugfix_tz_rationale_api_docs_compliance",
+      "label": "Comply with Kimi API tool-calling docs",
+      "file_type": "rationale",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact2-check-bugfix-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact13_check_e2e_tz_rationale_latency",
+      "label": "Single LLM call reduces latency and cost",
+      "file_type": "rationale",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact13-check-e2e-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact20_check_e2e_v2_tz_rationale_sdk_handling",
+      "label": "OpenAI SDK properly handles tool calls",
+      "file_type": "rationale",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact20-check-e2e-v2-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact11_check_remove_min_tz_rationale_short_news",
+      "label": "Short news can still contain checkable facts",
+      "file_type": "rationale",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact11-check-remove-min-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact12_check_websearch_loop_fix_tz_rationale_consistent_timeout",
+      "label": "Always pass tools to keep 300s timeout",
+      "file_type": "rationale",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact12-check-websearch-loop-fix-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact30_check_v3_pipeline_tz_rationale_visibility",
+      "label": "SSE pipeline gives real-time progress visibility",
+      "file_type": "rationale",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact30-check-v3-pipeline-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "fact31_check_news_enrich_tz_rationale_transparency",
+      "label": "Public fact-check results increase transparency",
+      "file_type": "rationale",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact31-check-news-enrich-tz.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    }
+  ],
+  "edges": [
+    {
+      "source": "tz_tag_protection_doc",
+      "target": "tz_tag_protection_createuser_tag",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_protection.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_protection_doc",
+      "target": "tz_tag_protection_user_defined_tags",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_protection.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_protection_doc",
+      "target": "tz_tag_protection_portfolios",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_protection.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_protection_doc",
+      "target": "tz_tag_protection_enrich_tag_via_llm",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_protection.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_protection_doc",
+      "target": "tz_tag_protection_build_enriched_keywords",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_protection.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_protection_doc",
+      "target": "tz_tag_protection_generate_tag_keywords",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_protection.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_protection_doc",
+      "target": "tz_tag_protection_heuristic_tag_type",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_protection.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_protection_doc",
+      "target": "tz_tag_protection_on_conflict_update",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_protection.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_protection_doc",
+      "target": "tz_tag_protection_tag_id_normalization",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_protection.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_protection_doc",
+      "target": "tz_tag_protection_race_condition_23505",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_protection.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_protection_doc",
+      "target": "tz_tag_protection_admin_tag_edit",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_protection.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_translit_dedup_doc",
+      "target": "tz_tag_translit_dedup_transliteration_deduplication",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_translit_dedup.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_translit_dedup_doc",
+      "target": "tz_tag_translit_dedup_get_translit_variants",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_translit_dedup.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_translit_dedup_doc",
+      "target": "tz_tag_translit_dedup_to_latin",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_translit_dedup.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_translit_dedup_doc",
+      "target": "tz_tag_translit_dedup_to_cyrillic",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_translit_dedup.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_translit_dedup_doc",
+      "target": "tz_tag_translit_dedup_three_level_check",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_translit_dedup.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_translit_dedup_doc",
+      "target": "tz_tag_translit_dedup_phonetic_limitation",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_translit_dedup.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_translit_dedup_doc",
+      "target": "tz_tag_translit_dedup_hardcoded_aliases",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_translit_dedup.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_web_search_forced_doc",
+      "target": "tz_web_search_forced_tool_choice_forced",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_web_search_forced.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_web_search_forced_doc",
+      "target": "tz_web_search_forced_tag_enrich_search",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_web_search_forced.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_web_search_forced_doc",
+      "target": "tz_web_search_forced_moonshot_api",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_web_search_forced.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_metriks_bugfix_doc",
+      "target": "tz_metriks_bugfix_toggle_admin",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_метрикс_BUGFIX.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_metriks_bugfix_doc",
+      "target": "tz_metriks_bugfix_toggle_block",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_метрикс_BUGFIX.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_metriks_bugfix_doc",
+      "target": "tz_metriks_bugfix_reset_password",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_метрикс_BUGFIX.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_metriks_bugfix_doc",
+      "target": "tz_metriks_bugfix_users_is_blocked",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_метрикс_BUGFIX.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_metriks_bugfix_doc",
+      "target": "tz_metriks_bugfix_users_last_login_at",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_метрикс_BUGFIX.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_metriks_bugfix_doc",
+      "target": "tz_metriks_bugfix_push_notification_columns",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_метрикс_BUGFIX.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_metriks_bugfix_doc",
+      "target": "tz_metriks_bugfix_admin_metrics",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_метрикс_BUGFIX.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_metriks_bugfix_doc",
+      "target": "tz_metriks_bugfix_product_metrics_tab",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_метрикс_BUGFIX.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_metriks_bugfix_doc",
+      "target": "tz_metriks_bugfix_login_source",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_метрикс_BUGFIX.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "activities_list_doc",
+      "target": "activities_list_user_events_table",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/activities-list.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "activities_list_doc",
+      "target": "activities_list_activity_log_service",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/activities-list.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "activities_list_doc",
+      "target": "activities_list_admin_events_endpoint",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/activities-list.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "activities_list_doc",
+      "target": "activities_list_admin_events_stats_endpoint",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/activities-list.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "activities_list_doc",
+      "target": "activities_list_users_tab_search",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/activities-list.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "activities_list_doc",
+      "target": "activities_list_activity_feed",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/activities-list.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "activities_list_doc",
+      "target": "activities_list_tg_alerts_tab",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/activities-list.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "activities_list_doc",
+      "target": "activities_list_page_view_plans",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/activities-list.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "carousel_flip_fixed_v2_doc",
+      "target": "carousel_flip_fixed_v2_flip_animation",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/carousel-flip-fixed-v2.html",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "carousel_flip_fixed_v2_doc",
+      "target": "carousel_flip_fixed_v2_frost_effect",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/carousel-flip-fixed-v2.html",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "carousel_flip_fixed_v2_doc",
+      "target": "carousel_flip_fixed_v2_card_states",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/carousel-flip-fixed-v2.html",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_tz_v3_doc",
+      "target": "fact_check_tz_v3_fact_check_pipeline",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-tz-v3.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_tz_v3_doc",
+      "target": "fact_check_tz_v3_fact_check_jobs",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-tz-v3.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_tz_v3_doc",
+      "target": "fact_check_tz_v3_fact_check_status",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-tz-v3.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_tz_v3_doc",
+      "target": "fact_check_tz_v3_fact_check_result",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-tz-v3.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_tz_v3_doc",
+      "target": "fact_check_tz_v3_post_fact_check",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-tz-v3.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_tz_v3_doc",
+      "target": "fact_check_tz_v3_get_fact_check",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-tz-v3.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_tz_v3_doc",
+      "target": "fact_check_tz_v3_retry_fact_check",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-tz-v3.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_tz_v3_doc",
+      "target": "fact_check_tz_v3_rate_limit",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-tz-v3.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_tz_v3_doc",
+      "target": "fact_check_tz_v3_premium_access",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-tz-v3.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_tz_v3_doc",
+      "target": "fact_check_tz_v3_ttl_24h",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-tz-v3.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_tz_v3_doc",
+      "target": "fact_check_tz_v3_polling",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-tz-v3.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_v4_final_impl_tz_doc",
+      "target": "fact_check_v4_final_impl_tz_yandex_search",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v4-final-impl-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_v4_final_impl_tz_doc",
+      "target": "fact_check_v4_final_impl_tz_fast_xml_parser",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v4-final-impl-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_v4_final_impl_tz_doc",
+      "target": "fact_check_v4_final_impl_tz_dual_search",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v4-final-impl-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_v4_final_impl_tz_doc",
+      "target": "fact_check_v4_final_impl_tz_step2_analysis",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v4-final-impl-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_v4_final_impl_tz_doc",
+      "target": "fact_check_v4_final_impl_tz_step3_sources",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v4-final-impl-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_v4_final_impl_tz_doc",
+      "target": "fact_check_v4_final_impl_tz_step4_assessment",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v4-final-impl-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_v4_final_impl_tz_doc",
+      "target": "fact_check_v4_final_impl_tz_dedup_by_url",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v4-final-impl-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_v4_final_impl_tz_doc",
+      "target": "fact_check_v4_final_impl_tz_progress_panel",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v4-final-impl-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_v4_final_impl_tz_doc",
+      "target": "fact_check_v4_final_impl_tz_source_card_badge",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v4-final-impl-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_v4_final_impl_tz_doc",
+      "target": "fact_check_v4_final_impl_tz_assessment_panel",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v4-final-impl-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_v4_final_impl_tz_doc",
+      "target": "fact_check_v4_final_impl_tz_public_result",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v4-final-impl-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_five_engines_tz_doc",
+      "target": "fact_check_five_engines_tz_serper_search",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check--five-engines-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_five_engines_tz_doc",
+      "target": "fact_check_five_engines_tz_five_engine_search",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check--five-engines-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_five_engines_tz_doc",
+      "target": "fact_check_five_engines_tz_result_tabs_filter",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check--five-engines-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_five_engines_tz_doc",
+      "target": "fact_check_five_engines_tz_fact_check_notifications",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check--five-engines-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_v5_impl_tz_doc",
+      "target": "fact_check_v5_impl_tz_engine_badge_fix",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v5-impl-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_v5_impl_tz_doc",
+      "target": "fact_check_v5_impl_tz_yandex_api_key_env",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v5-impl-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_v5_impl_tz_doc",
+      "target": "fact_check_v5_impl_tz_analysis_shared_context",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v5-impl-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_v5_impl_tz_doc",
+      "target": "fact_check_v5_impl_tz_normalize_source_engine",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v5-impl-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_bugfix_tz_doc",
+      "target": "fact_check_bugfix_tz_run_web_search_loop",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-bugfix-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_bugfix_tz_doc",
+      "target": "fact_check_bugfix_tz_json_stringify_bug",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-bugfix-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact2_check_bugfix_tz_doc",
+      "target": "fact2_check_bugfix_tz_tool_choice_invalid",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact2-check-bugfix-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact2_check_bugfix_tz_doc",
+      "target": "fact2_check_bugfix_tz_thinking_disabled",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact2-check-bugfix-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact2_check_bugfix_tz_doc",
+      "target": "fact2_check_bugfix_tz_round_trip",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact2-check-bugfix-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact3_check_debug_tz_doc",
+      "target": "fact3_check_debug_tz_conditional_thinking",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact3-check-debug-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact3_check_debug_tz_doc",
+      "target": "fact3_check_debug_tz_request_response_logging",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact3-check-debug-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact10_check_logs_tz_doc",
+      "target": "fact10_check_logs_tz_pipeline_logging",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact10-check-logs-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact11_check_remove_min_tz_doc",
+      "target": "fact11_check_remove_min_tz_remove_min_length",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact11-check-remove-min-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact12_check_websearch_loop_fix_tz_doc",
+      "target": "fact12_check_websearch_loop_fix_tz_always_tools",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact12-check-websearch-loop-fix-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact12_check_websearch_loop_fix_tz_doc",
+      "target": "fact12_check_websearch_loop_fix_tz_web_search_timeout",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact12-check-websearch-loop-fix-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact13_check_e2e_tz_doc",
+      "target": "fact13_check_e2e_tz_end_to_end_single_call",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact13-check-e2e-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact13_check_e2e_tz_doc",
+      "target": "fact13_check_e2e_tz_search_cache",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact13-check-e2e-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact20_check_e2e_v2_tz_doc",
+      "target": "fact20_check_e2e_v2_tz_openai_sdk",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact20-check-e2e-v2-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact20_check_e2e_v2_tz_doc",
+      "target": "fact20_check_e2e_v2_tz_echo_pattern",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact20-check-e2e-v2-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact21_check_status_fix_tz_doc",
+      "target": "fact21_check_status_fix_tz_jobs_constraint",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact21-check-status-fix-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact30_check_v3_pipeline_tz_doc",
+      "target": "fact30_check_v3_pipeline_tz_sessions_table",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact30-check-v3-pipeline-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact30_check_v3_pipeline_tz_doc",
+      "target": "fact30_check_v3_pipeline_tz_sse_endpoint",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact30-check-v3-pipeline-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact30_check_v3_pipeline_tz_doc",
+      "target": "fact30_check_v3_pipeline_tz_use_fact_check_sse",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact30-check-v3-pipeline-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact30_check_v3_pipeline_tz_doc",
+      "target": "fact30_check_v3_pipeline_tz_fact_check_progress",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact30-check-v3-pipeline-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact30_check_v3_pipeline_tz_doc",
+      "target": "fact30_check_v3_pipeline_tz_run_pipeline_generator",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact30-check-v3-pipeline-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact30_check_v3_pipeline_tz_doc",
+      "target": "fact30_check_v3_pipeline_tz_fetch_tool",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact30-check-v3-pipeline-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact31_check_news_enrich_tz_doc",
+      "target": "fact31_check_news_enrich_tz_update_news_fact_check",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact31-check-news-enrich-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact31_check_news_enrich_tz_doc",
+      "target": "fact31_check_news_enrich_tz_public_visibility",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact31-check-news-enrich-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_protection_rationale_separate_creation",
+      "target": "tz_tag_protection_createuser_tag",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_protection.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_protection_rationale_preserve_enriched",
+      "target": "tz_tag_protection_user_defined_tags",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_protection.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_protection_rationale_preserve_enriched",
+      "target": "tz_tag_protection_enrich_tag_via_llm",
+      "relation": "rationale_for",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_protection.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_translit_dedup_rationale_avoid_duplicates",
+      "target": "tz_tag_translit_dedup_transliteration_deduplication",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_translit_dedup.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_web_search_forced_rationale_fresh_data",
+      "target": "tz_web_search_forced_tool_choice_forced",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_web_search_forced.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_metriks_bugfix_rationale_admin_endpoints",
+      "target": "tz_metriks_bugfix_toggle_admin",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_метрикс_BUGFIX.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_metriks_bugfix_rationale_admin_endpoints",
+      "target": "tz_metriks_bugfix_toggle_block",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_метрикс_BUGFIX.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_metriks_bugfix_rationale_admin_endpoints",
+      "target": "tz_metriks_bugfix_reset_password",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_метрикс_BUGFIX.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "activities_list_rationale_no_retention",
+      "target": "activities_list_user_events_table",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/activities-list.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "carousel_flip_fixed_v2_rationale_reset_inline",
+      "target": "carousel_flip_fixed_v2_flip_animation",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/carousel-flip-fixed-v2.html",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_five_engines_tz_rationale_coverage",
+      "target": "fact_check_five_engines_tz_five_engine_search",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check--five-engines-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_v4_final_impl_tz_rationale_public_trust",
+      "target": "fact_check_v4_final_impl_tz_public_result",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v4-final-impl-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_v5_impl_tz_rationale_badge_accuracy",
+      "target": "fact_check_v5_impl_tz_engine_badge_fix",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v5-impl-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_bugfix_tz_rationale_no_double_stringify",
+      "target": "fact_check_bugfix_tz_json_stringify_bug",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-bugfix-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact2_check_bugfix_tz_rationale_api_docs_compliance",
+      "target": "fact2_check_bugfix_tz_tool_choice_invalid",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact2-check-bugfix-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact2_check_bugfix_tz_rationale_api_docs_compliance",
+      "target": "fact2_check_bugfix_tz_thinking_disabled",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact2-check-bugfix-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact13_check_e2e_tz_rationale_latency",
+      "target": "fact13_check_e2e_tz_end_to_end_single_call",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact13-check-e2e-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact20_check_e2e_v2_tz_rationale_sdk_handling",
+      "target": "fact20_check_e2e_v2_tz_openai_sdk",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact20-check-e2e-v2-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact11_check_remove_min_tz_rationale_short_news",
+      "target": "fact11_check_remove_min_tz_remove_min_length",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact11-check-remove-min-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact12_check_websearch_loop_fix_tz_rationale_consistent_timeout",
+      "target": "fact12_check_websearch_loop_fix_tz_always_tools",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact12-check-websearch-loop-fix-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact30_check_v3_pipeline_tz_rationale_visibility",
+      "target": "fact30_check_v3_pipeline_tz_sse_endpoint",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact30-check-v3-pipeline-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact31_check_news_enrich_tz_rationale_transparency",
+      "target": "fact31_check_news_enrich_tz_public_visibility",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact31-check-news-enrich-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_protection_createuser_tag",
+      "target": "tz_tag_protection_user_defined_tags",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_protection.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_protection_createuser_tag",
+      "target": "tz_tag_protection_portfolios",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_protection.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_protection_createuser_tag",
+      "target": "tz_tag_protection_enrich_tag_via_llm",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_protection.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_protection_createuser_tag",
+      "target": "tz_tag_protection_on_conflict_update",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_protection.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_protection_createuser_tag",
+      "target": "tz_tag_protection_tag_id_normalization",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_protection.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_protection_createuser_tag",
+      "target": "tz_tag_protection_race_condition_23505",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_protection.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_protection_admin_tag_edit",
+      "target": "tz_tag_protection_user_defined_tags",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_protection.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_translit_dedup_get_translit_variants",
+      "target": "tz_tag_protection_createuser_tag",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_translit_dedup.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_translit_dedup_three_level_check",
+      "target": "tz_tag_protection_createuser_tag",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_translit_dedup.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_translit_dedup_phonetic_limitation",
+      "target": "tz_tag_translit_dedup_hardcoded_aliases",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.75,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_translit_dedup.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_web_search_forced_tag_enrich_search",
+      "target": "tz_tag_protection_enrich_tag_via_llm",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_web_search_forced.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_web_search_forced_tool_choice_forced",
+      "target": "tz_web_search_forced_moonshot_api",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_web_search_forced.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_metriks_bugfix_toggle_block",
+      "target": "tz_metriks_bugfix_users_is_blocked",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_метрикс_BUGFIX.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_metriks_bugfix_login_source",
+      "target": "tz_metriks_bugfix_users_last_login_at",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_метрикс_BUGFIX.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_metriks_bugfix_admin_metrics",
+      "target": "tz_metriks_bugfix_product_metrics_tab",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_метрикс_BUGFIX.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "activities_list_activity_log_service",
+      "target": "activities_list_user_events_table",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/activities-list.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "activities_list_admin_events_endpoint",
+      "target": "activities_list_user_events_table",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/activities-list.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "activities_list_admin_events_stats_endpoint",
+      "target": "activities_list_user_events_table",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/activities-list.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "activities_list_activity_feed",
+      "target": "activities_list_admin_events_endpoint",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/activities-list.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "activities_list_users_tab_search",
+      "target": "activities_list_tg_alerts_tab",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.65,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/activities-list.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "activities_list_page_view_plans",
+      "target": "tz_web_search_forced_moonshot_api",
+      "relation": "conceptually_related_to",
+      "confidence": "AMBIGUOUS",
+      "confidence_score": 0.3,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/activities-list.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_tz_v3_fact_check_pipeline",
+      "target": "fact_check_tz_v3_fact_check_jobs",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-tz-v3.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_tz_v3_fact_check_pipeline",
+      "target": "fact_check_tz_v3_fact_check_status",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-tz-v3.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_tz_v3_fact_check_pipeline",
+      "target": "fact_check_tz_v3_fact_check_result",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-tz-v3.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_tz_v3_post_fact_check",
+      "target": "fact_check_tz_v3_fact_check_jobs",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-tz-v3.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_tz_v3_get_fact_check",
+      "target": "fact_check_tz_v3_fact_check_status",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-tz-v3.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_tz_v3_retry_fact_check",
+      "target": "fact_check_tz_v3_fact_check_jobs",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-tz-v3.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_tz_v3_rate_limit",
+      "target": "fact_check_tz_v3_post_fact_check",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-tz-v3.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_tz_v3_premium_access",
+      "target": "fact_check_tz_v3_post_fact_check",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-tz-v3.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_tz_v3_ttl_24h",
+      "target": "fact_check_tz_v3_fact_check_result",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-tz-v3.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_tz_v3_polling",
+      "target": "fact_check_tz_v3_get_fact_check",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-tz-v3.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_v4_final_impl_tz_dual_search",
+      "target": "fact_check_v4_final_impl_tz_yandex_search",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v4-final-impl-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_v4_final_impl_tz_dual_search",
+      "target": "tz_web_search_forced_moonshot_api",
+      "relation": "references",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v4-final-impl-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_v4_final_impl_tz_dual_search",
+      "target": "fact_check_v4_final_impl_tz_dedup_by_url",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v4-final-impl-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_v4_final_impl_tz_step2_analysis",
+      "target": "fact_check_v4_final_impl_tz_dual_search",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v4-final-impl-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_v4_final_impl_tz_step3_sources",
+      "target": "fact_check_v4_final_impl_tz_step2_analysis",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v4-final-impl-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_v4_final_impl_tz_step4_assessment",
+      "target": "fact_check_v4_final_impl_tz_step3_sources",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v4-final-impl-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_v4_final_impl_tz_progress_panel",
+      "target": "fact_check_v4_final_impl_tz_step4_assessment",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v4-final-impl-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_v4_final_impl_tz_source_card_badge",
+      "target": "fact_check_v4_final_impl_tz_step3_sources",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v4-final-impl-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_v4_final_impl_tz_assessment_panel",
+      "target": "fact_check_v4_final_impl_tz_step4_assessment",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v4-final-impl-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_v4_final_impl_tz_public_result",
+      "target": "fact_check_tz_v3_fact_check_result",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v4-final-impl-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_five_engines_tz_five_engine_search",
+      "target": "fact_check_v4_final_impl_tz_dual_search",
+      "relation": "semantically_similar_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check--five-engines-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_five_engines_tz_five_engine_search",
+      "target": "fact_check_five_engines_tz_serper_search",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check--five-engines-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_five_engines_tz_five_engine_search",
+      "target": "fact_check_v4_final_impl_tz_yandex_search",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check--five-engines-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_five_engines_tz_result_tabs_filter",
+      "target": "fact_check_v4_final_impl_tz_source_card_badge",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check--five-engines-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_five_engines_tz_fact_check_notifications",
+      "target": "fact_check_five_engines_tz_five_engine_search",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check--five-engines-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_v5_impl_tz_engine_badge_fix",
+      "target": "fact_check_v4_final_impl_tz_source_card_badge",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v5-impl-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_v5_impl_tz_yandex_api_key_env",
+      "target": "fact_check_v4_final_impl_tz_yandex_search",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v5-impl-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_v5_impl_tz_analysis_shared_context",
+      "target": "fact_check_v4_final_impl_tz_step2_analysis",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v5-impl-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_v5_impl_tz_normalize_source_engine",
+      "target": "fact_check_v4_final_impl_tz_step3_sources",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v5-impl-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_bugfix_tz_run_web_search_loop",
+      "target": "fact_check_v4_final_impl_tz_dual_search",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-bugfix-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_bugfix_tz_json_stringify_bug",
+      "target": "fact_check_bugfix_tz_run_web_search_loop",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-bugfix-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact2_check_bugfix_tz_tool_choice_invalid",
+      "target": "fact_check_bugfix_tz_run_web_search_loop",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact2-check-bugfix-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact2_check_bugfix_tz_thinking_disabled",
+      "target": "fact_check_bugfix_tz_run_web_search_loop",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact2-check-bugfix-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact2_check_bugfix_tz_round_trip",
+      "target": "fact2_check_bugfix_tz_thinking_disabled",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact2-check-bugfix-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact3_check_debug_tz_conditional_thinking",
+      "target": "fact2_check_bugfix_tz_thinking_disabled",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact3-check-debug-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact3_check_debug_tz_request_response_logging",
+      "target": "fact_check_bugfix_tz_run_web_search_loop",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact3-check-debug-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact10_check_logs_tz_pipeline_logging",
+      "target": "fact_check_tz_v3_fact_check_pipeline",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact10-check-logs-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact11_check_remove_min_tz_remove_min_length",
+      "target": "fact_check_tz_v3_fact_check_pipeline",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact11-check-remove-min-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact12_check_websearch_loop_fix_tz_always_tools",
+      "target": "fact_check_bugfix_tz_run_web_search_loop",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact12-check-websearch-loop-fix-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact12_check_websearch_loop_fix_tz_web_search_timeout",
+      "target": "fact_check_bugfix_tz_run_web_search_loop",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact12-check-websearch-loop-fix-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact13_check_e2e_tz_end_to_end_single_call",
+      "target": "fact_check_tz_v3_fact_check_pipeline",
+      "relation": "semantically_similar_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact13-check-e2e-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact13_check_e2e_tz_end_to_end_single_call",
+      "target": "fact_check_bugfix_tz_run_web_search_loop",
+      "relation": "semantically_similar_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact13-check-e2e-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact13_check_e2e_tz_search_cache",
+      "target": "fact13_check_e2e_tz_end_to_end_single_call",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact13-check-e2e-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact20_check_e2e_v2_tz_openai_sdk",
+      "target": "fact13_check_e2e_tz_end_to_end_single_call",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact20-check-e2e-v2-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact20_check_e2e_v2_tz_echo_pattern",
+      "target": "fact20_check_e2e_v2_tz_openai_sdk",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact20-check-e2e-v2-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact21_check_status_fix_tz_jobs_constraint",
+      "target": "fact_check_tz_v3_fact_check_jobs",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact21-check-status-fix-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact30_check_v3_pipeline_tz_sessions_table",
+      "target": "fact_check_tz_v3_fact_check_jobs",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact30-check-v3-pipeline-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact30_check_v3_pipeline_tz_sse_endpoint",
+      "target": "fact_check_tz_v3_get_fact_check",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact30-check-v3-pipeline-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact30_check_v3_pipeline_tz_use_fact_check_sse",
+      "target": "fact30_check_v3_pipeline_tz_sse_endpoint",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact30-check-v3-pipeline-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact30_check_v3_pipeline_tz_fact_check_progress",
+      "target": "fact30_check_v3_pipeline_tz_use_fact_check_sse",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact30-check-v3-pipeline-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact30_check_v3_pipeline_tz_run_pipeline_generator",
+      "target": "fact30_check_v3_pipeline_tz_sessions_table",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact30-check-v3-pipeline-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact30_check_v3_pipeline_tz_fetch_tool",
+      "target": "fact30_check_v3_pipeline_tz_run_pipeline_generator",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact30-check-v3-pipeline-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact31_check_news_enrich_tz_update_news_fact_check",
+      "target": "fact_check_tz_v3_fact_check_result",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact31-check-news-enrich-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact31_check_news_enrich_tz_public_visibility",
+      "target": "fact_check_v4_final_impl_tz_public_result",
+      "relation": "semantically_similar_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact31-check-news-enrich-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact31_check_news_enrich_tz_update_news_fact_check",
+      "target": "fact31_check_news_enrich_tz_public_visibility",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact31-check-news-enrich-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_v5_impl_tz_doc",
+      "target": "fact_check_v4_final_impl_tz_doc",
+      "relation": "cites",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v5-impl-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_v5_impl_tz_doc",
+      "target": "fact_check_five_engines_tz_doc",
+      "relation": "cites",
+      "confidence": "INFERRED",
+      "confidence_score": 0.75,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v5-impl-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_five_engines_tz_doc",
+      "target": "fact_check_v4_final_impl_tz_doc",
+      "relation": "cites",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check--five-engines-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_tg_email_doc",
+      "target": "fact_check_five_engines_tz_doc",
+      "relation": "cites",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-tg email.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_bugfix_tz_doc",
+      "target": "fact_check_v4_final_impl_tz_doc",
+      "relation": "cites",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-bugfix-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact2_check_bugfix_tz_doc",
+      "target": "fact_check_bugfix_tz_doc",
+      "relation": "cites",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact2-check-bugfix-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact3_check_debug_tz_doc",
+      "target": "fact2_check_bugfix_tz_doc",
+      "relation": "cites",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact3-check-debug-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact12_check_websearch_loop_fix_tz_doc",
+      "target": "fact_check_bugfix_tz_doc",
+      "relation": "cites",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact12-check-websearch-loop-fix-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact13_check_e2e_tz_doc",
+      "target": "fact_check_tz_v3_doc",
+      "relation": "cites",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact13-check-e2e-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact20_check_e2e_v2_tz_doc",
+      "target": "fact13_check_e2e_tz_doc",
+      "relation": "cites",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact20-check-e2e-v2-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact21_check_status_fix_tz_doc",
+      "target": "fact13_check_e2e_tz_doc",
+      "relation": "cites",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact21-check-status-fix-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact30_check_v3_pipeline_tz_doc",
+      "target": "fact_check_tz_v3_doc",
+      "relation": "cites",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact30-check-v3-pipeline-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact31_check_news_enrich_tz_doc",
+      "target": "fact_check_tz_v3_doc",
+      "relation": "cites",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact31-check-news-enrich-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact11_check_remove_min_tz_doc",
+      "target": "fact_check_tz_v3_doc",
+      "relation": "cites",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact11-check-remove-min-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact10_check_logs_tz_doc",
+      "target": "fact_check_tz_v3_doc",
+      "relation": "cites",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact10-check-logs-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_translit_dedup_doc",
+      "target": "tz_tag_protection_doc",
+      "relation": "cites",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_translit_dedup.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_web_search_forced_doc",
+      "target": "tz_tag_protection_doc",
+      "relation": "cites",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_web_search_forced.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_tz_v3_fact_check_result",
+      "target": "fact_check_v4_final_impl_tz_public_result",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact-check-v4-final-impl-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "fact_check_tz_v3_fact_check_status",
+      "target": "fact31_check_news_enrich_tz_update_news_fact_check",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/fact31-check-news-enrich-tz.md",
+      "source_location": null,
+      "weight": 1.0
+    }
+  ],
+  "hyperedges": [],
+  "input_tokens": 0,
+  "output_tokens": 0
+}

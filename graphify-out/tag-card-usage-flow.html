@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>PULSE — Использование карточки тега</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+body { font-family: system-ui, sans-serif; background: #0b0c0f; color: #e5e7eb; margin: 0; padding: 24px; }
+h1 { font-size: 20px; margin-bottom: 8px; }
+p { color: #6B7280; font-size: 13px; margin-bottom: 16px; }
+.mermaid { background: #111; border-radius: 12px; padding: 16px; }
+.note { background: #111; border: 1px solid #222; border-radius: 8px; padding: 12px; margin-top: 16px; font-size: 13px; color: #9CA3AF; }
+.note code { color: #34D399; background: #1a1a1a; padding: 2px 4px; border-radius: 4px; }
+a { color: #60A5FA; }
+</style>
+</head>
+<body>
+<h1>🏷️ Карточка тега (TagDetailModal) — как используется</h1>
+<p>Админская карточка открывается из таблицы тегов. Все действия внутри идут в <code>TagDetailModal.tsx</code>, бэкенд-эндпоинты — в <code>pulse-backend/src/index.ts</code>.</p>
+<div class="mermaid">
+flowchart TD
+    Admin(["Админ"])
+    TagsTab["TagsTab.tsx<br/>Список тегов"]
+    AdminPage["Admin.tsx<br/>Страница админки"]
+    TagCard["TagDetailModal.tsx<br/>Карточка тега"]
+
+    GET_LIST["GET /admin/tags<br/>index.ts:1870"]
+    GET_DETAIL["GET /admin/tags/:tagId<br/>index.ts:2041"]
+    PUT_TAG["PUT /admin/tags/:tagId<br/>index.ts:2287"]
+    ENRICH["POST /admin/tags/:tagId/enrich<br/>index.ts:2522"]
+    SCAN["POST /admin/tags/:tagId/backfill-matches<br/>index.ts:2603"]
+    DELETE["DELETE /admin/tags/:tagId<br/>index.ts:2659"]
+    BACKFILL["POST /admin/backfill"]
+
+    DB[("user_defined_tags<br/>+ enriched_data JSONB")]
+    News[("news<br/>matched_tags")]
+
+    Admin -->|"1. Открыть Tags"| TagsTab
+    TagsTab -->|"2. Загрузить список"| GET_LIST
+    GET_LIST --> DB
+    GET_LIST -->|"список тегов"| TagsTab
+
+    TagsTab -->|"3. onSelectTag(tagId)"| AdminPage
+    AdminPage -->|"4. Открыть модалку"| TagCard
+    TagCard -->|"5. GET /admin/tags/:tagId"| GET_DETAIL
+    GET_DETAIL --> DB
+    GET_DETAIL -->|"TagDetailResponse"| TagCard
+
+    TagCard -->|"Редактировать поле<br/>→ handleSave"| PUT_TAG
+    PUT_TAG --> DB
+    PUT_TAG -->|"updated_fields"| TagCard
+
+    TagCard -->|"Verified toggle"| PUT_TAG
+    TagCard -->|"dispatch tag:verified"| TagsTab
+
+    TagCard -->|"Enrich Tag"| ENRICH
+    ENRICH -->|"LLM + поиск"| DB
+    ENRICH -->|"перезагрузить"| TagCard
+
+    TagCard -->|"Scan Preview / Run"| SCAN
+    SCAN -->|"матчинг по keywords"| News
+    SCAN -->|"результат"| TagCard
+
+    TagCard -->|"Backfill"| BACKFILL
+    BACKFILL -->|"перепривязать статьи"| News
+    BACKFILL -->|"result"| TagCard
+
+    TagCard -->|"Delete Tag"| DELETE
+    DELETE --> DB
+    DELETE -->|"dispatch tag:deleted"| TagsTab
+    DELETE -->|"onClose"| AdminPage
+</div>
+<div class="note">
+<strong>Ключевые детали:</strong><br>
+• Карточка открывается только из <code>Admin.tsx</code> (он держит состояние <code>selectedTagId</code>).<br>
+• <code>TagsTab.tsx</code> вызывает <code>onSelectTag</code> при клике на строку.<br>
+• Внутри карточки: просмотр, редактирование полей, Enrich, Scan, Backfill, Delete, Verified toggle.<br>
+• <code>PUT /admin/tags/:tagId</code> обновляет как плоские колонки (например, <code>is_verified</code>), так и поля внутри <code>enriched_data</code>.<br>
+• События <code>tag:verified</code> и <code>tag:deleted</code> синхронизируют таблицу без перезагрузки страницы.
+</div>
+<script>mermaid.initialize({startOnLoad:true, theme:'dark'});</script>
+</body>
+</html>

@@ -1,0 +1,2919 @@
+{
+  "nodes": [
+    {
+      "id": "tz_telegram_webhook_allowed_updates",
+      "label": "TZ: Telegram webhook allowed_updates",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TELEGRAM_WEBHOOK_ALLOWED_UPDATES.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_telegram_widget_v2",
+      "label": "TZ: Telegram Login Widget v2",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TELEGRAM_WIDGET_V2.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_ticker_backfill_fix2",
+      "label": "TZ: Ticker backfill fix 2",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_FIX2.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_ticker_backfill_fix3",
+      "label": "TZ: Ticker backfill fix 3",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_FIX3.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_ticker_backfill_fix5",
+      "label": "TZ: Ticker backfill fix 5",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_FIX5.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_ticker_backfill_total",
+      "label": "TZ: Ticker backfill total",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_ticker_final_backfill_fix",
+      "label": "TZ: Ticker final backfill fix",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_финал_BACKFILL_FIX.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_v5_metrics",
+      "label": "TZ: Product Metrics v5",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_V5_METRICS.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_v6_metrics",
+      "label": "TZ: Product Metrics v6",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_V6_METRICS.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_admin_tag_enrich",
+      "label": "TZ: Admin tag enrich button",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_admin_tag_enrich.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_always_web_search",
+      "label": "TZ: Always web search",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_always_web_search.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_bcryptjs_to_bcrypt",
+      "label": "TZ: bcryptjs to bcrypt",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_bcryptjs_to_bcrypt.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_enrich_prompt_update",
+      "label": "TZ: Enrich prompt update",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_enrich_prompt_update.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_portfolios_insert_fix",
+      "label": "TZ: Portfolios insert fix",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_portfolios_insert_fix.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_portfolios_migration",
+      "label": "TZ: Portfolios migration",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_portfolios_migration.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_prompt_example_fix",
+      "label": "TZ: Prompt example fix",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_prompt_example_fix.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_russian_companies_prompt",
+      "label": "TZ: Russian companies prompt",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_russian_companies_prompt.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_async_enrichment",
+      "label": "TZ: Tag async enrichment",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_async_enrichment.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_dedup",
+      "label": "TZ: Tag deduplication",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_dedup.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_delete",
+      "label": "TZ: Tag deletion",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_delete.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_e2e_fixes",
+      "label": "TZ: Tag E2E fixes",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_e2e_fixes.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_enrichment_fix",
+      "label": "TZ: Tag enrichment fix",
+      "file_type": "document",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_enrichment_fix.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_telegram_webhook_allowed_updates_telegram_webhook",
+      "label": "Telegram webhook",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TELEGRAM_WEBHOOK_ALLOWED_UPDATES.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_telegram_webhook_allowed_updates_my_chat_member",
+      "label": "my_chat_member event",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TELEGRAM_WEBHOOK_ALLOWED_UPDATES.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_telegram_webhook_allowed_updates_allowed_updates",
+      "label": "allowed_updates parameter",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TELEGRAM_WEBHOOK_ALLOWED_UPDATES.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_telegram_webhook_allowed_updates_setwebhook",
+      "label": "setWebhook call",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TELEGRAM_WEBHOOK_ALLOWED_UPDATES.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_telegram_webhook_allowed_updates_user_channels",
+      "label": "user_channels table",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TELEGRAM_WEBHOOK_ALLOWED_UPDATES.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_telegram_widget_v2_telegram_login_widget",
+      "label": "Telegram Login Widget",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TELEGRAM_WIDGET_V2.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_telegram_widget_v2_hybrid_oauth_button",
+      "label": "hybrid OAuth button",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TELEGRAM_WIDGET_V2.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_telegram_widget_v2_telegram_config_endpoint",
+      "label": "GET /api/telegram/config",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TELEGRAM_WIDGET_V2.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_telegram_widget_v2_hmac_sha256_verification",
+      "label": "HMAC-SHA256 verification",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TELEGRAM_WIDGET_V2.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_telegram_widget_v2_telegram_connect_banner",
+      "label": "TelegramConnectBanner.tsx",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TELEGRAM_WIDGET_V2.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_telegram_widget_v2_postmessage",
+      "label": "postMessage auth callback",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TELEGRAM_WIDGET_V2.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_ticker_backfill_total_tag_backfill_service",
+      "label": "tagBackfill.ts service",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_ticker_backfill_total_news_source_manager",
+      "label": "NewsSourceManager",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_ticker_backfill_total_matched_tags",
+      "label": "matched_tags array",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_ticker_backfill_total_keywords_first_matching",
+      "label": "keywords-first matching",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_ticker_backfill_total_word_boundary_regex",
+      "label": "word boundary regex",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_ticker_backfill_total_tag_scan_button",
+      "label": "Tag Scan button",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_ticker_backfill_total_backfill_marker",
+      "label": "_backfill marker",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_ticker_backfill_total_backfill_semaphore",
+      "label": "backfill semaphore",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_ticker_backfill_total_max_tokens_guard",
+      "label": "MAX_TOKENS guard",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_ticker_backfill_total_count_tag_matches",
+      "label": "countTagMatches",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_ticker_backfill_total_backfill_matches_endpoint",
+      "label": "POST /admin/tags/:tagId/backfill-matches",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_ticker_backfill_total_backfill_matches_all_endpoint",
+      "label": "POST /admin/backfill-matches-all",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_ticker_backfill_total_statement_timeout",
+      "label": "statement_timeout",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_ticker_backfill_total_db_pool_config",
+      "label": "DB pool configuration",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_ticker_backfill_total_scan_badge",
+      "label": "Scan badge",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_ticker_backfill_total_tag_detail_modal",
+      "label": "TagDetailModal.tsx",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_ticker_backfill_total_admin_tags_tab",
+      "label": "TagsTab.tsx",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_ticker_backfill_fix2_build_scan_keywords",
+      "label": "buildScanKeywords",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_FIX2.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_ticker_backfill_fix3_apply_chunk_postgres",
+      "label": "applyChunkPostgres",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_FIX3.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_v5_metrics_product_metrics_tab",
+      "label": "ProductMetricsTab.tsx",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_V5_METRICS.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_v5_metrics_admin_metrics_endpoint",
+      "label": "admin metrics endpoint",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_V5_METRICS.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_v5_metrics_online_users",
+      "label": "online users metric",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_V5_METRICS.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_v5_metrics_plan_distribution",
+      "label": "plan distribution metric",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_V5_METRICS.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_v5_metrics_mrr_arr",
+      "label": "MRR/ARR metric",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_V5_METRICS.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_v5_metrics_promo_codes",
+      "label": "promo codes metric",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_V5_METRICS.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_v5_metrics_engagement",
+      "label": "engagement metric",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_V5_METRICS.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_v5_metrics_churn_cohorts",
+      "label": "churn cohorts metric",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_V5_METRICS.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_admin_tag_enrich_enrich_tag_button",
+      "label": "Enrich Tag button",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_admin_tag_enrich.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_admin_tag_enrich_admin_tag_enrich_endpoint",
+      "label": "POST /admin/tags/:tagId/enrich",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_admin_tag_enrich.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_always_web_search_enrich_tag_via_llm",
+      "label": "enrichTagViaLLM",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_always_web_search.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_always_web_search_web_search_tool",
+      "label": "$web_search tool",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_always_web_search.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_always_web_search_tool_choice",
+      "label": "tool_choice auto",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_always_web_search.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_bcryptjs_to_bcrypt_bcryptjs",
+      "label": "bcryptjs",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_bcryptjs_to_bcrypt.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_bcryptjs_to_bcrypt_bcrypt",
+      "label": "bcrypt",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_bcryptjs_to_bcrypt.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_bcryptjs_to_bcrypt_auth_service",
+      "label": "auth service",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_bcryptjs_to_bcrypt.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_bcryptjs_to_bcrypt_login_endpoint",
+      "label": "POST /auth/login",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_bcryptjs_to_bcrypt.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_bcryptjs_to_bcrypt_register_endpoint",
+      "label": "POST /auth/register",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_bcryptjs_to_bcrypt.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_bcryptjs_to_bcrypt_password_reset",
+      "label": "password reset",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_bcryptjs_to_bcrypt.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_bcryptjs_to_bcrypt_worker_threads",
+      "label": "Worker Threads fallback",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_bcryptjs_to_bcrypt.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_portfolios_migration_portfolios_table",
+      "label": "portfolios table",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_portfolios_migration.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_dedup_create_user_tag",
+      "label": "createUserTag",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_dedup.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_dedup_tag_deduplication",
+      "label": "tag deduplication",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_dedup.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_dedup_popular_tags",
+      "label": "popularTags",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_dedup.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_delete_delete_tag_endpoint",
+      "label": "DELETE /admin/tags/:tagId",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_delete.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_delete_delete_tag_modal",
+      "label": "DeleteTagModal",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_delete.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_delete_cascade_tag_delete",
+      "label": "cascade tag deletion",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_delete.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_enrichment_fix_tag_enrichment_parsing",
+      "label": "LLM enrichment parsing",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_enrichment_fix.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_enrichment_fix_response_format_json_object",
+      "label": "response_format json_object",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_enrichment_fix.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_enrichment_fix_max_tokens",
+      "label": "max_tokens 2000",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_enrichment_fix.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_async_enrichment_background_enrich_tag",
+      "label": "backgroundEnrichTag",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_async_enrichment.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_async_enrichment_heuristic_tag_type",
+      "label": "heuristicTagType",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_async_enrichment.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_async_enrichment_async_tag_enrichment",
+      "label": "asynchronous tag enrichment",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_async_enrichment.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_russian_companies_prompt_russian_companies_support",
+      "label": "Russian companies support",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_russian_companies_prompt.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_russian_companies_prompt_moex_ticker",
+      "label": "MOEX ticker",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_russian_companies_prompt.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_enrich_prompt_update_search_query_language",
+      "label": "search query language rule",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_enrich_prompt_update.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_prompt_example_fix_prompt_example_guard",
+      "label": "prompt example guard",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_prompt_example_fix.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_e2e_fixes_resolved_tag_name",
+      "label": "resolvedTagName",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_e2e_fixes.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_e2e_fixes_already_subscribed_flag",
+      "label": "alreadySubscribed flag",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_e2e_fixes.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_e2e_fixes_final_tag_id",
+      "label": "finalTagId",
+      "file_type": "concept",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_e2e_fixes.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_telegram_webhook_allowed_updates_rationale_explicit_allowed_updates",
+      "label": "Explicit allowed_updates required because my_chat_member is not in Telegram default update set",
+      "file_type": "rationale",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TELEGRAM_WEBHOOK_ALLOWED_UPDATES.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_telegram_widget_v2_rationale_hybrid_widget_control",
+      "label": "Custom button plus window.open popup keeps button always visible and avoids widget script caching issues",
+      "file_type": "rationale",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TELEGRAM_WIDGET_V2.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_ticker_backfill_total_rationale_keywords_first_parity",
+      "label": "Keywords-first matching ensures retro scan parity with ingest matcher and respects manual keyword fork",
+      "file_type": "rationale",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_ticker_backfill_total_rationale_event_driven_backfill",
+      "label": "Remove scheduled backfill from NSM and trigger retro scan only on tag changes to avoid DB lock every 5 minutes",
+      "file_type": "rationale",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_ticker_backfill_total_rationale_dry_run_preview",
+      "label": "Dry-run COUNT before apply lets admins preview impact and catch noisy keywords before writing",
+      "file_type": "rationale",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_bcryptjs_to_bcrypt_rationale_async_bcrypt_event_loop",
+      "label": "Replace bcryptjs with bcrypt async to avoid blocking Node event loop during password hashing",
+      "file_type": "rationale",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_bcryptjs_to_bcrypt.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_bcryptjs_to_bcrypt_rationale_bcryptjs_compatibility",
+      "label": "bcrypt and bcryptjs hashes are compatible ($2b$10$), so no data migration is needed",
+      "file_type": "rationale",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_bcryptjs_to_bcrypt.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_async_enrichment_rationale_fire_and_forget_enrichment",
+      "label": "Move LLM enrichment to background so tag creation returns instantly instead of blocking 5-15s",
+      "file_type": "rationale",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_async_enrichment.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_portfolios_migration_rationale_portfolios_columns_migration",
+      "label": "Add tag_name, tag_type, is_frozen columns to align production schema with schema.sql and support portfolio features",
+      "file_type": "rationale",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_portfolios_migration.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_always_web_search_rationale_forced_web_search_accuracy",
+      "label": "Force web search before enrichment to avoid LLM hallucinations and ensure current data",
+      "file_type": "rationale",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_always_web_search.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_dedup_rationale_tag_deduplication_uniqueness",
+      "label": "Check existing tags by lowercase name before insert to prevent duplicate tags with different IDs",
+      "file_type": "rationale",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_dedup.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_russian_companies_prompt_rationale_russian_market_context",
+      "label": "Add Russian market context to prompts because default examples only cover US/NASDAQ tickers",
+      "file_type": "rationale",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_russian_companies_prompt.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_prompt_example_fix_rationale_prompt_example_mismatch",
+      "label": "Use placeholder examples instead of real Apple data to prevent LLM from copying unrelated entity data",
+      "file_type": "rationale",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_prompt_example_fix.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "tz_tag_enrichment_fix_rationale_tag_enrichment_parsing_fix",
+      "label": "Use greedy regex and markdown fence cleanup plus response_format to reliably parse LLM JSON output",
+      "file_type": "rationale",
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_enrichment_fix.md",
+      "source_location": null,
+      "source_url": null,
+      "author": null,
+      "contributor": null
+    }
+  ],
+  "edges": [
+    {
+      "source": "tz_ticker_backfill_fix2",
+      "target": "tz_ticker_backfill_total",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_FIX2.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_fix3",
+      "target": "tz_ticker_backfill_fix2",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_FIX3.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_fix3",
+      "target": "tz_ticker_backfill_total",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_FIX3.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_fix5",
+      "target": "tz_ticker_backfill_fix2",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_FIX5.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_fix5",
+      "target": "tz_ticker_backfill_fix3",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_FIX5.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_final_backfill_fix",
+      "target": "tz_ticker_backfill_total",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_финал_BACKFILL_FIX.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_v6_metrics",
+      "target": "tz_v5_metrics",
+      "relation": "semantically_similar_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_V6_METRICS.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_portfolios_insert_fix",
+      "target": "tz_portfolios_migration",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_portfolios_insert_fix.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_portfolios_migration",
+      "target": "tz_portfolios_insert_fix",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_portfolios_migration.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_prompt_example_fix",
+      "target": "tz_enrich_prompt_update",
+      "relation": "semantically_similar_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.75,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_prompt_example_fix.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_russian_companies_prompt",
+      "target": "tz_enrich_prompt_update",
+      "relation": "semantically_similar_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.75,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_russian_companies_prompt.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_enrichment_fix",
+      "target": "tz_always_web_search",
+      "relation": "semantically_similar_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.75,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_enrichment_fix.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_enrichment_fix",
+      "target": "tz_tag_async_enrichment",
+      "relation": "semantically_similar_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.75,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_enrichment_fix.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_async_enrichment",
+      "target": "tz_admin_tag_enrich",
+      "relation": "semantically_similar_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.75,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_async_enrichment.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_dedup",
+      "target": "tz_tag_e2e_fixes",
+      "relation": "semantically_similar_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_dedup.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_e2e_fixes",
+      "target": "tz_tag_dedup",
+      "relation": "semantically_similar_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_e2e_fixes.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_delete",
+      "target": "tz_ticker_backfill_total",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.75,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_delete.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_telegram_webhook_allowed_updates",
+      "target": "tz_telegram_webhook_allowed_updates_telegram_webhook",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TELEGRAM_WEBHOOK_ALLOWED_UPDATES.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_telegram_webhook_allowed_updates",
+      "target": "tz_telegram_webhook_allowed_updates_my_chat_member",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TELEGRAM_WEBHOOK_ALLOWED_UPDATES.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_telegram_webhook_allowed_updates",
+      "target": "tz_telegram_webhook_allowed_updates_allowed_updates",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TELEGRAM_WEBHOOK_ALLOWED_UPDATES.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_telegram_webhook_allowed_updates",
+      "target": "tz_telegram_webhook_allowed_updates_setwebhook",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TELEGRAM_WEBHOOK_ALLOWED_UPDATES.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_telegram_webhook_allowed_updates",
+      "target": "tz_telegram_webhook_allowed_updates_user_channels",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TELEGRAM_WEBHOOK_ALLOWED_UPDATES.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_telegram_widget_v2",
+      "target": "tz_telegram_widget_v2_telegram_login_widget",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TELEGRAM_WIDGET_V2.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_telegram_widget_v2",
+      "target": "tz_telegram_widget_v2_hybrid_oauth_button",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TELEGRAM_WIDGET_V2.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_telegram_widget_v2",
+      "target": "tz_telegram_widget_v2_telegram_config_endpoint",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TELEGRAM_WIDGET_V2.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_telegram_widget_v2",
+      "target": "tz_telegram_widget_v2_hmac_sha256_verification",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TELEGRAM_WIDGET_V2.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_telegram_widget_v2",
+      "target": "tz_telegram_widget_v2_telegram_connect_banner",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TELEGRAM_WIDGET_V2.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_telegram_widget_v2",
+      "target": "tz_telegram_widget_v2_postmessage",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TELEGRAM_WIDGET_V2.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_fix2",
+      "target": "tz_ticker_backfill_total_tag_backfill_service",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_FIX2.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_fix2",
+      "target": "tz_ticker_backfill_total_matched_tags",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_FIX2.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_fix2",
+      "target": "tz_ticker_backfill_total_backfill_semaphore",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_FIX2.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_fix2",
+      "target": "tz_ticker_backfill_total_max_tokens_guard",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_FIX2.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_fix2",
+      "target": "tz_ticker_backfill_total_count_tag_matches",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_FIX2.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_fix2",
+      "target": "tz_ticker_backfill_total_tag_detail_modal",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_FIX2.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_fix2",
+      "target": "tz_ticker_backfill_total_admin_tags_tab",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_FIX2.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_fix2",
+      "target": "tz_ticker_backfill_total_scan_badge",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_FIX2.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_fix2",
+      "target": "tz_ticker_backfill_fix2_build_scan_keywords",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_FIX2.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_fix3",
+      "target": "tz_ticker_backfill_total_tag_backfill_service",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_FIX3.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_fix3",
+      "target": "tz_ticker_backfill_total_count_tag_matches",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_FIX3.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_fix3",
+      "target": "tz_ticker_backfill_fix3_apply_chunk_postgres",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_FIX3.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_fix5",
+      "target": "tz_ticker_backfill_total_tag_backfill_service",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_FIX5.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_fix5",
+      "target": "tz_ticker_backfill_total_max_tokens_guard",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_FIX5.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_fix5",
+      "target": "tz_ticker_backfill_total_backfill_semaphore",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_FIX5.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_fix5",
+      "target": "tz_ticker_backfill_total_backfill_matches_endpoint",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_FIX5.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_fix5",
+      "target": "tz_tag_async_enrichment_background_enrich_tag",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_FIX5.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_total",
+      "target": "tz_ticker_backfill_total_tag_backfill_service",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_total",
+      "target": "tz_ticker_backfill_total_news_source_manager",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_total",
+      "target": "tz_ticker_backfill_total_matched_tags",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_total",
+      "target": "tz_ticker_backfill_total_keywords_first_matching",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_total",
+      "target": "tz_ticker_backfill_total_word_boundary_regex",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_total",
+      "target": "tz_ticker_backfill_total_tag_scan_button",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_total",
+      "target": "tz_ticker_backfill_total_backfill_marker",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_total",
+      "target": "tz_ticker_backfill_total_backfill_semaphore",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_total",
+      "target": "tz_ticker_backfill_total_max_tokens_guard",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_total",
+      "target": "tz_ticker_backfill_total_count_tag_matches",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_total",
+      "target": "tz_ticker_backfill_total_backfill_matches_endpoint",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_total",
+      "target": "tz_ticker_backfill_total_backfill_matches_all_endpoint",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_total",
+      "target": "tz_ticker_backfill_total_statement_timeout",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_total",
+      "target": "tz_ticker_backfill_total_db_pool_config",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_total",
+      "target": "tz_ticker_backfill_total_scan_badge",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_total",
+      "target": "tz_ticker_backfill_total_tag_detail_modal",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_total",
+      "target": "tz_ticker_backfill_total_admin_tags_tab",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_final_backfill_fix",
+      "target": "tz_ticker_backfill_total_tag_backfill_service",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_финал_BACKFILL_FIX.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_final_backfill_fix",
+      "target": "tz_ticker_backfill_total_news_source_manager",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_финал_BACKFILL_FIX.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_final_backfill_fix",
+      "target": "tz_ticker_backfill_total_matched_tags",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_финал_BACKFILL_FIX.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_final_backfill_fix",
+      "target": "tz_ticker_backfill_total_keywords_first_matching",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_финал_BACKFILL_FIX.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_final_backfill_fix",
+      "target": "tz_ticker_backfill_total_word_boundary_regex",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_финал_BACKFILL_FIX.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_final_backfill_fix",
+      "target": "tz_ticker_backfill_total_tag_scan_button",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_финал_BACKFILL_FIX.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_final_backfill_fix",
+      "target": "tz_ticker_backfill_total_backfill_marker",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_финал_BACKFILL_FIX.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_final_backfill_fix",
+      "target": "tz_ticker_backfill_total_backfill_semaphore",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_финал_BACKFILL_FIX.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_final_backfill_fix",
+      "target": "tz_ticker_backfill_total_max_tokens_guard",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_финал_BACKFILL_FIX.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_final_backfill_fix",
+      "target": "tz_ticker_backfill_total_count_tag_matches",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_финал_BACKFILL_FIX.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_final_backfill_fix",
+      "target": "tz_ticker_backfill_total_backfill_matches_endpoint",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_финал_BACKFILL_FIX.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_final_backfill_fix",
+      "target": "tz_ticker_backfill_total_backfill_matches_all_endpoint",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_финал_BACKFILL_FIX.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_final_backfill_fix",
+      "target": "tz_ticker_backfill_total_statement_timeout",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_финал_BACKFILL_FIX.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_final_backfill_fix",
+      "target": "tz_ticker_backfill_total_db_pool_config",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_финал_BACKFILL_FIX.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_final_backfill_fix",
+      "target": "tz_ticker_backfill_total_scan_badge",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_финал_BACKFILL_FIX.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_final_backfill_fix",
+      "target": "tz_ticker_backfill_total_tag_detail_modal",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_финал_BACKFILL_FIX.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_final_backfill_fix",
+      "target": "tz_ticker_backfill_total_admin_tags_tab",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_финал_BACKFILL_FIX.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_v5_metrics",
+      "target": "tz_v5_metrics_product_metrics_tab",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_V5_METRICS.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_v5_metrics",
+      "target": "tz_v5_metrics_admin_metrics_endpoint",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_V5_METRICS.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_v5_metrics",
+      "target": "tz_v5_metrics_online_users",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_V5_METRICS.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_v5_metrics",
+      "target": "tz_v5_metrics_plan_distribution",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_V5_METRICS.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_v5_metrics",
+      "target": "tz_v5_metrics_mrr_arr",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_V5_METRICS.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_v5_metrics",
+      "target": "tz_v5_metrics_promo_codes",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_V5_METRICS.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_v5_metrics",
+      "target": "tz_v5_metrics_engagement",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_V5_METRICS.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_v5_metrics",
+      "target": "tz_v5_metrics_churn_cohorts",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_V5_METRICS.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_v6_metrics",
+      "target": "tz_v5_metrics_product_metrics_tab",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_V6_METRICS.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_v6_metrics",
+      "target": "tz_v5_metrics_admin_metrics_endpoint",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_V6_METRICS.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_v6_metrics",
+      "target": "tz_v5_metrics_online_users",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_V6_METRICS.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_v6_metrics",
+      "target": "tz_v5_metrics_plan_distribution",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_V6_METRICS.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_v6_metrics",
+      "target": "tz_v5_metrics_mrr_arr",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_V6_METRICS.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_v6_metrics",
+      "target": "tz_v5_metrics_promo_codes",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_V6_METRICS.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_v6_metrics",
+      "target": "tz_v5_metrics_engagement",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_V6_METRICS.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_v6_metrics",
+      "target": "tz_v5_metrics_churn_cohorts",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_V6_METRICS.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_admin_tag_enrich",
+      "target": "tz_admin_tag_enrich_enrich_tag_button",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_admin_tag_enrich.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_admin_tag_enrich",
+      "target": "tz_admin_tag_enrich_admin_tag_enrich_endpoint",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_admin_tag_enrich.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_admin_tag_enrich",
+      "target": "tz_always_web_search_enrich_tag_via_llm",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_admin_tag_enrich.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_always_web_search",
+      "target": "tz_always_web_search_enrich_tag_via_llm",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_always_web_search.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_always_web_search",
+      "target": "tz_always_web_search_web_search_tool",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_always_web_search.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_always_web_search",
+      "target": "tz_always_web_search_tool_choice",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_always_web_search.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_bcryptjs_to_bcrypt",
+      "target": "tz_bcryptjs_to_bcrypt_bcryptjs",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_bcryptjs_to_bcrypt.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_bcryptjs_to_bcrypt",
+      "target": "tz_bcryptjs_to_bcrypt_bcrypt",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_bcryptjs_to_bcrypt.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_bcryptjs_to_bcrypt",
+      "target": "tz_bcryptjs_to_bcrypt_auth_service",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_bcryptjs_to_bcrypt.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_bcryptjs_to_bcrypt",
+      "target": "tz_bcryptjs_to_bcrypt_login_endpoint",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_bcryptjs_to_bcrypt.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_bcryptjs_to_bcrypt",
+      "target": "tz_bcryptjs_to_bcrypt_register_endpoint",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_bcryptjs_to_bcrypt.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_bcryptjs_to_bcrypt",
+      "target": "tz_bcryptjs_to_bcrypt_password_reset",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_bcryptjs_to_bcrypt.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_bcryptjs_to_bcrypt",
+      "target": "tz_bcryptjs_to_bcrypt_worker_threads",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_bcryptjs_to_bcrypt.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_enrich_prompt_update",
+      "target": "tz_always_web_search_enrich_tag_via_llm",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_enrich_prompt_update.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_enrich_prompt_update",
+      "target": "tz_enrich_prompt_update_search_query_language",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_enrich_prompt_update.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_portfolios_insert_fix",
+      "target": "tz_portfolios_migration_portfolios_table",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_portfolios_insert_fix.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_portfolios_insert_fix",
+      "target": "tz_tag_dedup_create_user_tag",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_portfolios_insert_fix.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_portfolios_migration",
+      "target": "tz_portfolios_migration_portfolios_table",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_portfolios_migration.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_prompt_example_fix",
+      "target": "tz_always_web_search_enrich_tag_via_llm",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_prompt_example_fix.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_prompt_example_fix",
+      "target": "tz_prompt_example_fix_prompt_example_guard",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_prompt_example_fix.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_russian_companies_prompt",
+      "target": "tz_always_web_search_enrich_tag_via_llm",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_russian_companies_prompt.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_russian_companies_prompt",
+      "target": "tz_russian_companies_prompt_russian_companies_support",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_russian_companies_prompt.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_russian_companies_prompt",
+      "target": "tz_russian_companies_prompt_moex_ticker",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_russian_companies_prompt.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_async_enrichment",
+      "target": "tz_tag_async_enrichment_background_enrich_tag",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_async_enrichment.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_async_enrichment",
+      "target": "tz_tag_async_enrichment_heuristic_tag_type",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_async_enrichment.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_async_enrichment",
+      "target": "tz_tag_async_enrichment_async_tag_enrichment",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_async_enrichment.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_async_enrichment",
+      "target": "tz_tag_dedup_create_user_tag",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_async_enrichment.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_dedup",
+      "target": "tz_tag_dedup_create_user_tag",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_dedup.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_dedup",
+      "target": "tz_tag_dedup_tag_deduplication",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_dedup.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_dedup",
+      "target": "tz_tag_dedup_popular_tags",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_dedup.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_delete",
+      "target": "tz_tag_delete_delete_tag_endpoint",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_delete.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_delete",
+      "target": "tz_tag_delete_delete_tag_modal",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_delete.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_delete",
+      "target": "tz_tag_delete_cascade_tag_delete",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_delete.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_delete",
+      "target": "tz_ticker_backfill_total_matched_tags",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_delete.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_e2e_fixes",
+      "target": "tz_tag_dedup_create_user_tag",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_e2e_fixes.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_e2e_fixes",
+      "target": "tz_tag_e2e_fixes_resolved_tag_name",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_e2e_fixes.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_e2e_fixes",
+      "target": "tz_tag_e2e_fixes_already_subscribed_flag",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_e2e_fixes.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_e2e_fixes",
+      "target": "tz_tag_e2e_fixes_final_tag_id",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_e2e_fixes.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_e2e_fixes",
+      "target": "tz_tag_async_enrichment_background_enrich_tag",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_e2e_fixes.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_enrichment_fix",
+      "target": "tz_always_web_search_enrich_tag_via_llm",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_enrichment_fix.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_enrichment_fix",
+      "target": "tz_tag_enrichment_fix_tag_enrichment_parsing",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_enrichment_fix.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_enrichment_fix",
+      "target": "tz_tag_enrichment_fix_response_format_json_object",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_enrichment_fix.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_enrichment_fix",
+      "target": "tz_tag_enrichment_fix_max_tokens",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_enrichment_fix.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_telegram_webhook_allowed_updates_rationale_explicit_allowed_updates",
+      "target": "tz_telegram_webhook_allowed_updates_allowed_updates",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TELEGRAM_WEBHOOK_ALLOWED_UPDATES.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_telegram_webhook_allowed_updates",
+      "target": "tz_telegram_webhook_allowed_updates_rationale_explicit_allowed_updates",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TELEGRAM_WEBHOOK_ALLOWED_UPDATES.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_telegram_widget_v2_rationale_hybrid_widget_control",
+      "target": "tz_telegram_widget_v2_hybrid_oauth_button",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TELEGRAM_WIDGET_V2.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_telegram_widget_v2",
+      "target": "tz_telegram_widget_v2_rationale_hybrid_widget_control",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TELEGRAM_WIDGET_V2.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_total_rationale_keywords_first_parity",
+      "target": "tz_ticker_backfill_total_keywords_first_matching",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_total",
+      "target": "tz_ticker_backfill_total_rationale_keywords_first_parity",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_total_rationale_event_driven_backfill",
+      "target": "tz_ticker_backfill_total_tag_backfill_service",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_total",
+      "target": "tz_ticker_backfill_total_rationale_event_driven_backfill",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_total_rationale_dry_run_preview",
+      "target": "tz_ticker_backfill_total_backfill_matches_endpoint",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_total",
+      "target": "tz_ticker_backfill_total_rationale_dry_run_preview",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_bcryptjs_to_bcrypt_rationale_async_bcrypt_event_loop",
+      "target": "tz_bcryptjs_to_bcrypt_bcrypt",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_bcryptjs_to_bcrypt.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_bcryptjs_to_bcrypt",
+      "target": "tz_bcryptjs_to_bcrypt_rationale_async_bcrypt_event_loop",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_bcryptjs_to_bcrypt.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_bcryptjs_to_bcrypt_rationale_bcryptjs_compatibility",
+      "target": "tz_bcryptjs_to_bcrypt_bcrypt",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_bcryptjs_to_bcrypt.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_bcryptjs_to_bcrypt",
+      "target": "tz_bcryptjs_to_bcrypt_rationale_bcryptjs_compatibility",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_bcryptjs_to_bcrypt.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_async_enrichment_rationale_fire_and_forget_enrichment",
+      "target": "tz_tag_async_enrichment_background_enrich_tag",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_async_enrichment.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_async_enrichment",
+      "target": "tz_tag_async_enrichment_rationale_fire_and_forget_enrichment",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_async_enrichment.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_portfolios_migration_rationale_portfolios_columns_migration",
+      "target": "tz_portfolios_migration_portfolios_table",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_portfolios_migration.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_portfolios_migration",
+      "target": "tz_portfolios_migration_rationale_portfolios_columns_migration",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_portfolios_migration.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_always_web_search_rationale_forced_web_search_accuracy",
+      "target": "tz_always_web_search_web_search_tool",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_always_web_search.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_always_web_search",
+      "target": "tz_always_web_search_rationale_forced_web_search_accuracy",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_always_web_search.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_dedup_rationale_tag_deduplication_uniqueness",
+      "target": "tz_tag_dedup_tag_deduplication",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_dedup.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_dedup",
+      "target": "tz_tag_dedup_rationale_tag_deduplication_uniqueness",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_dedup.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_russian_companies_prompt_rationale_russian_market_context",
+      "target": "tz_russian_companies_prompt_russian_companies_support",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_russian_companies_prompt.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_russian_companies_prompt",
+      "target": "tz_russian_companies_prompt_rationale_russian_market_context",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_russian_companies_prompt.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_prompt_example_fix_rationale_prompt_example_mismatch",
+      "target": "tz_prompt_example_fix_prompt_example_guard",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_prompt_example_fix.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_prompt_example_fix",
+      "target": "tz_prompt_example_fix_rationale_prompt_example_mismatch",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_prompt_example_fix.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_enrichment_fix_rationale_tag_enrichment_parsing_fix",
+      "target": "tz_tag_enrichment_fix_tag_enrichment_parsing",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_enrichment_fix.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_enrichment_fix",
+      "target": "tz_tag_enrichment_fix_rationale_tag_enrichment_parsing_fix",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_enrichment_fix.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_total_tag_backfill_service",
+      "target": "tz_ticker_backfill_total_matched_tags",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_total_keywords_first_matching",
+      "target": "tz_ticker_backfill_total_word_boundary_regex",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_total_tag_scan_button",
+      "target": "tz_ticker_backfill_total_backfill_matches_endpoint",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_total_scan_badge",
+      "target": "tz_ticker_backfill_total_backfill_marker",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_ticker_backfill_total_backfill_semaphore",
+      "target": "tz_ticker_backfill_total_backfill_matches_all_endpoint",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.75,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_TICKER_BACKFILL_TOTAL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_always_web_search_enrich_tag_via_llm",
+      "target": "tz_always_web_search_web_search_tool",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.9,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_always_web_search.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_admin_tag_enrich_admin_tag_enrich_endpoint",
+      "target": "tz_always_web_search_enrich_tag_via_llm",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_admin_tag_enrich.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_async_enrichment_background_enrich_tag",
+      "target": "tz_always_web_search_enrich_tag_via_llm",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_async_enrichment.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_dedup_create_user_tag",
+      "target": "tz_portfolios_migration_portfolios_table",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_dedup.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_delete_delete_tag_endpoint",
+      "target": "tz_tag_delete_cascade_tag_delete",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.9,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_delete.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_delete_delete_tag_endpoint",
+      "target": "tz_ticker_backfill_total_matched_tags",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.75,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_delete.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_bcryptjs_to_bcrypt_bcryptjs",
+      "target": "tz_bcryptjs_to_bcrypt_bcrypt",
+      "relation": "semantically_similar_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.9,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_bcryptjs_to_bcrypt.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_v5_metrics_online_users",
+      "target": "tz_v5_metrics_engagement",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.75,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_V5_METRICS.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_v5_metrics_mrr_arr",
+      "target": "tz_v5_metrics_promo_codes",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.75,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_V5_METRICS.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_russian_companies_prompt_moex_ticker",
+      "target": "tz_russian_companies_prompt_russian_companies_support",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_russian_companies_prompt.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_e2e_fixes_final_tag_id",
+      "target": "tz_tag_async_enrichment_background_enrich_tag",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.75,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_e2e_fixes.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_e2e_fixes_resolved_tag_name",
+      "target": "tz_tag_dedup_create_user_tag",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.75,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_e2e_fixes.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_enrichment_fix_response_format_json_object",
+      "target": "tz_tag_enrichment_fix_tag_enrichment_parsing",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_enrichment_fix.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "tz_tag_enrichment_fix_max_tokens",
+      "target": "tz_tag_enrichment_fix_tag_enrichment_parsing",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.75,
+      "source_file": "/Users/vladislavbaklykov/Desktop/Результат КИМИ/KimiKOD/pulse kode/TZ_tag_enrichment_fix.md",
+      "source_location": null,
+      "weight": 1.0
+    }
+  ],
+  "hyperedges": [],
+  "input_tokens": 0,
+  "output_tokens": 0
+}

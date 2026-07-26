@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>PULSE — Где используются данные из карточки тега</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+body { font-family: system-ui, sans-serif; background: #0b0c0f; color: #e5e7eb; margin: 0; padding: 24px; }
+h1 { font-size: 20px; margin-bottom: 8px; }
+p { color: #6B7280; font-size: 13px; margin-bottom: 16px; }
+.mermaid { background: #111; border-radius: 12px; padding: 16px; }
+.note { background: #111; border: 1px solid #222; border-radius: 8px; padding: 12px; margin-top: 16px; font-size: 13px; color: #9CA3AF; }
+.note code { color: #34D399; background: #1a1a1a; padding: 2px 4px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<h1>🏷️ Данные из карточки тега — где используются</h1>
+<p>Центр — таблица <code>user_defined_tags</code> с колонкой <code>is_verified</code> и JSONB <code>enriched_data</code>. Стрелки показывают, какие поля тега куда идут.</p>
+<div class="mermaid">
+flowchart TD
+    subgraph DB["База данных"]
+        UDT[("user_defined_tags<br/>is_verified + enriched_data")]
+        NEWS[("news<br/>matched_tags[]")]
+        PORT[("portfolios<br/>user_id ↔ tag_id")]
+    end
+
+    subgraph AdminUI["Админ UI"]
+        TagCard["TagDetailModal.tsx<br/>Карточка тега<br/>редактирование + verified"]
+        TagsTab["TagsTab.tsx<br/>Таблица тегов"]
+        UserDetail["UserDetailModal.tsx<br/>Теги пользователя"]
+        Metrics["ProductMetricsTab.tsx<br/>Статистика по тегам"]
+    end
+
+    subgraph PublicUI["Публичный UI"]
+        Home["Home.tsx<br/>Облако тегов<br/>+ лимиты тарифа"]
+        TagChip["Tag.tsx<br/>Пилюля тега"]
+        PopTags["PopularTagsSlider.tsx<br/>Популярные теги"]
+        NewsFeed["NewsFeed.tsx<br/>Лента по тегу"]
+        TagEnrich["TagEnrichment.tsx<br/>Плашка обогащения"]
+        NewsDetail["NewsDetailModal.tsx<br/>Обогащения тегов в новости"]
+        Profile["Profile.tsx<br/>Управление тегами"]
+    end
+
+    subgraph Backend["Бэкенд-сервисы"]
+        NewsProc["newsProcessor.ts<br/>Обработка новостей"]
+        TagMatch["tagManager.ts / smartTagMatcher.ts<br/>Матчинг тегов"]
+        Backfill["tagBackfill.ts<br/>Ретро-матчинг"]
+        Enrich["enrichment.ts<br/>LLM-обогащение"]
+        Digest["digest.ts<br/>Дайджест по тегам"]
+        Push["push.ts<br/>Пуш-уведомления"]
+        Activity["activityLog.ts<br/>Лог событий тегов"]
+        Alerts["adminAlerts.ts<br/>Алерты админу"]
+        Reports["reports.ts / adminMetrics.ts<br/>Отчёты и метрики"]
+    end
+
+    subgraph Notifications["Уведомления пользователям"]
+        TG["Telegram bot<br/>дайджест + алерты"]
+        Email["Email<br/>репорты / уведомления"]
+    end
+
+    UDT -->|"tag_name, tag_type, is_verified"| TagCard
+    UDT -->|"tag_name, tag_type, is_verified<br/>articles_24h/7d/30d, subs"| TagsTab
+    UDT -->|"tag_name, tag_type"| TagChip
+    UDT -->|"tag_name, tag_type, popularity"| PopTags
+    UDT -->|"enriched_data: ticker, website,<br/>description, sectors, trends, geo..."| TagEnrich
+    UDT -->|"matched_tags[]"| NewsProc
+    UDT -->|"keywords, synonyms"| TagMatch
+    UDT -->|"keywords"| Backfill
+    UDT -->|"все поля"| Enrich
+    UDT -->|"tag_id, tag_name"| Reports
+
+    NEWS -->|"связанные новости<br/>для карточки"| TagCard
+    NEWS -->|"новости по тегу"| NewsFeed
+    NEWS -->|"matched_tags[]<br/>+ обогащения"| NewsDetail
+
+    PORT -->|"теги пользователя"| Profile
+    PORT -->|"теги пользователя"| UserDetail
+    PORT -->|"теги пользователя"| Digest
+    PORT -->|"теги пользователя"| Push
+
+    TagCard -->|"PUT /admin/tags/:tagId"| UDT
+    TagCard -->|"POST /enrich"| Enrich
+    TagCard -->|"POST /backfill-matches"| Backfill
+
+    TagMatch -->|"заполняет"| NEWS
+    Backfill -->|"заполняет"| NEWS
+    Enrich -->|"обновляет"| UDT
+
+    Digest -->|"рассылка"| TG
+    Push -->|"пуши"| TG
+    Reports -->|"weekly report"| Email
+    Alerts -->|"алерты"| TG
+
+    Activity -.->|"логирует"| TagCard
+    Activity -.->|"логирует"| Profile
+    Activity -.->|"логирует"| NewsFeed
+</div>
+<div class="note">
+<strong>Ключевые выводы:</strong><br>
+• Данные тега разделены на два потока: <strong>базовые</strong> (<code>tag_name</code>, <code>tag_type</code>, <code>is_verified</code>) и <strong>обогащённые</strong> (<code>ticker</code>, <code>description</code>, <code>sectors</code>, <code>geo_*</code> и т.д.).<br>
+• <code>is_verified</code> — только админская отметка, на публичный UI не влияет.<br>
+• <code>TagEnrichment.tsx</code> — основной потребитель обогащённых данных на публичной стороне.<br>
+• Бэкенд использует теги для матчинга новостей, дайджестов, пушей и отчётов.<br>
+• <code>portfolios</code> связывает пользователей с тегами — отсюда идёт персонализация.
+</div>
+<script>mermaid.initialize({startOnLoad:true, theme:'dark'});</script>
+</body>
+</html>
