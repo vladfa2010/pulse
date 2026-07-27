@@ -32,6 +32,7 @@ router.get('/candles_daily', adminMiddleware, async (req, res) => {
     }
 
     const candles = await getDailyCandles(exchange, ticker, days);
+    console.log(`[Market] candles_daily response for ${ticker}: ${candles.length} candles`);
 
     const fullDates = candles.map((c) => formatMskLocal(new Date(c.time)).slice(0, 10));
     const dayLabels = fullDates.map((d) => d.slice(5));

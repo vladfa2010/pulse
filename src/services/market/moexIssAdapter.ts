@@ -93,6 +93,7 @@ export async function resolveTicker(ticker: string): Promise<TickerBoard> {
       throw new Error(`Incomplete board info for ticker: ${ticker}`);
     }
 
+    console.log(`[MOEX] resolved ticker ${ticker}:`, result);
     resolveCache.set(key, result);
     return result;
   } catch (err: any) {
@@ -122,10 +123,15 @@ export async function getDailyCandles(ticker: string, days: number = 90): Promis
   )}/candles.json`;
 
   try {
+    // Daily candles: MOEX ISS expects YYYY-MM-DD for interval=24
+    const fromStr = formatMskDate(fromMsk);
+    const tillStr = formatMskDate(tillMsk);
+    console.log(`[MOEX] daily candles request: ${url} from=${fromStr} till=${tillStr}`);
+
     const res = await axios.get(url, {
       params: {
-        from: formatMskLocal(fromMsk),
-        till: formatMskLocal(tillMsk),
+        from: fromStr,
+        till: tillStr,
         interval: 24,
         'iss.meta': 'off',
       },
@@ -184,8 +190,10 @@ export async function getIntraday5min(ticker: string, dateStr: string): Promise<
   let current = new Date(start);
 
   try {
+    console.log(`[MOEX] intraday request: ${url} date=${dateStr}`);
     while (current < end) {
       const chunkEnd = new Date(Math.min(current.getTime() + INTRADAY_CHUNK_MINUTES * 60 * 1000, end.getTime()));
+      console.log(`[MOEX] intraday chunk from=${formatMskLocal(current)} till=${formatMskLocal(chunkEnd)}`);
       const res = await axios.get(url, {
         params: {
           from: formatMskLocal(current),
