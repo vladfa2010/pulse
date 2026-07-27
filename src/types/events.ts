@@ -27,6 +27,8 @@ export const USER_EVENT_TYPES = [
   'sentiment_vote',
   'factcheck_ordered',
   'page_view_plans',
+  'admin_changed_plan',
+  'admin_extended_subscription',
 ] as const;
 
 export type UserEventType = typeof USER_EVENT_TYPES[number];

@@ -127,3 +127,33 @@ export async function logFactCheckOrdered(userId: string, newsId: string): Promi
 export async function logPageViewPlans(userId: string): Promise<void> {
   return logUserEvent(userId, 'page_view_plans', { page: 'plans' });
 }
+
+export async function logAdminChangedPlan(
+  adminId: string,
+  userId: string,
+  previousPlan: string,
+  newPlan: string,
+  frozenTags: number
+): Promise<void> {
+  return logUserEvent(userId, 'admin_changed_plan', {
+    admin_id: adminId,
+    previous_plan: previousPlan,
+    new_plan: newPlan,
+    frozen_tags: frozenTags,
+  });
+}
+
+export async function logAdminExtendedSubscription(
+  adminId: string,
+  userId: string,
+  previousExpiresAt: string | null,
+  newExpiresAt: string,
+  monthsAdded?: number
+): Promise<void> {
+  return logUserEvent(userId, 'admin_extended_subscription', {
+    admin_id: adminId,
+    previous_expires_at: previousExpiresAt,
+    new_expires_at: newExpiresAt,
+    months_added: monthsAdded,
+  });
+}

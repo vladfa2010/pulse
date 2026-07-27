@@ -15,9 +15,13 @@ import {
   getPlanById,
   getActiveSubscriberCount,
   parseDbJson,
+  getUserSubscription,
+  freezeExcessTags,
+  unfreezeTagsUpToLimit,
 } from '../services/subscription';
 import { listAllFeatures, createFeature, updateFeature } from './features';
 import { getPromoByCode } from '../services/promo';
+import { logAdminChangedPlan, logAdminExtendedSubscription } from '../services/activityLog';
 
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
@@ -298,6 +302,178 @@ router.post('/users/:id/auto-renew', adminMiddleware, async (req: AuthRequest, r
   } catch (err: any) {
     console.error('[Admin] Toggle auto-renew error:', err.message);
     res.status(500).json({ error: 'Failed to toggle auto-renew' });
+  }
+});
+
+// POST /api/admin/users/:id/change-plan — admin changes user subscription plan
+router.post('/users/:id/change-plan', adminMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const targetUserId = req.params.id;
+    const { planId } = req.body;
+
+    if (!planId || typeof planId !== 'string') {
+      return res.status(400).json({ error: 'planId required' });
+    }
+
+    const plan = await getPlanById(planId);
+    if (!plan || !plan.is_active || plan.deleted_at) {
+      return res.status(400).json({ error: 'Invalid or inactive plan' });
+    }
+
+    const sub = await getUserSubscription(targetUserId);
+    const previousPlan = sub.plan;
+
+    await query(
+      `UPDATE users
+       SET subscription_plan = $1,
+           subscription_billing_cycle = $2,
+           subscription_active = TRUE,
+           subscription_auto_renew = FALSE,
+           scheduled_plan_downgrade = NULL
+       WHERE id = $3`,
+      [planId, plan.billing_frequency, targetUserId]
+    );
+
+    await freezeExcessTags(targetUserId, planId);
+    await unfreezeTagsUpToLimit(targetUserId, planId);
+
+    const tagCounts = await query(
+      `SELECT SUM(CASE WHEN is_frozen THEN 0 ELSE 1 END) as active,
+              SUM(CASE WHEN is_frozen THEN 1 ELSE 0 END) as frozen
+       FROM portfolios WHERE user_id = $1`,
+      [targetUserId]
+    );
+    const activeTags = Number(tagCounts.rows[0]?.active || 0);
+    const frozenTags = Number(tagCounts.rows[0]?.frozen || 0);
+
+    logAdminChangedPlan(req.user!.userId, targetUserId, previousPlan, planId, frozenTags).catch(() => {});
+
+    res.json({
+      success: true,
+      previousPlan,
+      newPlan: planId,
+      activeTags,
+      frozenTags,
+    });
+  } catch (err: any) {
+    console.error('[Admin] Change plan error:', err.message);
+    res.status(500).json({ error: 'Failed to change plan' });
+  }
+});
+
+// POST /api/admin/users/:id/extend-subscription — admin updates subscription expiration date
+router.post('/users/:id/extend-subscription', adminMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const targetUserId = req.params.id;
+    const { expiresAt, addMonths } = req.body;
+
+    const previousResult = await query(
+      `SELECT subscription_expires_at FROM users WHERE id = $1`,
+      [targetUserId]
+    );
+    const previousExpiresAt = previousResult.rows[0]?.subscription_expires_at || null;
+
+    let newExpiresAt: Date;
+
+    if (expiresAt) {
+      newExpiresAt = new Date(expiresAt);
+      if (isNaN(newExpiresAt.getTime())) {
+        return res.status(400).json({ error: 'Invalid expiresAt date' });
+      }
+    } else if (addMonths && typeof addMonths === 'number' && addMonths > 0) {
+      const base = previousExpiresAt && new Date(previousExpiresAt) > new Date()
+        ? new Date(previousExpiresAt)
+        : new Date();
+      newExpiresAt = new Date(base);
+      newExpiresAt.setMonth(newExpiresAt.getMonth() + addMonths);
+    } else {
+      return res.status(400).json({ error: 'expiresAt or addMonths required' });
+    }
+
+    await query(
+      `UPDATE users
+       SET subscription_expires_at = $1,
+           subscription_active = TRUE,
+           expiry_notified = '{}'
+       WHERE id = $2`,
+      [newExpiresAt.toISOString(), targetUserId]
+    );
+
+    await query(
+      `DELETE FROM subscription_notifications_sent
+       WHERE user_id = $1 AND type IN ('reminder_3d', 'reminder_1d')`,
+      [targetUserId]
+    );
+
+    logAdminExtendedSubscription(
+      req.user!.userId,
+      targetUserId,
+      previousExpiresAt,
+      newExpiresAt.toISOString(),
+      addMonths
+    ).catch(() => {});
+
+    res.json({
+      success: true,
+      previousExpiresAt,
+      newExpiresAt: newExpiresAt.toISOString(),
+    });
+  } catch (err: any) {
+    console.error('[Admin] Extend subscription error:', err.message);
+    res.status(500).json({ error: 'Failed to extend subscription' });
+  }
+});
+
+// GET /api/admin/activity-log — admin action history from user_events
+router.get('/activity-log', adminMiddleware, async (req, res) => {
+  try {
+    const userId = req.query.userId as string | undefined;
+    const limit = Math.min(Number(req.query.limit) || 100, 500);
+
+    const where = userId ? 'WHERE ue.user_id = $1' : '';
+    const params: any[] = userId ? [userId] : [];
+
+    const result = await query(
+      `SELECT ue.id, ue.user_id, ue.event_type, ue.event_data, ue.created_at,
+              target.email as target_email
+       FROM user_events ue
+       LEFT JOIN users target ON target.id = ue.user_id
+       ${where}
+       ORDER BY ue.created_at DESC
+       LIMIT $${params.length + 1}`,
+      [...params, limit]
+    );
+
+    const rows = result.rows.map((row: any) => ({
+      ...row,
+      event_data: parseDbJson(row.event_data) || {},
+    }));
+
+    const actorIds = rows
+      .map((r: any) => r.event_data?.admin_id)
+      .filter((id: any) => id && typeof id === 'string');
+
+    const actorEmails: Record<string, string> = {};
+    if (actorIds.length > 0) {
+      const placeholders = actorIds.map((_: any, i: number) => `$${i + 1}`).join(',');
+      const actorsResult = await query(
+        `SELECT id, email FROM users WHERE id IN (${placeholders})`,
+        actorIds
+      );
+      for (const actor of actorsResult.rows) {
+        actorEmails[actor.id] = actor.email;
+      }
+    }
+
+    res.json({
+      logs: rows.map((row: any) => ({
+        ...row,
+        actor_email: actorEmails[row.event_data?.admin_id] || null,
+      })),
+    });
+  } catch (err: any) {
+    console.error('[Admin] Activity log error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch activity log' });
   }
 });
 
