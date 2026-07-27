@@ -110,9 +110,9 @@
     "semantic_hash": "0d2c934d7521804a17133bf620951b8a"
   },
   "pulse-backend/src/routes/admin.ts": {
-    "mtime": 1784741579.891593,
-    "ast_hash": "8e6395a8a378b11b2bb2a17905e0ebca",
-    "semantic_hash": "8e6395a8a378b11b2bb2a17905e0ebca"
+    "mtime": 1785138236.4487233,
+    "ast_hash": "a0d0e15efaaa99af52c482b7b1635d2d",
+    "semantic_hash": ""
   },
   "pulse-backend/src/routes/adminMetrics.ts": {
     "mtime": 1784742912.6209245,
@@ -215,9 +215,9 @@
     "semantic_hash": "e419e01488fdb1361edbbf64b765db07"
   },
   "pulse-backend/src/services/activityLog.ts": {
-    "mtime": 1784562466.7637753,
-    "ast_hash": "8c2e47090a3e707a492ae7fa50de4b08",
-    "semantic_hash": "8c2e47090a3e707a492ae7fa50de4b08"
+    "mtime": 1785138122.2705405,
+    "ast_hash": "a7d27b1cae1c91d1f4ed9abd451464c2",
+    "semantic_hash": ""
   },
   "pulse-backend/src/services/adminAlerts.ts": {
     "mtime": 1784562456.241424,
@@ -365,9 +365,9 @@
     "semantic_hash": "ee65505575e930ec89b484125ec84303"
   },
   "pulse-backend/src/types/events.ts": {
-    "mtime": 1784561853.7744377,
-    "ast_hash": "262135ae59f1251909d84266194d8670",
-    "semantic_hash": "262135ae59f1251909d84266194d8670"
+    "mtime": 1785138102.8929923,
+    "ast_hash": "f5dc4d9ab9327169e3dac079bb79fde7",
+    "semantic_hash": ""
   },
   "pulse-backend/src/types/sqljs.d.ts": {
     "mtime": 1781770160.4776652,
@@ -875,14 +875,14 @@
     "semantic_hash": "0c8e725295fd490d67381fc0a2cfd224"
   },
   "pulse-frontend/src/pages/PaymentReturn.tsx": {
-    "mtime": 1783418542.4049015,
-    "ast_hash": "6b4879063240f511aba3ad105814c14d",
-    "semantic_hash": "6b4879063240f511aba3ad105814c14d"
+    "mtime": 1785145929.5051231,
+    "ast_hash": "fa89e4ed1b5380cded734ab49cde6bae",
+    "semantic_hash": ""
   },
   "pulse-frontend/src/pages/Pricing.tsx": {
-    "mtime": 1784976420.6355717,
-    "ast_hash": "2e7cec1dcbab1873694aaeb180457eba",
-    "semantic_hash": "2e7cec1dcbab1873694aaeb180457eba"
+    "mtime": 1785144198.2599082,
+    "ast_hash": "587d3b2e6a5b1758a630c123b8985489",
+    "semantic_hash": ""
   },
   "pulse-frontend/src/pages/Privacy.tsx": {
     "mtime": 1781898065.1230369,
@@ -965,9 +965,9 @@
     "semantic_hash": "4cdd5152f76889bf3a81f00ead8ae1bf"
   },
   "pulse-frontend/src/pages/admin/UserDetailModal.tsx": {
-    "mtime": 1784535921.9690654,
-    "ast_hash": "b7b3df52902306b3bccc3dfcfa0e0b68",
-    "semantic_hash": "b7b3df52902306b3bccc3dfcfa0e0b68"
+    "mtime": 1785138977.9259753,
+    "ast_hash": "bf68bf2a0385cb9dd540f5106f878ed7",
+    "semantic_hash": ""
   },
   "pulse-frontend/src/pages/admin/UsersTab.tsx": {
     "mtime": 1784535974.8119798,
@@ -1795,8 +1795,8 @@
     "semantic_hash": ""
   },
   "pulse-backend/ARCHITECTURE.md": {
-    "mtime": 1784735653.3713295,
-    "ast_hash": "546053bb6b5545d33bcc000db4e55a1c",
+    "mtime": 1785140395.6976333,
+    "ast_hash": "f5e225dd1771c3986028451c63d2ff51",
     "semantic_hash": ""
   },
   "pulse-backend/AUTH.md": {
@@ -1830,8 +1830,8 @@
     "semantic_hash": ""
   },
   "pulse-backend/DEPLOYMENT.md": {
-    "mtime": 1783611083.9948092,
-    "ast_hash": "a67d1df22a12d4db4c87429c337b0f4c",
+    "mtime": 1785077557.5346894,
+    "ast_hash": "10d19a7011ccf8d09a1201b95680a0a2",
     "semantic_hash": ""
   },
   "pulse-backend/DESIGN_SPEC.md": {
@@ -2110,8 +2110,8 @@
     "semantic_hash": ""
   },
   "pulse-frontend/ADMIN_DASHBOARD.md": {
-    "mtime": 1784795909.4855676,
-    "ast_hash": "9c17610d2dde21015b11684c45ceb121",
+    "mtime": 1785140287.310191,
+    "ast_hash": "984bdb2a7b6608ba8681407441296fd0",
     "semantic_hash": ""
   },
   "pulse-frontend/ANDROID.md": {
@@ -2592,6 +2592,36 @@
   "pulse_icon_v22_aurora.png": {
     "mtime": 1783678680.533718,
     "ast_hash": "d64ba35756ad1ce9df0052ef78ae145b",
+    "semantic_hash": ""
+  },
+  "TZ_ADMIN_USER_PLAN_EDIT.md": {
+    "mtime": 1785137569.3448799,
+    "ast_hash": "2ae6e5e7d6e599548a52cd13c4d67762",
+    "semantic_hash": ""
+  },
+  "TZ_PRICING_YOUR_PLAN.md": {
+    "mtime": 1785140181.2352154,
+    "ast_hash": "f59e47e80baffa18d3f02713612ddf21",
+    "semantic_hash": ""
+  },
+  "TZ_PROMO_BUTTON_PRICE.md": {
+    "mtime": 1785140528.7370558,
+    "ast_hash": "21a56e594b5885380c2199e9902eefc8",
+    "semantic_hash": ""
+  },
+  "TZ_AUTO_SELECT_PLAN2.md": {
+    "mtime": 1785143504.0785413,
+    "ast_hash": "9fc817225a8508d4190239ef406b4ee1",
+    "semantic_hash": ""
+  },
+  "TZ_PROMO_ENTER.md": {
+    "mtime": 1785144109.1874466,
+    "ast_hash": "01d92c47767e813c9125c7c7d8f51b21",
+    "semantic_hash": ""
+  },
+  "TZ_PAYMENT_PERIOD_MESSAGE.md": {
+    "mtime": 1785145826.9880834,
+    "ast_hash": "8c10b7414280dd1444cbd108612c3a06",
     "semantic_hash": ""
   }
 }

@@ -34,6 +34,8 @@ import translateRoutes from './routes/translate';
 import webhookRoutes from './routes/webhook';
 import adminRoutes from './routes/admin';
 import adminMetricsRoutes from './routes/adminMetrics';
+import marketRoutes from './routes/market';
+import tagMarketRoutes from './routes/tagMarket';
 import sentimentRoutes from './routes/sentiment';
 import appRoutes from './routes/app';
 import { authMiddleware, AuthRequest } from './middleware/auth';
@@ -2038,6 +2040,11 @@ app.get('/api/tags/search', async (req, res) => {
   }
 });
 
+// Market data routes (must be mounted BEFORE /admin/tags/:tagId)
+app.use('/admin/market', marketRoutes);
+app.use('/admin/tags/:tagId/news-daily', tagMarketRoutes);
+app.use('/admin/tags/:tagId/articles-by-day', tagMarketRoutes);
+
 // GET /admin/tags/:tagId — детали тега
 app.get('/admin/tags/:tagId', requireAdmin, async (req, res) => {
   try {
@@ -2109,18 +2116,43 @@ app.get('/admin/tags/:tagId', requireAdmin, async (req, res) => {
       geoCities   = ed.geo_cities    || [];
     } catch { /* ignore */ }
 
-    // Daily stats (30 days)
-    const dailyResult = await query(`
-      SELECT
-        date_trunc('day', published_at) as day,
-        COUNT(*) as count,
-        ROUND(AVG(sentiment_score) FILTER (WHERE sentiment_score IS NOT NULL), 1) as avg_sentiment
-      FROM news
-      WHERE $1 = ANY(matched_tags)
-        AND published_at > NOW() - INTERVAL '30 days'
-      GROUP BY date_trunc('day', published_at)
-      ORDER BY day ASC
-    `, [tagId]);
+    // Daily stats (30 days) — grouped by MSK day
+    let dailySql: string;
+    let dailyParams: any[];
+    if (USE_SQLITE) {
+      dailySql = `
+        SELECT
+          date(datetime(published_at, '+3 hours')) as day,
+          COUNT(*) as count,
+          ROUND(AVG(sentiment_score) FILTER (WHERE sentiment_score IS NOT NULL), 1) as avg_sentiment
+        FROM news
+        WHERE matched_tags IS NOT NULL
+          AND (
+            matched_tags LIKE ?
+            OR matched_tags LIKE ?
+            OR matched_tags LIKE ?
+            OR matched_tags = ?
+          )
+          AND datetime(published_at, '+3 hours') >= datetime('now', '-30 days', '+3 hours')
+        GROUP BY date(datetime(published_at, '+3 hours'))
+        ORDER BY day ASC
+      `;
+      dailyParams = [`%"${tagId}"%`, `%[${tagId},%`, `%,${tagId}]%`, tagId];
+    } else {
+      dailySql = `
+        SELECT
+          (published_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Moscow')::date as day,
+          COUNT(*) as count,
+          ROUND(AVG(sentiment_score) FILTER (WHERE sentiment_score IS NOT NULL), 1) as avg_sentiment
+        FROM news
+        WHERE $1 = ANY(matched_tags)
+          AND published_at > NOW() - INTERVAL '30 days'
+        GROUP BY (published_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Moscow')::date
+        ORDER BY day ASC
+      `;
+      dailyParams = [tagId];
+    }
+    const dailyResult = await query(dailySql, dailyParams);
 
     // Recent articles
     const articlesResult = await query(`
