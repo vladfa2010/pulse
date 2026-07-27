@@ -2801,6 +2801,87 @@ ALTER TABLE user_defined_tags
 
 ---
 
+## TZ_ADMIN_USER_PLAN_EDIT — Редактирование тарифа и срока подписки (админ)
+
+### Архитектура
+
+```
+Админ открывает UserDetailModal → раздел «Управление подпиской"
+  ↓
+GET /api/admin/plans  ← список активных неархивированных тарифов
+  ↓
+(смена тарифа)
+POST /api/admin/users/:id/change-plan { planId }
+  → UPDATE users (subscription_plan, billing_cycle, active, auto_renew, downgrade)
+  → freezeExcessTags() + unfreezeTagsUpToLimit()
+  → logAdminChangedPlan() → user_events
+  ↓
+(изменение срока)
+POST /api/admin/users/:id/extend-subscription { expiresAt | addMonths }
+  → UPDATE users (subscription_expires_at, active)
+  → expiry_notified = '{}'
+  → DELETE reminder_3d / reminder_1d из subscription_notifications_sent
+  → logAdminExtendedSubscription() → user_events
+  ↓
+GET /api/admin/activity-log?userId=...&limit=20
+  → Left JOIN users target + users actor по event_data.admin_id
+  → Frontend обновляет таблицу «История действий»
+```
+
+### Endpoints
+
+| Method | Path | Описание |
+|--------|------|----------|
+| GET | `/api/admin/plans` | Список активных неархивированных тарифов |
+| POST | `/api/admin/users/:id/change-plan` | Смена тарифа пользователя |
+| POST | `/api/admin/users/:id/extend-subscription` | Установка даты или добавление месяцев |
+| GET | `/api/admin/activity-log` | История админских действий (optional userId/limit) |
+
+### Что происходит при смене тарифа
+
+- Проверка: тариф существует, активен, не архивирован.
+- Обновляются поля:
+  - `subscription_plan = planId`
+  - `subscription_billing_cycle = plan.billing_frequency`
+  - `subscription_active = TRUE`
+  - `subscription_auto_renew = FALSE`
+  - `scheduled_plan_downgrade = NULL`
+- Пересчитываются теги:
+  - `freezeExcessTags()` — замораживает лишние теги сверх `tag_limit`;
+  - `unfreezeTagsUpToLimit()` — размораживает теги, если лимит позволяет.
+- Логируется `admin_changed_plan`:
+  - `admin_id`, `user_id`, `previous_plan`, `new_plan`, `frozen_tags`.
+- Frontend показывает активных/замороженных тегов.
+
+### Что происходит при продлении
+
+- `expiresAt`: устанавливает точную дату окончания.
+- `addMonths`: прибавляет N месяцев к `subscription_expires_at` (или к `NOW()`, если подписка истекла).
+- `subscription_active = TRUE`.
+- `expiry_notified = '{}'` — сбрасывает флаги уведомлений, чтобы cron снова прислал reminder.
+- Удаляются записи `reminder_3d` / `reminder_1d` из `subscription_notifications_sent`.
+- Логируется `admin_extended_subscription`:
+  - `admin_id`, `user_id`, `previous_expires_at`, `new_expires_at`, `months_added`.
+
+### Безопасность
+
+| Механизм | Описание |
+|----------|----------|
+| Admin guard | `adminMiddleware` — проверяет `is_admin` в JWT |
+| Plan validation | Нельзя назначить удалённый/неактивный/несуществующий тариф |
+| Date validation | `expiresAt` парсится через `new Date()`; невалидная дата → 400 |
+| Audit log | Все действия пишутся в `user_events` и отображаются в карточке |
+
+### Frontend
+
+| Компонент | Изменения |
+|-----------|-----------|
+| `UserDetailModal.tsx` | Блок «Управление подпиской»: select тарифа, input даты, кнопки +1/+3/+12 мес; таблица «История действий» |
+| `src/types/events.ts` | Новые типы `admin_changed_plan`, `admin_extended_subscription` |
+| `src/services/activityLog.ts` | Хелперы `logAdminChangedPlan`, `logAdminExtendedSubscription` |
+
+---
+
 ## Known Issues (не исправлены — отложено)
 
 ### BUG-1: 34,403 статьи застряли без тегов (критичный)
