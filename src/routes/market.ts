@@ -22,13 +22,13 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 router.get('/candles_daily', adminMiddleware, async (req, res) => {
   try {
     const ticker = (req.query.ticker as string || '').trim().toUpperCase();
-    const exchange = (req.query.exchange as string || '').trim().toUpperCase();
+    const exchange = (req.query.exchange as string || req.query.provider as string || 'MOEX').trim().toUpperCase();
     let days = parseInt(req.query.days as string, 10);
     if (isNaN(days) || days <= 0) days = 90;
     days = Math.min(days, 500);
 
-    if (!ticker || !exchange) {
-      return res.status(400).json({ error: 'ticker and exchange are required' });
+    if (!ticker) {
+      return res.status(400).json({ error: 'ticker is required' });
     }
 
     const candles = await getDailyCandles(exchange, ticker, days);
@@ -63,11 +63,11 @@ router.get('/candles_daily', adminMiddleware, async (req, res) => {
 router.get('/candles_intraday', adminMiddleware, async (req, res) => {
   try {
     const ticker = (req.query.ticker as string || '').trim().toUpperCase();
-    const exchange = (req.query.exchange as string || '').trim().toUpperCase();
+    const exchange = (req.query.exchange as string || req.query.provider as string || 'MOEX').trim().toUpperCase();
     const date = (req.query.date as string || '').trim();
 
-    if (!ticker || !exchange || !date) {
-      return res.status(400).json({ error: 'ticker, exchange and date are required' });
+    if (!ticker || !date) {
+      return res.status(400).json({ error: 'ticker and date are required' });
     }
     if (!DATE_RE.test(date)) {
       return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
