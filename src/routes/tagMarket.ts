@@ -11,7 +11,7 @@ const router = Router();
  * Возвращает количество новостей, привязанных к тегу, по каждому дню (MSK).
  * Период: last N days (default 90).
  */
-router.get('/:tagId/news-daily', adminMiddleware, async (req, res) => {
+router.get('/news-daily', adminMiddleware, async (req, res) => {
   try {
     const { tagId } = req.params;
     const days = Math.min(parseInt(req.query.days as string, 10) || 90, 365);
@@ -82,7 +82,7 @@ router.get('/:tagId/news-daily', adminMiddleware, async (req, res) => {
  * GET /admin/tags/:tagId/articles-by-day?date=YYYY-MM-DD
  * Возвращает список новостей за конкретный день (MSK) для тега.
  */
-router.get('/:tagId/articles-by-day', adminMiddleware, async (req, res) => {
+router.get('/articles-by-day', adminMiddleware, async (req, res) => {
   try {
     const { tagId } = req.params;
     const { date } = req.query;

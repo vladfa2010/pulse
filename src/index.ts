@@ -2042,8 +2042,7 @@ app.get('/api/tags/search', async (req, res) => {
 
 // Market data routes (must be mounted BEFORE /admin/tags/:tagId)
 app.use('/admin/market', marketRoutes);
-app.use('/admin/tags/:tagId/news-daily', tagMarketRoutes);
-app.use('/admin/tags/:tagId/articles-by-day', tagMarketRoutes);
+app.use('/admin/tags/:tagId', tagMarketRoutes);
 
 // GET /admin/tags/:tagId — детали тега
 app.get('/admin/tags/:tagId', requireAdmin, async (req, res) => {
