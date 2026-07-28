@@ -912,8 +912,8 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "pulse_backend_src_config_db",
-      "community": 165,
-      "community_name": "useAppUpdate.ts",
+      "community": 154,
+      "community_name": "PULSE Project Context",
       "norm_label": "db.ts"
     },
     {
@@ -945,8 +945,8 @@
       "source_location": "L74",
       "_origin": "ast",
       "id": "pulse_backend_src_index_runmigration",
-      "community": 11,
-      "community_name": "index.ts",
+      "community": 22,
+      "community_name": "subscription.ts",
       "norm_label": "runmigration()"
     },
     {
@@ -1121,8 +1121,8 @@
       "source_location": "L40",
       "_origin": "ast",
       "id": "pulse_backend_src_middleware_auth_authmiddleware",
-      "community": 35,
-      "community_name": "admin.ts",
+      "community": 11,
+      "community_name": "index.ts",
       "norm_label": "authmiddleware()"
     },
     {
@@ -1726,8 +1726,8 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "pulse_backend_src_routes_factcheck",
-      "community": 22,
-      "community_name": "subscription.ts",
+      "community": 11,
+      "community_name": "index.ts",
       "norm_label": "routes/factcheck.ts"
     },
     {
@@ -1737,8 +1737,8 @@
       "source_location": "L20",
       "_origin": "ast",
       "id": "pulse_backend_src_routes_factcheck_router",
-      "community": 22,
-      "community_name": "subscription.ts",
+      "community": 11,
+      "community_name": "index.ts",
       "norm_label": "router"
     },
     {
@@ -1748,8 +1748,8 @@
       "source_location": "L23",
       "_origin": "ast",
       "id": "pulse_backend_src_routes_factcheck_eligible_plans",
-      "community": 22,
-      "community_name": "subscription.ts",
+      "community": 11,
+      "community_name": "index.ts",
       "norm_label": "eligible_plans"
     },
     {
@@ -1759,8 +1759,8 @@
       "source_location": "L25",
       "_origin": "ast",
       "id": "pulse_backend_src_routes_factcheck_nowsql",
-      "community": 22,
-      "community_name": "subscription.ts",
+      "community": 11,
+      "community_name": "index.ts",
       "norm_label": "nowsql()"
     },
     {
@@ -1770,8 +1770,8 @@
       "source_location": "L29",
       "_origin": "ast",
       "id": "pulse_backend_src_routes_factcheck_requirepremium",
-      "community": 22,
-      "community_name": "subscription.ts",
+      "community": 109,
+      "community_name": "factCheckNotifications.ts",
       "norm_label": "requirepremium()"
     },
     {
@@ -1781,8 +1781,8 @@
       "source_location": "L50",
       "_origin": "ast",
       "id": "pulse_backend_src_routes_factcheck_checkratelimit",
-      "community": 22,
-      "community_name": "subscription.ts",
+      "community": 11,
+      "community_name": "index.ts",
       "norm_label": "checkratelimit()"
     },
     {
@@ -1792,8 +1792,8 @@
       "source_location": "L63",
       "_origin": "ast",
       "id": "pulse_backend_src_routes_factcheck_parsefactcheckresult",
-      "community": 22,
-      "community_name": "subscription.ts",
+      "community": 11,
+      "community_name": "index.ts",
       "norm_label": "parsefactcheckresult()"
     },
     {
@@ -2100,8 +2100,8 @@
       "source_location": "L24",
       "_origin": "ast",
       "id": "pulse_backend_src_routes_sentiment_router",
-      "community": 23,
-      "community_name": "sentimentIndex.ts",
+      "community": 11,
+      "community_name": "index.ts",
       "norm_label": "router"
     },
     {
@@ -2133,8 +2133,8 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "pulse_backend_src_routes_translate",
-      "community": 154,
-      "community_name": "PULSE Project Context",
+      "community": 11,
+      "community_name": "index.ts",
       "norm_label": "routes/translate.ts"
     },
     {
@@ -2144,8 +2144,8 @@
       "source_location": "L5",
       "_origin": "ast",
       "id": "pulse_backend_src_routes_translate_router",
-      "community": 154,
-      "community_name": "PULSE Project Context",
+      "community": 11,
+      "community_name": "index.ts",
       "norm_label": "router"
     },
     {
@@ -2155,8 +2155,8 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "pulse_backend_src_routes_user",
-      "community": 22,
-      "community_name": "subscription.ts",
+      "community": 109,
+      "community_name": "factCheckNotifications.ts",
       "norm_label": "routes/user.ts"
     },
     {
@@ -2166,8 +2166,8 @@
       "source_location": "L20",
       "_origin": "ast",
       "id": "pulse_backend_src_routes_user_router",
-      "community": 22,
-      "community_name": "subscription.ts",
+      "community": 109,
+      "community_name": "factCheckNotifications.ts",
       "norm_label": "router"
     },
     {
@@ -2177,8 +2177,8 @@
       "source_location": "L23",
       "_origin": "ast",
       "id": "pulse_backend_src_routes_user_uuidv4",
-      "community": 22,
-      "community_name": "subscription.ts",
+      "community": 109,
+      "community_name": "factCheckNotifications.ts",
       "norm_label": "uuidv4()"
     },
     {
@@ -2188,8 +2188,8 @@
       "source_location": "L31",
       "_origin": "ast",
       "id": "pulse_backend_src_routes_user_nowsql",
-      "community": 22,
-      "community_name": "subscription.ts",
+      "community": 109,
+      "community_name": "factCheckNotifications.ts",
       "norm_label": "nowsql()"
     },
     {
@@ -2199,8 +2199,8 @@
       "source_location": "L35",
       "_origin": "ast",
       "id": "pulse_backend_src_routes_user_insertorreplace",
-      "community": 22,
-      "community_name": "subscription.ts",
+      "community": 109,
+      "community_name": "factCheckNotifications.ts",
       "norm_label": "insertorreplace()"
     },
     {
@@ -2210,8 +2210,8 @@
       "source_location": "L635",
       "_origin": "ast",
       "id": "pulse_backend_src_routes_user_summarycache",
-      "community": 22,
-      "community_name": "subscription.ts",
+      "community": 109,
+      "community_name": "factCheckNotifications.ts",
       "norm_label": "summarycache"
     },
     {
@@ -2221,8 +2221,8 @@
       "source_location": "L639",
       "_origin": "ast",
       "id": "pulse_backend_src_routes_user_buildsummaryprompt",
-      "community": 22,
-      "community_name": "subscription.ts",
+      "community": 109,
+      "community_name": "factCheckNotifications.ts",
       "norm_label": "buildsummaryprompt()"
     },
     {
@@ -2804,8 +2804,8 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "pulse_backend_src_schemas_user",
-      "community": 22,
-      "community_name": "subscription.ts",
+      "community": 109,
+      "community_name": "factCheckNotifications.ts",
       "norm_label": "schemas/user.ts"
     },
     {
@@ -2815,8 +2815,8 @@
       "source_location": "L10",
       "_origin": "ast",
       "id": "pulse_backend_src_schemas_user_valid_tag_types",
-      "community": 22,
-      "community_name": "subscription.ts",
+      "community": 109,
+      "community_name": "factCheckNotifications.ts",
       "norm_label": "valid_tag_types"
     },
     {
@@ -2826,8 +2826,8 @@
       "source_location": "L14",
       "_origin": "ast",
       "id": "pulse_backend_src_schemas_user_addtagschema",
-      "community": 22,
-      "community_name": "subscription.ts",
+      "community": 109,
+      "community_name": "factCheckNotifications.ts",
       "norm_label": "addtagschema"
     },
     {
@@ -2837,8 +2837,8 @@
       "source_location": "L25",
       "_origin": "ast",
       "id": "pulse_backend_src_schemas_user_addtaginput",
-      "community": 22,
-      "community_name": "subscription.ts",
+      "community": 109,
+      "community_name": "factCheckNotifications.ts",
       "norm_label": "addtaginput"
     },
     {
@@ -3288,8 +3288,8 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "pulse_backend_src_services_cron",
-      "community": 46,
-      "community_name": "newsProcessor.ts",
+      "community": 22,
+      "community_name": "subscription.ts",
       "norm_label": "cron.ts"
     },
     {
@@ -3299,8 +3299,8 @@
       "source_location": "L37",
       "_origin": "ast",
       "id": "pulse_backend_src_services_cron_analyzesentiment",
-      "community": 46,
-      "community_name": "newsProcessor.ts",
+      "community": 22,
+      "community_name": "subscription.ts",
       "norm_label": "analyzesentiment()"
     },
     {
@@ -3310,8 +3310,8 @@
       "source_location": "L58",
       "_origin": "ast",
       "id": "pulse_backend_src_services_cron_logcronstart",
-      "community": 46,
-      "community_name": "newsProcessor.ts",
+      "community": 22,
+      "community_name": "subscription.ts",
       "norm_label": "logcronstart()"
     },
     {
@@ -3321,8 +3321,8 @@
       "source_location": "L73",
       "_origin": "ast",
       "id": "pulse_backend_src_services_cron_logcronfinish",
-      "community": 46,
-      "community_name": "newsProcessor.ts",
+      "community": 22,
+      "community_name": "subscription.ts",
       "norm_label": "logcronfinish()"
     },
     {
@@ -3332,8 +3332,8 @@
       "source_location": "L93",
       "_origin": "ast",
       "id": "pulse_backend_src_services_cron_processarticles",
-      "community": 46,
-      "community_name": "newsProcessor.ts",
+      "community": 22,
+      "community_name": "subscription.ts",
       "norm_label": "processarticles()"
     },
     {
@@ -3343,8 +3343,8 @@
       "source_location": "L122",
       "_origin": "ast",
       "id": "pulse_backend_src_services_cron_processarticleslocked",
-      "community": 46,
-      "community_name": "newsProcessor.ts",
+      "community": 22,
+      "community_name": "subscription.ts",
       "norm_label": "processarticleslocked()"
     },
     {
@@ -3354,8 +3354,8 @@
       "source_location": "L284",
       "_origin": "ast",
       "id": "pulse_backend_src_services_cron_acquirecronlock",
-      "community": 46,
-      "community_name": "newsProcessor.ts",
+      "community": 22,
+      "community_name": "subscription.ts",
       "norm_label": "acquirecronlock()"
     },
     {
@@ -3365,8 +3365,8 @@
       "source_location": "L311",
       "_origin": "ast",
       "id": "pulse_backend_src_services_cron_releasecronlock",
-      "community": 46,
-      "community_name": "newsProcessor.ts",
+      "community": 22,
+      "community_name": "subscription.ts",
       "norm_label": "releasecronlock()"
     },
     {
@@ -3376,8 +3376,8 @@
       "source_location": "L330",
       "_origin": "ast",
       "id": "pulse_backend_src_services_cron_processdeferredarticles",
-      "community": 46,
-      "community_name": "newsProcessor.ts",
+      "community": 22,
+      "community_name": "subscription.ts",
       "norm_label": "processdeferredarticles()"
     },
     {
@@ -3387,8 +3387,8 @@
       "source_location": "L427",
       "_origin": "ast",
       "id": "pulse_backend_src_services_cron_startcron",
-      "community": 46,
-      "community_name": "newsProcessor.ts",
+      "community": 22,
+      "community_name": "subscription.ts",
       "norm_label": "startcron()"
     },
     {
@@ -3596,8 +3596,8 @@
       "source_location": "L23",
       "_origin": "ast",
       "id": "pulse_backend_src_services_email_isquiethours",
-      "community": 165,
-      "community_name": "useAppUpdate.ts",
+      "community": 154,
+      "community_name": "PULSE Project Context",
       "norm_label": "isquiethours()"
     },
     {
@@ -3838,8 +3838,8 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "pulse_backend_src_services_enrichment",
-      "community": 46,
-      "community_name": "newsProcessor.ts",
+      "community": 22,
+      "community_name": "subscription.ts",
       "norm_label": "enrichment.ts"
     },
     {
@@ -3849,8 +3849,8 @@
       "source_location": "L13",
       "_origin": "ast",
       "id": "pulse_backend_src_services_enrichment_tagimpact",
-      "community": 46,
-      "community_name": "newsProcessor.ts",
+      "community": 22,
+      "community_name": "subscription.ts",
       "norm_label": "tagimpact"
     },
     {
@@ -3860,8 +3860,8 @@
       "source_location": "L22",
       "_origin": "ast",
       "id": "pulse_backend_src_services_enrichment_enrichmenttask",
-      "community": 46,
-      "community_name": "newsProcessor.ts",
+      "community": 22,
+      "community_name": "subscription.ts",
       "norm_label": "enrichmenttask"
     },
     {
@@ -3871,8 +3871,8 @@
       "source_location": "L40",
       "_origin": "ast",
       "id": "pulse_backend_src_services_enrichment_populatenewstaglinksbatch",
-      "community": 46,
-      "community_name": "newsProcessor.ts",
+      "community": 22,
+      "community_name": "subscription.ts",
       "norm_label": "populatenewstaglinksbatch()"
     },
     {
@@ -3882,8 +3882,8 @@
       "source_location": "L143",
       "_origin": "ast",
       "id": "pulse_backend_src_services_enrichment_populatenewstaglinks",
-      "community": 46,
-      "community_name": "newsProcessor.ts",
+      "community": 22,
+      "community_name": "subscription.ts",
       "norm_label": "populatenewstaglinks()"
     },
     {
@@ -5543,8 +5543,8 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "pulse_backend_src_services_push",
-      "community": 165,
-      "community_name": "useAppUpdate.ts",
+      "community": 154,
+      "community_name": "PULSE Project Context",
       "norm_label": "services/push.ts"
     },
     {
@@ -5554,8 +5554,8 @@
       "source_location": "L36",
       "_origin": "ast",
       "id": "pulse_backend_src_services_push_ispushconfigured",
-      "community": 165,
-      "community_name": "useAppUpdate.ts",
+      "community": 154,
+      "community_name": "PULSE Project Context",
       "norm_label": "ispushconfigured()"
     },
     {
@@ -5565,8 +5565,8 @@
       "source_location": "L44",
       "_origin": "ast",
       "id": "pulse_backend_src_services_push_sendsentimentvotepush",
-      "community": 165,
-      "community_name": "useAppUpdate.ts",
+      "community": 154,
+      "community_name": "PULSE Project Context",
       "norm_label": "sendsentimentvotepush()"
     },
     {
@@ -5576,8 +5576,8 @@
       "source_location": "L104",
       "_origin": "ast",
       "id": "pulse_backend_src_services_push_pushdata",
-      "community": 165,
-      "community_name": "useAppUpdate.ts",
+      "community": 154,
+      "community_name": "PULSE Project Context",
       "norm_label": "pushdata"
     },
     {
@@ -5587,8 +5587,8 @@
       "source_location": "L108",
       "_origin": "ast",
       "id": "pulse_backend_src_services_push_sendpushnotification",
-      "community": 165,
-      "community_name": "useAppUpdate.ts",
+      "community": 154,
+      "community_name": "PULSE Project Context",
       "norm_label": "sendpushnotification()"
     },
     {
@@ -5598,8 +5598,8 @@
       "source_location": "L185",
       "_origin": "ast",
       "id": "pulse_backend_src_services_push_sendnewarticlepush",
-      "community": 165,
-      "community_name": "useAppUpdate.ts",
+      "community": 154,
+      "community_name": "PULSE Project Context",
       "norm_label": "sendnewarticlepush()"
     },
     {
@@ -5609,8 +5609,8 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "pulse_backend_src_services_reports",
-      "community": 165,
-      "community_name": "useAppUpdate.ts",
+      "community": 56,
+      "community_name": "tagManager.ts",
       "norm_label": "reports.ts"
     },
     {
@@ -5620,8 +5620,8 @@
       "source_location": "L13",
       "_origin": "ast",
       "id": "pulse_backend_src_services_reports_reportdata",
-      "community": 165,
-      "community_name": "useAppUpdate.ts",
+      "community": 56,
+      "community_name": "tagManager.ts",
       "norm_label": "reportdata"
     },
     {
@@ -5631,8 +5631,8 @@
       "source_location": "L20",
       "_origin": "ast",
       "id": "pulse_backend_src_services_reports_tagsummary",
-      "community": 165,
-      "community_name": "useAppUpdate.ts",
+      "community": 56,
+      "community_name": "tagManager.ts",
       "norm_label": "tagsummary"
     },
     {
@@ -5642,8 +5642,8 @@
       "source_location": "L26",
       "_origin": "ast",
       "id": "pulse_backend_src_services_reports_article",
-      "community": 165,
-      "community_name": "useAppUpdate.ts",
+      "community": 56,
+      "community_name": "tagManager.ts",
       "norm_label": "article"
     },
     {
@@ -5653,8 +5653,8 @@
       "source_location": "L36",
       "_origin": "ast",
       "id": "pulse_backend_src_services_reports_generatereportforuser",
-      "community": 165,
-      "community_name": "useAppUpdate.ts",
+      "community": 56,
+      "community_name": "tagManager.ts",
       "norm_label": "generatereportforuser()"
     },
     {
@@ -5664,8 +5664,8 @@
       "source_location": "L126",
       "_origin": "ast",
       "id": "pulse_backend_src_services_reports_formatreporttext",
-      "community": 165,
-      "community_name": "useAppUpdate.ts",
+      "community": 56,
+      "community_name": "tagManager.ts",
       "norm_label": "formatreporttext()"
     },
     {
@@ -5675,8 +5675,8 @@
       "source_location": "L156",
       "_origin": "ast",
       "id": "pulse_backend_src_services_reports_formatreporthtml",
-      "community": 165,
-      "community_name": "useAppUpdate.ts",
+      "community": 56,
+      "community_name": "tagManager.ts",
       "norm_label": "formatreporthtml()"
     },
     {
@@ -5686,8 +5686,8 @@
       "source_location": "L205",
       "_origin": "ast",
       "id": "pulse_backend_src_services_reports_sendallweeklyreports",
-      "community": 165,
-      "community_name": "useAppUpdate.ts",
+      "community": 56,
+      "community_name": "tagManager.ts",
       "norm_label": "sendallweeklyreports()"
     },
     {
@@ -5697,8 +5697,8 @@
       "source_location": "L290",
       "_origin": "ast",
       "id": "pulse_backend_src_services_reports_sendweeklyreportforuser",
-      "community": 165,
-      "community_name": "useAppUpdate.ts",
+      "community": 56,
+      "community_name": "tagManager.ts",
       "norm_label": "sendweeklyreportforuser()"
     },
     {
@@ -5708,8 +5708,8 @@
       "source_location": "L325",
       "_origin": "ast",
       "id": "pulse_backend_src_services_reports_startreportcron",
-      "community": 165,
-      "community_name": "useAppUpdate.ts",
+      "community": 56,
+      "community_name": "tagManager.ts",
       "norm_label": "startreportcron()"
     },
     {
@@ -5719,8 +5719,8 @@
       "source_location": "L340",
       "_origin": "ast",
       "id": "pulse_backend_src_services_reports_formatdate",
-      "community": 165,
-      "community_name": "useAppUpdate.ts",
+      "community": 56,
+      "community_name": "tagManager.ts",
       "norm_label": "formatdate()"
     },
     {
@@ -5730,8 +5730,8 @@
       "source_location": "L344",
       "_origin": "ast",
       "id": "pulse_backend_src_services_reports_formatshortdate",
-      "community": 165,
-      "community_name": "useAppUpdate.ts",
+      "community": 56,
+      "community_name": "tagManager.ts",
       "norm_label": "formatshortdate()"
     },
     {
@@ -5741,8 +5741,8 @@
       "source_location": "L348",
       "_origin": "ast",
       "id": "pulse_backend_src_services_reports_sleep",
-      "community": 165,
-      "community_name": "useAppUpdate.ts",
+      "community": 56,
+      "community_name": "tagManager.ts",
       "norm_label": "sleep()"
     },
     {
@@ -6478,8 +6478,8 @@
       "source_location": "L221",
       "_origin": "ast",
       "id": "pulse_backend_src_services_smarttagmatcher_getrelatedtags",
-      "community": 18,
-      "community_name": "api.ts",
+      "community": 109,
+      "community_name": "factCheckNotifications.ts",
       "norm_label": "getrelatedtags()"
     },
     {
@@ -6665,8 +6665,8 @@
       "source_location": "L726",
       "_origin": "ast",
       "id": "pulse_backend_src_services_smarttagmatcher_analyzeunifiedbatch",
-      "community": 46,
-      "community_name": "newsProcessor.ts",
+      "community": 154,
+      "community_name": "PULSE Project Context",
       "norm_label": "analyzeunifiedbatch()"
     },
     {
@@ -6731,8 +6731,8 @@
       "source_location": "L61",
       "_origin": "ast",
       "id": "pulse_backend_src_services_sse_broadcastnews",
-      "community": 46,
-      "community_name": "newsProcessor.ts",
+      "community": 22,
+      "community_name": "subscription.ts",
       "norm_label": "broadcastnews()"
     },
     {
@@ -6896,8 +6896,8 @@
       "source_location": "L109",
       "_origin": "ast",
       "id": "pulse_backend_src_services_subscription_planlevel",
-      "community": 22,
-      "community_name": "subscription.ts",
+      "community": 109,
+      "community_name": "factCheckNotifications.ts",
       "norm_label": "planlevel()"
     },
     {
@@ -6907,8 +6907,8 @@
       "source_location": "L114",
       "_origin": "ast",
       "id": "pulse_backend_src_services_subscription_planlevelof",
-      "community": 22,
-      "community_name": "subscription.ts",
+      "community": 109,
+      "community_name": "factCheckNotifications.ts",
       "norm_label": "planlevelof()"
     },
     {
@@ -6918,8 +6918,8 @@
       "source_location": "L118",
       "_origin": "ast",
       "id": "pulse_backend_src_services_subscription_isatleast",
-      "community": 22,
-      "community_name": "subscription.ts",
+      "community": 109,
+      "community_name": "factCheckNotifications.ts",
       "norm_label": "isatleast()"
     },
     {
@@ -6929,8 +6929,8 @@
       "source_location": "L123",
       "_origin": "ast",
       "id": "pulse_backend_src_services_subscription_ispaid",
-      "community": 22,
-      "community_name": "subscription.ts",
+      "community": 109,
+      "community_name": "factCheckNotifications.ts",
       "norm_label": "ispaid()"
     },
     {
@@ -6984,8 +6984,8 @@
       "source_location": "L162",
       "_origin": "ast",
       "id": "pulse_backend_src_services_subscription_computeplanprice",
-      "community": 22,
-      "community_name": "subscription.ts",
+      "community": 109,
+      "community_name": "factCheckNotifications.ts",
       "norm_label": "computeplanprice()"
     },
     {
@@ -6995,8 +6995,8 @@
       "source_location": "L191",
       "_origin": "ast",
       "id": "pulse_backend_src_services_subscription_getusersubscription",
-      "community": 22,
-      "community_name": "subscription.ts",
+      "community": 109,
+      "community_name": "factCheckNotifications.ts",
       "norm_label": "getusersubscription()"
     },
     {
@@ -7006,8 +7006,8 @@
       "source_location": "L217",
       "_origin": "ast",
       "id": "pulse_backend_src_services_subscription_buildsubscriptionstatus",
-      "community": 16,
-      "community_name": "activityLog.ts",
+      "community": 109,
+      "community_name": "factCheckNotifications.ts",
       "norm_label": "buildsubscriptionstatus()"
     },
     {
@@ -7028,8 +7028,8 @@
       "source_location": "L264",
       "_origin": "ast",
       "id": "pulse_backend_src_services_subscription_calculateupgradeprice",
-      "community": 22,
-      "community_name": "subscription.ts",
+      "community": 109,
+      "community_name": "factCheckNotifications.ts",
       "norm_label": "calculateupgradeprice()"
     },
     {
@@ -7116,8 +7116,8 @@
       "source_location": "L597",
       "_origin": "ast",
       "id": "pulse_backend_src_services_subscription_lostfeatures",
-      "community": 22,
-      "community_name": "subscription.ts",
+      "community": 55,
+      "community_name": "email.ts",
       "norm_label": "lostfeatures"
     },
     {
@@ -7138,8 +7138,8 @@
       "source_location": "L639",
       "_origin": "ast",
       "id": "pulse_backend_src_services_subscription_usermonthlystats",
-      "community": 22,
-      "community_name": "subscription.ts",
+      "community": 55,
+      "community_name": "email.ts",
       "norm_label": "usermonthlystats"
     },
     {
@@ -7160,8 +7160,8 @@
       "source_location": "L722",
       "_origin": "ast",
       "id": "pulse_backend_src_services_subscription_savepaymentmethod",
-      "community": 22,
-      "community_name": "subscription.ts",
+      "community": 109,
+      "community_name": "factCheckNotifications.ts",
       "norm_label": "savepaymentmethod()"
     },
     {
@@ -7237,8 +7237,8 @@
       "source_location": "L992",
       "_origin": "ast",
       "id": "pulse_backend_src_services_subscription_getexcesstagsfordowngrade",
-      "community": 22,
-      "community_name": "subscription.ts",
+      "community": 109,
+      "community_name": "factCheckNotifications.ts",
       "norm_label": "getexcesstagsfordowngrade()"
     },
     {
@@ -7248,8 +7248,8 @@
       "source_location": "L1011",
       "_origin": "ast",
       "id": "pulse_backend_src_services_subscription_scheduledowngrade",
-      "community": 22,
-      "community_name": "subscription.ts",
+      "community": 109,
+      "community_name": "factCheckNotifications.ts",
       "norm_label": "scheduledowngrade()"
     },
     {
@@ -7292,8 +7292,8 @@
       "source_location": "L1151",
       "_origin": "ast",
       "id": "pulse_backend_src_services_subscription_sendsubscriptionreminders",
-      "community": 46,
-      "community_name": "newsProcessor.ts",
+      "community": 22,
+      "community_name": "subscription.ts",
       "norm_label": "sendsubscriptionreminders()"
     },
     {
@@ -7303,8 +7303,8 @@
       "source_location": "L1227",
       "_origin": "ast",
       "id": "pulse_backend_src_services_subscription_nowsqlplusdays",
-      "community": 46,
-      "community_name": "newsProcessor.ts",
+      "community": 22,
+      "community_name": "subscription.ts",
       "norm_label": "nowsqlplusdays()"
     },
     {
@@ -7314,8 +7314,8 @@
       "source_location": "L1233",
       "_origin": "ast",
       "id": "pulse_backend_src_services_subscription_datesql",
-      "community": 22,
-      "community_name": "subscription.ts",
+      "community": 55,
+      "community_name": "email.ts",
       "norm_label": "datesql()"
     },
     {
@@ -7325,8 +7325,8 @@
       "source_location": "L1237",
       "_origin": "ast",
       "id": "pulse_backend_src_services_subscription_datesqlplusdays",
-      "community": 22,
-      "community_name": "subscription.ts",
+      "community": 55,
+      "community_name": "email.ts",
       "norm_label": "datesqlplusdays()"
     },
     {
@@ -7402,8 +7402,8 @@
       "source_location": "L1675",
       "_origin": "ast",
       "id": "pulse_backend_src_services_subscription_requireminplan",
-      "community": 22,
-      "community_name": "subscription.ts",
+      "community": 109,
+      "community_name": "factCheckNotifications.ts",
       "norm_label": "requireminplan()"
     },
     {
@@ -7985,8 +7985,8 @@
       "source_location": "L1018",
       "_origin": "ast",
       "id": "pulse_backend_src_services_tagmanager_getalltagnames",
-      "community": 18,
-      "community_name": "api.ts",
+      "community": 109,
+      "community_name": "factCheckNotifications.ts",
       "norm_label": "getalltagnames()"
     },
     {
@@ -11719,8 +11719,8 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "pulse_frontend_src_components_navbar",
-      "community": 29,
-      "community_name": "Pricing.tsx",
+      "community": 7,
+      "community_name": "App.tsx",
       "norm_label": "navbar.tsx"
     },
     {
@@ -11730,8 +11730,8 @@
       "source_location": "L9",
       "_origin": "ast",
       "id": "pulse_frontend_src_components_navbar_navlinks",
-      "community": 29,
-      "community_name": "Pricing.tsx",
+      "community": 7,
+      "community_name": "App.tsx",
       "norm_label": "navlinks"
     },
     {
@@ -11741,8 +11741,8 @@
       "source_location": "L18",
       "_origin": "ast",
       "id": "pulse_frontend_src_components_navbar_adminlink",
-      "community": 29,
-      "community_name": "Pricing.tsx",
+      "community": 7,
+      "community_name": "App.tsx",
       "norm_label": "adminlink"
     },
     {
@@ -11752,8 +11752,8 @@
       "source_location": "L20",
       "_origin": "ast",
       "id": "pulse_frontend_src_components_navbar_soundtogglebutton",
-      "community": 29,
-      "community_name": "Pricing.tsx",
+      "community": 7,
+      "community_name": "App.tsx",
       "norm_label": "soundtogglebutton()"
     },
     {
@@ -11763,8 +11763,8 @@
       "source_location": "L183",
       "_origin": "ast",
       "id": "pulse_frontend_src_components_navbar_navbar",
-      "community": 29,
-      "community_name": "Pricing.tsx",
+      "community": 7,
+      "community_name": "App.tsx",
       "norm_label": "navbar()"
     },
     {
@@ -12214,8 +12214,8 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "pulse_frontend_src_components_premiumpromptmodal",
-      "community": 2,
-      "community_name": "FactCheckSection.tsx",
+      "community": 47,
+      "community_name": "Home.tsx",
       "norm_label": "premiumpromptmodal.tsx"
     },
     {
@@ -12225,8 +12225,8 @@
       "source_location": "L5",
       "_origin": "ast",
       "id": "pulse_frontend_src_components_premiumpromptmodal_premiumpromptmodalprops",
-      "community": 2,
-      "community_name": "FactCheckSection.tsx",
+      "community": 47,
+      "community_name": "Home.tsx",
       "norm_label": "premiumpromptmodalprops"
     },
     {
@@ -12236,8 +12236,8 @@
       "source_location": "L18",
       "_origin": "ast",
       "id": "pulse_frontend_src_components_premiumpromptmodal_premiumpromptmodal",
-      "community": 2,
-      "community_name": "FactCheckSection.tsx",
+      "community": 47,
+      "community_name": "Home.tsx",
       "norm_label": "premiumpromptmodal()"
     },
     {
@@ -12665,8 +12665,8 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "pulse_frontend_src_components_telegramconnectbanner",
-      "community": 30,
-      "community_name": "logAnalyticsEvent",
+      "community": 29,
+      "community_name": "Pricing.tsx",
       "norm_label": "telegramconnectbanner.tsx"
     },
     {
@@ -12676,8 +12676,8 @@
       "source_location": "L11",
       "_origin": "ast",
       "id": "pulse_frontend_src_components_telegramconnectbanner_telegramstatus",
-      "community": 30,
-      "community_name": "logAnalyticsEvent",
+      "community": 29,
+      "community_name": "Pricing.tsx",
       "norm_label": "telegramstatus"
     },
     {
@@ -12687,8 +12687,8 @@
       "source_location": "L21",
       "_origin": "ast",
       "id": "pulse_frontend_src_components_telegramconnectbanner_telegramconfig",
-      "community": 30,
-      "community_name": "logAnalyticsEvent",
+      "community": 29,
+      "community_name": "Pricing.tsx",
       "norm_label": "telegramconfig"
     },
     {
@@ -12698,8 +12698,8 @@
       "source_location": "L26",
       "_origin": "ast",
       "id": "pulse_frontend_src_components_telegramconnectbanner_telegramauthdata",
-      "community": 30,
-      "community_name": "logAnalyticsEvent",
+      "community": 29,
+      "community_name": "Pricing.tsx",
       "norm_label": "telegramauthdata"
     },
     {
@@ -12709,8 +12709,8 @@
       "source_location": "L35",
       "_origin": "ast",
       "id": "pulse_frontend_src_components_telegramconnectbanner_props",
-      "community": 30,
-      "community_name": "logAnalyticsEvent",
+      "community": 29,
+      "community_name": "Pricing.tsx",
       "norm_label": "props"
     },
     {
@@ -12720,8 +12720,8 @@
       "source_location": "L51",
       "_origin": "ast",
       "id": "pulse_frontend_src_components_telegramconnectbanner_telegramconnectbanner",
-      "community": 30,
-      "community_name": "logAnalyticsEvent",
+      "community": 29,
+      "community_name": "Pricing.tsx",
       "norm_label": "telegramconnectbanner()"
     },
     {
@@ -12731,8 +12731,8 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "pulse_frontend_src_components_unreadnewscarousel",
-      "community": 271,
-      "community_name": "Cleanup Failed Articles UI",
+      "community": 3,
+      "community_name": "NewsCard.tsx",
       "norm_label": "unreadnewscarousel.tsx"
     },
     {
@@ -12753,8 +12753,8 @@
       "source_location": "L26",
       "_origin": "ast",
       "id": "pulse_frontend_src_components_unreadnewscarousel_fetchunreadnews",
-      "community": 271,
-      "community_name": "Cleanup Failed Articles UI",
+      "community": 3,
+      "community_name": "NewsCard.tsx",
       "norm_label": "fetchunreadnews()"
     },
     {
@@ -12764,8 +12764,8 @@
       "source_location": "L31",
       "_origin": "ast",
       "id": "pulse_frontend_src_components_unreadnewscarousel_marknewsasread",
-      "community": 271,
-      "community_name": "Cleanup Failed Articles UI",
+      "community": 3,
+      "community_name": "NewsCard.tsx",
       "norm_label": "marknewsasread()"
     },
     {
@@ -12775,8 +12775,8 @@
       "source_location": "L35",
       "_origin": "ast",
       "id": "pulse_frontend_src_components_unreadnewscarousel_unreadnewscarousel",
-      "community": 271,
-      "community_name": "Cleanup Failed Articles UI",
+      "community": 3,
+      "community_name": "NewsCard.tsx",
       "norm_label": "unreadnewscarousel()"
     },
     {
@@ -13644,8 +13644,8 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "pulse_frontend_src_hooks_useambientstyles",
-      "community": 271,
-      "community_name": "Cleanup Failed Articles UI",
+      "community": 3,
+      "community_name": "NewsCard.tsx",
       "norm_label": "useambientstyles.ts"
     },
     {
@@ -13655,8 +13655,8 @@
       "source_location": "L4",
       "_origin": "ast",
       "id": "pulse_frontend_src_hooks_useambientstyles_pool",
-      "community": 271,
-      "community_name": "Cleanup Failed Articles UI",
+      "community": 3,
+      "community_name": "NewsCard.tsx",
       "norm_label": "pool"
     },
     {
@@ -13666,8 +13666,8 @@
       "source_location": "L6",
       "_origin": "ast",
       "id": "pulse_frontend_src_hooks_useambientstyles_hashid",
-      "community": 271,
-      "community_name": "Cleanup Failed Articles UI",
+      "community": 3,
+      "community_name": "NewsCard.tsx",
       "norm_label": "hashid()"
     },
     {
@@ -13677,8 +13677,8 @@
       "source_location": "L15",
       "_origin": "ast",
       "id": "pulse_frontend_src_hooks_useambientstyles_pickstyle",
-      "community": 271,
-      "community_name": "Cleanup Failed Articles UI",
+      "community": 3,
+      "community_name": "NewsCard.tsx",
       "norm_label": "pickstyle()"
     },
     {
@@ -13688,8 +13688,8 @@
       "source_location": "L25",
       "_origin": "ast",
       "id": "pulse_frontend_src_hooks_useambientstyles_useambientstyles",
-      "community": 271,
-      "community_name": "Cleanup Failed Articles UI",
+      "community": 3,
+      "community_name": "NewsCard.tsx",
       "norm_label": "useambientstyles()"
     },
     {
@@ -13699,8 +13699,8 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "pulse_frontend_src_hooks_useanalyticspagetracking",
-      "community": 30,
-      "community_name": "logAnalyticsEvent",
+      "community": 29,
+      "community_name": "Pricing.tsx",
       "norm_label": "useanalyticspagetracking.ts"
     },
     {
@@ -13710,8 +13710,8 @@
       "source_location": "L5",
       "_origin": "ast",
       "id": "pulse_frontend_src_hooks_useanalyticspagetracking_useanalyticspagetracking",
-      "community": 30,
-      "community_name": "logAnalyticsEvent",
+      "community": 29,
+      "community_name": "Pricing.tsx",
       "norm_label": "useanalyticspagetracking()"
     },
     {
@@ -13963,8 +13963,8 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "pulse_frontend_src_hooks_usenewsstream",
-      "community": 271,
-      "community_name": "Cleanup Failed Articles UI",
+      "community": 3,
+      "community_name": "NewsCard.tsx",
       "norm_label": "usenewsstream.ts"
     },
     {
@@ -13974,8 +13974,8 @@
       "source_location": "L10",
       "_origin": "ast",
       "id": "pulse_frontend_src_hooks_usenewsstream_withid",
-      "community": 271,
-      "community_name": "Cleanup Failed Articles UI",
+      "community": 3,
+      "community_name": "NewsCard.tsx",
       "norm_label": "withid"
     },
     {
@@ -13985,8 +13985,8 @@
       "source_location": "L14",
       "_origin": "ast",
       "id": "pulse_frontend_src_hooks_usenewsstream_streamitem",
-      "community": 271,
-      "community_name": "Cleanup Failed Articles UI",
+      "community": 3,
+      "community_name": "NewsCard.tsx",
       "norm_label": "streamitem"
     },
     {
@@ -13996,8 +13996,8 @@
       "source_location": "L19",
       "_origin": "ast",
       "id": "pulse_frontend_src_hooks_usenewsstream_usenewsstream",
-      "community": 271,
-      "community_name": "Cleanup Failed Articles UI",
+      "community": 3,
+      "community_name": "NewsCard.tsx",
       "norm_label": "usenewsstream()"
     },
     {
@@ -14084,8 +14084,8 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "pulse_frontend_src_hooks_usesoundtoggle",
-      "community": 29,
-      "community_name": "Pricing.tsx",
+      "community": 7,
+      "community_name": "App.tsx",
       "norm_label": "usesoundtoggle.ts"
     },
     {
@@ -14095,8 +14095,8 @@
       "source_location": "L5",
       "_origin": "ast",
       "id": "pulse_frontend_src_hooks_usesoundtoggle_readmuted",
-      "community": 29,
-      "community_name": "Pricing.tsx",
+      "community": 7,
+      "community_name": "App.tsx",
       "norm_label": "readmuted()"
     },
     {
@@ -14106,8 +14106,8 @@
       "source_location": "L14",
       "_origin": "ast",
       "id": "pulse_frontend_src_hooks_usesoundtoggle_usesoundtoggle",
-      "community": 29,
-      "community_name": "Pricing.tsx",
+      "community": 7,
+      "community_name": "App.tsx",
       "norm_label": "usesoundtoggle()"
     },
     {
@@ -14172,8 +14172,8 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "pulse_frontend_src_lib_analytics",
-      "community": 30,
-      "community_name": "logAnalyticsEvent",
+      "community": 29,
+      "community_name": "Pricing.tsx",
       "norm_label": "analytics.ts"
     },
     {
@@ -14194,8 +14194,8 @@
       "source_location": "L40",
       "_origin": "ast",
       "id": "pulse_frontend_src_lib_analytics_loganalyticsevent",
-      "community": 30,
-      "community_name": "logAnalyticsEvent",
+      "community": 29,
+      "community_name": "Pricing.tsx",
       "norm_label": "loganalyticsevent()"
     },
     {
@@ -14205,8 +14205,8 @@
       "source_location": "L52",
       "_origin": "ast",
       "id": "pulse_frontend_src_lib_analytics_setanalyticsuserid",
-      "community": 30,
-      "community_name": "logAnalyticsEvent",
+      "community": 29,
+      "community_name": "Pricing.tsx",
       "norm_label": "setanalyticsuserid()"
     },
     {
@@ -14216,8 +14216,8 @@
       "source_location": "L61",
       "_origin": "ast",
       "id": "pulse_frontend_src_lib_analytics_setanalyticsuserproperties",
-      "community": 30,
-      "community_name": "logAnalyticsEvent",
+      "community": 29,
+      "community_name": "Pricing.tsx",
       "norm_label": "setanalyticsuserproperties()"
     },
     {
@@ -14568,8 +14568,8 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "pulse_frontend_src_lib_sound",
-      "community": 29,
-      "community_name": "Pricing.tsx",
+      "community": 7,
+      "community_name": "App.tsx",
       "norm_label": "sound.ts"
     },
     {
@@ -14579,8 +14579,8 @@
       "source_location": "L10",
       "_origin": "ast",
       "id": "pulse_frontend_src_lib_sound_audioctx",
-      "community": 29,
-      "community_name": "Pricing.tsx",
+      "community": 7,
+      "community_name": "App.tsx",
       "norm_label": "audioctx"
     },
     {
@@ -15162,8 +15162,8 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "pulse_frontend_src_pages_paymentreturn",
-      "community": 30,
-      "community_name": "logAnalyticsEvent",
+      "community": 108,
+      "community_name": "PUSH_NOTIFICATIONS",
       "norm_label": "paymentreturn.tsx"
     },
     {
@@ -15173,8 +15173,8 @@
       "source_location": "L26",
       "_origin": "ast",
       "id": "pulse_frontend_src_pages_paymentreturn_paymentdetails",
-      "community": 30,
-      "community_name": "logAnalyticsEvent",
+      "community": 108,
+      "community_name": "PUSH_NOTIFICATIONS",
       "norm_label": "paymentdetails"
     },
     {
@@ -15184,8 +15184,8 @@
       "source_location": "L36",
       "_origin": "ast",
       "id": "pulse_frontend_src_pages_paymentreturn_status",
-      "community": 30,
-      "community_name": "logAnalyticsEvent",
+      "community": 108,
+      "community_name": "PUSH_NOTIFICATIONS",
       "norm_label": "status"
     },
     {
@@ -15195,8 +15195,8 @@
       "source_location": "L38",
       "_origin": "ast",
       "id": "pulse_frontend_src_pages_paymentreturn_buildsuccessmessage",
-      "community": 30,
-      "community_name": "logAnalyticsEvent",
+      "community": 108,
+      "community_name": "PUSH_NOTIFICATIONS",
       "norm_label": "buildsuccessmessage()"
     },
     {
@@ -15206,8 +15206,8 @@
       "source_location": "L65",
       "_origin": "ast",
       "id": "pulse_frontend_src_pages_paymentreturn_paymentreturn",
-      "community": 30,
-      "community_name": "logAnalyticsEvent",
+      "community": 108,
+      "community_name": "PUSH_NOTIFICATIONS",
       "norm_label": "paymentreturn()"
     },
     {
@@ -15217,7 +15217,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "pulse_frontend_src_pages_pricing",
-      "community": 297,
+      "community": 29,
       "community_name": "Pricing.tsx",
       "norm_label": "pricing.tsx"
     },
@@ -15228,7 +15228,7 @@
       "source_location": "L18",
       "_origin": "ast",
       "id": "pulse_frontend_src_pages_pricing_plan",
-      "community": 297,
+      "community": 29,
       "community_name": "Pricing.tsx",
       "norm_label": "plan"
     },
@@ -15239,7 +15239,7 @@
       "source_location": "L34",
       "_origin": "ast",
       "id": "pulse_frontend_src_pages_pricing_featuredef",
-      "community": 297,
+      "community": 29,
       "community_name": "Pricing.tsx",
       "norm_label": "featuredef"
     },
@@ -15250,7 +15250,7 @@
       "source_location": "L39",
       "_origin": "ast",
       "id": "pulse_frontend_src_pages_pricing_appliedpromo",
-      "community": 297,
+      "community": 29,
       "community_name": "Pricing.tsx",
       "norm_label": "appliedpromo"
     },
@@ -15261,7 +15261,7 @@
       "source_location": "L48",
       "_origin": "ast",
       "id": "pulse_frontend_src_pages_pricing_promo_reason_messages",
-      "community": 297,
+      "community": 29,
       "community_name": "Pricing.tsx",
       "norm_label": "promo_reason_messages"
     },
@@ -15272,7 +15272,7 @@
       "source_location": "L58",
       "_origin": "ast",
       "id": "pulse_frontend_src_pages_pricing_warning_reasons",
-      "community": 297,
+      "community": 29,
       "community_name": "Pricing.tsx",
       "norm_label": "warning_reasons"
     },
@@ -15283,7 +15283,7 @@
       "source_location": "L60",
       "_origin": "ast",
       "id": "pulse_frontend_src_pages_pricing_plan_icons",
-      "community": 297,
+      "community": 29,
       "community_name": "Pricing.tsx",
       "norm_label": "plan_icons"
     },
@@ -15294,7 +15294,7 @@
       "source_location": "L68",
       "_origin": "ast",
       "id": "pulse_frontend_src_pages_pricing_formatprice",
-      "community": 297,
+      "community": 29,
       "community_name": "Pricing.tsx",
       "norm_label": "formatprice()"
     },
@@ -15305,7 +15305,7 @@
       "source_location": "L73",
       "_origin": "ast",
       "id": "pulse_frontend_src_pages_pricing_formatdateonly",
-      "community": 297,
+      "community": 29,
       "community_name": "Pricing.tsx",
       "norm_label": "formatdateonly()"
     },
@@ -15316,7 +15316,7 @@
       "source_location": "L80",
       "_origin": "ast",
       "id": "pulse_frontend_src_pages_pricing_periodlabel",
-      "community": 297,
+      "community": 29,
       "community_name": "Pricing.tsx",
       "norm_label": "periodlabel()"
     },
@@ -15327,7 +15327,7 @@
       "source_location": "L87",
       "_origin": "ast",
       "id": "pulse_frontend_src_pages_pricing_computedyearlyprice",
-      "community": 297,
+      "community": 29,
       "community_name": "Pricing.tsx",
       "norm_label": "computedyearlyprice()"
     },
@@ -15338,7 +15338,7 @@
       "source_location": "L92",
       "_origin": "ast",
       "id": "pulse_frontend_src_pages_pricing_pricing",
-      "community": 297,
+      "community": 29,
       "community_name": "Pricing.tsx",
       "norm_label": "pricing()"
     },
@@ -27432,6 +27432,83 @@
       "norm_label": "7. \u043a\u0440\u0438\u0442\u0435\u0440\u0438\u0438 \u043f\u0440\u0438\u0435\u043c\u043a\u0438"
     },
     {
+      "label": "\u0422\u0417_KimiCode_\u0444\u0438\u043a\u0441_mergeParams_tagMarket.md",
+      "file_type": "document",
+      "source_file": "\u0422\u0417_KimiCode_\u0444\u0438\u043a\u0441_mergeParams_tagMarket.md",
+      "source_location": "L1",
+      "_origin": "ast",
+      "id": "\u0442\u0437_kimicode_\u0444\u0438\u043a\u0441_mergeparams_tagmarket",
+      "community": 46,
+      "community_name": "newsProcessor.ts",
+      "norm_label": "\u0442\u0437_kimicode_\u0444\u0438\u043a\u0441_mergeparams_tagmarket.md"
+    },
+    {
+      "label": "\u0417\u0430\u0434\u0430\u043d\u0438\u0435 \u0434\u043b\u044f Kimi Code: \u0444\u0438\u043a\u0441 400 \u00abtagId and date are required\u00bb \u0432 tagMarket",
+      "file_type": "document",
+      "source_file": "\u0422\u0417_KimiCode_\u0444\u0438\u043a\u0441_mergeParams_tagMarket.md",
+      "source_location": "L1",
+      "_origin": "ast",
+      "id": "\u0442\u0437_kimicode_\u0444\u0438\u043a\u0441_mergeparams_tagmarket_\u0437\u0430\u0434\u0430\u043d\u0438\u0435_\u0434\u043b\u044f_kimi_code_\u0444\u0438\u043a\u0441_400_tagid_and_date_are_required_\u0432_tagmarket",
+      "community": 46,
+      "community_name": "newsProcessor.ts",
+      "norm_label": "\u0437\u0430\u0434\u0430\u043d\u0438\u0435 \u0434\u043b\u044f kimi code: \u0444\u0438\u043a\u0441 400 \u00abtagid and date are required\u00bb \u0432 tagmarket"
+    },
+    {
+      "label": "\u0421\u0438\u043c\u043f\u0442\u043e\u043c",
+      "file_type": "document",
+      "source_file": "\u0422\u0417_KimiCode_\u0444\u0438\u043a\u0441_mergeParams_tagMarket.md",
+      "source_location": "L7",
+      "_origin": "ast",
+      "id": "\u0442\u0437_kimicode_\u0444\u0438\u043a\u0441_mergeparams_tagmarket_\u0441\u0438\u043c\u043f\u0442\u043e\u043c",
+      "community": 46,
+      "community_name": "newsProcessor.ts",
+      "norm_label": "\u0441\u0438\u043c\u043f\u0442\u043e\u043c"
+    },
+    {
+      "label": "\u0414\u0438\u0430\u0433\u043d\u043e\u0437 (\u0433\u043e\u0442\u043e\u0432, \u0440\u0430\u0441\u0441\u043b\u0435\u0434\u043e\u0432\u0430\u0442\u044c \u043d\u0435 \u043d\u0443\u0436\u043d\u043e)",
+      "file_type": "document",
+      "source_file": "\u0422\u0417_KimiCode_\u0444\u0438\u043a\u0441_mergeParams_tagMarket.md",
+      "source_location": "L11",
+      "_origin": "ast",
+      "id": "\u0442\u0437_kimicode_\u0444\u0438\u043a\u0441_mergeparams_tagmarket_\u0434\u0438\u0430\u0433\u043d\u043e\u0437_\u0433\u043e\u0442\u043e\u0432_\u0440\u0430\u0441\u0441\u043b\u0435\u0434\u043e\u0432\u0430\u0442\u044c_\u043d\u0435_\u043d\u0443\u0436\u043d\u043e",
+      "community": 46,
+      "community_name": "newsProcessor.ts",
+      "norm_label": "\u0434\u0438\u0430\u0433\u043d\u043e\u0437 (\u0433\u043e\u0442\u043e\u0432, \u0440\u0430\u0441\u0441\u043b\u0435\u0434\u043e\u0432\u0430\u0442\u044c \u043d\u0435 \u043d\u0443\u0436\u043d\u043e)"
+    },
+    {
+      "label": "\u041f\u0440\u0430\u0432\u043a\u0430 (\u043e\u0434\u043d\u0430 \u0441\u0442\u0440\u043e\u043a\u0430)",
+      "file_type": "document",
+      "source_file": "\u0422\u0417_KimiCode_\u0444\u0438\u043a\u0441_mergeParams_tagMarket.md",
+      "source_location": "L27",
+      "_origin": "ast",
+      "id": "\u0442\u0437_kimicode_\u0444\u0438\u043a\u0441_mergeparams_tagmarket_\u043f\u0440\u0430\u0432\u043a\u0430_\u043e\u0434\u043d\u0430_\u0441\u0442\u0440\u043e\u043a\u0430",
+      "community": 46,
+      "community_name": "newsProcessor.ts",
+      "norm_label": "\u043f\u0440\u0430\u0432\u043a\u0430 (\u043e\u0434\u043d\u0430 \u0441\u0442\u0440\u043e\u043a\u0430)"
+    },
+    {
+      "label": "\u041f\u0440\u043e\u0432\u0435\u0440\u043a\u0430 \u043f\u043e\u0441\u043b\u0435 \u0434\u0435\u043f\u043b\u043e\u044f",
+      "file_type": "document",
+      "source_file": "\u0422\u0417_KimiCode_\u0444\u0438\u043a\u0441_mergeParams_tagMarket.md",
+      "source_location": "L38",
+      "_origin": "ast",
+      "id": "\u0442\u0437_kimicode_\u0444\u0438\u043a\u0441_mergeparams_tagmarket_\u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0430_\u043f\u043e\u0441\u043b\u0435_\u0434\u0435\u043f\u043b\u043e\u044f",
+      "community": 46,
+      "community_name": "newsProcessor.ts",
+      "norm_label": "\u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0430 \u043f\u043e\u0441\u043b\u0435 \u0434\u0435\u043f\u043b\u043e\u044f"
+    },
+    {
+      "label": "\u041e\u0442\u043a\u0430\u0442",
+      "file_type": "document",
+      "source_file": "\u0422\u0417_KimiCode_\u0444\u0438\u043a\u0441_mergeParams_tagMarket.md",
+      "source_location": "L52",
+      "_origin": "ast",
+      "id": "\u0442\u0437_kimicode_\u0444\u0438\u043a\u0441_mergeparams_tagmarket_\u043e\u0442\u043a\u0430\u0442",
+      "community": 46,
+      "community_name": "newsProcessor.ts",
+      "norm_label": "\u043e\u0442\u043a\u0430\u0442"
+    },
+    {
       "label": "\u0422\u0417_\u041c\u0430\u0440\u043a\u0435\u0442-\u0442\u0430\u0438\u0306\u043c\u043b\u0430\u0438\u0306\u043d_\u0432_\u043a\u0430\u0440\u0442\u043e\u0447\u043a\u0435_\u0442\u0435\u0433\u0430.md",
       "file_type": "document",
       "source_file": "\u0422\u0417_\u041c\u0430\u0440\u043a\u0435\u0442-\u0442\u0430\u0438\u0306\u043c\u043b\u0430\u0438\u0306\u043d_\u0432_\u043a\u0430\u0440\u0442\u043e\u0447\u043a\u0435_\u0442\u0435\u0433\u0430.md",
@@ -28340,8 +28417,8 @@
       "source_location": "L114",
       "_origin": "ast",
       "id": "pulse_backend_src_config_db_pool",
-      "community": 46,
-      "community_name": "newsProcessor.ts",
+      "community": 22,
+      "community_name": "subscription.ts",
       "norm_label": "pool"
     },
     {
@@ -30328,8 +30405,8 @@
       "source_url": null,
       "author": null,
       "contributor": null,
-      "community": 156,
-      "community_name": "Document: TZ_ADMIN_USERS_FIX.md",
+      "community": 131,
+      "community_name": "Document: TZ_AT_RISK_MODAL.md",
       "norm_label": "get /admin/metrics/at-risk-accounts endpoint",
       "id": "tz_at_risk_modal_get_admin_metrics_at_risk_accounts"
     },
@@ -44732,8 +44809,8 @@
       "source_url": null,
       "author": null,
       "contributor": null,
-      "community": 299,
-      "community_name": "Auto-renew cancellation",
+      "community": 137,
+      "community_name": "auto_renew flag",
       "norm_label": "pulse-cancel-recurring-adapted-tz.md",
       "id": "pulse_cancel_recurring_adapted_tz"
     },
@@ -46773,8 +46850,8 @@
       "source_url": null,
       "author": null,
       "contributor": null,
-      "community": 299,
-      "community_name": "Auto-renew cancellation",
+      "community": 137,
+      "community_name": "auto_renew flag",
       "norm_label": "auto-renew cancellation",
       "id": "pulse_cancel_recurring_adapted_tz_auto_renew_cancellation"
     },
@@ -46799,8 +46876,8 @@
       "source_url": null,
       "author": null,
       "contributor": null,
-      "community": 299,
-      "community_name": "Auto-renew cancellation",
+      "community": 137,
+      "community_name": "auto_renew flag",
       "norm_label": "post /api/user/auto-renew",
       "id": "pulse_cancel_recurring_adapted_tz_post_user_auto_renew"
     },
@@ -46812,8 +46889,8 @@
       "source_url": null,
       "author": null,
       "contributor": null,
-      "community": 299,
-      "community_name": "Auto-renew cancellation",
+      "community": 137,
+      "community_name": "auto_renew flag",
       "norm_label": "post /admin/users/:userid/auto-renew",
       "id": "pulse_cancel_recurring_adapted_tz_post_admin_user_auto_renew"
     },
@@ -46851,8 +46928,8 @@
       "source_url": null,
       "author": null,
       "contributor": null,
-      "community": 299,
-      "community_name": "Auto-renew cancellation",
+      "community": 137,
+      "community_name": "auto_renew flag",
       "norm_label": "userstab",
       "id": "pulse_cancel_recurring_adapted_tz_users_tab"
     },
@@ -46864,8 +46941,8 @@
       "source_url": null,
       "author": null,
       "contributor": null,
-      "community": 299,
-      "community_name": "Auto-renew cancellation",
+      "community": 68,
+      "community_name": "Boolean-only features",
       "norm_label": "planssubtab",
       "id": "pulse_cancel_recurring_adapted_tz_plans_sub_tab"
     },
@@ -47995,8 +48072,8 @@
       "source_url": null,
       "author": null,
       "contributor": null,
-      "community": 301,
-      "community_name": "Cleanup Failed Articles UI",
+      "community": 17,
+      "community_name": "Admin Dashboard Specification",
       "norm_label": "cleanup failed articles ui",
       "id": "pulse_frontend_admin_dashboard_cleanup_failed_articles_ui"
     },
@@ -48021,8 +48098,8 @@
       "source_url": null,
       "author": null,
       "contributor": null,
-      "community": 299,
-      "community_name": "Auto-renew cancellation",
+      "community": 137,
+      "community_name": "auto_renew flag",
       "norm_label": "user detail modal",
       "id": "pulse_frontend_admin_dashboard_user_detail_modal"
     },
@@ -48151,8 +48228,8 @@
       "source_url": null,
       "author": null,
       "contributor": null,
-      "community": 300,
-      "community_name": "adminApi root path",
+      "community": 17,
+      "community_name": "Admin Dashboard Specification",
       "norm_label": "adminapi root path",
       "id": "pulse_frontend_admin_dashboard_adminapi_root_path"
     },
@@ -48398,8 +48475,8 @@
       "source_url": null,
       "author": null,
       "contributor": null,
-      "community": 300,
-      "community_name": "adminApi root path",
+      "community": 17,
+      "community_name": "Admin Dashboard Specification",
       "norm_label": "admin endpoints are on root /admin not /api/admin to avoid 404",
       "id": "pulse_frontend_admin_dashboard_admin_endpoints_are_on_root_admin_not_api_admin_to_avoid_404"
     },
@@ -48424,8 +48501,8 @@
       "source_url": null,
       "author": null,
       "contributor": null,
-      "community": 301,
-      "community_name": "Cleanup Failed Articles UI",
+      "community": 17,
+      "community_name": "Admin Dashboard Specification",
       "norm_label": "cleanup button uses admin jwt so cron secret is not needed in ui",
       "id": "pulse_frontend_admin_dashboard_cleanup_button_uses_admin_jwt_so_cron_secret_is_not_needed_in_ui"
     },
@@ -100535,6 +100612,72 @@
       "_origin": "ast",
       "source": "\u043d\u0430\u0434\u043e_\u0441\u0434\u0435\u043b\u0430\u0442\u044c_tz_bot_tag_limit_3_\u043a\u043e\u0434_\u043d\u0430_\u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0435_\u043f\u043e\u043b\u043d\u044b\u0439_diff",
       "target": "\u043d\u0430\u0434\u043e_\u0441\u0434\u0435\u043b\u0430\u0442\u044c_tz_bot_tag_limit_tagmanager_ts_createusertag_line_430_460",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "\u0422\u0417_KimiCode_\u0444\u0438\u043a\u0441_mergeParams_tagMarket.md",
+      "source_location": "L1",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "\u0442\u0437_kimicode_\u0444\u0438\u043a\u0441_mergeparams_tagmarket",
+      "target": "\u0442\u0437_kimicode_\u0444\u0438\u043a\u0441_mergeparams_tagmarket_\u0437\u0430\u0434\u0430\u043d\u0438\u0435_\u0434\u043b\u044f_kimi_code_\u0444\u0438\u043a\u0441_400_tagid_and_date_are_required_\u0432_tagmarket",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "\u0422\u0417_KimiCode_\u0444\u0438\u043a\u0441_mergeParams_tagMarket.md",
+      "source_location": "L11",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "\u0442\u0437_kimicode_\u0444\u0438\u043a\u0441_mergeparams_tagmarket_\u0437\u0430\u0434\u0430\u043d\u0438\u0435_\u0434\u043b\u044f_kimi_code_\u0444\u0438\u043a\u0441_400_tagid_and_date_are_required_\u0432_tagmarket",
+      "target": "\u0442\u0437_kimicode_\u0444\u0438\u043a\u0441_mergeparams_tagmarket_\u0434\u0438\u0430\u0433\u043d\u043e\u0437_\u0433\u043e\u0442\u043e\u0432_\u0440\u0430\u0441\u0441\u043b\u0435\u0434\u043e\u0432\u0430\u0442\u044c_\u043d\u0435_\u043d\u0443\u0436\u043d\u043e",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "\u0422\u0417_KimiCode_\u0444\u0438\u043a\u0441_mergeParams_tagMarket.md",
+      "source_location": "L52",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "\u0442\u0437_kimicode_\u0444\u0438\u043a\u0441_mergeparams_tagmarket_\u0437\u0430\u0434\u0430\u043d\u0438\u0435_\u0434\u043b\u044f_kimi_code_\u0444\u0438\u043a\u0441_400_tagid_and_date_are_required_\u0432_tagmarket",
+      "target": "\u0442\u0437_kimicode_\u0444\u0438\u043a\u0441_mergeparams_tagmarket_\u043e\u0442\u043a\u0430\u0442",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "\u0422\u0417_KimiCode_\u0444\u0438\u043a\u0441_mergeParams_tagMarket.md",
+      "source_location": "L27",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "\u0442\u0437_kimicode_\u0444\u0438\u043a\u0441_mergeparams_tagmarket_\u0437\u0430\u0434\u0430\u043d\u0438\u0435_\u0434\u043b\u044f_kimi_code_\u0444\u0438\u043a\u0441_400_tagid_and_date_are_required_\u0432_tagmarket",
+      "target": "\u0442\u0437_kimicode_\u0444\u0438\u043a\u0441_mergeparams_tagmarket_\u043f\u0440\u0430\u0432\u043a\u0430_\u043e\u0434\u043d\u0430_\u0441\u0442\u0440\u043e\u043a\u0430",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "\u0422\u0417_KimiCode_\u0444\u0438\u043a\u0441_mergeParams_tagMarket.md",
+      "source_location": "L38",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "\u0442\u0437_kimicode_\u0444\u0438\u043a\u0441_mergeparams_tagmarket_\u0437\u0430\u0434\u0430\u043d\u0438\u0435_\u0434\u043b\u044f_kimi_code_\u0444\u0438\u043a\u0441_400_tagid_and_date_are_required_\u0432_tagmarket",
+      "target": "\u0442\u0437_kimicode_\u0444\u0438\u043a\u0441_mergeparams_tagmarket_\u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0430_\u043f\u043e\u0441\u043b\u0435_\u0434\u0435\u043f\u043b\u043e\u044f",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "\u0422\u0417_KimiCode_\u0444\u0438\u043a\u0441_mergeParams_tagMarket.md",
+      "source_location": "L7",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "\u0442\u0437_kimicode_\u0444\u0438\u043a\u0441_mergeparams_tagmarket_\u0437\u0430\u0434\u0430\u043d\u0438\u0435_\u0434\u043b\u044f_kimi_code_\u0444\u0438\u043a\u0441_400_tagid_and_date_are_required_\u0432_tagmarket",
+      "target": "\u0442\u0437_kimicode_\u0444\u0438\u043a\u0441_mergeparams_tagmarket_\u0441\u0438\u043c\u043f\u0442\u043e\u043c",
       "confidence_score": 1.0
     },
     {

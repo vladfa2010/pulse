@@ -4,7 +4,7 @@
 > Файл: `pulse-frontend/src/pages/admin/TagDetailModal.tsx`
 > Компонент таймлайна: `pulse-frontend/src/components/admin/TagMarketTimeline.tsx`
 > Бэкенд: `pulse-backend/src/routes/market.ts`, `pulse-backend/src/routes/tagMarket.ts`, `pulse-backend/src/services/market/`
-> Статус: ✅ Market Timeline (MOEX + новости) работает в проде
+> Статус: ✅ Market Timeline (MOEX + новости) работает в проде — свечи, гистограмма, клик по дню, интрадей и список новостей функционируют.
 
 ---
 
@@ -126,6 +126,29 @@ useEffect(() => { chart.setOption(option, true) }, [candles, dailyStats, chartRe
 - SQLite-локально: `datetime(published_at, '+3 hours')`.
 - PostgreSQL-прод: `(published_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Moscow')::date`.
 
+### 4.5 Источник гистограммы новостей (fixed v4)
+
+Проблема: гистограмма строилась из `dailyStats` от `GET /admin/tags/:tagId`, которая группировалась по UTC, а список новостей за день — по МСК. Из-за этого клик по бару мог показывать пустой список. Также backend-эндпоинты писали в несуществующую таблицу `articles`.
+
+Фикс:
+
+- `src/routes/tagMarket.ts` использует реальную таблицу `news` и колонки `title_ru`, `summary_ru`, `sentiment_score`.
+- `GET /admin/tags/:tagId/news-daily` становится источником гистограммы (МСК).
+- `articles-by-day` возвращает последние 50 новостей за МСК-день, сортировка `published_at DESC`.
+- Frontend показывает красное сообщение при ошибке загрузки списка новостей.
+
+### 4.6 mergeParams (fixed v5)
+
+Проблема: `tagMarketRoutes` был смонтирован на `/admin/tags/:tagId`, но создан без `mergeParams: true`. Express не передавал `tagId` в дочерний роутер → `req.params.tagId` был `undefined` → 400 `tagId and date are required` при клике по бару.
+
+Фикс:
+
+```ts
+const router = Router({ mergeParams: true });
+```
+
+После этого `/admin/tags/:tagId/articles-by-day` и `/admin/tags/:tagId/news-daily` корректно получают `tagId`.
+
 ---
 
 ## 5. Критерии приёмки (регресс)
@@ -154,4 +177,4 @@ useEffect(() => { chart.setOption(option, true) }, [candles, dailyStats, chartRe
 
 ---
 
-*Последние фиксы: `4a15359` (ECharts race v3), `933be69` (candlestick data format v2), `1d3a75e` (empty-candle warning).*
+*Последние фиксы: `91df6cf` (mergeParams v5), `efdb71b` (news table + MSK histogram v4), `4a15359` (ECharts race v3), `933be69` (candlestick data format v2), `1d3a75e` (empty-candle warning). После всех фиксов карточка тега с Market Timeline работает в проде.**
