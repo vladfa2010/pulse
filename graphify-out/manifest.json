@@ -2630,8 +2630,8 @@
     "semantic_hash": ""
   },
   "pulse-backend/src/routes/tagMarket.ts": {
-    "mtime": 1785186303.5869875,
-    "ast_hash": "89b3207e4d215eebc8422ba3072353c3",
+    "mtime": 1785237897.620776,
+    "ast_hash": "6aefd3bb02afe4f454883d1d539b82cd",
     "semantic_hash": ""
   },
   "pulse-backend/src/services/market/marketRouter.ts": {
@@ -2650,8 +2650,8 @@
     "semantic_hash": ""
   },
   "pulse-frontend/src/components/admin/TagMarketTimeline.tsx": {
-    "mtime": 1785236890.8376338,
-    "ast_hash": "1079915f79be585c4b53baa383fc267c",
+    "mtime": 1785238091.5128293,
+    "ast_hash": "7b20be64491ba6a398cd4fdf2d9bbe2b",
     "semantic_hash": ""
   },
   "\u0422\u0417_\u041c\u0430\u0440\u043a\u0435\u0442-\u0442\u0430\u0438\u0306\u043c\u043b\u0430\u0438\u0306\u043d_\u0432_\u043a\u0430\u0440\u0442\u043e\u0447\u043a\u0435_\u0442\u0435\u0433\u0430.md": {
@@ -2677,6 +2677,11 @@
   "pulse-backend/docs/admin/tag-card.md": {
     "mtime": 1785237387.8017793,
     "ast_hash": "c8d43e913417c2d64da82c09a3bb0c54",
+    "semantic_hash": ""
+  },
+  "\u0422\u0417_\u0424\u0438\u043a\u0441_\u0441\u043f\u0438\u0441\u043e\u043a_\u043d\u043e\u0432\u043e\u0441\u0442\u0435\u0438\u0306_\u0437\u0430_\u0434\u0435\u043d\u044c_v4.md": {
+    "mtime": 1785237668.0508964,
+    "ast_hash": "cb64f7ee70c5899fbedb0af90bb8144f",
     "semantic_hash": ""
   }
 }

@@ -4,7 +4,7 @@ import { query } from '../config/db';
 
 const USE_SQLITE = process.env.NODE_ENV !== 'production' && !process.env.DATABASE_URL;
 
-const router = Router();
+const router = Router({ mergeParams: true });
 
 /**
  * GET /admin/tags/:tagId/news-daily
