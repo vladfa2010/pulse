@@ -1,11 +1,11 @@
 # Graph Report - pulse kode  (2026-07-28)
 
 ## Corpus Check
-- 484 files · ~755,078 words
+- 485 files · ~755,659 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 4555 nodes · 6640 edges · 296 communities (275 shown, 21 thin omitted)
+- 4570 nodes · 6654 edges · 297 communities (278 shown, 19 thin omitted)
 - Extraction: 95% EXTRACTED · 5% INFERRED · 0% AMBIGUOUS · INFERRED: 361 edges (avg confidence: 0.78)
 - Token cost: 0 input · 0 output
 
@@ -251,6 +251,7 @@
 - Страница профиля
 - UsersTab.tsx
 - Instructions.tsx
+- Document: TZ_Fix_Click_Jerk.md
 - types/factCheck.ts
 - routes/factCheck.ts
 - Rate limit middleware
@@ -323,23 +324,23 @@
 ## Import Cycles
 - 3-file cycle: `pulse-backend/src/services/email.ts -> pulse-backend/src/services/subscription.ts -> pulse-backend/src/services/push.ts -> pulse-backend/src/services/email.ts`
 
-## Communities (296 total, 21 thin omitted)
+## Communities (297 total, 19 thin omitted)
 
 ### Community 0 - "InAppUpdaterPlugin"
 Cohesion: 0.06
 Nodes (29): BridgeActivity, Bundle, DownloadManager, FirebaseMessagingService, Handler, Intent, JSObject, PendingIntent (+21 more)
 
 ### Community 1 - "TZ: Ticker backfill total"
-Cohesion: 0.09
-Nodes (44): DELETE /admin/tags/:tagId, DeleteConfirmModal, GET /admin/tags/:tagId/delete-preview, delete_tag_cascade function, Hard delete with full cascade cleanup, matched_tags text[], news_tag_links table, notification_settings table (+36 more)
+Cohesion: 0.06
+Nodes (57): GET /api/tags/related, LLM Smart Matching, Related Tags System, rssSources.ts, smartTagMatcher.ts, Smart Tag Matching, DELETE /admin/tags/:tagId, DeleteConfirmModal (+49 more)
 
 ### Community 2 - "FactCheckSection.tsx"
-Cohesion: 0.06
-Nodes (37): AssessmentPanel(), LABEL_COLORS, Props, ProgressPanel(), Props, STEPS, ENGINE_ICONS, ENGINE_LABELS (+29 more)
+Cohesion: 0.07
+Nodes (36): AssessmentPanel(), LABEL_COLORS, Props, ProgressPanel(), Props, STEPS, ENGINE_ICONS, ENGINE_LABELS (+28 more)
 
 ### Community 3 - "NewsCard.tsx"
 Cohesion: 0.07
-Nodes (38): AllNewsCarousel(), fetchHistoryNews(), HistoryPage, AmbientBackground(), AmbientBackgroundProps, AmbientStyle, colorMap, cyrb128() (+30 more)
+Nodes (43): AllNewsCarousel(), fetchHistoryNews(), HistoryPage, AmbientBackground(), AmbientBackgroundProps, AmbientStyle, colorMap, cyrb128() (+35 more)
 
 ### Community 4 - "TZ_SEO_v1"
 Cohesion: 0.04
@@ -354,16 +355,16 @@ Cohesion: 0.05
 Nodes (43): api.ts hardcoded backend URL, auto-renew / recurring payments, BACKEND_URL environment variable, clearAuth race condition, TZ_LIVE_PAYMENTS, FRONTEND_URL environment variable, /health endpoint, Enable auto-renew after YooKassa approval (+35 more)
 
 ### Community 7 - "App.tsx"
-Cohesion: 0.08
-Nodes (20): App(), AppUpdateModal(), AppUpdateModalProps, UnreadCountContext, UnreadCountContextType, UnreadCountProvider(), useUnreadCount(), useBackButton() (+12 more)
+Cohesion: 0.06
+Nodes (30): app, App(), AppUpdateModal(), AppUpdateModalProps, adminLink, Navbar(), navLinks, UnreadCountContext (+22 more)
 
 ### Community 8 - "AuthModal Specification"
 Cohesion: 0.11
 Nodes (18): Admin Dashboard, AuthModal Specification, All fields clear on tab switch to avoid leftover state, AuthModal, AuthModalContext, Framer Motion, Login tab, Lucide icons (+10 more)
 
 ### Community 9 - "services/factCheck.ts"
-Cohesion: 0.06
-Nodes (65): AssessmentV4, client, createFactCheckSession(), delay(), emitStage(), emitterKey(), EngineStatus, factCheckEmitters (+57 more)
+Cohesion: 0.08
+Nodes (49): query, checkRateLimit(), ELIGIBLE_PLANS, router, AssessmentV4, client, createFactCheckJob(), createFactCheckSession() (+41 more)
 
 ### Community 10 - "TZ_SSE_REALTIME_v3"
 Cohesion: 0.05
@@ -371,7 +372,7 @@ Nodes (39): AudioContext, 3-second chime debounce, TZ_SOUND_BUGFIX, iOS AudioCon
 
 ### Community 11 - "index.ts"
 Cohesion: 0.05
-Nodes (31): checkCircularReference(), nsm, NOTE: /trigger/nsm endpoint зарегистрирован в основном потоке выше, TAG_UPDATE_RULES, apiLimiter, authLimiter, forgotPasswordLimiter, passwordResetFlowLimiter (+23 more)
+Nodes (36): checkCircularReference(), nsm, NOTE: /trigger/nsm endpoint зарегистрирован в основном потоке выше, runMigration(), start(), TAG_UPDATE_RULES, authMiddleware(), AuthRequest (+28 more)
 
 ### Community 12 - "enrichTagViaLLM"
 Cohesion: 0.08
@@ -391,15 +392,15 @@ Nodes (29): 1. Цель, 2. Условие показа блока, 3.1. Общ�
 
 ### Community 16 - "activityLog.ts"
 Cohesion: 0.09
-Nodes (32): router, ForgotPasswordInput, ForgotPasswordSchema, LoginInput, LoginSchema, RegisterInput, RegisterSchema, ResetPasswordInput (+24 more)
+Nodes (31): router, ForgotPasswordInput, ForgotPasswordSchema, LoginInput, LoginSchema, RegisterInput, RegisterSchema, ResetPasswordInput (+23 more)
 
 ### Community 17 - "Admin Dashboard Specification"
 Cohesion: 0.05
-Nodes (37): Admin Dashboard Specification, Auto-refresh 60s, Backfill UI, Bug history fixes, EditableCard, Error bars by type, GET /admin/llm-dashboard, GET /admin/llm-errors (+29 more)
+Nodes (41): Admin Dashboard Specification, Admin endpoints are on root /admin not /api/admin to avoid 404, adminApi root path, Auto-refresh 60s, Backfill UI, Bug history fixes, Cleanup button uses admin JWT so cron secret is not needed in UI, Cleanup Failed Articles UI (+33 more)
 
 ### Community 18 - "api.ts"
-Cohesion: 0.10
-Nodes (26): analyzeSentimentBatch(), analyzeSentimentBatchChunk(), analyzeSentimentFallback(), analyzeSentimentLLM(), analyzeTagImpact(), analyzeTagImpactBatch(), analyzeTagImpactBatchChunk(), analyzeUnifiedBatchChunk() (+18 more)
+Cohesion: 0.11
+Nodes (25): analyzeSentimentBatch(), analyzeSentimentBatchChunk(), analyzeSentimentFallback(), analyzeSentimentLLM(), analyzeTagImpact(), analyzeTagImpactBatch(), analyzeTagImpactBatchChunk(), analyzeUnifiedBatchChunk() (+17 more)
 
 ### Community 19 - "TZ_PopularTagsSlider_v2"
 Cohesion: 0.05
@@ -414,12 +415,12 @@ Cohesion: 0.07
 Nodes (29): scheduled downgrade, features_registry table, FeaturesSubTab, freezeExcessTags, plan_level, PlansSubTab, promo_codes table, PromoCodesSubTab (+21 more)
 
 ### Community 22 - "subscription.ts"
-Cohesion: 0.06
-Nodes (58): AuthRequest, requirePremium(), router, summaryCache, ConfirmPaymentInput, ConfirmPaymentSchema, CreatePaymentInput, CreatePaymentSchema (+50 more)
+Cohesion: 0.08
+Nodes (54): normalizePlanRow(), normalizePromoRow(), requirePremium(), router, activatePaymentIfNeeded(), activateSubscription(), buildSubscriptionStatus(), calculateUpgradePrice() (+46 more)
 
 ### Community 23 - "sentimentIndex.ts"
-Cohesion: 0.14
-Nodes (30): VoteSchema, aggregateTo5min(), extendWithFlatLine(), fetchChunk(), fetchImoex1minCandles(), formatMskLocal(), getImoex5minForDay(), getMoscowDayBounds() (+22 more)
+Cohesion: 0.13
+Nodes (32): router, VoteSchema, logSentimentVote(), aggregateTo5min(), extendWithFlatLine(), fetchChunk(), fetchImoex1minCandles(), formatMskLocal() (+24 more)
 
 ### Community 24 - "dependencies"
 Cohesion: 0.06
@@ -427,7 +428,7 @@ Nodes (33): axios, bcrypt, cors, dotenv, express, express-rate-limit, firebase-a
 
 ### Community 25 - "dependencies"
 Cohesion: 0.06
-Nodes (36): canvas-confetti, @capacitor/app, @capacitor/browser, @capacitor/preferences, @capacitor/push-notifications, @capacitor/share, class-variance-authority, clsx (+28 more)
+Nodes (35): canvas-confetti, @capacitor/app, @capacitor/browser, @capacitor/preferences, @capacitor/push-notifications, @capacitor/share, class-variance-authority, clsx (+27 more)
 
 ### Community 26 - "Extended tag fields v2"
 Cohesion: 0.16
@@ -438,20 +439,20 @@ Cohesion: 0.15
 Nodes (12): 1. Контекст, 2. Проблема, 3. Версия / где воспроизвести, 4. Диагностика на стороне backend, 5.1 Формат дат `from`/`till` для `interval=24`, 5.2 Несовпадение оси X свечей и баров, 5.3 Блокировка запросов к MOEX ISS с Render, 5. Текущие гипотезы и уже сделанные правки (+4 more)
 
 ### Community 28 - "tagBackfill.ts"
-Cohesion: 0.14
-Nodes (29): applyChunkPostgres(), applyChunkSqlite(), backfillAllTags(), BackfillOptions, BackfillResult, backfillTagMatches(), buildPostgresPattern(), buildScanKeywords() (+21 more)
+Cohesion: 0.08
+Nodes (52): invalidateUserTagsCache(), applyChunkPostgres(), applyChunkSqlite(), backfillAllTags(), BackfillOptions, BackfillResult, backfillTagMatches(), buildPostgresPattern() (+44 more)
 
 ### Community 29 - "Pricing.tsx"
-Cohesion: 0.10
-Nodes (21): AuthModal(), AuthModalProps, AuthStep, ForgotStep, slideVariants, Footer(), linkGroups, Layout() (+13 more)
+Cohesion: 0.07
+Nodes (34): AuthModal(), AuthModalProps, AuthStep, ForgotStep, slideVariants, Footer(), linkGroups, Layout() (+26 more)
 
 ### Community 30 - "logAnalyticsEvent"
-Cohesion: 0.09
-Nodes (17): SCREENS, Props, TelegramAuthData, TelegramConfig, TelegramConnectBanner(), TelegramStatus, useAnalyticsPageTracking(), logAnalyticsEvent() (+9 more)
+Cohesion: 0.22
+Nodes (5): SCREENS, DownloadPage(), fetchVersion(), getPlatform(), VersionInfo
 
 ### Community 31 - "routes/user.ts"
-Cohesion: 0.05
-Nodes (51): Document: TZ_Fix_Click_Jerk.md, AnimatePresence mode=popLayout, cardRefs Map with useRef, PopularTagsSlider click jerk bug, createRipple function, Framer Motion layout prop, Framer Motion layout recalculation cascade, document.querySelector in async handleToggle (+43 more)
+Cohesion: 0.18
+Nodes (15): PopularTagsSlider click jerk bug, Document: TZ_Fix_PeriodTab_Animation_Restart.md, PeriodTabs component, layoutId="periodTabSlider", useAuth portfolio change re-render, Rationale: React.memo prevents PeriodTabs re-render when parent changes but props do not, stopping layoutId spring restart, React.memo memoization, Document: TZ_Fix_Portfolio_Selected_Sync.md (+7 more)
 
 ### Community 32 - "4. Frontend: Баннер заморозки тегов"
 Cohesion: 0.07
@@ -462,12 +463,12 @@ Cohesion: 0.07
 Nodes (28): 1.1 Что происходит при истечении подписки, 1.2 Заморозка тегов — как работает, 1. Архитектура (текущее состояние), 2.1 Таблица уведомлений, 2.2 Два режима письма, 2. Email-уведомления об истечении, 3.1 Переиспользуем существующее, 3.2 Cron: `sendExpiryNotifications` (+20 more)
 
 ### Community 34 - "routes/payment.ts"
-Cohesion: 0.23
-Nodes (13): AmbientParticle, COLORS, ColorSpec, createAmbientParticle(), createParticle(), isMobile(), Particle, ParticleType (+5 more)
+Cohesion: 0.21
+Nodes (14): AmbientParticle, COLORS, ColorSpec, createAmbientParticle(), createParticle(), isMobile(), Particle, ParticleType (+6 more)
 
 ### Community 35 - "admin.ts"
-Cohesion: 0.07
-Nodes (42): authMiddleware(), validate(), adminMiddleware(), archivePlan(), normalizePlanRow(), normalizePromoRow(), nowSql(), router (+34 more)
+Cohesion: 0.12
+Nodes (24): archivePlan(), nowSql(), router, createFeature(), listAllFeatures(), listFeatures(), normalizeFeatureRow(), nowSql() (+16 more)
 
 ### Community 36 - "ТЕХНИЧЕСКОЕ ЗАДАНИЕ"
 Cohesion: 0.07
@@ -478,8 +479,8 @@ Cohesion: 0.16
 Nodes (26): agoSql(), cache, cacheKey(), getAdoption(), getCached(), getChurn(), getDaily(), getEngagement() (+18 more)
 
 ### Community 38 - "finnhubAdapter.ts"
-Cohesion: 0.07
-Nodes (40): cfg(), CircuitBreaker, createArticle(), DEFAULTS, fetchAndSaveFinnhubNews(), FetchedArticle, FetchResult, fetchWithRetry() (+32 more)
+Cohesion: 0.15
+Nodes (20): cfg(), CircuitBreaker, createArticle(), DEFAULTS, fetchAndSaveFinnhubNews(), FetchedArticle, FetchResult, fetchWithRetry() (+12 more)
 
 ### Community 39 - "PULSE Carousels Logic"
 Cohesion: 0.07
@@ -510,16 +511,16 @@ Cohesion: 0.08
 Nodes (25): API, Cron, `DELETE /api/user/tags/:tagId`, Email-шаблоны, `GET /api/user/tags`, Trial на архивированном тарифе, Автопродление по архивированному тарифу, Архивированные тарифы (+17 more)
 
 ### Community 46 - "newsProcessor.ts"
-Cohesion: 0.20
-Nodes (14): pool, acquireCronLock(), logCronFinish(), logCronStart(), processArticles(), processArticlesLocked(), processDeferredArticles(), releaseCronLock() (+6 more)
+Cohesion: 0.16
+Nodes (17): pool, acquireCronLock(), logCronFinish(), logCronStart(), processArticles(), processArticlesLocked(), processDeferredArticles(), releaseCronLock() (+9 more)
 
 ### Community 47 - "Home.tsx"
-Cohesion: 0.16
-Nodes (10): PulseLine(), Tag(), TagProps, typeColors, easeOutExpo, popularTags, subscribePortfolio, Suggestion (+2 more)
+Cohesion: 0.13
+Nodes (11): PremiumPromptModalProps, PulseLine(), Tag(), TagProps, typeColors, easeOutExpo, popularTags, subscribePortfolio (+3 more)
 
 ### Community 48 - "Document: TZ_FLIP_FROST_ANIMATION.md"
-Cohesion: 0.13
-Nodes (16): NewsCard landscape variant, NewsDetailModal component, Document: TZ_FLIP_FROST_ANIMATION.md, AllNewsCarousel (Carousel 2), backdrop-filter CSS, data-flip-id attribute, firstNewIndex === 0 detection, force reflow (void track.offsetWidth) (+8 more)
+Cohesion: 0.09
+Nodes (26): Ambient Lines feature, NewsCard landscape variant, UnreadNewsCarousel, Ambient Lines 9 types, NewsDetailModal component, Document: TZ_FLIP_FROST_ANIMATION.md, AllNewsCarousel (Carousel 2), backdrop-filter CSS (+18 more)
 
 ### Community 49 - "Pricing admin audit"
 Cohesion: 0.12
@@ -530,8 +531,8 @@ Cohesion: 0.20
 Nodes (9): Pricing.tsx — добавить useEffect, Автоматический выбор текущего тарифа на странице Pricing, Код на изменение, Критерии приёмки, Проблема, Решение, ТЕХНИЧЕСКОЕ ЗАДАНИЕ, Что изменится (+1 more)
 
 ### Community 51 - "Profile.tsx"
-Cohesion: 0.14
-Nodes (20): User, getPushPermissionState(), initPushNotifications(), isPushAvailable(), registerNativePush(), registerWebPush(), saveToken(), isVapidPushSupported() (+12 more)
+Cohesion: 0.12
+Nodes (21): User, firebaseConfig, getPushPermissionState(), initPushNotifications(), isPushAvailable(), registerNativePush(), registerWebPush(), saveToken() (+13 more)
 
 ### Community 52 - "compilerOptions"
 Cohesion: 0.08
@@ -547,7 +548,7 @@ Nodes (24): Private investor audience, Backend architecture, Critical rules, Fro
 
 ### Community 55 - "email.ts"
 Cohesion: 0.13
-Nodes (38): escapeHtml(), formatDateRu(), formatPrice(), formatReportHtml(), getYandexTransporter(), PULSE_EMAIL_CTA(), PULSE_EMAIL_HEADER(), PULSE_EMAIL_WRAPPER() (+30 more)
+Nodes (38): escapeHtml(), formatDateRu(), formatPrice(), formatReportHtml(), getYandexTransporter(), isQuietHours(), PULSE_EMAIL_CTA(), PULSE_EMAIL_HEADER() (+30 more)
 
 ### Community 56 - "tagManager.ts"
 Cohesion: 0.15
@@ -586,8 +587,8 @@ Cohesion: 0.12
 Nodes (22): Document: TZ_DEEPLINKS_v1.md, AndroidManifest /news/ intent-filter, Backfill slug script, GET /api/news/by-slug/:slug endpoint, GET /api/news/by-slug/:slug/tag-enrichments, Copy link to clipboard, Backend-first deployment order, handleClose navigate(-1) vs navigate('/') (+14 more)
 
 ### Community 65 - "Android push fix"
-Cohesion: 0.23
-Nodes (14): @capacitor/android, Firebase Cloud Messaging, Firebase 11.6.0, Foreground push handling, google-services.json, Invalid token cleanup, NotificationCompat.Builder, push_enabled (+6 more)
+Cohesion: 0.11
+Nodes (32): Android notification channel, @capacitor/android, Cold start token loss, FCM token, Firebase Cloud Messaging, Firebase 11.6.0, Foreground push handling, google-services.json (+24 more)
 
 ### Community 66 - "PULSE — ТЗ: Диагностика платежа с промокодом (после фикса 90460c7)"
 Cohesion: 0.10
@@ -598,8 +599,8 @@ Cohesion: 0.33
 Nodes (12): ActivityFeed, channel_connected email, factcheck_ordered event, logFactCheckOrdered(), logPageViewPlans(), logSubscriptionCancelled(), page_view_plans event, sentiment_vote activity (+4 more)
 
 ### Community 68 - "Boolean-only features"
-Cohesion: 0.12
-Nodes (17): Client-side validation before server submission, Feature form validation, FeaturesSubTab, ID lowercase regex, PUT /api/admin/features/:id, soft-delete via is_active, Soft-delete to preserve historical plan data, Boolean-only features (+9 more)
+Cohesion: 0.11
+Nodes (18): PlansSubTab, Client-side validation before server submission, Feature form validation, FeaturesSubTab, ID lowercase regex, PUT /api/admin/features/:id, soft-delete via is_active, Soft-delete to preserve historical plan data (+10 more)
 
 ### Community 69 - "PULSE — ТЗ: Промокод применяется, но платёж не проходит"
 Cohesion: 0.10
@@ -670,8 +671,8 @@ Cohesion: 0.18
 Nodes (17): Weekly reports, TELEGRAM_NOTIFICATIONS, Push quiet hours, HMAC linking prevents user_id spoofing, Quiet hours respect user sleep, Telegram connect banner, Telegram sentiment alerts, Bot commands (+9 more)
 
 ### Community 86 - "webhook.ts"
-Cohesion: 0.27
-Nodes (14): confirmAddTag(), deleteUserTag(), escapeHtml(), getUserIdByChatId(), handleCallbackQuery(), handleDigestNow(), handleTagInput(), promptAddTag() (+6 more)
+Cohesion: 0.19
+Nodes (20): confirmAddTag(), deleteUserTag(), escapeHtml(), getUserIdByChatId(), handleCallbackQuery(), handleDigestNow(), handleTagInput(), promptAddTag() (+12 more)
 
 ### Community 87 - "digest.ts"
 Cohesion: 0.24
@@ -687,7 +688,7 @@ Nodes (16): Admin(), BackfillResult, ErrorBars(), FailedArticle, formatDate(), g
 
 ### Community 90 - "Document: TZ_AMBIENT_LINES_v2.md"
 Cohesion: 0.14
-Nodes (17): Ellipse Orbit animation, Flowing Waves animation, Noise Terrain animation, Document: TZ_AMBIENT_LINES_v2.md, Breath Gradient (07), Drift Particles (08), Ellipse Orbit (03), Flowing Waves Bottom (01b) (+9 more)
+Nodes (17): Flowing Waves animation, Noise Terrain animation, Particle Terrain animation, Document: TZ_AMBIENT_LINES_v2.md, Breath Gradient (07), Drift Particles (08), Flowing Waves Bottom (01b), Flowing Waves Classic (01) (+9 more)
 
 ### Community 91 - "Document: TZ_DOWNLOAD_PAGE_INTEGRATION.md"
 Cohesion: 0.13
@@ -726,8 +727,8 @@ Cohesion: 0.13
 Nodes (14): finnhubAdapter.ts, Single pool over parallel streams, DISTINCT portfolio tags to save rate limits, exchange='USA' filter, Only USA exchange tags for Finnhub, Finnhub Adapter, INC-001 API key in git, NewsSourceManager (+6 more)
 
 ### Community 100 - "SentimentChartCard.tsx"
-Cohesion: 0.15
-Nodes (15): CommunityMetrics, formatCountdown(), formatDateTime(), formatTime(), ImoexCandle, ImoexData, IndexPoint, PersonalStats (+7 more)
+Cohesion: 0.16
+Nodes (14): CommunityMetrics, formatCountdown(), formatDateTime(), formatTime(), ImoexCandle, ImoexData, IndexPoint, PersonalStats (+6 more)
 
 ### Community 101 - "PULSE — ТЗ: Исправление формата даты в промокоде"
 Cohesion: 0.12
@@ -758,12 +759,12 @@ Cohesion: 0.14
 Nodes (15): Email as PRIMARY KEY, Git commit after every change, Glow animation pill shape, Kimi API endpoint api.moonshot.ai, News retained 2 weeks, All payments saved in DB, Premium tier: reports + alerts, English news must translate to Russian (+7 more)
 
 ### Community 108 - "PUSH_NOTIFICATIONS"
-Cohesion: 0.09
-Nodes (26): DailySummary(), SummaryData, easeOutExpo, FreezeTagsBanner(), TagStatus, NotificationSettings, Props, EnrichmentData (+18 more)
+Cohesion: 0.11
+Nodes (18): easeOutExpo, FreezeTagsBanner(), TagStatus, NotificationSettings, Props, EnrichmentData, Props, TYPE_COLORS (+10 more)
 
 ### Community 109 - "factCheckNotifications.ts"
-Cohesion: 0.13
-Nodes (13): GET /api/tags/related, LLM Smart Matching, Related Tags System, rssSources.ts, smartTagMatcher.ts, Smart Tag Matching, COALESCE enriched_data fix, delete_tag_cascade v3 (+5 more)
+Cohesion: 0.06
+Nodes (29): validate(), router, router, router, summaryCache, ConfirmPaymentInput, ConfirmPaymentSchema, CreatePaymentInput (+21 more)
 
 ### Community 110 - "PULSE — ТЗ: Исправление мигания баннера (React state вместо DOM)"
 Cohesion: 0.13
@@ -851,11 +852,11 @@ Nodes (17): ActivityLogEntry, Channel, daysLeft(), DeletePreview, formatDate(), 
 
 ### Community 131 - "Document: TZ_AT_RISK_MODAL.md"
 Cohesion: 0.15
-Nodes (14): Admin Users list (Users tab), Document: TZ_AT_RISK_MODAL.md, adminApi.get, pulse-backend/src/routes/adminMetrics.ts, At Risk Accounts Modal, AtRiskModal.tsx, Client-side search/filter, dormant_30d account type (+6 more)
+Nodes (15): Admin Users list (Users tab), Document: TZ_AT_RISK_MODAL.md, adminApi.get, pulse-backend/src/routes/adminMetrics.ts, At Risk Accounts Modal, AtRiskModal.tsx, Client-side search/filter, dormant_30d account type (+7 more)
 
 ### Community 132 - "Document: TZ_AMBIENT_LINES.md"
 Cohesion: 0.18
-Nodes (14): Document: TZ_AMBIENT_LINES.md, AmbientBackground component, Carousel 1 "Это вы ещё не видели", GPU performance / no layout recalc, Particle Terrain animation, pointer-events: none overlay, Ambient style randomization without adjacent repeats, Rationale: nearest cards should not share ambient style to avoid visual repetition (+6 more)
+Nodes (14): Document: TZ_AMBIENT_LINES.md, AmbientBackground component, Carousel 1 "Это вы ещё не видели", Ellipse Orbit animation, GPU performance / no layout recalc, pointer-events: none overlay, Ambient style randomization without adjacent repeats, Rationale: nearest cards should not share ambient style to avoid visual repetition (+6 more)
 
 ### Community 133 - "ТЕХНИЧЕСКОЕ ЗАДАНИЕ"
 Cohesion: 0.14
@@ -874,8 +875,8 @@ Cohesion: 0.15
 Nodes (12): 1. Баг, 2.1 Backend — запрос только активных, 2.2 Backend — список тегов только активные, 2.3 Полный endpoint, 2. Исправления, 3. Правило, 4. Файлы, 5. Чеклист (+4 more)
 
 ### Community 137 - "auto_renew flag"
-Cohesion: 0.17
-Nodes (12): GET /api/user/tariff-status, processTrialExpirations(), subscription_auto_renew field, auto_renew flag, GET /api/user/my-plan, Keep payment_method_id for re-enabling auto-renew, POST /api/admin/users/:userId/auto-renew/off, POST /api/user/auto-renew/on (+4 more)
+Cohesion: 0.12
+Nodes (17): Auto-renew cancellation, GET /api/user/tariff-status, POST /admin/users/:userId/auto-renew, POST /api/user/auto-renew, processTrialExpirations(), subscription_auto_renew field, UsersTab, auto_renew flag (+9 more)
 
 ### Community 138 - "PopularTagsSlider"
 Cohesion: 0.17
@@ -886,8 +887,8 @@ Cohesion: 0.15
 Nodes (13): PULSE Design System, Animation system, Color carries meaning: cyan action, green positive, red negative, amber warning, Color tokens, CSS utilities, Dark theme, Glassmorphism, Navbar component (+5 more)
 
 ### Community 140 - "Push Notifications Setup"
-Cohesion: 0.09
-Nodes (23): firebase, Analytics events, Analytics works only in web because JS SDK is unstable in WebView, Firebase Analytics, Firebase Cloud Messaging, Firebase config, One device per user constrained by unique user_id channel, PulseMessagingService (+15 more)
+Cohesion: 0.15
+Nodes (13): Firebase Cloud Messaging, Push Notifications Setup, Capacitor Push Notifications, Cold start token delivery, Data-only push, Data-only push is required for custom action buttons in background, FCM push notifications, NotificationChannelSetupPlugin (+5 more)
 
 ### Community 141 - "PULSE — ТЗ: Цены без копеек — округление в меньшую сторону"
 Cohesion: 0.15
@@ -922,8 +923,8 @@ Cohesion: 0.17
 Nodes (11): author, description, keywords, license, main, name, version, aggregator (+3 more)
 
 ### Community 149 - "routes/news.ts"
-Cohesion: 0.43
-Nodes (7): nativeAuth.ts, Data-only sentiment push rationale, Sentiment cron tasks, Sentiment vote push, sentiment_vote_push_sent table, Three-button vote, VoteReceiver
+Cohesion: 0.13
+Nodes (18): extractTag(), fetchAllRSS(), fetchSource(), httpAgent, httpsAgent, lastFetchStats, loadSourceMetaCache(), normalizePubDate() (+10 more)
 
 ### Community 150 - "PULSE — ТЗ: Исправление логики заморозки при даунгрейде"
 Cohesion: 0.17
@@ -942,16 +943,16 @@ Cohesion: 0.14
 Nodes (23): router, getDailyCandles(), getIntraday5min(), getProvider(), MarketProvider, PROVIDERS, SUPPORTED_EXCHANGES, AXIOS_HEADERS (+15 more)
 
 ### Community 154 - "PULSE Project Context"
-Cohesion: 0.08
-Nodes (42): query, runMigration(), start(), router, backfillSlugs(), initDb(), isQuietHours(), logNewsDataCheck() (+34 more)
+Cohesion: 0.19
+Nodes (18): acquireCronLock(), analyzeSentiment(), markNoTags(), matchTagsWithLLM(), processRawArticles(), processRawArticlesLocked(), RawArticle, releaseCronLock() (+10 more)
 
 ### Community 155 - "Carousel track"
 Cohesion: 0.17
 Nodes (12): Auto-scroll (5000ms interval), Carousel track, Edge fade gradients, Navigation arrows and dots, Rationale: 104px card width is 20% narrower than 130px baseline, Rationale: fixed 16px dot container prevents layout shift on select, Rationale: no snap, pure JS smooth scroll, Ripple animation from dot center (+4 more)
 
 ### Community 156 - "Document: TZ_ADMIN_USERS_FIX.md"
-Cohesion: 0.24
-Nodes (12): Document: TZ_ADMIN_USERS_FIX.md, Amount column, LEFT JOIN completed payments subquery, GET /api/admin/users endpoint, Paid column, payments table, Rationale: frontend received undefined totals because backend omitted the fields, Rationale: use LEFT JOIN with status='completed' payments to compute totals (+4 more)
+Cohesion: 0.27
+Nodes (11): Document: TZ_ADMIN_USERS_FIX.md, Amount column, LEFT JOIN completed payments subquery, GET /api/admin/users endpoint, Paid column, payments table, Rationale: frontend received undefined totals because backend omitted the fields, Rationale: use LEFT JOIN with status='completed' payments to compute totals (+3 more)
 
 ### Community 157 - "Document: TZ_HASHROUTER_FIX.md"
 Cohesion: 0.24
@@ -987,7 +988,7 @@ Nodes (10): Badges system, Blind Vote, Blind vote prevents herd bias, Cron delay
 
 ### Community 165 - "useAppUpdate.ts"
 Cohesion: 0.24
-Nodes (11): AppliedPromo, computedYearlyPrice(), FeatureDef, formatDateOnly(), formatPrice(), periodLabel(), Plan, PLAN_ICONS (+3 more)
+Nodes (15): FactCheckResultV4, SourceV4, buildEmailHtml(), buildTelegramText(), escapeHtml(), escapeMarkdownV2(), extractHost(), formatDate() (+7 more)
 
 ### Community 166 - "PromoCodesSubTab.tsx"
 Cohesion: 0.25
@@ -1146,8 +1147,8 @@ Cohesion: 0.18
 Nodes (10): 1. Симптом, 2. Root cause: гонка «API vs динамический import», 3. Доказательство, 4. Что изменить (1 файл, +6/−1), 5. Критерии приёмки, 6. Регрессионный тест (ручной, обязательный порядок), 7. Риски / откат, 8. Почему баг возвращался — разбор для процесса (+2 more)
 
 ### Community 205 - "serperSearch.ts"
-Cohesion: 0.73
-Nodes (6): Cold start token loss, FCM token, Token delivery fix, FCM token SharedPreferences rationale, CapacitorStorage SharedPreferences, TokenFlushPlugin
+Cohesion: 0.13
+Nodes (14): 1. Назначение, 2. Структура карточки, 3.1 Детали тега, 3.2 Market Timeline, 3.3 Управление тегом, 3. API endpoints, 4.1 Компонент, 4.2 Гонка инициализации (fixed v3) (+6 more)
 
 ### Community 206 - "pulse-download-page/src/pages/DownloadPage.tsx"
 Cohesion: 0.32
@@ -1203,11 +1204,11 @@ Nodes (12): 1. Симптом (по скриншоту), 2. Почему «ст�
 
 ### Community 219 - "processRawArticles"
 Cohesion: 0.16
-Nodes (23): invalidateUserTagsCache(), backgroundEnrichTag(), buildEnrichedKeywords(), createUserTag(), detectTagTypeViaLLM(), enrichTagViaLLM(), generateTagKeywords(), getTranslitVariants() (+15 more)
+Nodes (15): createRipple function, Document: TZ_Fix_Ripple_Positioning.md, cardRef callback prop on TagCard, createRipple using getBoundingClientRect, offsetLeft/offsetTop issue, .pts-card relative element, .pts-dot-wrap element, Rationale: getBoundingClientRect gives exact viewport coordinates independent of offsetParent chain (+7 more)
 
 ### Community 220 - "Auto-renew cancellation"
-Cohesion: 0.29
-Nodes (6): Auto-renew cancellation, PlansSubTab, POST /admin/users/:userId/auto-renew, POST /api/user/auto-renew, UsersTab, User Detail Modal
+Cohesion: 0.24
+Nodes (9): AuthContext, AuthCtx, AuthProvider(), mapUser(), PortfolioTag, initAnalytics(), clearNativeStorage(), saveTokenToNativeStorage() (+1 more)
 
 ### Community 221 - "screenshot.cjs"
 Cohesion: 0.29
@@ -1262,16 +1263,16 @@ Cohesion: 0.33
 Nodes (6): scripts, build, check:news-data, db:init, dev, start
 
 ### Community 234 - "yandexSearch.ts"
-Cohesion: 0.20
-Nodes (9): commit dc7084b, needs_translation flag, News Processor, Separate fetch and process layers, title_ru NULL as raw marker, fetchAPISearch(), fetchRSS(), NewsSourceManager (+1 more)
+Cohesion: 0.33
+Nodes (5): commit dc7084b, needs_translation flag, News Processor, Separate fetch and process layers, title_ru NULL as raw marker
 
 ### Community 235 - "HeroAnimation.tsx"
 Cohesion: 0.20
 Nodes (15): VAPID web push, PUSH_NOTIFICATIONS, Push notification endpoints, SECURITY, Local .env storage, GitHub Secrets, Leak response procedure, Render environment variables (+7 more)
 
 ### Community 236 - "NewsSourceManager"
-Cohesion: 0.33
-Nodes (6): Ambient Lines feature, Ambient Lines 9 types, CardAppear animation, FLIP animation, Frost overlay, Rationale: FLIP shows where existing cards move; Frost accent highlights the newly inserted card
+Cohesion: 0.18
+Nodes (11): firebase, Analytics events, Analytics works only in web because JS SDK is unstable in WebView, Firebase Analytics, Firebase config, One device per user constrained by unique user_id channel, PulseMessagingService, Push notifications (+3 more)
 
 ### Community 237 - "Баннер заморозки тегов"
 Cohesion: 0.33
@@ -1286,16 +1287,20 @@ Cohesion: 0.17
 Nodes (12): Free Premium tariffs, PULSE Project Context, Architecture, Changelog, Critical rules, Current status, Development context, Product vision (+4 more)
 
 ### Community 240 - "Instructions.tsx"
-Cohesion: 0.50
-Nodes (4): UnreadNewsCarousel, Optimistic update (mark-as-read), Rationale: UnreadNewsCarousel optimistic update must remain instant, so FLIP is intentionally not applied there, UnreadNewsCarousel (Carousel 1)
+Cohesion: 0.33
+Nodes (7): ApiResponse, get(), post(), runCriticalPath(), runTagNameDedupTest(), runTagProtectionTest(), TestResult
+
+### Community 241 - "Document: TZ_Fix_Click_Jerk.md"
+Cohesion: 0.31
+Nodes (9): Document: TZ_Fix_Click_Jerk.md, AnimatePresence mode=popLayout, cardRefs Map with useRef, Framer Motion layout prop, Framer Motion layout recalculation cascade, document.querySelector in async handleToggle, Rationale: layout prop and popLayout cause cascade layout recalculation on style-only changes, Rationale: useRef Map gives stable DOM reference across React re-renders (+1 more)
 
 ### Community 242 - "types/factCheck.ts"
-Cohesion: 0.10
-Nodes (18): app, name, private, scripts, build, dev, preview, screenshot:desktop (+10 more)
+Cohesion: 0.17
+Nodes (11): name, private, scripts, build, dev, preview, screenshot:desktop, screenshot:home (+3 more)
 
 ### Community 243 - "routes/factCheck.ts"
-Cohesion: 0.25
-Nodes (5): checkRateLimit(), ELIGIBLE_PLANS, router, createFactCheckJob(), updateNewsFactCheck()
+Cohesion: 0.32
+Nodes (7): isEnglish(), searchSerperSegment(), SerperEngine, SerperEngineStatus, serperSearch(), SerperSearchResult, SerperSource
 
 ### Community 244 - "Rate limit middleware"
 Cohesion: 0.80
@@ -1361,13 +1366,21 @@ Nodes (3): INC-002 429 rate limit, tiered fetching, 60-minute interval balances 
 Cohesion: 1.00
 Nodes (3): confetti, Confetti under toast spec, VoteToast
 
+### Community 270 - "adminApi root path"
+Cohesion: 0.53
+Nodes (4): backfillSlugs(), CYRILLIC_TO_LATIN, slugify(), transliterate()
+
+### Community 271 - "Cleanup Failed Articles UI"
+Cohesion: 0.47
+Nodes (4): fetchAPISearch(), fetchRSS(), NewsSourceManager, saveArticles()
+
 ### Community 292 - "TagMarketTimeline.tsx"
 Cohesion: 0.28
 Nodes (7): Candle, DailyStat, formatDate(), formatMskDate(), NewsArticle, Props, TagMarketTimeline()
 
 ### Community 293 - "NewsSourceManager"
-Cohesion: 0.46
-Nodes (7): getClientIp(), ipToBigInt(), isIpInCidr(), isYookassaIp(), maskForPrefix(), parseCidr(), YOOKASSA_CIDRS
+Cohesion: 0.40
+Nodes (6): Document: TZ_Fix_First_Tag_Click_Block.md, PopularTagsSlider carousel wrapper, First/last card dead zones, Left/right fade overlays, pointer-events-none for decorative overlays, Rationale: left/right fade gradients are decorative and should not capture pointer events
 
 ### Community 294 - "db-sqlite.ts"
 Cohesion: 0.36
@@ -1378,8 +1391,8 @@ Cohesion: 0.33
 Nodes (5): Критерии приёмки, Проблема, Промокод: применение по нажатию Enter, ТЕХНИЧЕСКОЕ ЗАДАНИЕ, Фикс
 
 ### Community 296 - "Notification channel fix"
-Cohesion: 0.60
-Nodes (5): Android notification channel, MainActivity.kt create channel, NotificationChannelSetupPlugin, Notification channel fix, Notification channel at startup rationale
+Cohesion: 0.47
+Nodes (6): Document: TZ_Glow_Clipping_Fix.md, box-shadow blur radius, Card glow clipping in PopularTagsSlider, .pts-card overflow: hidden, .pts-track padding-bottom, Rationale: overflow:hidden on .pts-card is required for ripple, so track bottom padding is increased to reveal shadow
 
 ## Ambiguous Edges - Review These
 - `Moonshot/Kimi API` → `page_view_plans event`  [AMBIGUOUS]
@@ -1392,9 +1405,9 @@ Nodes (5): Android notification channel, MainActivity.kt create channel, Notific
   pulse-cancel-recurring-adapted-tz.md · relation: conceptually_related_to
 
 ## Knowledge Gaps
-- **1830 isolated node(s):** `name`, `version`, `description`, `main`, `dev` (+1825 more)
+- **1841 isolated node(s):** `name`, `version`, `description`, `main`, `dev` (+1836 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **21 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **19 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
@@ -1407,9 +1420,9 @@ _Questions this graph is uniquely positioned to answer:_
   _Edge tagged AMBIGUOUS (relation: conceptually_related_to) - confidence is low._
 - **What is the exact relationship between `PlansSubTab` and `PlansSubTab checkbox fix`?**
   _Edge tagged AMBIGUOUS (relation: conceptually_related_to) - confidence is low._
-- **Why does `dependencies` connect `dependencies` to `types/factCheck.ts`?**
+- **Why does `dependencies` connect `dependencies` to `types/factCheck.ts`, `NewsSourceManager`?**
   _High betweenness centrality (0.073) - this node is a cross-community bridge._
-- **Why does `app` connect `types/factCheck.ts` to `index.ts`, `App.tsx`?**
-  _High betweenness centrality (0.073) - this node is a cross-community bridge._
-- **Why does `firebase` connect `Push Notifications Setup` to `PULSE Security Policy`, `PULSE Frontend HTML Entry`, `PULSE Frontend Readme`, `dependencies`, `PULSE Android Application`?**
+- **Why does `app` connect `App.tsx` to `index.ts`?**
+  _High betweenness centrality (0.071) - this node is a cross-community bridge._
+- **Why does `PULSE Frontend Readme` connect `PULSE Frontend Readme` to `PULSE Security Policy`, `PULSE Product Context & Agreements`, `NewsSourceManager`, `Push Notifications Setup`, `PULSE Frontend HTML Entry`, `PULSE Deployment Guide`, `UsersTab.tsx`, `PULSE Design & Logic Specification`, `Android Auto Update`, `PULSE Android Application`?**
   _High betweenness centrality (0.071) - this node is a cross-community bridge._

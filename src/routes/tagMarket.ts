@@ -29,9 +29,8 @@ router.get('/news-daily', adminMiddleware, async (req, res) => {
         SELECT
           date(datetime(published_at, '+3 hours')) AS day,
           COUNT(*) AS count
-        FROM articles
-        WHERE status = 'published'
-          AND published_at >= datetime('now', '-${days} days', '+3 hours')
+        FROM news
+        WHERE published_at >= datetime('now', '-${days} days', '+3 hours')
           AND (
             matched_tags LIKE ?
             OR matched_tags LIKE ?
@@ -51,11 +50,10 @@ router.get('/news-daily', adminMiddleware, async (req, res) => {
       // PostgreSQL
       sql = `
         SELECT
-          (published_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Moscow')::date AS day,
+          to_char((published_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Moscow')::date, 'YYYY-MM-DD') AS day,
           COUNT(*) AS count
-        FROM articles
-        WHERE status = 'published'
-          AND published_at >= NOW() - INTERVAL '${days} days'
+        FROM news
+        WHERE published_at >= NOW() - INTERVAL '${days} days'
           AND $1 = ANY(matched_tags)
         GROUP BY (published_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Moscow')::date
         ORDER BY day ASC
@@ -103,17 +101,16 @@ router.get('/articles-by-day', adminMiddleware, async (req, res) => {
       sql = `
         SELECT
           id,
-          title,
+          title_ru AS title,
           slug,
           source,
           url,
           published_at,
-          sentiment,
-          summary,
+          sentiment_score,
+          summary_ru AS summary,
           matched_tags
-        FROM articles
-        WHERE status = 'published'
-          AND matched_tags IS NOT NULL
+        FROM news
+        WHERE matched_tags IS NOT NULL
           AND (
             matched_tags LIKE ?
             OR matched_tags LIKE ?
@@ -122,7 +119,8 @@ router.get('/articles-by-day', adminMiddleware, async (req, res) => {
           )
           AND datetime(published_at, '+3 hours') >= datetime(?, 'start of day', '-3 hours')
           AND datetime(published_at, '+3 hours') < datetime(?, 'start of day', '+1 day', '-3 hours')
-        ORDER BY published_at ASC
+        ORDER BY published_at DESC
+        LIMIT 50
       `;
       params = [
         `%"${tagId}"%`,
@@ -136,19 +134,19 @@ router.get('/articles-by-day', adminMiddleware, async (req, res) => {
       sql = `
         SELECT
           id,
-          title,
+          title_ru AS title,
           slug,
           source,
           url,
           published_at,
-          sentiment,
-          summary,
+          sentiment_score,
+          summary_ru AS summary,
           matched_tags
-        FROM articles
-        WHERE status = 'published'
-          AND $1 = ANY(matched_tags)
+        FROM news
+        WHERE $1 = ANY(matched_tags)
           AND (published_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Moscow')::date = $2::date
-        ORDER BY published_at ASC
+        ORDER BY published_at DESC
+        LIMIT 50
       `;
       params = [tagId, date];
     }

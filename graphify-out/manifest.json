@@ -2673,5 +2673,10 @@
     "mtime": 1785236740.0044322,
     "ast_hash": "bb792418637012b51176d03d3c9acd9b",
     "semantic_hash": ""
+  },
+  "pulse-backend/docs/admin/tag-card.md": {
+    "mtime": 1785237387.8017793,
+    "ast_hash": "c8d43e913417c2d64da82c09a3bb0c54",
+    "semantic_hash": ""
   }
 }
