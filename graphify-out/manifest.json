@@ -2625,8 +2625,8 @@
     "semantic_hash": ""
   },
   "pulse-backend/src/routes/market.ts": {
-    "mtime": 1785186785.676196,
-    "ast_hash": "15c953a773e5c4cdd4a25fde4793a82e",
+    "mtime": 1785188392.4285982,
+    "ast_hash": "35b15f6c3690f04bda261c1b7376aacc",
     "semantic_hash": ""
   },
   "pulse-backend/src/routes/tagMarket.ts": {
@@ -2640,8 +2640,8 @@
     "semantic_hash": ""
   },
   "pulse-backend/src/services/market/moexIssAdapter.ts": {
-    "mtime": 1785185426.2971675,
-    "ast_hash": "49ff3096a4c63cbd0601535f03572f46",
+    "mtime": 1785188317.6092448,
+    "ast_hash": "8fda826a956a48af8e06036714636475",
     "semantic_hash": ""
   },
   "pulse-backend/src/services/market/utils.ts": {

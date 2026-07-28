@@ -28,6 +28,11 @@ const BASE_URL = 'https://iss.moex.com/iss';
 const REQUEST_TIMEOUT_MS = 15000;
 const INTRADAY_CHUNK_MINUTES = 500; // max candles per ISS request for 1-min interval
 
+const AXIOS_HEADERS = {
+  'User-Agent': 'Pulse-Admin/1.0 (contact@inside-trade.ru)',
+  'Accept': 'application/json',
+};
+
 interface TickerBoard {
   secid: string;
   engine: string;
@@ -59,6 +64,7 @@ export async function resolveTicker(ticker: string): Promise<TickerBoard> {
   try {
     const res = await axios.get(`${BASE_URL}/securities/${encodeURIComponent(key)}.json`, {
       params: { 'iss.meta': 'off' },
+      headers: AXIOS_HEADERS,
       timeout: REQUEST_TIMEOUT_MS,
     });
 
@@ -135,10 +141,12 @@ export async function getDailyCandles(ticker: string, days: number = 90): Promis
         interval: 24,
         'iss.meta': 'off',
       },
+      headers: AXIOS_HEADERS,
       timeout: REQUEST_TIMEOUT_MS,
     });
 
     const candles = res.data?.candles;
+    console.log(`[MOEX] daily candles raw response keys:`, Object.keys(res.data || {}), `candles rows:`, candles?.data?.length ?? 0);
     if (!candles || !Array.isArray(candles.data) || candles.data.length === 0) {
       dailyCache.set(cacheKeyDaily, { data: [], expiresAt: nowMs() + 15 * 60 * 1000 });
       return [];
@@ -201,10 +209,12 @@ export async function getIntraday5min(ticker: string, dateStr: string): Promise<
           interval: 1,
           'iss.meta': 'off',
         },
+        headers: AXIOS_HEADERS,
         timeout: REQUEST_TIMEOUT_MS,
       });
 
       const candles = res.data?.candles;
+      console.log(`[MOEX] intraday chunk rows:`, candles?.data?.length ?? 0);
       if (candles && Array.isArray(candles.data) && candles.data.length > 0) {
         const columns: string[] = candles.columns;
         const idx: Record<string, number> = {};

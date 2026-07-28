@@ -1,7 +1,7 @@
 # Graph Report - pulse kode  (2026-07-28)
 
 ## Corpus Check
-- 481 files · ~752,852 words
+- 481 files · ~752,898 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
