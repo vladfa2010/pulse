@@ -3,6 +3,7 @@ flowchart TD
     TagsTab["TagsTab.tsx<br/>Список тегов"]
     AdminPage["Admin.tsx<br/>Страница админки"]
     TagCard["TagDetailModal.tsx<br/>Карточка тега"]
+    TagMarketTimeline["TagMarketTimeline.tsx<br/>Рыночный таймлайн + новости"]
     
     GET_LIST["GET /admin/tags<br/>index.ts:1870"]
     GET_DETAIL["GET /admin/tags/:tagId<br/>index.ts:2041"]
@@ -11,9 +12,14 @@ flowchart TD
     SCAN["POST /admin/tags/:tagId/backfill-matches<br/>index.ts:2603"]
     DELETE["DELETE /admin/tags/:tagId<br/>index.ts:2659"]
     BACKFILL["POST /admin/backfill<br/>index.ts:?"]
+    MARKET_DAILY["GET /admin/market/candles_daily<br/>market.ts"]
+    MARKET_INTRADAY["GET /admin/market/candles_intraday<br/>market.ts"]
+    TAG_NEWS_DAILY["GET /admin/tags/:tagId/news-daily<br/>tagMarket.ts"]
+    TAG_ARTICLES_DAY["GET /admin/tags/:tagId/articles-by-day<br/>tagMarket.ts"]
     
     DB[("user_defined_tags<br/>+ enriched_data JSONB")]
     News[("news<br/>matched_tags")]
+    MOEX["MOEX ISS<br/>candles.json"]
     
     Admin -->|"1. Открыть Tags"| TagsTab
     TagsTab -->|"2. Загрузить список"| GET_LIST
@@ -25,6 +31,20 @@ flowchart TD
     TagCard -->|"5. GET /admin/tags/:tagId"| GET_DETAIL
     GET_DETAIL --> DB
     GET_DETAIL -->|"TagDetailResponse"| TagCard
+    
+    TagCard --> TagMarketTimeline
+    TagMarketTimeline -->|"MOEX daily candles"| MARKET_DAILY
+    MARKET_DAILY --> MOEX
+    MARKET_DAILY -->|"ohlc + full_dates"| TagMarketTimeline
+    TagMarketTimeline -->|"news count by day"| TAG_NEWS_DAILY
+    TAG_NEWS_DAILY --> News
+    TAG_NEWS_DAILY -->|"daily news counts"| TagMarketTimeline
+    TagMarketTimeline -->|"click on day"| MARKET_INTRADAY
+    MARKET_INTRADAY --> MOEX
+    MARKET_INTRADAY -->|"5-min candles"| TagMarketTimeline
+    TagMarketTimeline -->|"click on day"| TAG_ARTICLES_DAY
+    TAG_ARTICLES_DAY --> News
+    TAG_ARTICLES_DAY -->|"articles list"| TagMarketTimeline
     
     TagCard -->|"Редактировать поле<br/>→ handleSave"| PUT_TAG
     PUT_TAG --> DB
