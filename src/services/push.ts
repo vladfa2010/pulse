@@ -10,7 +10,9 @@
 import { initializeApp, cert } from 'firebase-admin';
 import { getMessaging, type Messaging } from 'firebase-admin/messaging';
 import { query } from '../config/db';
-import { isQuietHours } from './email';
+import { sendWebPushToUser } from './webPush';
+import { isQuietHoursMsk } from './notifications/quietHours';
+import { getEnabledSubscriptions } from './notifications/subscriptions';
 
 let messaging: Messaging | null = null;
 
@@ -49,13 +51,40 @@ export async function sendSentimentVotePush(userId: string): Promise<boolean> {
   }
 
   try {
-    const settingsResult = await query(
-      `SELECT push_enabled FROM notification_settings WHERE user_id = $1`,
+    const subs = await getEnabledSubscriptions(userId, 'engagement');
+    const pushSub = subs.find(s => s.channel === 'push');
+    if (!pushSub) {
+      console.log(`[Push] engagement/push disabled for user ${userId}`);
+      return false;
+    }
+
+    // Quiet hours (MSK)
+    const quietResult = await query(
+      `SELECT quiet_hours_enabled, quiet_hours_start, quiet_hours_end
+       FROM notification_settings WHERE user_id = $1`,
       [userId]
     );
-    const settings = settingsResult.rows[0];
-    if (!settings || !settings.push_enabled) return false;
+    const quiet = quietResult.rows[0];
+    if (quiet?.quiet_hours_enabled && isQuietHoursMsk(quiet.quiet_hours_start, quiet.quiet_hours_end)) {
+      console.log(`[Push] Quiet hours for user ${userId}, skipping sentiment vote`);
+      return false;
+    }
 
+    // Fan-out: FCM + VAPID web push
+    const fcmOk = await sendEngagementPushFcm(userId);
+    const vapidOk = await sendWebPushToUser(userId, 'Оцените рынок', 'Ваш голос влияет на индекс сантимента. Как вы оцените рынок?', { type: 'sentiment_vote' });
+
+    return fcmOk || vapidOk > 0;
+  } catch (err: any) {
+    console.error('[Push] sendSentimentVotePush failed:', err.message);
+    return false;
+  }
+}
+
+async function sendEngagementPushFcm(userId: string): Promise<boolean> {
+  if (!messaging) return false;
+
+  try {
     const channelResult = await query(
       `SELECT target FROM user_channels
        WHERE user_id = $1 AND channel = 'push' AND is_active = TRUE`,
@@ -75,7 +104,7 @@ export async function sendSentimentVotePush(userId: string): Promise<boolean> {
       android: { priority: 'high' },
     });
 
-    console.log(`[Push] Sentiment vote push to user ${userId}`);
+    console.log(`[Push] Sentiment vote FCM to user ${userId}`);
     return true;
   } catch (err: any) {
     const code = err.code || err.errorInfo?.code;
@@ -95,7 +124,7 @@ export async function sendSentimentVotePush(userId: string): Promise<boolean> {
         console.error('[Push] Failed to deactivate token:', dbErr.message);
       }
     } else {
-      console.error('[Push] sendSentimentVotePush failed:', err.message);
+      console.error('[Push] sendEngagementPushFcm failed:', err.message);
     }
     return false;
   }
@@ -118,7 +147,7 @@ export async function sendPushNotification(
   }
 
   try {
-    // Check user settings
+    // Kill-switch: пока фронт частично пишет в старую колонку, проверяем её тоже.
     const settingsResult = await query(
       `SELECT push_enabled, quiet_hours_enabled, quiet_hours_start, quiet_hours_end
        FROM notification_settings WHERE user_id = $1`,
@@ -127,7 +156,7 @@ export async function sendPushNotification(
     const settings = settingsResult.rows[0];
     if (!settings || !settings.push_enabled) return false;
 
-    if (settings.quiet_hours_enabled && await isQuietHours(userId)) {
+    if (settings.quiet_hours_enabled && isQuietHoursMsk(settings.quiet_hours_start, settings.quiet_hours_end)) {
       console.log(`[Push] Quiet hours for user ${userId}, skipping`);
       return false;
     }
@@ -198,7 +227,8 @@ export async function sendNewArticlePush(
     const result = await query(
       `SELECT DISTINCT p.user_id
        FROM portfolios p
-       JOIN notification_settings ns ON ns.user_id = p.user_id AND ns.push_enabled = TRUE
+       JOIN notification_subscriptions ns ON ns.user_id = p.user_id
+         AND ns.product = 'news_alert' AND ns.channel = 'push' AND ns.enabled = TRUE
        JOIN user_channels uc ON uc.user_id = p.user_id AND uc.channel = 'push' AND uc.is_active = TRUE
        LEFT JOIN user_news_reads r ON r.user_id = p.user_id AND r.news_id = $2
        LEFT JOIN push_notifications_sent ps ON ps.user_id = p.user_id AND ps.news_id = $2

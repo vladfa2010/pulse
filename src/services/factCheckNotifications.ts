@@ -7,6 +7,7 @@ import path from 'path';
 import { query } from '../config/db';
 import { sendEmail } from './email';
 import { sendTelegramMessage } from './telegram';
+import { getEnabledSubscriptions, getDeliveryTarget } from './notifications/subscriptions';
 import type { FactCheckResultV4, SourceV4 } from './factCheck';
 
 const APP_URL = process.env.APP_URL || process.env.FRONTEND_URL || 'https://pulse.inside-trade.ru';
@@ -28,26 +29,8 @@ export async function sendFactCheckNotifications(args: {
   const { userId, newsId, result } = args;
 
   try {
-    const settingsRes = await query(
-      `SELECT fact_check_email_enabled, fact_check_tg_enabled
-       FROM notification_settings WHERE user_id = $1`,
-      [userId]
-    );
-    const settings = settingsRes.rows[0];
-    if (!settings) return;
-
-    const userRes = await query(
-      `SELECT email FROM users WHERE id = $1`,
-      [userId]
-    );
-    const user = userRes.rows[0];
-
-    const tgRes = await query(
-      `SELECT target FROM user_channels
-       WHERE user_id = $1 AND channel = 'telegram' AND is_active = TRUE`,
-      [userId]
-    );
-    const tgChatId = tgRes.rows[0]?.target as string | undefined;
+    const subs = await getEnabledSubscriptions(userId, 'fact_check');
+    if (subs.length === 0) return;
 
     const newsRes = await query(
       `SELECT title_ru, title_original FROM news WHERE id = $1`,
@@ -55,17 +38,24 @@ export async function sendFactCheckNotifications(args: {
     );
     const newsTitle = (newsRes.rows[0]?.title_ru || newsRes.rows[0]?.title_original || 'Без названия') as string;
 
-    if (settings.fact_check_email_enabled && user?.email) {
-      const subject = `PULSE — результат проверки: ${truncate(newsTitle, 80)}`;
-      const html = buildEmailHtml(result, newsTitle, newsId);
-      await sendEmail(user.email, subject, html);
-    }
+    for (const sub of subs) {
+      try {
+        const target = await getDeliveryTarget(userId, sub.channel, 'fact_check');
+        if (!target) continue;
 
-    if (settings.fact_check_tg_enabled && tgChatId) {
-      const text = buildTelegramText(result, newsTitle, newsId);
-      const chunks = splitMessage(text, 4000);
-      for (const chunk of chunks) {
-        await sendTelegramMessage(tgChatId, chunk, 'MarkdownV2');
+        if (sub.channel === 'email') {
+          const subject = `PULSE — результат проверки: ${truncate(newsTitle, 80)}`;
+          const html = buildEmailHtml(result, newsTitle, newsId);
+          await sendEmail(target.target, subject, html);
+        } else if (sub.channel === 'telegram') {
+          const text = buildTelegramText(result, newsTitle, newsId);
+          const chunks = splitMessage(text, 4000);
+          for (const chunk of chunks) {
+            await sendTelegramMessage(target.target, chunk, 'MarkdownV2');
+          }
+        }
+      } catch (err: any) {
+        console.error(`[FactCheckNotifications] ${sub.channel} failed for ${userId}:`, err.message);
       }
     }
   } catch (err) {

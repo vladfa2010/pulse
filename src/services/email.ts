@@ -9,6 +9,7 @@
 import axios from 'axios';
 // @ts-ignore — nodemailer types not installed
 import nodemailer from 'nodemailer';
+import { isQuietHoursMsk } from './notifications/quietHours';
 import type { LostFeatures, UserMonthlyStats } from './subscription';
 
 const EMAIL_PROVIDER = process.env.EMAIL_PROVIDER || 'none';
@@ -30,16 +31,7 @@ export async function isQuietHours(userId: string): Promise<boolean> {
     );
     const s = result.rows[0];
     if (!s || !s.quiet_hours_enabled) return false;
-
-    const now = new Date();
-    const pad = (n: number) => n.toString().padStart(2, '0');
-    const nowStr = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
-
-    if (s.quiet_hours_start < s.quiet_hours_end) {
-      return nowStr >= s.quiet_hours_start && nowStr <= s.quiet_hours_end;
-    } else {
-      return nowStr >= s.quiet_hours_start || nowStr <= s.quiet_hours_end;
-    }
+    return isQuietHoursMsk(s.quiet_hours_start, s.quiet_hours_end);
   } catch {
     return false;
   }

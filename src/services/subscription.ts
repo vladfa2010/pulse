@@ -15,6 +15,7 @@ import { query, pool } from '../config/db';
 import { sendTelegramMessage } from './telegram';
 import { sendPushNotification } from './push';
 import { sendWebPushToUser } from './webPush';
+import { getEnabledSubscriptions, getDeliveryTarget } from './notifications/subscriptions';
 import axios from 'axios';
 import { logSubscriptionActivated } from './activityLog';
 import {
@@ -24,6 +25,7 @@ import {
   sendExpiry1DayManual,
   sendExpiredPaymentFailed,
   sendExpiredToday,
+  sendEmail,
 } from './email';
 import { logPaymentCompleted } from './activityLog';
 
@@ -1114,37 +1116,32 @@ export async function notifySubscriptionEvent(
     [userId, type]
   );
 
-  // TZ_NOTIFICATION_SETTINGS: respect user notification preferences
-  const settingsResult = await query(
-    `SELECT tg_enabled, push_enabled, web_push_enabled
-     FROM notification_settings WHERE user_id = $1`,
-    [userId]
-  );
-  const settings = settingsResult.rows[0] || {
-    tg_enabled: true,
-    push_enabled: true,
-    web_push_enabled: true,
-  };
+  // TZ_NOTIFICATION_SETTINGS: respect user notification preferences via matrix
+  const billingSubs = await getEnabledSubscriptions(userId, 'billing');
 
-  // Telegram
-  if (settings.tg_enabled !== false) {
-    const tgResult = await query(
-      `SELECT target FROM user_channels WHERE user_id = $1 AND channel = 'telegram' AND is_active = TRUE`,
-      [userId]
-    );
-    for (const row of tgResult.rows) {
-      await sendTelegramMessage(row.target, message);
+  for (const sub of billingSubs) {
+    try {
+      if (sub.channel === 'telegram') {
+        const target = await getDeliveryTarget(userId, 'telegram', 'billing');
+        if (target) await sendTelegramMessage(target.target, message);
+      } else if (sub.channel === 'email') {
+        const target = await getDeliveryTarget(userId, 'email', 'billing');
+        if (target) {
+          const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"></head>
+<body style="font-family:Arial,sans-serif;background:#0a0a0a;margin:0;padding:20px;color:#e5e5e5;">
+<div style="max-width:480px;margin:0 auto;background:#111111;border-radius:16px;overflow:hidden;border:1px solid #222222;">
+<div style="padding:28px;">${escapeHtml(message).replace(/\n/g, '<br>')}</div>
+</div></body></html>`;
+          await sendEmail(target.target, 'PULSE', html);
+        }
+      } else if (sub.channel === 'push') {
+        await sendPushNotification(userId, 'PULSE', message, { type });
+        await sendWebPushToUser(userId, 'PULSE', message, { type });
+      }
+    } catch (err: any) {
+      console.error(`[notifySubscriptionEvent] ${sub.channel} failed for ${userId}:`, err.message);
     }
-  }
-
-  // Push (Firebase/FCM)
-  if (settings.push_enabled !== false) {
-    await sendPushNotification(userId, 'PULSE', message, { type });
-  }
-
-  // Web Push (VAPID)
-  if (settings.web_push_enabled !== false) {
-    await sendWebPushToUser(userId, 'PULSE', message, { type });
   }
 }
 
@@ -1689,4 +1686,13 @@ export function requireMinPlan(minPlanId: string) {
     }
     next();
   };
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
 }

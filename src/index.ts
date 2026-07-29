@@ -41,8 +41,9 @@ import appRoutes from './routes/app';
 import { authMiddleware, AuthRequest } from './middleware/auth';
 import { apiLimiter, authLimiter, webhookLimiter, forgotPasswordLimiter, passwordResetFlowLimiter, promoValidateLimiter } from './middleware/rateLimit';
 import { startCron } from './services/cron';   // RSS cron отключен (TZ_REMOVE_DUPLICATE_RSS_CRON) — модуль оставлен для отката
-import { startReportCron, sendWeeklyReportForUser } from './services/reports'; // ← Еженедельные репорты
-import { startDigestCron, sendAllDigests } from './services/digest'; // ← TG дайджест (каждый час)
+import { sendWeeklyReportForUser } from './services/reports'; // ← Еженедельные репорты (manual + API)
+import { startDigestCron, sendAllDigests, setDigestEnabled } from './services/digest'; // ← дайджест (каждый час) — через notification matrix
+import notificationsRouter from './routes/notifications';
 import cron from 'node-cron';
 import { resetDailyWindows, refreshImoexCache } from './services/sentimentIndex';
 import { sendSentimentVotePush } from './services/push';
@@ -4337,6 +4338,7 @@ app.use('/api/plans', plansRoutes);     // GET /api/plans
 app.use('/api/promo/validate', promoValidateLimiter, promoRoutes); // GET /api/promo/validate
 app.use('/api/features', featuresRoutes); // GET /api/features
 app.use('/api/user', userRoutes);       // GET/POST/DELETE /api/user/tags
+app.use('/api/user', notificationsRouter); // Notification matrix (GET/PUT /notification-matrix, quiet-hours)
 app.use('/api/translate', translateRoutes);
 app.use('/api/webhook', webhookLimiter, webhookRoutes); // Высокий лимит для YuKassa
 app.use('/api/admin', adminRoutes);     // GET /api/admin/users, /stats
@@ -4490,20 +4492,8 @@ app.post('/api/auth/telegram', authMiddleware, async (req: AuthRequest, res) => 
       );
     }
 
-    // ── 6. Enable digest ──
-    if (USE_SQLITE) {
-      await query(
-        `INSERT OR REPLACE INTO notification_settings (user_id, tg_digest_enabled) VALUES ($1, 1)`,
-        [userId]
-      );
-    } else {
-      await query(
-        `INSERT INTO notification_settings (user_id, tg_digest_enabled)
-         VALUES ($1, TRUE)
-         ON CONFLICT (user_id) DO UPDATE SET tg_digest_enabled = TRUE`,
-        [userId]
-      );
-    }
+    // ── 6. Enable digest in matrix ──
+    await setDigestEnabled(userId, 'telegram', true);
 
     console.log(`[Telegram Widget] User ${userId} linked to TG ${chatId}`);
     res.json({ success: true, chatId });
@@ -5017,6 +5007,140 @@ async function start() {
     { sql: `ALTER TABLE news ADD COLUMN IF NOT EXISTS is_political BOOLEAN DEFAULT FALSE`, name: 'is_political' },
     { sql: `ALTER TABLE news ADD COLUMN IF NOT EXISTS article_type VARCHAR(10) DEFAULT 'micro'`, name: 'article_type' },
     { sql: `CREATE TABLE IF NOT EXISTS cron_locks (job_name VARCHAR(50) PRIMARY KEY, locked_at TIMESTAMP, locked_by VARCHAR(100), expires_at TIMESTAMP DEFAULT ${_SQL_NOW})`, name: 'cron_locks' },
+    // Notification matrix v1: product × channel subscriptions
+    {
+      sql: `CREATE TABLE IF NOT EXISTS notification_subscriptions (
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        product VARCHAR(32) NOT NULL,
+        channel VARCHAR(16) NOT NULL,
+        enabled BOOLEAN NOT NULL DEFAULT FALSE,
+        frequency VARCHAR(8),
+        last_sent_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT ${_SQL_NOW},
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT ${_SQL_NOW},
+        PRIMARY KEY (user_id, product, channel)
+      )`,
+      name: 'notification_subscriptions'
+    },
+    {
+      sql: `CREATE INDEX IF NOT EXISTS idx_notif_subs_lookup ON notification_subscriptions (product, channel) WHERE enabled = TRUE`,
+      name: 'idx_notif_subs_lookup'
+    },
+    {
+      sql: `INSERT INTO notification_subscriptions (user_id, product, channel, enabled, frequency, last_sent_at)
+            SELECT user_id, 'digest', 'telegram', COALESCE(tg_digest_enabled, FALSE), COALESCE(digest_frequency, '1h'), last_digest_sent
+            FROM notification_settings ON CONFLICT (user_id, product, channel) DO NOTHING`,
+      name: 'backfill_digest_telegram'
+    },
+    {
+      sql: `INSERT INTO notification_subscriptions (user_id, product, channel, enabled, frequency)
+            SELECT user_id, 'digest', 'email', COALESCE(email_digest_enabled, FALSE), COALESCE(digest_frequency, '1h')
+            FROM notification_settings ON CONFLICT (user_id, product, channel) DO NOTHING`,
+      name: 'backfill_digest_email'
+    },
+    {
+      sql: `INSERT INTO notification_subscriptions (user_id, product, channel, enabled, frequency)
+            SELECT user_id, 'digest', 'push', COALESCE(push_enabled, FALSE), COALESCE(digest_frequency, '1h')
+            FROM notification_settings ON CONFLICT (user_id, product, channel) DO NOTHING`,
+      name: 'backfill_digest_push'
+    },
+    {
+      sql: `INSERT INTO notification_subscriptions (user_id, product, channel, enabled)
+            SELECT user_id, 'weekly_report', 'telegram', COALESCE(tg_enabled, TRUE)
+            FROM notification_settings ON CONFLICT (user_id, product, channel) DO NOTHING`,
+      name: 'backfill_weekly_report_telegram'
+    },
+    {
+      sql: `INSERT INTO notification_subscriptions (user_id, product, channel, enabled)
+            SELECT user_id, 'weekly_report', 'email', COALESCE(email_enabled, TRUE)
+            FROM notification_settings ON CONFLICT (user_id, product, channel) DO NOTHING`,
+      name: 'backfill_weekly_report_email'
+    },
+    {
+      sql: `INSERT INTO notification_subscriptions (user_id, product, channel, enabled)
+            SELECT user_id, 'weekly_report', 'push', COALESCE(push_enabled, FALSE)
+            FROM notification_settings ON CONFLICT (user_id, product, channel) DO NOTHING`,
+      name: 'backfill_weekly_report_push'
+    },
+    {
+      sql: `INSERT INTO notification_subscriptions (user_id, product, channel, enabled)
+            SELECT user_id, 'fact_check', 'telegram', COALESCE(fact_check_tg_enabled, TRUE)
+            FROM notification_settings ON CONFLICT (user_id, product, channel) DO NOTHING`,
+      name: 'backfill_fact_check_telegram'
+    },
+    {
+      sql: `INSERT INTO notification_subscriptions (user_id, product, channel, enabled)
+            SELECT user_id, 'fact_check', 'email', COALESCE(fact_check_email_enabled, TRUE)
+            FROM notification_settings ON CONFLICT (user_id, product, channel) DO NOTHING`,
+      name: 'backfill_fact_check_email'
+    },
+    {
+      sql: `INSERT INTO notification_subscriptions (user_id, product, channel, enabled)
+            SELECT user_id, 'news_alert', 'push', COALESCE(push_enabled, FALSE)
+            FROM notification_settings ON CONFLICT (user_id, product, channel) DO NOTHING`,
+      name: 'backfill_news_alert_push'
+    },
+    {
+      sql: `INSERT INTO notification_subscriptions (user_id, product, channel, enabled)
+            SELECT user_id, 'engagement', 'push', COALESCE(push_enabled, FALSE)
+            FROM notification_settings ON CONFLICT (user_id, product, channel) DO NOTHING`,
+      name: 'backfill_engagement_push'
+    },
+    {
+      sql: `INSERT INTO notification_subscriptions (user_id, product, channel, enabled)
+            SELECT user_id, 'billing', 'push', COALESCE(web_push_enabled, TRUE)
+            FROM notification_settings ON CONFLICT (user_id, product, channel) DO NOTHING`,
+      name: 'backfill_billing_push'
+    },
+    {
+      sql: `INSERT INTO notification_subscriptions (user_id, product, channel, enabled)
+            SELECT user_id, 'billing', 'email', TRUE
+            FROM notification_settings ON CONFLICT (user_id, product, channel) DO NOTHING`,
+      name: 'backfill_billing_email'
+    },
+    // Default rows for users without notification_settings (legacy / new registration backfill)
+    {
+      sql: `INSERT INTO notification_subscriptions (user_id, product, channel, enabled, frequency)
+            SELECT u.id, 'digest', 'telegram', FALSE, '1h' FROM users u
+            WHERE NOT EXISTS (SELECT 1 FROM notification_settings ns WHERE ns.user_id = u.id)
+            ON CONFLICT (user_id, product, channel) DO NOTHING`,
+      name: 'backfill_defaults_digest_telegram'
+    },
+    {
+      sql: `INSERT INTO notification_subscriptions (user_id, product, channel, enabled)
+            SELECT u.id, 'weekly_report', 'telegram', TRUE FROM users u
+            WHERE NOT EXISTS (SELECT 1 FROM notification_settings ns WHERE ns.user_id = u.id)
+            ON CONFLICT (user_id, product, channel) DO NOTHING`,
+      name: 'backfill_defaults_weekly_report_telegram'
+    },
+    {
+      sql: `INSERT INTO notification_subscriptions (user_id, product, channel, enabled)
+            SELECT u.id, 'weekly_report', 'email', TRUE FROM users u
+            WHERE NOT EXISTS (SELECT 1 FROM notification_settings ns WHERE ns.user_id = u.id)
+            ON CONFLICT (user_id, product, channel) DO NOTHING`,
+      name: 'backfill_defaults_weekly_report_email'
+    },
+    {
+      sql: `INSERT INTO notification_subscriptions (user_id, product, channel, enabled)
+            SELECT u.id, 'fact_check', 'telegram', TRUE FROM users u
+            WHERE NOT EXISTS (SELECT 1 FROM notification_settings ns WHERE ns.user_id = u.id)
+            ON CONFLICT (user_id, product, channel) DO NOTHING`,
+      name: 'backfill_defaults_fact_check_telegram'
+    },
+    {
+      sql: `INSERT INTO notification_subscriptions (user_id, product, channel, enabled)
+            SELECT u.id, 'fact_check', 'email', TRUE FROM users u
+            WHERE NOT EXISTS (SELECT 1 FROM notification_settings ns WHERE ns.user_id = u.id)
+            ON CONFLICT (user_id, product, channel) DO NOTHING`,
+      name: 'backfill_defaults_fact_check_email'
+    },
+    {
+      sql: `INSERT INTO notification_subscriptions (user_id, product, channel, enabled)
+            SELECT u.id, 'billing', 'email', TRUE FROM users u
+            WHERE NOT EXISTS (SELECT 1 FROM notification_settings ns WHERE ns.user_id = u.id)
+            ON CONFLICT (user_id, product, channel) DO NOTHING`,
+      name: 'backfill_defaults_billing_email'
+    },
     { sql: `CREATE TABLE IF NOT EXISTS user_defined_tags (tag_id VARCHAR(50) PRIMARY KEY, tag_name VARCHAR(100) NOT NULL, tag_type VARCHAR(20) DEFAULT 'company', keywords TEXT[] DEFAULT '{}', enriched_data JSONB, created_by UUID REFERENCES users(id), created_at TIMESTAMP DEFAULT ${_SQL_NOW})`, name: 'user_defined_tags' },
     // Telegram digest settings
     { sql: `ALTER TABLE notification_settings ADD COLUMN IF NOT EXISTS tg_digest_enabled BOOLEAN DEFAULT FALSE`, name: 'tg_digest_enabled' },
@@ -5435,7 +5559,7 @@ async function start() {
     // ─── Шаг 5: Запуск фоновых задач ──────────────────────────────────
     // startCron() — ОТКЛЮЧЕН (TZ_REMOVE_DUPLICATE_RSS_CRON)
     // RSS обрабатывается NewsSourceManager каждые 5 мин
-    startReportCron(); // ← Еженедельные репорты (воскресенье 13:00)
+    // startReportCron() — ОТКЛЮЧЕН: weekly report переехал в notification workers (startDigestCron)
 
     // ─── Шаг 6: Настройка YuKassa webhook ─────────────────────────────
     setTimeout(() => {
@@ -5564,7 +5688,8 @@ async function start() {
         const result = await query(
           `SELECT u.id as user_id
            FROM users u
-           JOIN notification_settings ns ON ns.user_id = u.id AND ns.push_enabled = TRUE
+           JOIN notification_subscriptions ns ON ns.user_id = u.id
+             AND ns.product = 'engagement' AND ns.channel = 'push' AND ns.enabled = TRUE
            JOIN user_channels uc ON uc.user_id = u.id AND uc.channel = 'push' AND uc.is_active = TRUE
            WHERE NOT EXISTS (
              SELECT 1 FROM sentiment_votes sv

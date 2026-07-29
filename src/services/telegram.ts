@@ -1,5 +1,7 @@
 import axios from 'axios';
 import { query } from '../config/db';
+import { setDigestEnabled } from './digest';
+import { isQuietHoursMsk } from './notifications/quietHours';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
@@ -47,10 +49,7 @@ export async function sendTelegramMessage(
               `UPDATE user_channels SET is_active = FALSE WHERE channel = 'telegram' AND target = $1`,
               [chatId]
             );
-            await query(
-              `UPDATE notification_settings SET tg_digest_enabled = FALSE WHERE user_id = $1`,
-              [userId]
-            );
+            await setDigestEnabled(userId, 'telegram', false);
             console.log(`[Telegram] Auto-deactivated channel for chat ${chatId}, user ${userId}`);
           }
         } catch (dbErr: any) {
@@ -103,7 +102,7 @@ export async function sendAlert(userId: string, title: string, body: string): Pr
     );
 
     const settings = settingsResult.rows[0];
-    if (settings?.quiet_hours_enabled && isQuietHours(settings.quiet_hours_start, settings.quiet_hours_end)) {
+    if (settings?.quiet_hours_enabled && isQuietHoursMsk(settings.quiet_hours_start, settings.quiet_hours_end)) {
       console.log(`[Telegram] Quiet hours, skipping alert for user ${userId}`);
       return false;
     }
@@ -152,21 +151,6 @@ function escapeHtml(text: string): string {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
-}
-
-function isQuietHours(start: string, end: string): boolean {
-  const now = new Date();
-  const current = now.getHours() * 60 + now.getMinutes();
-  const [startH, startM] = start.split(':').map(Number);
-  const [endH, endM] = end.split(':').map(Number);
-  const startMinutes = startH * 60 + startM;
-  const endMinutes = endH * 60 + endM;
-
-  if (startMinutes <= endMinutes) {
-    return current >= startMinutes && current <= endMinutes;
-  }
-  // Crosses midnight
-  return current >= startMinutes || current <= endMinutes;
 }
 
 function sleep(ms: number): Promise<void> {

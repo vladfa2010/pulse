@@ -16,6 +16,8 @@ import axios from 'axios';
 import { getVapidPublicKey } from '../services/webPush';
 import { logTagAdded, logTagRemoved } from '../services/activityLog';
 import { savePaymentMethod } from '../services/subscription';
+import { setDigestEnabled } from '../services/digest';
+import { setSubscription, getSubscription, setQuietHours, ensureDefaultSubscriptions } from '../services/notifications/subscriptions';
 
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
@@ -289,7 +291,7 @@ router.get('/notifications', authMiddleware, async (req: AuthRequest, res) => {
   }
 });
 
-// PATCH /api/user/notifications
+// PATCH /api/user/notifications (legacy → маппим в матрицу)
 router.patch('/notifications', authMiddleware, async (req: AuthRequest, res) => {
   try {
     const userId = req.user!.userId;
@@ -324,6 +326,37 @@ router.patch('/notifications', authMiddleware, async (req: AuthRequest, res) => 
       `UPDATE notification_settings SET ${fields.join(', ')}, updated_at = ${nowSql()} WHERE user_id = $${paramIdx}`,
       values
     );
+
+    // Маппим изменения в матрицу, чтобы старые тумблеры продолжали работать
+    if (updates.tg_enabled !== undefined) {
+      await setSubscription(userId, 'weekly_report', 'telegram', { enabled: updates.tg_enabled });
+    }
+    if (updates.email_enabled !== undefined) {
+      await setSubscription(userId, 'weekly_report', 'email', { enabled: updates.email_enabled });
+    }
+    if (updates.push_enabled !== undefined) {
+      const enabled = updates.push_enabled;
+      await setSubscription(userId, 'digest', 'push', { enabled });
+      await setSubscription(userId, 'weekly_report', 'push', { enabled });
+      await setSubscription(userId, 'news_alert', 'push', { enabled });
+      await setSubscription(userId, 'engagement', 'push', { enabled });
+    }
+    if (updates.fact_check_email_enabled !== undefined) {
+      await setSubscription(userId, 'fact_check', 'email', { enabled: updates.fact_check_email_enabled });
+    }
+    if (updates.fact_check_tg_enabled !== undefined) {
+      await setSubscription(userId, 'fact_check', 'telegram', { enabled: updates.fact_check_tg_enabled });
+    }
+    if (updates.report_frequency !== undefined) {
+      // weekly_report пока не использует frequency; сохраняем для совместимости
+    }
+    if (updates.quiet_hours_enabled !== undefined || updates.quiet_hours_start !== undefined || updates.quiet_hours_end !== undefined) {
+      await setQuietHours(userId, {
+        enabled: updates.quiet_hours_enabled,
+        start: updates.quiet_hours_start,
+        end: updates.quiet_hours_end,
+      });
+    }
 
     res.json({ success: true });
   } catch (err) {
@@ -480,15 +513,21 @@ router.get('/telegram-status', authMiddleware, async (req: AuthRequest, res) => 
   try {
     const userId = req.user!.userId;
 
+    // Гарантируем, что у юзера есть строки матрицы (legacy / новые)
+    await ensureDefaultSubscriptions(userId);
+
     // Get channel info
     const channelResult = await query(
       `SELECT target, is_active FROM user_channels WHERE user_id = $1 AND channel = 'telegram'`,
       [userId]
     );
 
-    // Get notification settings
+    // Get digest subscription from matrix
+    const digestSub = await getSubscription(userId, 'digest', 'telegram');
+
+    // Get quiet hours
     const settingsResult = await query(
-      `SELECT tg_digest_enabled, digest_frequency, quiet_hours_enabled, quiet_hours_start, quiet_hours_end
+      `SELECT quiet_hours_enabled, quiet_hours_start, quiet_hours_end
        FROM notification_settings WHERE user_id = $1`,
       [userId]
     );
@@ -500,8 +539,8 @@ router.get('/telegram-status', authMiddleware, async (req: AuthRequest, res) => 
       connected: !!channel && channel.is_active,
       channelExists: !!channel,
       chatId: channel?.target || undefined,
-      digestEnabled: settings.tg_digest_enabled || false,
-      frequency: settings.digest_frequency || '1h',
+      digestEnabled: digestSub?.enabled || false,
+      frequency: digestSub?.frequency || '1h',
       quietHoursEnabled: settings.quiet_hours_enabled || false,
       quietHoursStart: settings.quiet_hours_start || '23:00',
       quietHoursEnd: settings.quiet_hours_end || '07:00',
@@ -522,11 +561,8 @@ router.post('/telegram-disconnect', authMiddleware, async (req: AuthRequest, res
       [userId]
     );
 
-    // Disable digest
-    await query(
-      `UPDATE notification_settings SET tg_digest_enabled = FALSE WHERE user_id = $1`,
-      [userId]
-    );
+    // Disable digest in matrix
+    await setDigestEnabled(userId, 'telegram', false);
 
     res.json({ success: true });
   } catch (err) {
@@ -534,7 +570,7 @@ router.post('/telegram-disconnect', authMiddleware, async (req: AuthRequest, res
   }
 });
 
-// POST /api/user/notification-settings — сохранить настройки уведомлений
+// POST /api/user/notification-settings — сохранить настройки уведомлений (legacy, маппится на матрицу)
 router.post('/notification-settings', authMiddleware, async (req: AuthRequest, res) => {
   try {
     const userId = req.user!.userId;
@@ -547,18 +583,17 @@ router.post('/notification-settings', authMiddleware, async (req: AuthRequest, r
     if (frequency !== undefined) {
       fields.push(`digest_frequency = $${paramIdx++}`);
       values.push(frequency);
+      // Дублируем частоту в матрицу для всех каналов дайджеста
+      await setSubscription(userId, 'digest', 'telegram', { frequency });
+      await setSubscription(userId, 'digest', 'email', { frequency });
+      await setSubscription(userId, 'digest', 'push', { frequency });
     }
-    if (quietHoursEnabled !== undefined) {
-      fields.push(`quiet_hours_enabled = $${paramIdx++}`);
-      values.push(quietHoursEnabled);
-    }
-    if (quietHoursStart !== undefined) {
-      fields.push(`quiet_hours_start = $${paramIdx++}`);
-      values.push(quietHoursStart);
-    }
-    if (quietHoursEnd !== undefined) {
-      fields.push(`quiet_hours_end = $${paramIdx++}`);
-      values.push(quietHoursEnd);
+    if (quietHoursEnabled !== undefined || quietHoursStart !== undefined || quietHoursEnd !== undefined) {
+      await setQuietHours(userId, {
+        enabled: quietHoursEnabled,
+        start: quietHoursStart,
+        end: quietHoursEnd,
+      });
     }
 
     if (fields.length === 0) {
@@ -584,15 +619,13 @@ router.get('/email-settings', authMiddleware, async (req: AuthRequest, res) => {
   try {
     const userId = req.user!.userId;
     const result = await query(
-      `SELECT digest_email, email_digest_enabled FROM notification_settings WHERE user_id = $1`,
+      `SELECT digest_email FROM notification_settings WHERE user_id = $1`,
       [userId]
     );
-    if (result.rows.length === 0) {
-      return res.json({ email: '', enabled: false });
-    }
+    const digestSub = await getSubscription(userId, 'digest', 'email');
     res.json({
-      email: result.rows[0].digest_email || '',
-      enabled: result.rows[0].email_digest_enabled || false,
+      email: result.rows[0]?.digest_email || '',
+      enabled: digestSub?.enabled || false,
     });
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch email settings' });
@@ -612,11 +645,13 @@ router.post('/email-settings', authMiddleware, async (req: AuthRequest, res) => 
     }
 
     await query(
-      `UPDATE notification_settings 
-       SET digest_email = $1, email_digest_enabled = $2, updated_at = ${nowSql()}
-       WHERE user_id = $3`,
-      [email || null, enabled === true, userId]
+      `UPDATE notification_settings
+       SET digest_email = $1, updated_at = ${nowSql()}
+       WHERE user_id = $2`,
+      [email || null, userId]
     );
+
+    await setSubscription(userId, 'digest', 'email', { enabled: enabled === true });
 
     res.json({ success: true, email, enabled: enabled === true });
   } catch (err) {

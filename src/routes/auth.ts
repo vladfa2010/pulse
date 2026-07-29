@@ -30,6 +30,7 @@ import {
   ForgotPasswordSchema, VerifyCodeSchema, ResetPasswordSchema,
 } from '../schemas/auth';
 import { buildSubscriptionStatus } from '../services/subscription';
+import { ensureDefaultSubscriptions } from '../services/notifications/subscriptions';
 import { sendPasswordResetCodeEmail, sendWelcomeEmail } from '../services/email';
 import { sendTelegramMessage } from '../services/telegram';
 import {
@@ -145,6 +146,9 @@ router.post('/register', validate(RegisterSchema), async (req, res) => {
       `INSERT INTO notification_settings (user_id) VALUES ($1)`,
       [userId]
     );
+
+    // ─── Сидируем матрицу подписок (новый рефактор уведомлений) ────────
+    await ensureDefaultSubscriptions(userId);
 
     // ─── Отправляем welcome-письмо (не блокируем ответ) ─────────────────
     sendWelcomeEmail(email, username).catch((err: any) => {

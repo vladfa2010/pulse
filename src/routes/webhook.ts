@@ -3,6 +3,7 @@ import { query } from '../config/db';
 import axios from 'axios';
 import { isYookassaIp, getClientIp } from '../services/ipCheck';
 import { savePaymentMethod, getPlanById, scheduleDowngrade, notifySubscriptionEvent, activatePaymentIfNeeded } from '../services/subscription';
+import { setDigestEnabled } from '../services/digest';
 import {
   logSubscriptionCancelled,
   logTelegramConnected,
@@ -294,10 +295,7 @@ router.post('/telegram', async (req, res) => {
               `UPDATE user_channels SET is_active = FALSE WHERE channel = 'telegram' AND target = $1`,
               [chatId]
             );
-            await query(
-              `UPDATE notification_settings SET tg_digest_enabled = FALSE WHERE user_id = $1`,
-              [userId]
-            );
+            await setDigestEnabled(userId, 'telegram', false);
             logTelegramDisconnected(userId, chatId).catch(() => {});
             console.log(`[Webhook] Deactivated telegram channel for user ${userId}, chat ${chatId}`);
           } else {
@@ -358,10 +356,7 @@ router.post('/telegram', async (req, res) => {
              ON CONFLICT (user_id, channel) DO UPDATE SET target = $2, is_active = TRUE`,
             [userId, chatId]
           );
-          await query(
-            `UPDATE notification_settings SET tg_digest_enabled = TRUE WHERE user_id = $1`,
-            [userId]
-          );
+          await setDigestEnabled(userId, 'telegram', true);
 
           logTelegramConnected(userId, chatId).catch(() => {});
 
@@ -395,7 +390,10 @@ router.post('/telegram', async (req, res) => {
         break;
       }
       case '/stop': {
-        await query(`UPDATE notification_settings SET tg_digest_enabled = FALSE WHERE user_id = (SELECT user_id FROM user_channels WHERE target = $1 AND channel = 'telegram')`, [chatId]);
+        const userId = await getUserIdByChatId(chatId);
+        if (userId) {
+          await setDigestEnabled(userId, 'telegram', false);
+        }
         await sendMessageWithButtons(chatId, '🔕 Рассылка приостановлена.', [
           [{ text: '▶️ Включить рассылку', callback_data: 'start_digest' }],
         ]);
@@ -447,14 +445,20 @@ async function handleCallbackQuery(req: any, res: any): Promise<void> {
         break;
       }
       case 'stop_digest': {
-        await query(`UPDATE notification_settings SET tg_digest_enabled = FALSE WHERE user_id = (SELECT user_id FROM user_channels WHERE target = $1 AND channel = 'telegram')`, [chatId]);
+        const userId = await getUserIdByChatId(chatId);
+        if (userId) {
+          await setDigestEnabled(userId, 'telegram', false);
+        }
         await sendMessageWithButtons(chatId, '🔕 Рассылка приостановлена.', [
           [{ text: '▶️ Включить рассылку', callback_data: 'start_digest' }],
         ]);
         break;
       }
       case 'start_digest': {
-        await query(`UPDATE notification_settings SET tg_digest_enabled = TRUE WHERE user_id = (SELECT user_id FROM user_channels WHERE target = $1 AND channel = 'telegram')`, [chatId]);
+        const userId = await getUserIdByChatId(chatId);
+        if (userId) {
+          await setDigestEnabled(userId, 'telegram', true);
+        }
         await sendMessageWithButtons(chatId, '▶️ Рассылка включена!', [
           [{ text: '📰 Получить дайджест', callback_data: 'digest_now' }],
         ]);

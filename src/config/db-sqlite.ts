@@ -73,7 +73,6 @@ export async function query(text: string, params?: any[]): Promise<{ rows: any[]
     .replace(/::text\[\]/g, '')
     .replace(/::jsonb/g, '')
     .replace(/ON CONFLICT DO NOTHING/g, 'OR IGNORE')
-    .replace(/ON CONFLICT \([^)]+\) DO UPDATE SET/g, 'ON CONFLICT DO UPDATE SET')
     .replace(/COALESCE\(/g, 'COALESCE(')
     .replace(/INTERVAL '/g, '')
     .replace(/' days'/g, " days")
@@ -482,6 +481,21 @@ export async function initSQLiteSchema(): Promise<void> {
       report_language TEXT DEFAULT 'ru',
       updated_at TEXT DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS notification_subscriptions (
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      product TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 0,
+      frequency TEXT,
+      last_sent_at TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY (user_id, product, channel)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_notification_subscriptions_lookup
+      ON notification_subscriptions (product, channel, enabled);
 
     CREATE TABLE IF NOT EXISTS translation_cache (
       id TEXT PRIMARY KEY,
