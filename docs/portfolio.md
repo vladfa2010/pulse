@@ -132,10 +132,14 @@ interface BrokerAdapter {
 
 ### Финам
 
-- `secret` → POST `/v1/sessions` → JWT.
-- JWT → POST `/v1/sessions/details` → account IDs.
+- `secret` → POST `/v1/sessions` → JWT (`token`, не `access_token`).
+- JWT → POST `/v1/sessions/details` → `account_ids` (snake_case), `readonly`.
 - GET `/v1/accounts/{account_id}` → positions.
-- Поддерживает `SBER@MISX` (MOEX), `MDLN@XNGS` (NASDAQ), `SECZ@XNYS` (NYSE).
+- Поля ответа — **snake_case**: `average_price`, `current_price`, `daily_pnl`.
+- Числа приходят в объектах: `quantity.value`, `average_price.value`.
+- `average_price.value === "0.0"` интерпретируется как `NULL` (позиция зачислена без покупки).
+- Символ: `SBER@MISX` (MOEX/RUB), `MDLN@XNGS` (NASDAQ/USD), `SECZ@XNYS` (NYSE/USD), `RU000A1053P7@MISX` (облигации).
+- Невалидный/протухший токен возвращает **HTTP 500** `{ code: 2, message: "" }` → адаптер переводит в `broker_key_invalid`.
 - Пропускает синхронизацию в техническое окно 05:00–05:15 МСК.
 
 ### БКС

@@ -25,6 +25,7 @@ export interface TestKeyResult {
   positionsCount?: number;
   error?: string;
   newToken?: string; // For adapters that rotate refresh tokens (BCS)
+  readonly?: boolean; // For adapters that expose read-only flag (Finam)
 }
 
 export interface BrokerAdapter {

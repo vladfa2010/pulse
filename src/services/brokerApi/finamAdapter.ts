@@ -1,9 +1,13 @@
 /**
  * PULSE — Finam Trade API adapter (read-only)
  *
- * https://api.finam.ru/docs/rest
+ * Wire-format fixes (2026-07-30):
+ *   - Finam REST uses snake_case: account_ids, average_price, etc.
+ *   - Numbers are wrapped in { value: string } objects.
+ *   - Invalid/expired credentials return HTTP 500 { code: 2, message: '' }.
+ *
  * Auth flow: secret → POST /v1/sessions → JWT
- *            JWT → POST /v1/sessions/details → account ids
+ *            JWT → POST /v1/sessions/details → account_ids
  *            GET /v1/accounts/{account_id} → positions
  */
 
@@ -29,8 +33,13 @@ function isInMaintenanceWindow(): boolean {
   return minute <= 15;
 }
 
+function isFinamUnauthorized(data: any): boolean {
+  // Finam returns HTTP 500 with code: 2 for invalid/revoked credentials or expired sessions
+  return data && data.code === 2 && data.message === '';
+}
+
 function parseTickerMic(symbol: string): { ticker: string; exchange: string; currency: string } {
-  // Format: SBER@MISX, MDLN@XNGS, SECZ@XNYS
+  // Format: SBER@MISX, RU000A1053P7@MISX, MDLN@XNGS, SECZ@XNYS
   const parts = symbol.split('@');
   const ticker = (parts[0] || symbol).trim().toUpperCase();
   const mic = (parts[1] || 'MISX').trim().toUpperCase();
@@ -51,12 +60,18 @@ function parseTickerMic(symbol: string): { ticker: string; exchange: string; cur
 function normalizeError(error: any): { code: string; status?: number; message: string } {
   if (axios.isAxiosError(error)) {
     const status = error.response?.status;
-    const message = error.response?.data?.message || error.response?.data?.error || error.message;
-    if (status === 401) return { code: 'broker_key_invalid', status, message };
+    const data = error.response?.data;
+    const message = data?.message || data?.error || error.message;
+
+    if (status === 401 || isFinamUnauthorized(data)) {
+      return { code: 'broker_key_invalid', status, message };
+    }
     if (status === 503 && isInMaintenanceWindow()) {
       return { code: 'broker_maintenance', status, message: 'Finam maintenance window' };
     }
-    if (status && status >= 500) return { code: 'broker_unavailable', status, message };
+    if (status && status >= 500) {
+      return { code: 'broker_unavailable', status, message };
+    }
     if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') {
       return { code: 'broker_timeout', status, message: error.message };
     }
@@ -65,27 +80,48 @@ function normalizeError(error: any): { code: string; status?: number; message: s
   return { code: 'broker_unavailable', message: error?.message || String(error) };
 }
 
+function getNumberValue(value: any): string | number | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'object' && value !== null && typeof value.value === 'string') {
+    return value.value;
+  }
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number') return value;
+  return null;
+}
+
+function parseNumber(value: any): number | null {
+  const raw = getNumberValue(value);
+  if (raw === null || raw === undefined) return null;
+  const parsed = parseFloat(String(raw));
+  return isFinite(parsed) ? parsed : null;
+}
+
 async function getJwt(secret: string): Promise<string> {
   const res = await axios.post(
     `${BASE_URL}/v1/sessions`,
     { secret },
     { headers: HEADERS, timeout: REQUEST_TIMEOUT_MS }
   );
-  const token = res.data?.token || res.data?.access_token || res.data?.jwt;
-  if (!token) {
-    throw Object.assign(new Error('No JWT in sessions response'), { code: 'broker_unavailable' });
+  const token = res.data?.token;
+  if (!token || typeof token !== 'string') {
+    throw Object.assign(new Error('No token in Finam sessions response'), { code: 'broker_unavailable' });
   }
   return token;
 }
 
-async function getAccountIds(jwt: string): Promise<string[]> {
+async function getAccountIds(jwt: string): Promise<{ ids: string[]; readonly: boolean }> {
   const res = await axios.post(
     `${BASE_URL}/v1/sessions/details`,
     { token: jwt },
     { headers: { ...HEADERS, Authorization: `Bearer ${jwt}` }, timeout: REQUEST_TIMEOUT_MS }
   );
-  const accounts = res.data?.accounts || res.data?.accountIds || res.data?.data?.accounts || [];
-  return Array.isArray(accounts) ? accounts.map((a: any) => (a.id || a.accountId || a).toString()) : [];
+  const ids = res.data?.account_ids;
+  const readonly = !!res.data?.readonly;
+  const accounts = Array.isArray(ids)
+    ? ids.map((a: any) => (typeof a === 'string' ? a : String(a.id || a.accountId || a)))
+    : [];
+  return { ids: accounts, readonly };
 }
 
 async function getAccountPositions(jwt: string, accountId: string): Promise<BrokerPosition[]> {
@@ -99,27 +135,25 @@ async function getAccountPositions(jwt: string, accountId: string): Promise<Brok
 
   const result: BrokerPosition[] = [];
   for (const pos of rawPositions) {
-    const symbol = pos.symbol || pos.security || pos.code || pos.ticker;
-    if (!symbol) continue;
+    const symbol = pos.symbol;
+    if (!symbol || typeof symbol !== 'string') continue;
 
-    // Skip cash / equity rows (we only store securities)
-    const type = (pos.type || pos.securityType || '').toString().toLowerCase();
+    // Cash rows are not part of positions array; skip anything that looks like money
+    const type = (pos.type || pos.security_type || '').toString().toLowerCase();
     if (type.includes('cash') || type.includes('money') || symbol.toLowerCase() === 'cash') continue;
 
     const { ticker, exchange, currency } = parseTickerMic(symbol);
-    const quantity = parseFloat(pos.quantity ?? pos.balance ?? pos.amount ?? 0);
-    if (!isFinite(quantity) || quantity === 0) continue;
+    const quantity = parseNumber(pos.quantity);
+    if (quantity === null || quantity === 0) continue;
 
-    const rawAvg = pos.average_price || pos.averagePrice || pos.avgPrice || pos.price || '0';
-    const avgPrice = parseFloat(rawAvg);
-    const avgPriceNormalized = !isFinite(avgPrice) || avgPrice === 0 ? null : avgPrice;
-
-    const companyName = pos.shortName || pos.name || pos.securityName || ticker;
+    const avgPrice = parseNumber(pos.average_price);
+    // "0.0" / "0" / 0 means position transferred without purchase price — treat as NULL
+    const avgPriceNormalized = avgPrice === null || avgPrice === 0 ? null : avgPrice;
 
     result.push({
       ticker,
       exchange,
-      companyName,
+      companyName: ticker,
       quantity,
       avgPrice: avgPriceNormalized,
       currency,
@@ -127,6 +161,26 @@ async function getAccountPositions(jwt: string, accountId: string): Promise<Brok
     });
   }
   return result;
+}
+
+async function fetchAccountPositionsWithRetry(
+  secret: string,
+  jwt: string,
+  accountId: string,
+  attempt = 1
+): Promise<BrokerPosition[]> {
+  try {
+    return await getAccountPositions(jwt, accountId);
+  } catch (err: any) {
+    const norm = normalizeError(err);
+    // Finam returns 500 {code:2} for expired sessions too. Retry once with a fresh JWT.
+    if (norm.code === 'broker_key_invalid' && attempt === 1) {
+      console.log('[FinamAdapter] Session expired or invalid, refreshing JWT and retrying once');
+      const freshJwt = await getJwt(secret);
+      return fetchAccountPositionsWithRetry(secret, freshJwt, accountId, attempt + 1);
+    }
+    throw err;
+  }
 }
 
 async function retryOnce<T>(fn: () => Promise<T>, label: string): Promise<T> {
@@ -143,16 +197,16 @@ async function retryOnce<T>(fn: () => Promise<T>, label: string): Promise<T> {
   }
 }
 
-async function fetchAllPositions(secret: string): Promise<BrokerPosition[]> {
+async function fetchAllPositions(secret: string): Promise<{ positions: BrokerPosition[]; readonly: boolean }> {
   return retryOnce(async () => {
     const jwt = await getJwt(secret);
-    const accountIds = await getAccountIds(jwt);
+    const { ids: accountIds, readonly } = await getAccountIds(jwt);
     const all: BrokerPosition[] = [];
     for (const accountId of accountIds) {
-      const positions = await getAccountPositions(jwt, accountId);
+      const positions = await fetchAccountPositionsWithRetry(secret, jwt, accountId);
       all.push(...positions);
     }
-    return all;
+    return { positions: all, readonly };
   }, 'fetchAllPositions');
 }
 
@@ -161,8 +215,8 @@ const finamAdapter: BrokerAdapter = {
 
   async testKey(secret: string): Promise<TestKeyResult> {
     try {
-      const positions = await fetchAllPositions(secret);
-      return { ok: true, positionsCount: positions.length };
+      const { positions, readonly } = await fetchAllPositions(secret);
+      return { ok: true, positionsCount: positions.length, readonly };
     } catch (err: any) {
       const norm = normalizeError(err);
       if (norm.code === 'broker_maintenance') {
@@ -174,7 +228,7 @@ const finamAdapter: BrokerAdapter = {
 
   async getPositions(secret: string): Promise<{ positions: BrokerPosition[] }> {
     try {
-      const positions = await fetchAllPositions(secret);
+      const { positions } = await fetchAllPositions(secret);
       return { positions };
     } catch (err: any) {
       const norm = normalizeError(err);

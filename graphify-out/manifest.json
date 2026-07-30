@@ -1830,8 +1830,8 @@
     "semantic_hash": ""
   },
   "pulse-backend/DEPLOYMENT.md": {
-    "mtime": 1785077557.5346894,
-    "ast_hash": "10d19a7011ccf8d09a1201b95680a0a2",
+    "mtime": 1785422785.9140408,
+    "ast_hash": "b2806ca62962e192a77caf771532f5a3",
     "semantic_hash": ""
   },
   "pulse-backend/DESIGN_SPEC.md": {
@@ -1885,8 +1885,8 @@
     "semantic_hash": ""
   },
   "pulse-backend/README.md": {
-    "mtime": 1785402441.3958814,
-    "ast_hash": "aeb73911d2430e33ec64b409693d281c",
+    "mtime": 1785422638.4857588,
+    "ast_hash": "fbebfaf90121120370d7f3e5bb218dae",
     "semantic_hash": ""
   },
   "pulse-backend/SECURITY.md": {
@@ -2200,8 +2200,8 @@
     "semantic_hash": ""
   },
   "pulse-frontend/docs/profile.md": {
-    "mtime": 1784882943.2376804,
-    "ast_hash": "33bdc24696cd793718d8b5360272b89d",
+    "mtime": 1785422801.4407787,
+    "ast_hash": "bed4d33643936c0ad7bde1ca4101030d",
     "semantic_hash": ""
   },
   "pulse-frontend/index.html": {
@@ -2937,6 +2937,16 @@
   "\u041c\u043e\u043a\u0430\u043f_\u041f\u043e\u0440\u0442\u0444\u0435\u043b\u044c.html": {
     "mtime": 1785414317.893405,
     "ast_hash": "f5af3ddb182a10a4ee4d06237023c313",
+    "semantic_hash": ""
+  },
+  "pulse-backend/docs/portfolio.md": {
+    "mtime": 1785422552.3838468,
+    "ast_hash": "b79dad94625b31a1fa7289e6fa96f52e",
+    "semantic_hash": ""
+  },
+  "pulse-frontend/docs/portfolio.md": {
+    "mtime": 1785422585.9180412,
+    "ast_hash": "55660bf01583962b3ccd72ac1c594e45",
     "semantic_hash": ""
   }
 }
