@@ -30,8 +30,8 @@
     "semantic_hash": "5c4e5032b7f9546b8c13768da0c3c2e1"
   },
   "pulse-backend/src/index.ts": {
-    "mtime": 1785418933.5811713,
-    "ast_hash": "26e11688251e7d9f9e82f7ef6564ac9c",
+    "mtime": 1785421463.2143896,
+    "ast_hash": "26ddc5f6e424fe1d9e016afd5548e830",
     "semantic_hash": ""
   },
   "pulse-backend/src/middleware/auth.ts": {
@@ -2825,13 +2825,13 @@
     "semantic_hash": ""
   },
   "pulse-backend/src/services/brokerPortfolioService.ts": {
-    "mtime": 1785419451.0642664,
-    "ast_hash": "33b2d5927f8a52cddf0c5cf615063cae",
+    "mtime": 1785419533.2949018,
+    "ast_hash": "98330c2cde44b42e68e3e24860299561",
     "semantic_hash": ""
   },
   "pulse-backend/src/services/crypto.ts": {
-    "mtime": 1785417411.6975448,
-    "ast_hash": "925e999c42299d590ca7a55a736fa040",
+    "mtime": 1785420023.1819546,
+    "ast_hash": "32f4df23e1d3a99d9a54a942b19d6907",
     "semantic_hash": ""
   },
   "pulse-backend/src/services/portfolioSync/worker.ts": {

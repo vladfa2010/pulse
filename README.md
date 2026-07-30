@@ -120,6 +120,20 @@ Push реализованы через Firebase Cloud Messaging.
 | POST | `/api/user/telegram-disconnect` | Отключить Telegram-уведомления |
 | POST | `/api/webhook/telegram` | Webhook от Telegram API |
 
+### Portfolio / Broker keys
+
+Подключение брокерских счетов (Финам, БКС, Инсайд), автосинхронизация позиций, сводка портфеля и облако рекомендуемых тегов.
+
+| Method | Endpoint | Описание |
+|--------|----------|----------|
+| GET / POST / PATCH / DELETE | `/api/broker-keys` | Управление ключами брокеров |
+| GET / POST / PATCH / DELETE | `/api/portfolio` | Управление портфелями |
+| POST | `/api/portfolio/:id/sync` | Ручная синхронизация |
+| GET | `/api/portfolio/summary` | Сводка с ценами и PnL |
+| GET | `/api/portfolio/recommended-tags` | Облако рекомендуемых тегов |
+
+Подробнее: [`docs/portfolio.md`](./docs/portfolio.md)
+
 ### Admin
 | Method | Endpoint | Описание |
 |--------|----------|----------|
@@ -146,6 +160,7 @@ Push реализованы через Firebase Cloud Messaging.
 | `YOOKASSA_SHOP_ID` | ЮKassa shop ID |
 | `YOOKASSA_SECRET_KEY` | ЮKassa secret |
 | `KIMI_API_KEY` | Kimi Translate API |
+| `ENCRYPTION_KEY` | 64 hex-символов (32 байта) для AES-256-GCM шифрования API-токенов брокеров |
 | `EMAIL_PROVIDER` | Email-провайдер: `resend`, `yandex` или `none` |
 | `EMAIL_FROM` | Адрес отправителя (например `noreply@pulse.inside-trade.ru`) |
 | `RESEND_API_KEY` | Resend API ключ |

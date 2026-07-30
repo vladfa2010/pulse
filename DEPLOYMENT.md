@@ -142,6 +142,7 @@ npm run build   # выход в dist/
 | `YANDEX_USER` | `(скрыт)` | Yandex SMTP логин |
 | `YANDEX_PASS` | `(скрыт)` | Yandex SMTP app-пароль |
 | `TELEGRAM_BOT_TOKEN` | `(скрыт)` | Telegram Bot токен |
+| `ENCRYPTION_KEY` | `(скрыт)` | 64 hex-символов (32 байта) для AES-256-GCM шифрования API-токенов брокеров. Обязателен для фичи портфелей. |
 
 ### Git Repository
 - **URL:** https://github.com/vladfa2010/pulse
