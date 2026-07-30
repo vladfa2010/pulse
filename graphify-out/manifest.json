@@ -2825,8 +2825,8 @@
     "semantic_hash": ""
   },
   "pulse-backend/src/services/brokerPortfolioService.ts": {
-    "mtime": 1785419533.2949018,
-    "ast_hash": "98330c2cde44b42e68e3e24860299561",
+    "mtime": 1785428923.0412085,
+    "ast_hash": "455d283a63308daec402047322a6225e",
     "semantic_hash": ""
   },
   "pulse-backend/src/services/crypto.ts": {
@@ -2855,8 +2855,8 @@
     "semantic_hash": ""
   },
   "pulse-frontend/src/components/portfolio/BrokerCard.tsx": {
-    "mtime": 1785418196.8916402,
-    "ast_hash": "af19d81859a0d21144a7619d0d62c9c3",
+    "mtime": 1785429016.6395907,
+    "ast_hash": "91a774ff6b2619ed2512731b6e4c30b1",
     "semantic_hash": ""
   },
   "pulse-frontend/src/components/portfolio/BrokerKeyModal.tsx": {
@@ -2900,8 +2900,8 @@
     "semantic_hash": ""
   },
   "pulse-frontend/src/hooks/usePortfolio.ts": {
-    "mtime": 1785419406.03242,
-    "ast_hash": "72daa60e731c8e5224f22f11811397e3",
+    "mtime": 1785428983.1395953,
+    "ast_hash": "31693435399dae9b7b9252b21f602f3e",
     "semantic_hash": ""
   },
   "pulse-frontend/src/hooks/useToast.ts": {
@@ -2925,8 +2925,8 @@
     "semantic_hash": ""
   },
   "pulse-frontend/src/types/portfolio.ts": {
-    "mtime": 1785419384.8902736,
-    "ast_hash": "16b0ee1a29cb4e02ce642bef7efa22ba",
+    "mtime": 1785428967.378705,
+    "ast_hash": "846c9a0c9edfa0200b56da14eb916b3b",
     "semantic_hash": ""
   },
   "\u041c\u043e\u043a\u0430\u043f_\u041b\u041a_\u0411\u0440\u043e\u043a\u0435\u0440\u044b.html": {
@@ -2972,6 +2972,11 @@
   "\u0422\u0417_\u0444\u0438\u043a\u0441_\u0430\u0434\u0430\u043f\u0442\u0435\u0440\u0430_\u0424\u0438\u043d\u0430\u043c\u0430.md": {
     "mtime": 1785423134.6554644,
     "ast_hash": "f2c2095fd4854c64f7959b43173878dd",
+    "semantic_hash": ""
+  },
+  "\u0422\u0417_\u043c\u0438\u043d\u0438_\u043a\u043d\u043e\u043f\u043a\u0430_\u0441\u0438\u043d\u0445\u0440\u043e\u043d\u0438\u0437\u0430\u0446\u0438\u0438.md": {
+    "mtime": 1785428851.5012302,
+    "ast_hash": "696115fa03dc32f1c57e78873692a287",
     "semantic_hash": ""
   }
 }

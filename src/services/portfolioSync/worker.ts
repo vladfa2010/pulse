@@ -15,7 +15,6 @@ import {
   getPortfolioById,
   getPortfolioPositions,
   applyPositionDiff,
-  updatePortfolioAfterKeyDelete,
   updateKeyTokenAfterSync,
 } from '../brokerPortfolioService';
 import { BrokerKeyRow } from '../brokerKeyService';

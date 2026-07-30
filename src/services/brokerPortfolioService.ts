@@ -693,15 +693,6 @@ function parseJson(value: any): any {
   return null;
 }
 
-export async function updatePortfolioAfterKeyDelete(keyId: string): Promise<void> {
-  await query(
-    `UPDATE broker_portfolios
-     SET source = 'manual', broker_key_id = NULL, updated_at = ${nowSql()}
-     WHERE broker_key_id = $1`,
-    [keyId]
-  );
-}
-
 export async function updateKeyTokenAfterSync(keyId: string, newToken?: string): Promise<void> {
   if (!newToken) return;
   await query(

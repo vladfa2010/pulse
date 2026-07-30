@@ -140,10 +140,10 @@ export async function deleteBrokerKey(userId: string, keyId: string): Promise<vo
   const key = await getBrokerKeyById(userId, keyId);
   if (!key) throw Object.assign(new Error('Broker key not found'), { code: 'not_found' });
 
+  // Portfolio lives as long as its key. Deleting the key removes the portfolio;
+  // positions are cascade-deleted via FK in broker_portfolios_v1.sql.
   await query(
-    `UPDATE broker_portfolios
-     SET source = 'manual', broker_key_id = NULL, updated_at = ${nowSql()}
-     WHERE broker_key_id = $1 AND user_id = $2`,
+    `DELETE FROM broker_portfolios WHERE broker_key_id = $1 AND user_id = $2`,
     [keyId, userId]
   );
 
@@ -151,6 +151,8 @@ export async function deleteBrokerKey(userId: string, keyId: string): Promise<vo
     `DELETE FROM broker_keys WHERE id = $1 AND user_id = $2`,
     [keyId, userId]
   );
+
+  console.log(`[BrokerKeys] deleted key=${keyId} broker=${key.broker} user=${userId} — linked portfolio removed`);
 }
 
 export async function testBrokerKey(
