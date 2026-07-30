@@ -45,7 +45,7 @@ export async function buildDigestContent(
   const limitClause = maxTags !== null ? `LIMIT $2` : '';
   const limitParams = maxTags !== null ? [userId, maxTags] : [userId];
   const portfolioResult = await query(
-    `SELECT tag_id, tag_name FROM portfolios WHERE user_id = $1 ${limitClause} ORDER BY created_at ASC`,
+    `SELECT tag_id, tag_name FROM portfolios WHERE user_id = $1 ORDER BY created_at ASC ${limitClause}`,
     limitParams
   );
 

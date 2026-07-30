@@ -72,7 +72,7 @@ export async function buildWeeklyReportContent(
   let newsResult;
   if (USE_SQLITE) {
     const conditions = tagIds.map(() => 'matched_tags LIKE ?').join(' OR ');
-    const likeParams = tagIds.map(id => `"${id}"`);
+    const likeParams = tagIds.map(id => `%;"${id}";%`);
     newsResult = await query(
       `SELECT COALESCE(title_ru, title_original) as title,
               COALESCE(summary_ru, summary_original) as summary,
