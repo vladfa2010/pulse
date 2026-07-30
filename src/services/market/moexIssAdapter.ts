@@ -44,6 +44,8 @@ interface TickerBoard {
 const resolveCache = new Map<string, TickerBoard | null>();
 const dailyCache = new Map<string, { data: MarketCandle[]; expiresAt: number }>();
 const intradayCache = new Map<string, { data: MarketCandle[]; expiresAt: number }>();
+const currentPriceCache = new Map<string, { price: number | null; expiresAt: number }>();
+
 
 function nowMs() {
   return Date.now();
@@ -170,6 +172,67 @@ export async function getDailyCandles(ticker: string, days: number = 90): Promis
   } catch (err: any) {
     throw new Error(`MOEX daily candles failed: ${err.message}`);
   }
+}
+
+export async function getCurrentPrice(ticker: string): Promise<number | null> {
+  const cacheKeyPrice = cacheKey(ticker, 'current');
+  const cached = currentPriceCache.get(cacheKeyPrice);
+  if (cached && cached.expiresAt > nowMs()) {
+    return cached.price;
+  }
+
+  const board = await resolveTicker(ticker);
+  const url = `${BASE_URL}/engines/${encodeURIComponent(board.engine)}/markets/${encodeURIComponent(
+    board.market
+  )}/boards/${encodeURIComponent(board.board)}/securities/${encodeURIComponent(
+    board.secid
+  )}/candles.json`;
+
+  try {
+    // Try today's 1-minute candles for the most recent close
+    const { start, end } = getMoscowDayBounds(new Date());
+    const res = await axios.get(url, {
+      params: {
+        from: formatMskLocal(start),
+        till: formatMskLocal(end),
+        interval: 1,
+        'iss.meta': 'off',
+      },
+      headers: AXIOS_HEADERS,
+      timeout: REQUEST_TIMEOUT_MS,
+    });
+
+    const candles = res.data?.candles;
+    if (candles && Array.isArray(candles.data) && candles.data.length > 0) {
+      const columns: string[] = candles.columns;
+      const idx: Record<string, number> = {};
+      columns.forEach((c, i) => (idx[c] = i));
+      const lastRow = candles.data[candles.data.length - 1];
+      const price = parseFloat(lastRow[idx.close]);
+      if (!isNaN(price) && price > 0) {
+        currentPriceCache.set(cacheKeyPrice, { price, expiresAt: nowMs() + 60 * 1000 });
+        return price;
+      }
+    }
+  } catch (err: any) {
+    console.log(`[MOEX] intraday current price failed for ${ticker}: ${err.message}`);
+  }
+
+  try {
+    // Fallback to the latest daily candle close
+    const daily = await getDailyCandles(ticker, 5);
+    if (daily.length > 0) {
+      const last = daily[daily.length - 1];
+      const price = last.close ?? null;
+      currentPriceCache.set(cacheKeyPrice, { price, expiresAt: nowMs() + 60 * 1000 });
+      return price;
+    }
+  } catch (err: any) {
+    console.log(`[MOEX] daily fallback current price failed for ${ticker}: ${err.message}`);
+  }
+
+  currentPriceCache.set(cacheKeyPrice, { price: null, expiresAt: nowMs() + 60 * 1000 });
+  return null;
 }
 
 export async function getIntraday5min(ticker: string, dateStr: string): Promise<MarketCandle[]> {

@@ -43,7 +43,10 @@ import { apiLimiter, authLimiter, webhookLimiter, forgotPasswordLimiter, passwor
 import { startCron } from './services/cron';   // RSS cron отключен (TZ_REMOVE_DUPLICATE_RSS_CRON) — модуль оставлен для отката
 import { sendWeeklyReportForUser } from './services/reports'; // ← Еженедельные репорты (manual + API)
 import { startDigestCron, sendAllDigests, setDigestEnabled } from './services/digest'; // ← дайджест (каждый час) — через notification matrix
+import { startPortfolioSyncWorker } from './services/portfolioSync/worker';
 import notificationsRouter from './routes/notifications';
+import brokerKeysRouter from './routes/brokerKeys';
+import portfolioRouter from './routes/portfolio';
 import cron from 'node-cron';
 import { resetDailyWindows, refreshImoexCache } from './services/sentimentIndex';
 import { sendSentimentVotePush } from './services/push';
@@ -4346,6 +4349,8 @@ app.use('/api/admin', adminMetricsRoutes); // GET /api/admin/metrics?section=...
 app.use('/admin', adminMetricsRoutes);     // GET /admin/metrics?section=... (frontend adminApi root path)
 app.use('/api/sentiment', sentimentRoutes); // Sentiment Index
 app.use('/api/app', appRoutes);            // App version / update info
+app.use('/api/broker-keys', brokerKeysRouter); // Broker API keys management
+app.use('/api/portfolio', portfolioRouter);    // Broker portfolios, summary, recommended tags
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Page view events
@@ -5270,6 +5275,13 @@ async function start() {
     { sql: `ALTER TABLE push_notifications_sent ADD COLUMN IF NOT EXISTS title VARCHAR(255)`, name: 'push_notifications_sent_title' },
     { sql: `ALTER TABLE users ADD COLUMN IF NOT EXISTS expiry_notified JSONB DEFAULT '{}'`, name: 'users_expiry_notified' },
     { sql: `ALTER TABLE push_notifications_sent ADD COLUMN IF NOT EXISTS source VARCHAR(50)`, name: 'push_notifications_sent_source' },
+    // Broker portfolios V1
+    { sql: `CREATE TABLE IF NOT EXISTS broker_keys (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, broker TEXT NOT NULL CHECK (broker IN ('inside','finam','bcs','other')), label TEXT NOT NULL DEFAULT '', token_encrypted TEXT NOT NULL, token_tail TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'ok' CHECK (status IN ('ok','error')), last_error TEXT, consecutive_failures INTEGER NOT NULL DEFAULT 0, last_synced_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT ${_SQL_NOW}, updated_at TIMESTAMPTZ NOT NULL DEFAULT ${_SQL_NOW})`, name: 'broker_keys' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_broker_keys_user_broker ON broker_keys(user_id, broker)`, name: 'idx_broker_keys_user_broker' },
+    { sql: `CREATE TABLE IF NOT EXISTS broker_portfolios (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, broker TEXT NOT NULL CHECK (broker IN ('inside','finam','bcs','other')), name TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'api' CHECK (source IN ('api','manual','import')), broker_key_id UUID REFERENCES broker_keys(id) ON DELETE SET NULL, last_synced_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT ${_SQL_NOW}, updated_at TIMESTAMPTZ NOT NULL DEFAULT ${_SQL_NOW}, UNIQUE (user_id, broker, name))`, name: 'broker_portfolios' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_broker_portfolios_user_broker_name ON broker_portfolios(user_id, broker, name)`, name: 'idx_broker_portfolios_user_broker_name' },
+    { sql: `CREATE TABLE IF NOT EXISTS broker_positions (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), broker_portfolio_id UUID NOT NULL REFERENCES broker_portfolios(id) ON DELETE CASCADE, ticker TEXT NOT NULL, exchange TEXT NOT NULL DEFAULT 'MOEX', company_name TEXT, quantity NUMERIC(20, 6) NOT NULL, avg_price NUMERIC(20, 6), currency TEXT NOT NULL DEFAULT 'RUB', external_id TEXT, source TEXT NOT NULL DEFAULT 'api' CHECK (source IN ('api','manual','import')), created_at TIMESTAMPTZ NOT NULL DEFAULT ${_SQL_NOW}, updated_at TIMESTAMPTZ NOT NULL DEFAULT ${_SQL_NOW}, UNIQUE (broker_portfolio_id, ticker, exchange))`, name: 'broker_positions' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_broker_positions_portfolio_ticker_exchange ON broker_positions(broker_portfolio_id, ticker, exchange)`, name: 'idx_broker_positions_portfolio_ticker_exchange' },
   ];
   for (const m of migrations) {
     try {
@@ -5598,6 +5610,7 @@ async function start() {
     }, 8000);
 
     startDigestCron(); // TG digest cron (every hour)
+    startPortfolioSyncWorker(); // Broker portfolio sync (every 15 min MSK)
     startFactCheckCron(); // Fact-check worker (every 10s)
 
     // Sentiment Index — daily reset of vote_count_today / streak at 00:00 MSK (21:00 UTC)

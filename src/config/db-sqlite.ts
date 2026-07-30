@@ -463,6 +463,56 @@ export async function initSQLiteSchema(): Promise<void> {
       UNIQUE(user_id, channel)
     );
 
+    CREATE TABLE IF NOT EXISTS broker_keys (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      broker TEXT NOT NULL CHECK(broker IN ('inside','finam','bcs','other')),
+      label TEXT NOT NULL DEFAULT '',
+      token_encrypted TEXT NOT NULL,
+      token_tail TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'ok' CHECK(status IN ('ok','error')),
+      last_error TEXT,
+      consecutive_failures INTEGER NOT NULL DEFAULT 0,
+      last_synced_at TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_broker_keys_user_broker ON broker_keys(user_id, broker);
+
+    CREATE TABLE IF NOT EXISTS broker_portfolios (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      broker TEXT NOT NULL CHECK(broker IN ('inside','finam','bcs','other')),
+      name TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'api' CHECK(source IN ('api','manual','import')),
+      broker_key_id TEXT REFERENCES broker_keys(id) ON DELETE SET NULL,
+      last_synced_at TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(user_id, broker, name)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_broker_portfolios_user_broker_name ON broker_portfolios(user_id, broker, name);
+
+    CREATE TABLE IF NOT EXISTS broker_positions (
+      id TEXT PRIMARY KEY,
+      broker_portfolio_id TEXT NOT NULL REFERENCES broker_portfolios(id) ON DELETE CASCADE,
+      ticker TEXT NOT NULL,
+      exchange TEXT NOT NULL DEFAULT 'MOEX',
+      company_name TEXT,
+      quantity REAL NOT NULL,
+      avg_price REAL,
+      currency TEXT NOT NULL DEFAULT 'RUB',
+      external_id TEXT,
+      source TEXT NOT NULL DEFAULT 'api' CHECK(source IN ('api','manual','import')),
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(broker_portfolio_id, ticker, exchange)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_broker_positions_portfolio_ticker_exchange ON broker_positions(broker_portfolio_id, ticker, exchange);
+
     CREATE TABLE IF NOT EXISTS notification_settings (
       user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
       tg_enabled INTEGER DEFAULT 1,

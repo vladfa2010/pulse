@@ -101,6 +101,21 @@ export const webhookLimiter = rateLimit({
   validate: { trustProxy: false },
 });
 
+// ─── Broker key endpoints — protect against token brute-forcing ────────────
+// 10 requests per minute per user (or IP if user is not available)
+export const brokerKeyLimiter = rateLimit({
+  windowMs: 60 * 1000,  // 1 minute
+  max: 10,              // 10 attempts
+  message: {
+    error: 'Слишком много попыток. Попробуйте позже.',
+    retryAfter: '1 minute',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => (req as any).user?.userId || req.ip || 'unknown',
+  validate: { trustProxy: false },
+});
+
 // ─── Promo validate endpoint ───────────────────────────────────────────────
 // 10 проверок промокода в минуту на IP
 export const promoValidateLimiter = rateLimit({

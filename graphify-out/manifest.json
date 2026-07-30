@@ -20,9 +20,9 @@
     "semantic_hash": "0625ff4a95e1d24294ff9d9bd8e886f4"
   },
   "pulse-backend/src/config/db-sqlite.ts": {
-    "mtime": 1784976367.3881571,
-    "ast_hash": "f4d2531574a944ff76efc877d73b4c6e",
-    "semantic_hash": "f4d2531574a944ff76efc877d73b4c6e"
+    "mtime": 1785355032.2736979,
+    "ast_hash": "e939cd622995194168bab37989fc2bfc",
+    "semantic_hash": ""
   },
   "pulse-backend/src/config/db.ts": {
     "mtime": 1784821278.1593657,
@@ -30,8 +30,8 @@
     "semantic_hash": "5c4e5032b7f9546b8c13768da0c3c2e1"
   },
   "pulse-backend/src/index.ts": {
-    "mtime": 1785186309.3501675,
-    "ast_hash": "a45fbf0335705fa825c3bf6b1f209028",
+    "mtime": 1785398122.2993932,
+    "ast_hash": "375a22ce3d431b876f59fa040a4e078a",
     "semantic_hash": ""
   },
   "pulse-backend/src/middleware/auth.ts": {
@@ -125,9 +125,9 @@
     "semantic_hash": "a53b5a82bb6fc02b51f0ca885a648560"
   },
   "pulse-backend/src/routes/auth.ts": {
-    "mtime": 1784741579.89157,
-    "ast_hash": "6b823352f71f566887971400b38e8ada",
-    "semantic_hash": "6b823352f71f566887971400b38e8ada"
+    "mtime": 1785355578.6834805,
+    "ast_hash": "726fd995139ef1007767c4a4041d7369",
+    "semantic_hash": ""
   },
   "pulse-backend/src/routes/factCheck.ts": {
     "mtime": 1784545198.958964,
@@ -170,14 +170,14 @@
     "semantic_hash": "1d8bd2ae8b44c964da0a7e9c2b592e5e"
   },
   "pulse-backend/src/routes/user.ts": {
-    "mtime": 1785072147.5886283,
-    "ast_hash": "53efe255c23a6d5a059d3ccd413960ee",
-    "semantic_hash": "53efe255c23a6d5a059d3ccd413960ee"
+    "mtime": 1785355640.837783,
+    "ast_hash": "0bfee39039ac2d0425787020cc9b82e8",
+    "semantic_hash": ""
   },
   "pulse-backend/src/routes/webhook.ts": {
-    "mtime": 1785073035.0957205,
-    "ast_hash": "277d2538bd7b6b9334d80b94e86f3ad3",
-    "semantic_hash": "277d2538bd7b6b9334d80b94e86f3ad3"
+    "mtime": 1785355202.4417026,
+    "ast_hash": "563d086896b10f7a7d66b2647f8cea93",
+    "semantic_hash": ""
   },
   "pulse-backend/src/schemas/auth.ts": {
     "mtime": 1784574789.8299203,
@@ -230,14 +230,14 @@
     "semantic_hash": "081207d8d0475821172f991ca4ccbc61"
   },
   "pulse-backend/src/services/digest.ts": {
-    "mtime": 1784814889.3242233,
-    "ast_hash": "f0b3c1f614f9353820889126029b251a",
-    "semantic_hash": "f0b3c1f614f9353820889126029b251a"
+    "mtime": 1785355983.8172796,
+    "ast_hash": "c545180dda7e4ffc4e147df85535b8cd",
+    "semantic_hash": ""
   },
   "pulse-backend/src/services/email.ts": {
-    "mtime": 1784881274.1188138,
-    "ast_hash": "9fa6d68a302b1f512ba8aaa37cc39e79",
-    "semantic_hash": "9fa6d68a302b1f512ba8aaa37cc39e79"
+    "mtime": 1785355906.4458113,
+    "ast_hash": "be027c6b8dc5d1d72016f7d839194f8d",
+    "semantic_hash": ""
   },
   "pulse-backend/src/services/enrichment.ts": {
     "mtime": 1781770160.4761336,
@@ -250,9 +250,9 @@
     "semantic_hash": "951dfa40c94c3393e6c3aa008ad5628b"
   },
   "pulse-backend/src/services/factCheckNotifications.ts": {
-    "mtime": 1784215872.4740248,
-    "ast_hash": "2b6d5e3316280ec1d495eaae2d2f715e",
-    "semantic_hash": "2b6d5e3316280ec1d495eaae2d2f715e"
+    "mtime": 1785355833.556601,
+    "ast_hash": "918a1bf941ba4d081b6cf0197a87e260",
+    "semantic_hash": ""
   },
   "pulse-backend/src/services/finnhubAdapter.ts": {
     "mtime": 1781770160.4762425,
@@ -285,14 +285,14 @@
     "semantic_hash": "2773919216857a3018bec57e95fd0c94"
   },
   "pulse-backend/src/services/push.ts": {
-    "mtime": 1784577699.6411147,
-    "ast_hash": "886bfde002b62489f5c1ec6552515ca6",
-    "semantic_hash": "886bfde002b62489f5c1ec6552515ca6"
+    "mtime": 1785394980.6505525,
+    "ast_hash": "538a4426ef4278dac3a3b725216324ee",
+    "semantic_hash": ""
   },
   "pulse-backend/src/services/reports.ts": {
-    "mtime": 1782914658.9689057,
-    "ast_hash": "ed6118c752c049759a459060afff987a",
-    "semantic_hash": "ed6118c752c049759a459060afff987a"
+    "mtime": 1785394876.1930003,
+    "ast_hash": "41391adb94ab8a6d8ad70b4e27bdee97",
+    "semantic_hash": ""
   },
   "pulse-backend/src/services/rssFetcher.ts": {
     "mtime": 1784276903.5042737,
@@ -325,9 +325,9 @@
     "semantic_hash": "379e64ca4a139b68d378bcff2db296bf"
   },
   "pulse-backend/src/services/subscription.ts": {
-    "mtime": 1785074335.1762006,
-    "ast_hash": "45693b903a88d163c967cc6872443744",
-    "semantic_hash": "45693b903a88d163c967cc6872443744"
+    "mtime": 1785395045.722775,
+    "ast_hash": "ed8aa2c894f6b118c54c0c759420db01",
+    "semantic_hash": ""
   },
   "pulse-backend/src/services/tagBackfill.ts": {
     "mtime": 1784740589.6317809,
@@ -340,9 +340,9 @@
     "semantic_hash": "ccbad2520b914cf2e914d0664e9079a7"
   },
   "pulse-backend/src/services/telegram.ts": {
-    "mtime": 1784814909.448029,
-    "ast_hash": "76bd6c73941b03814b1e6624ac5444ea",
-    "semantic_hash": "76bd6c73941b03814b1e6624ac5444ea"
+    "mtime": 1785355888.3926933,
+    "ast_hash": "8d026eaab02b2158452a42c1b3521f02",
+    "semantic_hash": ""
   },
   "pulse-backend/src/services/translate.ts": {
     "mtime": 1781991868.419906,
@@ -410,9 +410,9 @@
     "semantic_hash": "93af69d6865c62bb06614f81696cf1dd"
   },
   "pulse-frontend/android/app/build.gradle": {
-    "mtime": 1784823887.0855591,
-    "ast_hash": "92042a9f14aa45d496ee35a05c87ecf0",
-    "semantic_hash": "92042a9f14aa45d496ee35a05c87ecf0"
+    "mtime": 1785412125.9243255,
+    "ast_hash": "efbbfbc6b2713adfe334031e664405bc",
+    "semantic_hash": ""
   },
   "pulse-frontend/android/app/capacitor.build.gradle": {
     "mtime": 1784321104.3364275,
@@ -490,8 +490,8 @@
     "semantic_hash": "95dbddc5cc1a9d333fe4a925cb2475c2"
   },
   "pulse-frontend/package.json": {
-    "mtime": 1785185645.4838498,
-    "ast_hash": "5ee89bbe9f2e7da368f23b4cdb8a34f9",
+    "mtime": 1785412125.924336,
+    "ast_hash": "3b5458bfc5308acb2f5916aee84b525c",
     "semantic_hash": ""
   },
   "pulse-frontend/postcss.config.js": {
@@ -890,9 +890,9 @@
     "semantic_hash": "ac094233fd69a6232501b870c17427a4"
   },
   "pulse-frontend/src/pages/Profile.tsx": {
-    "mtime": 1784882823.261917,
-    "ast_hash": "e03383536c918b09fc2285fcc6150944",
-    "semantic_hash": "e03383536c918b09fc2285fcc6150944"
+    "mtime": 1785356374.2559938,
+    "ast_hash": "59f007273753d9268506e2081634fc61",
+    "semantic_hash": ""
   },
   "pulse-frontend/src/pages/SentimentIndex.tsx": {
     "mtime": 1782379393.8456988,
@@ -1885,8 +1885,8 @@
     "semantic_hash": ""
   },
   "pulse-backend/README.md": {
-    "mtime": 1784741721.1819518,
-    "ast_hash": "286e38af626c7e1f0cddeafec636c031",
+    "mtime": 1785402441.3958814,
+    "ast_hash": "aeb73911d2430e33ec64b409693d281c",
     "semantic_hash": ""
   },
   "pulse-backend/SECURITY.md": {
@@ -2000,8 +2000,8 @@
     "semantic_hash": ""
   },
   "pulse-backend/docs/subscriptions.md": {
-    "mtime": 1785073107.2684104,
-    "ast_hash": "e6bcc40fc7d9dd105a5f6942107cb42e",
+    "mtime": 1785402428.3072734,
+    "ast_hash": "778cee0c76ebc8b03984aa2bb5baa643",
     "semantic_hash": ""
   },
   "pulse-backend/plan-smart-tags.md": {
@@ -2650,8 +2650,8 @@
     "semantic_hash": ""
   },
   "pulse-frontend/src/components/admin/TagMarketTimeline.tsx": {
-    "mtime": 1785238091.5128293,
-    "ast_hash": "7b20be64491ba6a398cd4fdf2d9bbe2b",
+    "mtime": 1785240466.3570466,
+    "ast_hash": "f9da4e9f433059ed1cb9cc60d782c044",
     "semantic_hash": ""
   },
   "\u0422\u0417_\u041c\u0430\u0440\u043a\u0435\u0442-\u0442\u0430\u0438\u0306\u043c\u043b\u0430\u0438\u0306\u043d_\u0432_\u043a\u0430\u0440\u0442\u043e\u0447\u043a\u0435_\u0442\u0435\u0433\u0430.md": {
@@ -2665,8 +2665,8 @@
     "semantic_hash": ""
   },
   "\u0422\u0417_\u0424\u0438\u043a\u0441_\u043d\u0435\u0432\u0438\u0434\u0438\u043c\u044b\u0445_\u0441\u0432\u0435\u0447\u0435\u0438\u0306_v2.md": {
-    "mtime": 1785235346.465511,
-    "ast_hash": "df2bd42ebb2e804540bc48c477a7b41c",
+    "mtime": 1785239971.708668,
+    "ast_hash": "29f186ab7b9fe7d243f4a3ce1420501e",
     "semantic_hash": ""
   },
   "\u0422\u0417_\u0424\u0438\u043a\u0441_\u0433\u043e\u043d\u043a\u0438_\u0438\u043d\u0438\u0446\u0438\u0430\u043b\u0438\u0437\u0430\u0446\u0438\u0438_ECharts_v3.md": {
@@ -2675,18 +2675,113 @@
     "semantic_hash": ""
   },
   "pulse-backend/docs/admin/tag-card.md": {
-    "mtime": 1785237387.8017793,
-    "ast_hash": "c8d43e913417c2d64da82c09a3bb0c54",
+    "mtime": 1785239892.8589628,
+    "ast_hash": "3fb7fa9fb11968bb4878a85cbda7cfc8",
     "semantic_hash": ""
   },
   "\u0422\u0417_\u0424\u0438\u043a\u0441_\u0441\u043f\u0438\u0441\u043e\u043a_\u043d\u043e\u0432\u043e\u0441\u0442\u0435\u0438\u0306_\u0437\u0430_\u0434\u0435\u043d\u044c_v4.md": {
-    "mtime": 1785237668.0508964,
-    "ast_hash": "cb64f7ee70c5899fbedb0af90bb8144f",
+    "mtime": 1785240026.7810705,
+    "ast_hash": "b10061d668382f9343ae6aa7a612d5df",
     "semantic_hash": ""
   },
   "\u0422\u0417_KimiCode_\u0444\u0438\u043a\u0441_mergeParams_tagMarket.md": {
-    "mtime": 1785239071.1638348,
-    "ast_hash": "a302061b689c87f04fe3d91c7795de7f",
+    "mtime": 1785240054.7443,
+    "ast_hash": "53ca2cb2b2d92326fc8d8fbaf6f839f3",
+    "semantic_hash": ""
+  },
+  "pulse-backend/src/migrations/notification_matrix_v1.sql": {
+    "mtime": 1785354898.6627204,
+    "ast_hash": "6697b27975305bb47f489cd97253f3fb",
+    "semantic_hash": ""
+  },
+  "pulse-backend/src/routes/notifications.ts": {
+    "mtime": 1785354795.1320093,
+    "ast_hash": "c9dd67e55afe317d315fe5dd943694c1",
+    "semantic_hash": ""
+  },
+  "pulse-backend/src/services/notifications/digestContent.ts": {
+    "mtime": 1785395290.5160983,
+    "ast_hash": "116675fa3b9ad2eeffa1e50bab64ae63",
+    "semantic_hash": ""
+  },
+  "pulse-backend/src/services/notifications/dispatcher.ts": {
+    "mtime": 1785394777.189091,
+    "ast_hash": "846c7b697a0fe4bd5a1cf1eeb0ae6581",
+    "semantic_hash": ""
+  },
+  "pulse-backend/src/services/notifications/entitlement.ts": {
+    "mtime": 1785397056.6516492,
+    "ast_hash": "6bd64bff35457f6fdf3ba1989ba20bc0",
+    "semantic_hash": ""
+  },
+  "pulse-backend/src/services/notifications/formatters.ts": {
+    "mtime": 1785394740.5998194,
+    "ast_hash": "098cb914d55a55b6fb912b9dd109c4d3",
+    "semantic_hash": ""
+  },
+  "pulse-backend/src/services/notifications/quietHours.ts": {
+    "mtime": 1785354649.2739182,
+    "ast_hash": "67ba46eab515dd0528472575be1f554c",
+    "semantic_hash": ""
+  },
+  "pulse-backend/src/services/notifications/subscriptions.ts": {
+    "mtime": 1785401753.5168874,
+    "ast_hash": "6f2df53998f230d548e0234f21035ff0",
+    "semantic_hash": ""
+  },
+  "pulse-backend/src/services/notifications/types.ts": {
+    "mtime": 1785354608.7922454,
+    "ast_hash": "4cb3cfa42875f908c29410de81ed4b9a",
+    "semantic_hash": ""
+  },
+  "pulse-backend/src/services/notifications/workers.ts": {
+    "mtime": 1785394786.851052,
+    "ast_hash": "a885c9b2ed4083e25137a7f2608e255b",
+    "semantic_hash": ""
+  },
+  "pulse-frontend/src/components/NotificationMatrix.tsx": {
+    "mtime": 1785354830.6914363,
+    "ast_hash": "38247ae9ec5f5d2878d914986caab571",
+    "semantic_hash": ""
+  },
+  "\u0422\u0417_KimiCode_\u043c\u0430\u0440\u043a\u0435\u0440\u044b_\u043d\u043e\u0432\u043e\u0441\u0442\u0435\u0438\u0306_\u043d\u0430_\u0438\u043d\u0442\u0440\u0430\u0434\u0435\u0435.md": {
+    "mtime": 1785239829.4449542,
+    "ast_hash": "517a88f494475cda2ac64800bf685de6",
+    "semantic_hash": ""
+  },
+  "\u0422\u0417_\u0440\u0435\u0444\u0430\u043a\u0442\u043e\u0440_\u0443\u0432\u0435\u0434\u043e\u043c\u043b\u0435\u043d\u0438\u0438\u0306_PULSE.md": {
+    "mtime": 1785351973.624137,
+    "ast_hash": "f4a544bb5961aff559b6ef7d8f65e23a",
+    "semantic_hash": ""
+  },
+  "pulse-backend/src/services/notifications/weeklyReportContent.ts": {
+    "mtime": 1785395307.856119,
+    "ast_hash": "aa37870a7570e6f78755ee74ca46562c",
+    "semantic_hash": ""
+  },
+  "\u0422\u0417_\u0440\u0435\u0444\u0430\u043a\u0442\u043e\u0440_\u0443\u0432\u0435\u0434\u043e\u043c\u043b\u0435\u043d\u0438\u0438\u03062_PULSE.md": {
+    "mtime": 1785394302.1129253,
+    "ast_hash": "dd404b53592f952074e262c659a52ffe",
+    "semantic_hash": ""
+  },
+  "\u0422\u0417_hotfix_is_trial_\u0434\u0430\u0438\u0306\u0434\u0436\u0435\u0441\u0442.md": {
+    "mtime": 1785396881.2592163,
+    "ast_hash": "aea88f8b2396e223ee3cff58a9263090",
+    "semantic_hash": ""
+  },
+  "\u0422\u0417_hotfix_engagement_vapid.md": {
+    "mtime": 1785398033.5528243,
+    "ast_hash": "141b244ed4c867751e776bdff913976e",
+    "semantic_hash": ""
+  },
+  "\u0422\u0417_hotfix_\u0441\u0431\u0440\u043e\u0441_\u043d\u0430\u0441\u0442\u0440\u043e\u0435\u043a_\u043c\u0430\u0442\u0440\u0438\u0446\u044b.md": {
+    "mtime": 1785401635.0841165,
+    "ast_hash": "e07bdbaf95fb8c425c9397263c7257c7",
+    "semantic_hash": ""
+  },
+  "\u0422\u0417_\u041f\u043e\u0440\u0442\u0444\u0435\u043b\u0438_\u0438_\u043e\u0431\u043b\u0430\u043a\u043e_\u0442\u0435\u0433\u043e\u0432.md": {
+    "mtime": 1785400382.7396152,
+    "ast_hash": "4c71ed4b3458b72e8b807068cbd42c00",
     "semantic_hash": ""
   }
 }
