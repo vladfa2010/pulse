@@ -59,7 +59,7 @@ const FREE_FALLBACK: ResolvedPlan = {
 async function resolvePlan(userId: string): Promise<ResolvedPlan> {
   const result = await query(
     `SELECT u.subscription_plan, u.subscription_active, u.subscription_expires_at,
-            p.features, p.tag_limit, p.price_monthly, p.is_trial
+            p.features, p.tag_limit, p.price_monthly
      FROM users u
      LEFT JOIN subscription_plans p ON p.id = u.subscription_plan
      WHERE u.id = $1`,
@@ -69,17 +69,15 @@ async function resolvePlan(userId: string): Promise<ResolvedPlan> {
 
   const row = result.rows[0];
   const expired = row.subscription_expires_at && new Date(row.subscription_expires_at) < new Date();
-  // Trial считается платным, пока активен — иначе пробный период лишится weekly_report
   const active = !!row.subscription_active && !expired;
-  const paidByPrice = (row.price_monthly ?? 0) > 0;
-  const paidByTrial = !!row.is_trial && active;
-  const paid = paidByPrice || paidByTrial;
+  // Trial-пользователи и так сидят на платном плане (промо выдаёт plan с price > 0),
+  // отдельный флаг не нужен
+  const paid = (row.price_monthly ?? 0) > 0;
 
   // Неактивная подписка = план free (поведение как раньше, но теперь управляется из админки)
   if (!active || !row.features) {
     return {
       ...FREE_FALLBACK,
-      // Если был активный trial, но истёк/деактивирован — падаем до free с тегами free
       paid: false,
     };
   }
