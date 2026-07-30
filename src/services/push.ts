@@ -13,6 +13,7 @@ import { query } from '../config/db';
 import { sendWebPushToUser } from './webPush';
 import { isQuietHoursMsk } from './notifications/quietHours';
 import { getEnabledSubscriptions } from './notifications/subscriptions';
+import { getQuietHours } from './notifications/subscriptions';
 
 let messaging: Messaging | null = null;
 
@@ -138,7 +139,8 @@ export async function sendPushNotification(
   userId: string,
   title: string,
   body: string,
-  data: PushData = {}
+  data: PushData = {},
+  options: { skipQuietHours?: boolean; skipEnabledCheck?: boolean } = {}
 ): Promise<boolean> {
   console.log(`[Push] sendPushNotification user=${userId} title="${title}"`);
   if (!messaging) {
@@ -148,17 +150,21 @@ export async function sendPushNotification(
 
   try {
     // Kill-switch: пока фронт частично пишет в старую колонку, проверяем её тоже.
-    const settingsResult = await query(
-      `SELECT push_enabled, quiet_hours_enabled, quiet_hours_start, quiet_hours_end
-       FROM notification_settings WHERE user_id = $1`,
-      [userId]
-    );
-    const settings = settingsResult.rows[0];
-    if (!settings || !settings.push_enabled) return false;
+    // Для transactional push (billing) вызывающий может отключить эту проверку,
+    // т.к. он уже проверил матрицу ('billing','push').
+    if (!options.skipEnabledCheck) {
+      const settingsResult = await query(
+        `SELECT push_enabled, quiet_hours_enabled, quiet_hours_start, quiet_hours_end
+         FROM notification_settings WHERE user_id = $1`,
+        [userId]
+      );
+      const settings = settingsResult.rows[0];
+      if (!settings || !settings.push_enabled) return false;
 
-    if (settings.quiet_hours_enabled && isQuietHoursMsk(settings.quiet_hours_start, settings.quiet_hours_end)) {
-      console.log(`[Push] Quiet hours for user ${userId}, skipping`);
-      return false;
+      if (!options.skipQuietHours && settings.quiet_hours_enabled && isQuietHoursMsk(settings.quiet_hours_start, settings.quiet_hours_end)) {
+        console.log(`[Push] Quiet hours for user ${userId}, skipping`);
+        return false;
+      }
     }
 
     // Get active push token
@@ -229,12 +235,25 @@ export async function sendNewArticlePush(
        FROM portfolios p
        JOIN notification_subscriptions ns ON ns.user_id = p.user_id
          AND ns.product = 'news_alert' AND ns.channel = 'push' AND ns.enabled = TRUE
-       JOIN user_channels uc ON uc.user_id = p.user_id AND uc.channel = 'push' AND uc.is_active = TRUE
-       LEFT JOIN user_news_reads r ON r.user_id = p.user_id AND r.news_id = $2
-       LEFT JOIN push_notifications_sent ps ON ps.user_id = p.user_id AND ps.news_id = $2
        WHERE p.tag_id = ANY($1::text[])
-         AND r.user_id IS NULL
-         AND ps.id IS NULL`,
+         AND NOT EXISTS (
+           SELECT 1 FROM user_news_reads r
+           WHERE r.user_id = p.user_id AND r.news_id = $2
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM push_notifications_sent ps
+           WHERE ps.user_id = p.user_id AND ps.news_id = $2
+         )
+         AND (
+           EXISTS (
+             SELECT 1 FROM user_channels uc
+             WHERE uc.user_id = p.user_id AND uc.channel = 'push' AND uc.is_active = TRUE
+           )
+           OR EXISTS (
+             SELECT 1 FROM push_subscriptions ps2
+             WHERE ps2.user_id = p.user_id AND ps2.is_active = TRUE
+           )
+         )`,
       [matchedTags, newsId]
     );
 
@@ -251,9 +270,16 @@ export async function sendNewArticlePush(
 
     for (const userId of userIds) {
       try {
+        // Respect quiet hours (MSK) for content-driven alerts
+        const quiet = await getQuietHours(userId);
+        if (quiet?.enabled && isQuietHoursMsk(quiet.start, quiet.end)) {
+          console.log(`[Push] Article ${newsId}: quiet hours for user ${userId}, skip`);
+          continue;
+        }
+
         const insertResult = await query(
           `INSERT INTO push_notifications_sent (user_id, news_id, title, source)
-           VALUES ($1, $2, $3, 'fcm')
+           VALUES ($1, $2, $3, 'push')
            ON CONFLICT (user_id, news_id) DO NOTHING
            RETURNING id`,
           [userId, newsId, title]
@@ -263,8 +289,11 @@ export async function sendNewArticlePush(
           continue;
         }
 
-        const ok = await sendPushNotification(userId, title, body, data);
-        console.log(`[Push] Article ${newsId}: sent to user ${userId} = ${ok}`);
+        const [fcmOk, vapidCount] = await Promise.all([
+          sendPushNotification(userId, title, body, data),
+          sendWebPushToUser(userId, title, body, data),
+        ]);
+        console.log(`[Push] Article ${newsId}: sent to user ${userId} fcm=${fcmOk} vapid=${vapidCount}`);
       } catch (err: any) {
         console.error(`[Push] Failed to notify user ${userId} about article ${newsId}:`, err.message);
       }

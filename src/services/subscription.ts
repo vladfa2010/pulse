@@ -1237,7 +1237,7 @@ function dateSqlPlusDays(days: number): string {
     : `DATE(CURRENT_DATE + INTERVAL '${days} days')`;
 }
 
-// ─── Email expiry notifications (T-4, T-1, T-0) ────────────────────────────
+// ─── Email + Push expiry notifications (T-4, T-1, T-0) ───────────────────
 export async function sendExpiryNotifications(): Promise<{
   sent: number;
   skipped: number;
@@ -1291,6 +1291,7 @@ export async function sendExpiryNotifications(): Promise<{
             row.id,
           ]);
           result.sent++;
+          await sendBillingPush(row.id, 'PULSE — подписка', `Через 4 дня истекает подписка ${row.plan_name}`, { type: 'billing', subtype: '4d' });
         } else {
           result.errors++;
         }
@@ -1344,6 +1345,7 @@ export async function sendExpiryNotifications(): Promise<{
             row.id,
           ]);
           result.sent++;
+          await sendBillingPush(row.id, 'PULSE — подписка', `Завтра истекает подписка ${row.plan_name}`, { type: 'billing', subtype: '1d' });
         } else {
           result.errors++;
         }
@@ -1400,6 +1402,7 @@ export async function sendExpiryNotifications(): Promise<{
             row.id,
           ]);
           result.sent++;
+          await sendBillingPush(row.id, 'PULSE — подписка истекла', `Подписка ${row.plan_name} истекла`, { type: 'billing', subtype: 'expired' });
         } else {
           result.errors++;
         }
@@ -1415,6 +1418,25 @@ export async function sendExpiryNotifications(): Promise<{
 
   console.log('[ExpiryNotify] sent:', result.sent, 'skipped:', result.skipped, 'errors:', result.errors);
   return result;
+}
+
+async function sendBillingPush(
+  userId: string,
+  title: string,
+  body: string,
+  data: Record<string, string>
+): Promise<void> {
+  try {
+    const subs = await getEnabledSubscriptions(userId, 'billing');
+    if (!subs.some(s => s.channel === 'push')) return;
+
+    await Promise.all([
+      sendPushNotification(userId, title, body, data, { skipQuietHours: true, skipEnabledCheck: true }),
+      sendWebPushToUser(userId, title, body, data),
+    ]);
+  } catch (e: any) {
+    console.error(`[ExpiryNotify] Billing push failed for user ${userId}:`, e.message);
+  }
 }
 
 // ─── Feature registry cache ────────────────────────────────────────────────

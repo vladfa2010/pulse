@@ -4,6 +4,7 @@
  */
 
 import { DigestArticle, DigestContent } from './digestContent';
+import { WeeklyReportContent } from './weeklyReportContent';
 import { FREQUENCY_LABELS } from './types';
 
 const MAX_MESSAGE_LENGTH = 3900;
@@ -149,4 +150,99 @@ export function formatDigestTitle(content: DigestContent): string {
 export function truncateText(text: string, maxLength: number): string {
   if (text.length <= maxLength) return text;
   return text.slice(0, maxLength - 1) + '…';
+}
+
+// ── Weekly Report (Telegram HTML) ───────────────────────────────────────────
+
+export function formatWeeklyReportTelegram(content: WeeklyReportContent): string {
+  let text = `📊 <b>PULSE — Еженедельный отчёт</b>\n`;
+  text += `📅 ${content.period}\n\n`;
+
+  text += `📈 Статистика:\n`;
+  text += `   Всего новостей: ${content.totalArticles}\n`;
+  text += `   🟢 Позитивных: ${content.sentimentBreakdown.positive}\n`;
+  text += `   🔴 Негативных: ${content.sentimentBreakdown.negative}\n`;
+  text += `   ⚪ Нейтральных: ${content.sentimentBreakdown.neutral}\n\n`;
+
+  for (const tag of content.tagSummaries) {
+    text += `━━━ <b>${escapeHtml(tag.tagName.toUpperCase())}</b> (${tag.articles.length}) ━━━\n\n`;
+
+    for (const article of tag.articles.slice(0, 5)) {
+      const emoji = article.sentiment === 'positive' ? '🟢' : article.sentiment === 'negative' ? '🔴' : '⚪';
+      const date = formatShortDate(article.publishedAt);
+      text += `${emoji} <a href="${article.url}">${escapeHtml(article.title)}</a>\n`;
+      text += `   <i>${escapeHtml(article.source)}</i> · ${date}\n\n`;
+    }
+
+    if (tag.articles.length > 5) {
+      text += `<i>…и ещё ${tag.articles.length - 5} новостей</i>\n\n`;
+    }
+  }
+
+  text += `━━━\n<i>Отчёт составлен автоматически сервисом PULSE</i>`;
+  return text;
+}
+
+function formatShortDate(d: Date): string {
+  return new Date(d).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
+// ── Weekly Report (Email HTML) ───────────────────────────────────────────────
+
+export function formatWeeklyReportEmail(content: WeeklyReportContent): { subject: string; html: string } {
+  const subject = '📊 PULSE — Еженедельный отчёт';
+
+  let html = `<div style="margin-bottom:24px;">`;
+  html += `<h3 style="color:#1a1a2e; margin:0 0 16px;">📊 Сводка за неделю</h3>`;
+  html += `<div style="display:flex; gap:16px; margin-bottom:24px; flex-wrap:wrap;">`;
+  html += statCardHtml(content.totalArticles.toString(), 'Всего новостей', '#10b981');
+  html += statCardHtml(content.sentimentBreakdown.positive.toString(), 'Позитив', '#10b981');
+  html += statCardHtml(content.sentimentBreakdown.negative.toString(), 'Негатив', '#ef4444');
+  html += `</div></div>`;
+
+  for (const tag of content.tagSummaries) {
+    html += `<div style="margin-bottom:32px;">`;
+    html += `<h4 style="color:#1a1a2e; margin:0 0 12px; padding-bottom:8px; border-bottom:2px solid #e5e7eb;">`;
+    html += `${escapeHtml(tag.tagName)} <span style="color:#8e8e93; font-weight:400;">(${tag.articles.length})</span></h4>`;
+
+    for (const article of tag.articles.slice(0, 5)) {
+      const tagClass = article.sentiment === 'positive' ? 'tag-positive'
+        : article.sentiment === 'negative' ? 'tag-negative' : 'tag-neutral';
+      const sentimentLabel = article.sentiment === 'positive' ? 'Позитив'
+        : article.sentiment === 'negative' ? 'Негатив' : 'Нейтрал';
+
+      html += `<div style="margin-bottom:12px; padding:12px; background:#fafafa; border-radius:8px;">`;
+      html += `<div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">`;
+      html += `<a href="${article.url}" style="font-weight:500; color:#1a1a2e; text-decoration:none; flex:1;">${escapeHtml(article.title)}</a>`;
+      html += `<span class="tag ${tagClass}">${sentimentLabel}</span></div>`;
+      html += `<div style="margin-top:6px; color:#8e8e93; font-size:12px;">`;
+      html += `${escapeHtml(article.source)} · ${formatShortDate(article.publishedAt)}</div>`;
+      html += `</div>`;
+    }
+
+    if (tag.articles.length > 5) {
+      html += `<p style="color:#8e8e93; font-size:12px;">…и ещё ${tag.articles.length - 5} новостей</p>`;
+    }
+
+    html += `</div>`;
+  }
+
+  return { subject, html };
+}
+
+function statCardHtml(value: string, label: string, color: string): string {
+  return `<div style="background:#f0fdf4; border-radius:8px; padding:12px 16px; min-width:100px;">` +
+    `<div style="font-size:24px; font-weight:600; color:${color};">${value}</div>` +
+    `<div style="font-size:12px; color:#6b7280;">${label}</div></div>`;
+}
+
+// ── Weekly Report (Push) ───────────────────────────────────────────────────
+
+export function formatWeeklyReportPush(content: WeeklyReportContent): { title: string; body: string; data: Record<string, string> } {
+  const n = content.totalArticles;
+  return {
+    title: '📊 PULSE — Еженедельный отчёт',
+    body: n === 1 ? '1 новость за неделю' : `${n} новостей за неделю`,
+    data: { type: 'weekly_report', count: String(n) },
+  };
 }

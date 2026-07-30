@@ -12,7 +12,11 @@ import { sendEmail } from '../email';
 import { sendPushNotification } from '../push';
 import { sendWebPushToUser } from '../webPush';
 import { buildDigestContent, DigestContent } from './digestContent';
-import { formatDigestTelegram, formatDigestEmail, formatDigestPush } from './formatters';
+import { buildWeeklyReportContent, WeeklyReportContent } from './weeklyReportContent';
+import {
+  formatDigestTelegram, formatDigestEmail, formatDigestPush,
+  formatWeeklyReportTelegram, formatWeeklyReportEmail, formatWeeklyReportPush,
+} from './formatters';
 import { getEntitlement } from './entitlement';
 import { isQuietHoursForProduct } from './quietHours';
 import {
@@ -23,6 +27,8 @@ import { Product, Channel, Subscription, DeliveryResult } from './types';
 
 export type SendResult = 'sent' | 'empty' | 'skipped' | 'error';
 
+export type NotificationContent = DigestContent | WeeklyReportContent;
+
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 // ── Отправка одного продукта в один канал ───────────────────────────────────
@@ -31,38 +37,75 @@ async function deliver(
   userId: string,
   product: Product,
   channel: Channel,
-  content: DigestContent,
+  content: NotificationContent,
   frequency: string
 ): Promise<boolean> {
-  switch (channel) {
-    case 'telegram': {
-      const target = await getDeliveryTarget(userId, 'telegram', product);
-      if (!target) return false;
-      const messages = formatDigestTelegram(content, frequency);
-      for (let i = 0; i < messages.length; i++) {
-        const ok = await sendTelegramMessage(target.target, messages[i]);
-        if (!ok) return false;
-        if (i < messages.length - 1) await sleep(200);
+  if (product === 'digest') {
+    const c = content as DigestContent;
+    switch (channel) {
+      case 'telegram': {
+        const target = await getDeliveryTarget(userId, 'telegram', product);
+        if (!target) return false;
+        const messages = formatDigestTelegram(c, frequency);
+        for (let i = 0; i < messages.length; i++) {
+          const ok = await sendTelegramMessage(target.target, messages[i]);
+          if (!ok) return false;
+          if (i < messages.length - 1) await sleep(200);
+        }
+        return true;
       }
-      return true;
-    }
-    case 'email': {
-      const target = await getDeliveryTarget(userId, 'email', product);
-      if (!target) return false;
-      const { subject, html } = formatDigestEmail(content);
-      return sendEmail(target.target, subject, html);
-    }
-    case 'push': {
-      const { title, body, data } = formatDigestPush(content);
-      // Fan-out в обе push-системы: FCM (push.ts) и VAPID web push (webPush.ts).
-      // Успех = доставлено хотя бы в одну.
-      const [fcmOk, vapidCount] = await Promise.all([
-        sendPushNotification(userId, title, body, data),
-        sendWebPushToUser(userId, title, body, data),
-      ]);
-      return fcmOk || vapidCount > 0;
+      case 'email': {
+        const target = await getDeliveryTarget(userId, 'email', product);
+        if (!target) return false;
+        const { subject, html } = formatDigestEmail(c);
+        return sendEmail(target.target, subject, html);
+      }
+      case 'push': {
+        const { title, body, data } = formatDigestPush(c);
+        // Fan-out в обе push-системы: FCM (push.ts) и VAPID web push (webPush.ts).
+        // Успех = доставлено хотя бы в одну.
+        const [fcmOk, vapidCount] = await Promise.all([
+          sendPushNotification(userId, title, body, data),
+          sendWebPushToUser(userId, title, body, data),
+        ]);
+        return fcmOk || vapidCount > 0;
+      }
     }
   }
+
+  if (product === 'weekly_report') {
+    const c = content as WeeklyReportContent;
+    switch (channel) {
+      case 'telegram': {
+        const target = await getDeliveryTarget(userId, 'telegram', product);
+        if (!target) return false;
+        const text = formatWeeklyReportTelegram(c);
+        const chunks = splitTelegramMessage(text, 4000);
+        for (let i = 0; i < chunks.length; i++) {
+          const ok = await sendTelegramMessage(target.target, chunks[i]);
+          if (!ok) return false;
+          if (i < chunks.length - 1) await sleep(500);
+        }
+        return true;
+      }
+      case 'email': {
+        const target = await getDeliveryTarget(userId, 'email', product);
+        if (!target) return false;
+        const { subject, html } = formatWeeklyReportEmail(c);
+        return sendEmail(target.target, subject, html);
+      }
+      case 'push': {
+        const { title, body, data } = formatWeeklyReportPush(c);
+        const [fcmOk, vapidCount] = await Promise.all([
+          sendPushNotification(userId, title, body, data),
+          sendWebPushToUser(userId, title, body, data),
+        ]);
+        return fcmOk || vapidCount > 0;
+      }
+    }
+  }
+
+  return false;
 }
 
 // ── Плановая рассылка одному юзеру (все его включённые каналы продукта) ────
@@ -96,7 +139,7 @@ export async function dispatchToUser(userId: string, product: Product): Promise<
       .sort((a, b) => a.getTime() - b.getTime())[0] ?? null;
 
     const content = await buildContent(userId, product, ent.maxTags, earliest);
-    if (!content || content.articles.length === 0) {
+    if (!content || isEmptyContent(content)) {
       console.log(`[Dispatcher] user=${userId} product=${product} no content`);
       return 'empty';
     }
@@ -145,7 +188,7 @@ export async function dispatchToUserNow(
     }
 
     const content = await buildContent(userId, product, null, null, 'manual');
-    if (!content || content.articles.length === 0) return 'empty';
+    if (!content || isEmptyContent(content)) return 'empty';
 
     const ok = await deliver(userId, product, channel, content, '1h');
     if (!ok) return 'error';
@@ -185,15 +228,40 @@ async function buildContent(
   maxTags: number | null,
   since: Date | null,
   context = 'scheduled'
-): Promise<DigestContent | null> {
+): Promise<NotificationContent | null> {
   switch (product) {
     case 'digest':
       return buildDigestContent(userId, maxTags, since, context);
-    // case 'weekly_report': return buildWeeklyReportContent(userId, maxTags);
-    // case 'fact_check': обрабатывается своим воркером по событиям, не по расписанию
+    case 'weekly_report':
+      return buildWeeklyReportContent(userId, maxTags);
+    // fact_check, news_alert, billing, engagement — event-driven, не по расписанию
     default:
       return null;
   }
 }
 
 export { buildContent };
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function isEmptyContent(content: NotificationContent): boolean {
+  if ('articles' in content) return content.articles.length === 0;
+  if ('tagSummaries' in content) return content.tagSummaries.length === 0;
+  return true;
+}
+
+function splitTelegramMessage(text: string, maxLength: number): string[] {
+  const chunks: string[] = [];
+  let remaining = text;
+  while (remaining.length > 0) {
+    if (remaining.length <= maxLength) {
+      chunks.push(remaining);
+      break;
+    }
+    let cutAt = remaining.lastIndexOf('\n', maxLength);
+    if (cutAt === -1) cutAt = maxLength;
+    chunks.push(remaining.slice(0, cutAt));
+    remaining = remaining.slice(cutAt).trim();
+  }
+  return chunks;
+}

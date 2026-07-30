@@ -1,8 +1,5 @@
-import cron from 'node-cron';
 import { query } from '../config/db';
 import { sendWeeklyReport } from './telegram';
-import { sendWeeklyReportEmail } from './email';
-import { sendPushNotification } from './push';
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
@@ -199,92 +196,7 @@ function formatReportHtml(data: ReportData): string {
 }
 
 // ============================================================
-// Main: Send reports to all premium users
-// ============================================================
-
-export async function sendAllWeeklyReports(): Promise<void> {
-  console.log('[Reports] Starting weekly report distribution');
-
-  // Get all premium users
-  const usersResult = await query(
-    `SELECT u.id
-     FROM users u
-     WHERE u.subscription_active = TRUE
-       AND EXISTS (SELECT 1 FROM portfolios p WHERE p.user_id = u.id LIMIT 1)`
-  );
-
-  console.log(`[Reports] Found ${usersResult.rows.length} premium users with tags`);
-
-  let sent = 0;
-  let failed = 0;
-
-  for (const user of usersResult.rows) {
-    try {
-      // Get user's notification settings
-      const settingsResult = await query(
-        `SELECT tg_enabled, email_enabled, push_enabled, report_format
-         FROM notification_settings WHERE user_id = $1`,
-        [user.id]
-      );
-
-      const settings = settingsResult.rows[0] || { tg_enabled: true, email_enabled: true, push_enabled: false, report_format: 'full' };
-
-      // Generate report
-      const reportData = await generateReportForUser(user.id);
-      if (!reportData) {
-        console.log(`[Reports] No data for user ${user.id}, skipping`);
-        continue;
-      }
-
-      // Send via Telegram
-      if (settings.tg_enabled) {
-        const text = formatReportText(reportData);
-        const ok = await sendWeeklyReport(user.id, text);
-        if (ok) sent++;
-      }
-
-      // Send via Email
-      if (settings.email_enabled) {
-        const html = formatReportHtml(reportData);
-        const emailResult = await query(`SELECT email FROM users WHERE id = $1`, [user.id]);
-        const userEmail = emailResult.rows[0]?.email;
-        if (userEmail) {
-          const stats = reportData.sentimentBreakdown;
-          const ok = await sendWeeklyReportEmail(userEmail, reportData.tagSummaries.flatMap(t => t.articles), { total: reportData.totalArticles, ...stats });
-          if (ok) sent++;
-        }
-      }
-
-      // Send via Push
-      if (settings.push_enabled) {
-        const pushBody = reportData.totalArticles === 1
-          ? '1 новость за неделю'
-          : `${reportData.totalArticles} новостей за неделю`;
-        await sendPushNotification(
-          user.id,
-          '📊 PULSE — Еженедельный отчёт',
-          pushBody,
-          { type: 'weekly_report', count: reportData.totalArticles.toString() }
-        );
-      }
-
-      // Rate limit
-      await sleep(200);
-    } catch (err) {
-      console.error(`[Reports] Failed for user ${user.id}:`, err);
-      failed++;
-    }
-  }
-
-  console.log(`[Reports] Done: ${sent} sent, ${failed} failed`);
-}
-
-// ============================================================
-// Cron: Sunday 13:00 MSK
-// ============================================================
-
-// ============================================================
-// Manual: Send weekly report to single user
+// Manual: Send weekly report to single user (admin / API)
 // ============================================================
 
 export async function sendWeeklyReportForUser(userId: string): Promise<{ sent: boolean; message: string }> {
@@ -316,21 +228,6 @@ export async function sendWeeklyReportForUser(userId: string): Promise<{ sent: b
   } catch (err: any) {
     return { sent: false, message: `Error: ${err.message}` };
   }
-}
-
-// ============================================================
-// Cron: Sunday 13:00 MSK
-// ============================================================
-
-export function startReportCron() {
-  console.log('[Reports] Scheduled for every Sunday at 13:00 MSK');
-  // Sunday 13:00 = '0 13 * * 0'
-  cron.schedule('0 13 * * 0', () => {
-    console.log('[Reports] Triggering weekly reports');
-    sendAllWeeklyReports();
-  }, {
-    timezone: 'Europe/Moscow',
-  });
 }
 
 // ============================================================

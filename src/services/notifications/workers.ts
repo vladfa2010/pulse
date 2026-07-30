@@ -22,12 +22,11 @@ export function startNotificationWorkers(): void {
   }, { timezone: 'Europe/Moscow' });
   console.log('[Worker:digest] Scheduled hourly at :00 Europe/Moscow');
 
-  // Weekly report — временно отключён: buildContent для 'weekly_report' ещё не реализован.
-  // Когда будет готов контент-сторителлинг, раскомментировать:
-  // cron.schedule('0 13 * * 0', () => {
-  //   runBroadcast('weekly_report').catch(e => console.error('[Worker:weekly_report] error:', e));
-  // }, { timezone: 'Europe/Moscow' });
-  // console.log('[Worker:weekly_report] Scheduled Sunday at 13:00 Europe/Moscow');
+  // Weekly report — воскресенье 13:00 МСК
+  cron.schedule('0 13 * * 0', () => {
+    runBroadcast('weekly_report').catch(e => console.error('[Worker:weekly_report] error:', e));
+  }, { timezone: 'Europe/Moscow' });
+  console.log('[Worker:weekly_report] Scheduled Sunday at 13:00 Europe/Moscow');
 }
 
 async function runBroadcast(product: Product): Promise<void> {
