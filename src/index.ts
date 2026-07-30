@@ -150,12 +150,20 @@ app.get('/health', async (req, res) => {
     cronStatus = 'error';
   }
 
+  const keyHex = process.env.ENCRYPTION_KEY || '';
+  const keyValid = !!keyHex && keyHex.length === 64 && /^[0-9a-fA-F]+$/.test(keyHex);
+
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
     version: '8.4.0',
     cron: cronStatus,
     sse_subscribers: getSubscriberCount(),
+    encryption_key: {
+      present: !!process.env.ENCRYPTION_KEY,
+      length: keyHex.length,
+      valid: keyValid,
+    },
   });
 });
 
@@ -5570,7 +5578,8 @@ async function start() {
     console.log(`Routes: /api/auth, /api/news, /api/payment, /api/user, /api/translate, /api/webhook, /api/admin`);
 
     if (!encryptionKeyConfigured()) {
-      console.warn('[Security] ENCRYPTION_KEY is not configured. Broker API keys will be unavailable until the variable is set.');
+      const keyHex = process.env.ENCRYPTION_KEY || '';
+      console.warn(`[Security] ENCRYPTION_KEY is not configured. present=${!!keyHex}, length=${keyHex.length}, valid=${encryptionKeyConfigured()}. Broker API keys will be unavailable until the variable is set.`);
     } else {
       console.log('[Security] ENCRYPTION_KEY is configured.');
     }
