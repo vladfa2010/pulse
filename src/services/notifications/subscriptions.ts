@@ -130,10 +130,25 @@ export async function ensureDefaultSubscriptions(userId: string): Promise<void> 
   ];
 
   for (const d of defaults) {
-    await setSubscription(userId, d.product, d.channel, {
-      enabled: d.enabled,
-      frequency: d.frequency,
-    });
+    // Сидинг ТОЛЬКО отсутствующих строк: DO NOTHING при конфликте —
+    // существующие значения юзера никогда не перезаписываются.
+    // НЕ через setSubscription: его UPSERT с COALESCE($4, enabled)
+    // затирает выбор юзера дефолтом на каждый GET.
+    if (USE_SQLITE) {
+      await query(
+        `INSERT INTO notification_subscriptions (user_id, product, channel, enabled, frequency, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, datetime('now'), datetime('now'))
+         ON CONFLICT (user_id, product, channel) DO NOTHING`,
+        [userId, d.product, d.channel, d.enabled ? 1 : 0, d.frequency ?? null]
+      );
+    } else {
+      await query(
+        `INSERT INTO notification_subscriptions (user_id, product, channel, enabled, frequency, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+         ON CONFLICT (user_id, product, channel) DO NOTHING`,
+        [userId, d.product, d.channel, d.enabled, d.frequency ?? null]
+      );
+    }
   }
 }
 
