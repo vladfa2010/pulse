@@ -5690,7 +5690,6 @@ async function start() {
            FROM users u
            JOIN notification_subscriptions ns ON ns.user_id = u.id
              AND ns.product = 'engagement' AND ns.channel = 'push' AND ns.enabled = TRUE
-           JOIN user_channels uc ON uc.user_id = u.id AND uc.channel = 'push' AND uc.is_active = TRUE
            WHERE NOT EXISTS (
              SELECT 1 FROM sentiment_votes sv
              WHERE sv.user_id = u.id
@@ -5699,6 +5698,16 @@ async function start() {
            AND NOT EXISTS (
              SELECT 1 FROM sentiment_vote_push_sent sp
              WHERE sp.user_id = u.id AND sp.sent_date = $1
+           )
+           AND (
+             EXISTS (
+               SELECT 1 FROM user_channels uc
+               WHERE uc.user_id = u.id AND uc.channel = 'push' AND uc.is_active = TRUE
+             )
+             OR EXISTS (
+               SELECT 1 FROM push_subscriptions ps
+               WHERE ps.user_id = u.id AND ps.is_active = TRUE
+             )
            )`,
           [`${todayStr} 00:00:00`]
         );
