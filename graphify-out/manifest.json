@@ -2805,13 +2805,13 @@
     "semantic_hash": ""
   },
   "pulse-backend/src/services/brokerApi/finamAdapter.ts": {
-    "mtime": 1785418173.8326552,
-    "ast_hash": "3b86721e4e0e6707ecc1d1e911dc34b1",
+    "mtime": 1785423354.4190493,
+    "ast_hash": "e77b89e86961ae854eb70ea658e98b6a",
     "semantic_hash": ""
   },
   "pulse-backend/src/services/brokerApi/index.ts": {
-    "mtime": 1785418135.0181746,
-    "ast_hash": "4b0dac98dc7d182ddf491d09923673cd",
+    "mtime": 1785423313.2356703,
+    "ast_hash": "a5079ed48cf5389533fbe6bb54ab13e0",
     "semantic_hash": ""
   },
   "pulse-backend/src/services/brokerApi/insideAdapter.ts": {
@@ -2940,13 +2940,38 @@
     "semantic_hash": ""
   },
   "pulse-backend/docs/portfolio.md": {
-    "mtime": 1785422552.3838468,
-    "ast_hash": "b79dad94625b31a1fa7289e6fa96f52e",
+    "mtime": 1785423464.905849,
+    "ast_hash": "38a3abf2c90e289e7408ba93914d1e37",
     "semantic_hash": ""
   },
   "pulse-frontend/docs/portfolio.md": {
     "mtime": 1785422585.9180412,
     "ast_hash": "55660bf01583962b3ccd72ac1c594e45",
+    "semantic_hash": ""
+  },
+  "pulse-backend/src/scripts/testFinamAdapter.ts": {
+    "mtime": 1785423437.846364,
+    "ast_hash": "808be73a968e8df75ae5b944c53b0508",
+    "semantic_hash": ""
+  },
+  "pulse-backend/src/services/brokerApi/__fixtures__/finam/account.json": {
+    "mtime": 1785423422.4399073,
+    "ast_hash": "44e9bbd57e684f0e5e5ab67b3a22dd77",
+    "semantic_hash": ""
+  },
+  "pulse-backend/src/services/brokerApi/__fixtures__/finam/session-details.json": {
+    "mtime": 1785423422.4398935,
+    "ast_hash": "dfc24a18696e8710c6744d042877c8ff",
+    "semantic_hash": ""
+  },
+  "pulse-backend/src/services/brokerApi/__fixtures__/finam/session.json": {
+    "mtime": 1785423406.2160504,
+    "ast_hash": "c1cb0d58ae7bf3cc24f5d28af3832dde",
+    "semantic_hash": ""
+  },
+  "\u0422\u0417_\u0444\u0438\u043a\u0441_\u0430\u0434\u0430\u043f\u0442\u0435\u0440\u0430_\u0424\u0438\u043d\u0430\u043c\u0430.md": {
+    "mtime": 1785423134.6554644,
+    "ast_hash": "f2c2095fd4854c64f7959b43173878dd",
     "semantic_hash": ""
   }
 }

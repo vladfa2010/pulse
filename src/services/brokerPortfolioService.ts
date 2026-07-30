@@ -218,6 +218,7 @@ export async function syncBrokerPortfolio(userId: string, portfolioId: string): 
     positions = res.positions;
     newToken = res.newToken;
   } catch (err: any) {
+    console.error(`[BrokerPortfolio] sync failed portfolio=${portfolioId} broker=${portfolio.broker} code=${err.code || 'unknown'}: ${err.message}`);
     throw new Error(err.message || 'broker_unavailable');
   }
 
@@ -231,6 +232,14 @@ export async function syncBrokerPortfolio(userId: string, portfolioId: string): 
   }
 
   const diff = await applyPositionDiff(userId, portfolioId, positions, 'api');
+
+  console.log(
+    `[BrokerPortfolio] sync ok portfolio=${portfolioId} broker=${portfolio.broker} ` +
+    `positions=${positions.length} added=${diff.added} updated=${diff.updated} closed=${diff.closed}`
+  );
+  if (positions.length === 0) {
+    console.warn(`[BrokerPortfolio] sync returned 0 positions portfolio=${portfolioId} broker=${portfolio.broker} — проверить адаптер/счёт`);
+  }
 
   await query(
     `UPDATE broker_portfolios SET last_synced_at = ${nowSql()}, updated_at = ${nowSql()} WHERE id = $1`,
