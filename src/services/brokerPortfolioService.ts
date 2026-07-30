@@ -333,10 +333,11 @@ export async function applyPositionDiff(
 
 async function logUserEvent(userId: string, type: string, data: Record<string, any>): Promise<void> {
   try {
+    const dataJson = USE_SQLITE ? JSON.stringify(data) : data;
     await query(
       `INSERT INTO user_events (id, user_id, event_type, event_data, created_at)
        VALUES ($1, $2, $3, $4, ${nowSql()})`,
-      [nodeCrypto.randomUUID(), userId, type, JSON.stringify(data)]
+      [nodeCrypto.randomUUID(), userId, type, dataJson]
     );
   } catch (err: any) {
     console.error(`[BrokerPortfolio] Failed to log user_event ${type}:`, err.message);

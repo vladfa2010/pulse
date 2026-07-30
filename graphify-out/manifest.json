@@ -20,8 +20,8 @@
     "semantic_hash": "0625ff4a95e1d24294ff9d9bd8e886f4"
   },
   "pulse-backend/src/config/db-sqlite.ts": {
-    "mtime": 1785355032.2736979,
-    "ast_hash": "e939cd622995194168bab37989fc2bfc",
+    "mtime": 1785418098.0528998,
+    "ast_hash": "419595ba24029dfb3eeabdf90617d214",
     "semantic_hash": ""
   },
   "pulse-backend/src/config/db.ts": {
@@ -30,8 +30,8 @@
     "semantic_hash": "5c4e5032b7f9546b8c13768da0c3c2e1"
   },
   "pulse-backend/src/index.ts": {
-    "mtime": 1785398122.2993932,
-    "ast_hash": "375a22ce3d431b876f59fa040a4e078a",
+    "mtime": 1785418933.5811713,
+    "ast_hash": "26e11688251e7d9f9e82f7ef6564ac9c",
     "semantic_hash": ""
   },
   "pulse-backend/src/middleware/auth.ts": {
@@ -40,9 +40,9 @@
     "semantic_hash": "1794e0bedf5c5673d58cff1bce5b2546"
   },
   "pulse-backend/src/middleware/rateLimit.ts": {
-    "mtime": 1784402716.1701555,
-    "ast_hash": "dcba292abbcff256ed2015920cac3964",
-    "semantic_hash": "dcba292abbcff256ed2015920cac3964"
+    "mtime": 1785419003.1005745,
+    "ast_hash": "7f4752c40e3b3b7314ff404dd1b82166",
+    "semantic_hash": ""
   },
   "pulse-backend/src/middleware/validate.ts": {
     "mtime": 1784403078.4129364,
@@ -520,9 +520,9 @@
     "semantic_hash": "2631e59d853352d7f71f7ff98aac7aca"
   },
   "pulse-frontend/src/App.tsx": {
-    "mtime": 1784317075.9102492,
-    "ast_hash": "2c52c8284730289c657220db15baf914",
-    "semantic_hash": "2c52c8284730289c657220db15baf914"
+    "mtime": 1785418452.246703,
+    "ast_hash": "a6cb8eb65f6983480dcf2592c2c4e02b",
+    "semantic_hash": ""
   },
   "pulse-frontend/src/components/AllNewsCarousel.tsx": {
     "mtime": 1784277307.1687253,
@@ -575,9 +575,9 @@
     "semantic_hash": "9e37dc36a33045a350c304c8b347db3e"
   },
   "pulse-frontend/src/components/Navbar.tsx": {
-    "mtime": 1784098871.5878572,
-    "ast_hash": "9ec275e7a31474ad2e5b84080bad56bf",
-    "semantic_hash": "9ec275e7a31474ad2e5b84080bad56bf"
+    "mtime": 1785418966.307753,
+    "ast_hash": "62ff670da5384dae1373b67b4b744202",
+    "semantic_hash": ""
   },
   "pulse-frontend/src/components/NewsCard.tsx": {
     "mtime": 1784277152.0734515,
@@ -840,9 +840,9 @@
     "semantic_hash": "d04db172500efc51d7193889f3c25b0a"
   },
   "pulse-frontend/src/main.tsx": {
-    "mtime": 1784317068.7191856,
-    "ast_hash": "0bb3f851f9427070e0aceff72ea181bd",
-    "semantic_hash": "0bb3f851f9427070e0aceff72ea181bd"
+    "mtime": 1785418081.6617577,
+    "ast_hash": "810c169f8d5e962a44945f9836db119d",
+    "semantic_hash": ""
   },
   "pulse-frontend/src/pages/Admin.tsx": {
     "mtime": 1784574754.8707922,
@@ -890,8 +890,8 @@
     "semantic_hash": "ac094233fd69a6232501b870c17427a4"
   },
   "pulse-frontend/src/pages/Profile.tsx": {
-    "mtime": 1785356374.2559938,
-    "ast_hash": "59f007273753d9268506e2081634fc61",
+    "mtime": 1785418515.6707976,
+    "ast_hash": "4f6fd380e41910608c6fb76f5559db9b",
     "semantic_hash": ""
   },
   "pulse-frontend/src/pages/SentimentIndex.tsx": {
@@ -2635,13 +2635,13 @@
     "semantic_hash": ""
   },
   "pulse-backend/src/services/market/marketRouter.ts": {
-    "mtime": 1785185441.4961386,
-    "ast_hash": "0c1f45657aba7036dad67fc38866f807",
+    "mtime": 1785417440.1974769,
+    "ast_hash": "e49c306a2a206514e82ce0915d540e30",
     "semantic_hash": ""
   },
   "pulse-backend/src/services/market/moexIssAdapter.ts": {
-    "mtime": 1785234288.9229984,
-    "ast_hash": "eaec06a2201196967330c376b6d2a9e2",
+    "mtime": 1785418026.1474855,
+    "ast_hash": "ada56deb6e80ddec11d079facf6e92eb",
     "semantic_hash": ""
   },
   "pulse-backend/src/services/market/utils.ts": {
@@ -2780,8 +2780,163 @@
     "semantic_hash": ""
   },
   "\u0422\u0417_\u041f\u043e\u0440\u0442\u0444\u0435\u043b\u0438_\u0438_\u043e\u0431\u043b\u0430\u043a\u043e_\u0442\u0435\u0433\u043e\u0432.md": {
-    "mtime": 1785400382.7396152,
-    "ast_hash": "4c71ed4b3458b72e8b807068cbd42c00",
+    "mtime": 1785416670.1313374,
+    "ast_hash": "8319eb073ad03e71dafcdf32be0607eb",
+    "semantic_hash": ""
+  },
+  "pulse-backend/src/migrations/broker_portfolios_v1.sql": {
+    "mtime": 1785418053.8465214,
+    "ast_hash": "0a0a6bcbb2bda8afd7fff54605d4edbc",
+    "semantic_hash": ""
+  },
+  "pulse-backend/src/routes/brokerKeys.ts": {
+    "mtime": 1785419246.8925838,
+    "ast_hash": "8152be15266b3119220fa8c0234fa3ae",
+    "semantic_hash": ""
+  },
+  "pulse-backend/src/routes/portfolio.ts": {
+    "mtime": 1785418494.0760226,
+    "ast_hash": "581675d806595dc6913832a61089d491",
+    "semantic_hash": ""
+  },
+  "pulse-backend/src/services/brokerApi/bcsAdapter.ts": {
+    "mtime": 1785418197.9144213,
+    "ast_hash": "0e1f0ec82a3e633d16420a543e306981",
+    "semantic_hash": ""
+  },
+  "pulse-backend/src/services/brokerApi/finamAdapter.ts": {
+    "mtime": 1785418173.8326552,
+    "ast_hash": "3b86721e4e0e6707ecc1d1e911dc34b1",
+    "semantic_hash": ""
+  },
+  "pulse-backend/src/services/brokerApi/index.ts": {
+    "mtime": 1785418135.0181746,
+    "ast_hash": "4b0dac98dc7d182ddf491d09923673cd",
+    "semantic_hash": ""
+  },
+  "pulse-backend/src/services/brokerApi/insideAdapter.ts": {
+    "mtime": 1785418144.2872758,
+    "ast_hash": "09c69d7ca3aebd5fee47057d36ba7278",
+    "semantic_hash": ""
+  },
+  "pulse-backend/src/services/brokerKeyService.ts": {
+    "mtime": 1785418263.315345,
+    "ast_hash": "fea709f9906982724d002a3045a445a4",
+    "semantic_hash": ""
+  },
+  "pulse-backend/src/services/brokerPortfolioService.ts": {
+    "mtime": 1785419451.0642664,
+    "ast_hash": "33b2d5927f8a52cddf0c5cf615063cae",
+    "semantic_hash": ""
+  },
+  "pulse-backend/src/services/crypto.ts": {
+    "mtime": 1785417411.6975448,
+    "ast_hash": "925e999c42299d590ca7a55a736fa040",
+    "semantic_hash": ""
+  },
+  "pulse-backend/src/services/portfolioSync/worker.ts": {
+    "mtime": 1785418555.5528321,
+    "ast_hash": "f792daa5a0177459621c0ab5a4ccdee0",
+    "semantic_hash": ""
+  },
+  "pulse-frontend/src/components/GlassCard.tsx": {
+    "mtime": 1785418305.7840893,
+    "ast_hash": "d07cdbfede50dc5f493de64208cb4cbd",
+    "semantic_hash": ""
+  },
+  "pulse-frontend/src/components/GlassModal.tsx": {
+    "mtime": 1785418145.7261474,
+    "ast_hash": "3c2a7cda5996b8f96cf15983e774df59",
+    "semantic_hash": ""
+  },
+  "pulse-frontend/src/components/Toast.tsx": {
+    "mtime": 1785417498.4418886,
+    "ast_hash": "7685c7763b21584eaf0169a795e8fd48",
+    "semantic_hash": ""
+  },
+  "pulse-frontend/src/components/portfolio/BrokerCard.tsx": {
+    "mtime": 1785418196.8916402,
+    "ast_hash": "af19d81859a0d21144a7619d0d62c9c3",
+    "semantic_hash": ""
+  },
+  "pulse-frontend/src/components/portfolio/BrokerKeyModal.tsx": {
+    "mtime": 1785418245.6823657,
+    "ast_hash": "9d9ad0d5e19aafd6b89e849bc1c5cdeb",
+    "semantic_hash": ""
+  },
+  "pulse-frontend/src/components/portfolio/ConsolidatedTable.tsx": {
+    "mtime": 1785418553.0551486,
+    "ast_hash": "76b5820fcd6a268325f00dec5b33944c",
+    "semantic_hash": ""
+  },
+  "pulse-frontend/src/components/portfolio/DeleteKeyConfirm.tsx": {
+    "mtime": 1785418245.68355,
+    "ast_hash": "f478a80c6518daa9309f0c511b1540f1",
+    "semantic_hash": ""
+  },
+  "pulse-frontend/src/components/portfolio/GrandTotalStrip.tsx": {
+    "mtime": 1785418196.8867357,
+    "ast_hash": "cb64f0272381a52335e5376e5a0359fd",
+    "semantic_hash": ""
+  },
+  "pulse-frontend/src/components/portfolio/PortfolioFormModal.tsx": {
+    "mtime": 1785418245.676292,
+    "ast_hash": "90e513cc63fde491efccda3fc18aa8f6",
+    "semantic_hash": ""
+  },
+  "pulse-frontend/src/components/portfolio/PositionsTable.tsx": {
+    "mtime": 1785418196.886728,
+    "ast_hash": "d3d409bee467919967b601b9ebaac508",
+    "semantic_hash": ""
+  },
+  "pulse-frontend/src/components/portfolio/RecommendedTagsCloud.tsx": {
+    "mtime": 1785419463.7825158,
+    "ast_hash": "35d34137ad46d203b1f526e18daaca51",
+    "semantic_hash": ""
+  },
+  "pulse-frontend/src/hooks/useBrokerKeys.ts": {
+    "mtime": 1785418121.5851388,
+    "ast_hash": "1a5ddccda5fb013db5a0299ce4dcdef4",
+    "semantic_hash": ""
+  },
+  "pulse-frontend/src/hooks/usePortfolio.ts": {
+    "mtime": 1785419406.03242,
+    "ast_hash": "72daa60e731c8e5224f22f11811397e3",
+    "semantic_hash": ""
+  },
+  "pulse-frontend/src/hooks/useToast.ts": {
+    "mtime": 1785417498.44239,
+    "ast_hash": "9cd89e20c2e21777bb92841fee1df796",
+    "semantic_hash": ""
+  },
+  "pulse-frontend/src/lib/format.ts": {
+    "mtime": 1785417498.4405737,
+    "ast_hash": "1b77570fc84948ed34e48848ad6887e4",
+    "semantic_hash": ""
+  },
+  "pulse-frontend/src/pages/PortfolioPage.tsx": {
+    "mtime": 1785418356.9351354,
+    "ast_hash": "f0f1ca92850f9fb629af2b02cff61ccd",
+    "semantic_hash": ""
+  },
+  "pulse-frontend/src/pages/account/BrokersTab.tsx": {
+    "mtime": 1785418553.0587838,
+    "ast_hash": "8fb2a9436d245f7447e90850421ed7b5",
+    "semantic_hash": ""
+  },
+  "pulse-frontend/src/types/portfolio.ts": {
+    "mtime": 1785419384.8902736,
+    "ast_hash": "16b0ee1a29cb4e02ce642bef7efa22ba",
+    "semantic_hash": ""
+  },
+  "\u041c\u043e\u043a\u0430\u043f_\u041b\u041a_\u0411\u0440\u043e\u043a\u0435\u0440\u044b.html": {
+    "mtime": 1785414312.5673594,
+    "ast_hash": "5f2fc0d23db1b213b958d93d7ec8be18",
+    "semantic_hash": ""
+  },
+  "\u041c\u043e\u043a\u0430\u043f_\u041f\u043e\u0440\u0442\u0444\u0435\u043b\u044c.html": {
+    "mtime": 1785414317.893405,
+    "ast_hash": "f5af3ddb182a10a4ee4d06237023c313",
     "semantic_hash": ""
   }
 }

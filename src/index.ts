@@ -44,6 +44,7 @@ import { startCron } from './services/cron';   // RSS cron отключен (TZ_
 import { sendWeeklyReportForUser } from './services/reports'; // ← Еженедельные репорты (manual + API)
 import { startDigestCron, sendAllDigests, setDigestEnabled } from './services/digest'; // ← дайджест (каждый час) — через notification matrix
 import { startPortfolioSyncWorker } from './services/portfolioSync/worker';
+import { encryptionKeyConfigured } from './services/crypto';
 import notificationsRouter from './routes/notifications';
 import brokerKeysRouter from './routes/brokerKeys';
 import portfolioRouter from './routes/portfolio';
@@ -5567,6 +5568,12 @@ async function start() {
   app.listen(PORT, () => {
     console.log(`PULSE backend running on port ${PORT}`);
     console.log(`Routes: /api/auth, /api/news, /api/payment, /api/user, /api/translate, /api/webhook, /api/admin`);
+
+    if (!encryptionKeyConfigured()) {
+      console.warn('[Security] ENCRYPTION_KEY is not configured. Broker API keys will be unavailable until the variable is set.');
+    } else {
+      console.log('[Security] ENCRYPTION_KEY is configured.');
+    }
 
     // ─── Шаг 5: Запуск фоновых задач ──────────────────────────────────
     // startCron() — ОТКЛЮЧЕН (TZ_REMOVE_DUPLICATE_RSS_CRON)
