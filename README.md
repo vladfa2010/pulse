@@ -68,8 +68,12 @@ docker-compose up
 | PUT | `/api/user/profile` | Обновление профиля |
 | GET | `/api/user/portfolio` | Портфель |
 | PUT | `/api/user/portfolio` | Обновление портфеля |
-| GET | `/api/user/notifications` | Настройки уведомлений |
-| PATCH | `/api/user/notifications` | Обновление настроек уведомлений |
+| GET | `/api/user/notification-matrix` | Матрица уведомлений (продукт × канал) |
+| PUT | `/api/user/notification-matrix` | Обновить ячейку матрицы |
+| POST | `/api/user/notification-matrix/quiet-hours` | Тихие часы |
+| GET | `/api/user/notification-delivery-target` | Адрес доставки по каналу |
+| GET | `/api/user/notifications` | **Legacy:** маппится на матрицу |
+| PATCH | `/api/user/notifications` | **Legacy:** маппится на матрицу |
 
 ### Payment
 | Method | Endpoint | Описание |
@@ -153,9 +157,11 @@ Push реализованы через Firebase Cloud Messaging.
 
 ## Database Schema
 
-8 таблиц: `users`, `portfolios`, `payments`, `news`, `user_sessions`, `user_channels`, `notification_settings`, `translation_cache`
+Ключевые таблицы: `users`, `portfolios`, `payments`, `news`, `user_sessions`, `user_channels`, `notification_subscriptions`, `notification_settings`, `push_subscriptions`, `translation_cache`.
 
-См. `src/models/schema.sql`
+`notification_subscriptions` — единственный источник правды о подписках (матрица продукт × канал). `notification_settings` сохранена для тихих часов, `digest_email` и обратной совместимости.
+
+См. `src/models/schema.sql` и `src/migrations/notification_matrix_v1.sql`.
 # force redeploy Mon Jun  1 18:43:06 CST 2026
 # force redeploy 1780317442
 # unstuck 1780318331

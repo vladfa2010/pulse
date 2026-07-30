@@ -49,17 +49,60 @@ downgrade→ `scheduled_plan_downgrade` → `processScheduledDowngrades()` → �
 - Каждые 6 часов — `processTrialExpirations()`.
 - Каждые 5 минут — `processScheduledDowngrades()`.
 
-## Настройки уведомлений
+## Настройки уведомлений (Notification Matrix)
 
-`notifySubscriptionEvent` (Telegram, Push, Web Push) проверяет `notification_settings` перед отправкой:
+Уведомления управляются матрицей `notification_subscriptions` — единственным источником правды. Каждая строка = пара **продукт × канал**.
 
-| Канал | Поле в `notification_settings` | Поведение при `FALSE` |
-|-------|--------------------------------|------------------------|
-| Telegram | `tg_enabled` | Не отправлять Telegram-уведомления |
-| Push (FCM) | `push_enabled` | Не отправлять push-уведомления |
-| Web Push (VAPID) | `web_push_enabled` | Не отправлять web-push |
+### Схема
 
-Если у пользователя нет записи в `notification_settings`, по умолчанию все каналы включены (`TRUE`). Дедупликация по `subscription_notifications_sent` работает независимо от настроек.
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `user_id` | UUID FK → users | Пользователь |
+| `product` | VARCHAR(32) | `digest`, `weekly_report`, `fact_check`, `news_alert`, `billing`, `engagement` |
+| `channel` | VARCHAR(16) | `telegram`, `email`, `push` |
+| `enabled` | BOOLEAN | Включена ли подписка |
+| `frequency` | VARCHAR(8) | Только для `digest`: `1h`, `3h`, `6h`, `12h`, `24h` |
+| `last_sent_at` | TIMESTAMPTZ | Время последней отправки по этому продукту+каналу |
+| `created_at` / `updated_at` | TIMESTAMPTZ | Служебные |
+
+PRIMARY KEY: `(user_id, product, channel)`.
+
+### Продукты и каналы
+
+| Продукт | Каналы | Описание |
+|---------|--------|----------|
+| `digest` | `telegram`, `email`, `push` | Периодическая подборка непрочитанных |
+| `weekly_report` | `telegram`, `email`, `push` | Еженедельный отчёт (воскресенье, 13:00 МСК) |
+| `fact_check` | `telegram`, `email` | Результат on-demand факт-чека |
+| `news_alert` | `push` | Мгновенный пуш при выходе новости по тегу |
+| `billing` | `email`, `push` | Подписка, оплата, истечение, grace |
+| `engagement` | `push` | Sentiment-напоминания, стрики и механики удержания |
+
+### Дефолты и сидинг
+
+При регистрации или первом вызове `GET /api/user/notification-matrix` вызывается `ensureDefaultSubscriptions(userId)`. Он **только** создаёт отсутствующие строки (`INSERT ... ON CONFLICT DO NOTHING`) и **никогда** не перезаписывает выбор пользователя:
+
+- `digest` — все каналы выключены (`enabled = FALSE`), частота `1h`;
+- `weekly_report` — `telegram` и `email` включены, `push` выключен;
+- `fact_check` — `telegram` и `email` включены;
+- `news_alert` — выключен;
+- `billing` — `email` и `push` включены;
+- `engagement` — выключен.
+
+### Тихие часы
+
+Тихие часы и отдельный адрес дайджеста (`digest_email`) пока остаются в `notification_settings` — это не подписка, а глобальные настройки доставки. Управляются через `POST /api/user/notification-matrix/quiet-hours`.
+
+### API
+
+- `GET /api/user/notification-matrix` — вся матрица, активные каналы и тихие часы.
+- `PUT /api/user/notification-matrix` — обновить одну ячейку: `{ product, channel, enabled?, frequency? }`.
+- `POST /api/user/notification-matrix/quiet-hours` — `{ enabled?, start?, end? }` (формат `HH:MM`).
+- `GET /api/user/notification-delivery-target?channel=...&product=...` — адрес доставки (chat_id/email/endpoint).
+
+### Legacy
+
+Старые эндпоинты `/api/user/notifications` и `/api/user/notification-settings` сохранены для обратной совместимости и маппятся на матрицу, но `notification_subscriptions` — единственный источник правды для всех рассылок.
 
 ## Архивированные тарифы
 
