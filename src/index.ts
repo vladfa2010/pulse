@@ -5337,21 +5337,21 @@ async function start() {
   try {
     await query(`
       INSERT INTO subscription_plans
-        (id, name, price, billing_frequency, yearly_discount, tag_limit, features, display_order, is_active, is_popular, coming_soon_label, plan_level)
+        (id, name, price_monthly, price_yearly, price, billing_frequency, yearly_discount, tag_limit, features, display_order, is_active, is_popular, coming_soon_label, plan_level)
       VALUES
-        ('free',    'Free',    0,     'monthly', 0,  3,
+        ('free',    'Free',    0,    0,    0,     'monthly', 0,  3,
          '{"telegram":false,"push":false,"ai_summary":false,"alerts":false,"priority":"normal"}',
          1, TRUE, FALSE, NULL, 0),
-        ('base',    'Base',    100,   'monthly', 20, 10,
+        ('base',    'Base',    100,  960,  100,   'monthly', 20, 10,
          '{"telegram":true,"push":true,"ai_summary":false,"alerts":false,"priority":"normal"}',
          2, TRUE, FALSE, NULL, 1),
-        ('premium', 'Premium', 990,   'monthly', 20, 25,
+        ('premium', 'Premium', 990,  9504, 990,   'monthly', 20, 25,
          '{"telegram":true,"push":true,"ai_summary":true,"alerts":true,"priority":"high"}',
          3, TRUE, TRUE, NULL, 2),
-        ('club',    'Club',    2500,  'monthly', 20, -1,
+        ('club',    'Club',    2500, 24000, 2500,  'monthly', 20, -1,
          '{"telegram":true,"push":true,"ai_summary":true,"alerts":true,"priority":"max","early_delivery":true,"custom_thresholds":true,"club_access":true}',
          4, TRUE, FALSE, 'Скоро', 3),
-        ('pro',     'Pro',     2500,  'monthly', 20, -1,
+        ('pro',     'Pro',     2500, 24000, 2500,  'monthly', 20, -1,
          '{"telegram":true,"push":true,"ai_summary":true,"alerts":true,"priority":"max","early_delivery":true,"custom_thresholds":true,"api_access":true}',
          5, TRUE, FALSE, 'Скоро', 4)
       ON CONFLICT (id) DO NOTHING
