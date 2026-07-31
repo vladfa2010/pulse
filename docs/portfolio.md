@@ -212,6 +212,10 @@ Cron-воркер `services/portfolioSync/worker.ts` запускается ка
 }
 ```
 
+- `suggestedTag` — тикер бумаги **без символа `#`** (хэштег-логика в PULSE не используется).
+- `exchange` — реальная биржа позиции (`MOEX`, `NASDAQ`, `NYSE` и т.д.), а не хардкод `MOEX`.
+- `companyName` — название компании из `broker_positions.company_name` или кэша `securities`.
+
 Статусы тега:
 - `available` — можно подписаться.
 - `subscribed` — уже подписан.
@@ -219,6 +223,34 @@ Cron-воркер `services/portfolioSync/worker.ts` запускается ка
 - `limit-reached` — лимит тегов тарифа исчерпан.
 
 Лимит берётся из `subscription_plans.tag_limit`. `used` — количество активных (не замороженных) подписок пользователя в таблице `portfolios`.
+
+### Создание тега из облака
+
+`POST /api/portfolio/recommended-tags/subscribe` (body: `{ ticker, exchange }`):
+
+1. Ищет `company_name` позиции пользователя, затем в кэше `securities`, затем фолбэк на тикер.
+2. `tag_id` формируется как `slugifyTagId(companyName)` — слаг на русском/английском, **не UUID**.
+3. `tag_name` = название компании, либо тикер, если имя неизвестно.
+4. `keywords` = `[ticker.toLowerCase(), companyName.toLowerCase()]`.
+5. `enriched_data` = `{ ticker, exchange, companyName }` — нужен маркет-роутеру и матчингу новостей.
+6. Сначала ищет существующий тег по `enriched_data->>'ticker' + exchange`, затем по `tag_id`, чтобы не дублировать.
+7. Если тег уже существовал с именем-тикером (фолбэк), при подписке обновляет `tag_name` и `keywords` до реального названия компании; `tag_id` не меняется.
+8. После создания/подписки запускает `backgroundEnrichTag()` — фоновое LLM-обогащение синонимами/сектором.
+9. Если пользователь уже создал ручной тег с таким именем (`createUserTag` разрешает по имени/транслиту), подписка идёт на существующий тег, а его `enriched_data` дополняется `ticker/exchange/companyName`.
+
+### Докачка имени при синхронизации
+
+При каждом `applyPositionDiff` (ручная/автоматическая синхронизация) для каждой позиции с непустым `company_name` запускается `backfillTagFromPositionCompanyName()`:
+- ищет теги по `enriched_data.ticker + exchange`;
+- если `tag_name` равно тикеру, обновляет его до `company_name`;
+- мёрджит `keywords`: добавляет `companyName.toLowerCase()`;
+- обновляет `enriched_data.companyName`.
+
+`tag_id` остаётся прежним, поэтому подписки `portfolios.tag_id` не ломаются.
+
+### Утилиты
+
+- `src/utils/slugifyTag.ts` — `slugifyTagId(name)`: нижний регистр, кириллица сохраняется, пробелы → `_`, максимум 50 символов.
 
 ---
 
