@@ -295,9 +295,9 @@ export async function applyPositionDiff(
          SET quantity = $1,
              avg_price = $2,
              company_name = CASE
-               WHEN $3 IS NOT NULL AND (company_name IS NULL OR company_name = $7) THEN $3
-               WHEN $3 IS NOT NULL THEN company_name
-               ELSE COALESCE($3, company_name)
+               WHEN $3::text IS NOT NULL AND (company_name IS NULL OR company_name = $7::text) THEN $3::text
+               WHEN $3::text IS NOT NULL THEN company_name
+               ELSE COALESCE($3::text, company_name)
              END,
              currency = $4,
              external_id = COALESCE($5, external_id),
