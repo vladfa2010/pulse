@@ -45,6 +45,13 @@ async function main() {
     process.exit(1);
   }
 
+  // SBER must have a real company name (via /v1/assets cache)
+  const sber = positions.find(p => p.ticker === 'SBER');
+  if (sber && sber.companyName === 'SBER') {
+    console.error('[TestFinam] FAILED: SBER companyName should be enriched, got', sber.companyName);
+    process.exit(1);
+  }
+
   // MDLN is NASDAQ, SECZ is NYSE
   const mdln = positions.find(p => p.ticker === 'MDLN');
   if (!mdln || mdln.exchange !== 'NASDAQ' || mdln.currency !== 'USD') {

@@ -350,6 +350,20 @@ export async function initSQLiteSchema(): Promise<void> {
 
     CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user_id ON push_subscriptions(user_id);
 
+    CREATE TABLE IF NOT EXISTS securities (
+      id          TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+      ticker      TEXT NOT NULL,
+      exchange    TEXT NOT NULL,
+      short_name  TEXT,
+      isin        TEXT,
+      sec_type    TEXT,
+      source      TEXT NOT NULL DEFAULT 'finam',
+      resolved_at TEXT DEFAULT (datetime('now')),
+      UNIQUE (ticker, exchange)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_securities_ticker_exchange ON securities(ticker, exchange);
+
     CREATE TABLE IF NOT EXISTS webhook_events (
       id TEXT PRIMARY KEY,
       provider TEXT NOT NULL,

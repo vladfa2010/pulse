@@ -294,12 +294,16 @@ export async function applyPositionDiff(
         `UPDATE broker_positions
          SET quantity = $1,
              avg_price = $2,
-             company_name = COALESCE($3, company_name),
+             company_name = CASE
+               WHEN $3 IS NOT NULL AND (company_name IS NULL OR company_name = $7) THEN $3
+               WHEN $3 IS NOT NULL THEN company_name
+               ELSE COALESCE($3, company_name)
+             END,
              currency = $4,
              external_id = COALESCE($5, external_id),
              updated_at = ${nowSql()}
          WHERE id = $6`,
-        [quantity, avgPrice, companyName, currency, externalId, match.id]
+        [quantity, avgPrice, companyName, currency, externalId, match.id, ticker]
       );
       updated++;
     } else {
@@ -574,6 +578,7 @@ export async function getPortfolioSummary(userId: string, mode: 'by-broker' | 'c
 
 export interface RecommendedTag {
   ticker: string;
+  exchange: string;
   companyName: string | null;
   suggestedTag: string;
   status: 'available' | 'subscribed' | 'created-new' | 'limit-reached';
@@ -630,6 +635,7 @@ export async function getRecommendedTags(userId: string): Promise<{ tags: Recomm
 
     tags.push({
       ticker: pos.ticker,
+      exchange: pos.exchange,
       companyName: pos.company_name,
       suggestedTag: `#${pos.ticker}`,
       status,

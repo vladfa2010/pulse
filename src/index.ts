@@ -5291,6 +5291,8 @@ async function start() {
     { sql: `CREATE INDEX IF NOT EXISTS idx_broker_portfolios_user_broker_name ON broker_portfolios(user_id, broker, name)`, name: 'idx_broker_portfolios_user_broker_name' },
     { sql: `CREATE TABLE IF NOT EXISTS broker_positions (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), broker_portfolio_id UUID NOT NULL REFERENCES broker_portfolios(id) ON DELETE CASCADE, ticker TEXT NOT NULL, exchange TEXT NOT NULL DEFAULT 'MOEX', company_name TEXT, quantity NUMERIC(20, 6) NOT NULL, avg_price NUMERIC(20, 6), currency TEXT NOT NULL DEFAULT 'RUB', external_id TEXT, source TEXT NOT NULL DEFAULT 'api' CHECK (source IN ('api','manual','import')), created_at TIMESTAMPTZ NOT NULL DEFAULT ${_SQL_NOW}, updated_at TIMESTAMPTZ NOT NULL DEFAULT ${_SQL_NOW}, UNIQUE (broker_portfolio_id, ticker, exchange))`, name: 'broker_positions' },
     { sql: `CREATE INDEX IF NOT EXISTS idx_broker_positions_portfolio_ticker_exchange ON broker_positions(broker_portfolio_id, ticker, exchange)`, name: 'idx_broker_positions_portfolio_ticker_exchange' },
+    { sql: `CREATE TABLE IF NOT EXISTS securities (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), ticker TEXT NOT NULL, exchange TEXT NOT NULL, short_name TEXT, isin TEXT, sec_type TEXT, source TEXT NOT NULL DEFAULT 'finam', resolved_at TIMESTAMPTZ NOT NULL DEFAULT ${_SQL_NOW}, UNIQUE (ticker, exchange))`, name: 'securities' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_securities_ticker_exchange ON securities(ticker, exchange)`, name: 'idx_securities_ticker_exchange' },
   ];
   for (const m of migrations) {
     try {

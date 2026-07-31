@@ -13,6 +13,7 @@
 
 import axios from 'axios';
 import { BrokerAdapter, TestKeyResult, BrokerPosition } from './index';
+import { query } from '../../config/db';
 
 const BASE_URL = 'https://api.finam.ru';
 const REQUEST_TIMEOUT_MS = 15000;
@@ -97,6 +98,151 @@ function parseNumber(value: any): number | null {
   return isFinite(parsed) ? parsed : null;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Security name enrichment via Finam /v1/assets + securities cache
+// ═══════════════════════════════════════════════════════════════════════════
+
+const USE_SQLITE = process.env.USE_SQLITE === 'true';
+const ASSET_TIMEOUT_MS = 10000;
+const POSITIVE_CACHE_DAYS = 30;
+const NEGATIVE_CACHE_DAYS = 7;
+
+function nowSql(): string {
+  return USE_SQLITE ? "datetime('now')" : 'NOW()';
+}
+
+function cacheFreshSql(positive: boolean): string {
+  if (USE_SQLITE) {
+    const days = positive ? POSITIVE_CACHE_DAYS : NEGATIVE_CACHE_DAYS;
+    return `datetime(resolved_at) > datetime('now', '-${days} days')`;
+  }
+  const days = positive ? `${POSITIVE_CACHE_DAYS} days` : `${NEGATIVE_CACHE_DAYS} days`;
+  return `resolved_at > NOW() - INTERVAL '${days}'`;
+}
+
+interface SecurityInfo {
+  shortName: string | null;
+  isin: string | null;
+  secType: string | null;
+}
+
+async function findSecurity(ticker: string, exchange: string): Promise<SecurityInfo | undefined> {
+  const result = await query(
+    `SELECT short_name, isin, sec_type, resolved_at, ${cacheFreshSql(true)} AS fresh_pos, ${cacheFreshSql(false)} AS fresh_neg
+     FROM securities WHERE ticker = $1 AND exchange = $2`,
+    [ticker, exchange]
+  );
+  if (result.rows.length === 0) return undefined;
+  const row = result.rows[0];
+  if (row.short_name !== null && row.short_name !== undefined && row.fresh_pos) {
+    return { shortName: row.short_name, isin: row.isin || null, secType: row.sec_type || null };
+  }
+  if ((row.short_name === null || row.short_name === undefined) && row.fresh_neg) {
+    return { shortName: null, isin: null, secType: null };
+  }
+  return undefined;
+}
+
+async function saveSecurity(
+  ticker: string,
+  exchange: string,
+  shortName: string | null,
+  isin: string | null,
+  secType: string | null
+): Promise<void> {
+  if (USE_SQLITE) {
+    await query(
+      `INSERT INTO securities (id, ticker, exchange, short_name, isin, sec_type, resolved_at)
+       VALUES (lower(hex(randomblob(16))), $1, $2, $3, $4, $5, ${nowSql()})
+       ON CONFLICT (ticker, exchange) DO UPDATE SET
+         short_name = EXCLUDED.short_name,
+         isin = EXCLUDED.isin,
+         sec_type = EXCLUDED.sec_type,
+         resolved_at = EXCLUDED.resolved_at`,
+      [ticker, exchange, shortName, isin, secType]
+    );
+  } else {
+    await query(
+      `INSERT INTO securities (ticker, exchange, short_name, isin, sec_type, resolved_at)
+       VALUES ($1, $2, $3, $4, $5, ${nowSql()})
+       ON CONFLICT (ticker, exchange) DO UPDATE SET
+         short_name = EXCLUDED.short_name,
+         isin = EXCLUDED.isin,
+         sec_type = EXCLUDED.sec_type,
+         resolved_at = EXCLUDED.resolved_at`,
+      [ticker, exchange, shortName, isin, secType]
+    );
+  }
+}
+
+async function fetchAssetName(symbol: string, jwt: string, accountId: string): Promise<SecurityInfo | null> {
+  try {
+    const res = await axios.get(
+      `${BASE_URL}/v1/assets/${encodeURIComponent(symbol)}?account_id=${encodeURIComponent(accountId)}`,
+      { headers: { ...HEADERS, Authorization: `Bearer ${jwt}` }, timeout: ASSET_TIMEOUT_MS }
+    );
+    const data = res.data;
+    if (!data || typeof data !== 'object') return null;
+    const name = typeof data.name === 'string' ? data.name.trim() : null;
+    if (!name) return null;
+    const isin = typeof data.isin === 'string' ? data.isin : null;
+    const secType = typeof data.type === 'string' ? data.type : null;
+    return { shortName: name, isin, secType };
+  } catch (err: any) {
+    const status = err?.response?.status;
+    const data = err?.response?.data;
+    console.log(`[Finam] asset fetch failed ${symbol}: status=${status || 'none'} ${data?.message || data?.error || err.message}`);
+    return null;
+  }
+}
+
+async function enrichPosition(
+  pos: BrokerPosition,
+  jwt: string,
+  accountId: string
+): Promise<BrokerPosition> {
+  // Only enrich Finam-style symbols stored in externalId (original symbol like SBER@MISX)
+  const symbol = pos.externalId || `${pos.ticker}@${pos.exchange}`;
+
+  const cached = await findSecurity(pos.ticker, pos.exchange);
+  if (cached) {
+    if (cached.shortName) {
+      console.log(`[Finam] asset cache hit ${symbol} → "${cached.shortName}"`);
+      return { ...pos, companyName: cached.shortName };
+    }
+    return pos; // negative cache
+  }
+
+  const fetched = await fetchAssetName(symbol, jwt, accountId);
+  if (fetched && fetched.shortName) {
+    await saveSecurity(pos.ticker, pos.exchange, fetched.shortName, fetched.isin, fetched.secType);
+    console.log(`[Finam] asset ${symbol} → "${fetched.shortName}"`);
+    return { ...pos, companyName: fetched.shortName };
+  }
+
+  await saveSecurity(pos.ticker, pos.exchange, null, null, null);
+  console.log(`[Finam] asset miss ${symbol}`);
+  return pos;
+}
+
+async function enrichPositions(
+  positions: BrokerPosition[],
+  jwt: string,
+  accountId: string
+): Promise<BrokerPosition[]> {
+  const enriched: BrokerPosition[] = [];
+  for (const pos of positions) {
+    try {
+      const e = await enrichPosition(pos, jwt, accountId);
+      enriched.push(e);
+    } catch (err: any) {
+      console.error(`[Finam] enrichPosition failed ${pos.ticker}:`, err.message);
+      enriched.push(pos);
+    }
+  }
+  return enriched;
+}
+
 async function getJwt(secret: string): Promise<string> {
   const res = await axios.post(
     `${BASE_URL}/v1/sessions`,
@@ -160,7 +306,7 @@ async function getAccountPositions(jwt: string, accountId: string): Promise<Brok
       externalId: symbol,
     });
   }
-  return result;
+  return enrichPositions(result, jwt, accountId);
 }
 
 async function fetchAccountPositionsWithRetry(

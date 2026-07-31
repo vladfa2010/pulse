@@ -435,6 +435,23 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
 CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user_id ON push_subscriptions(user_id);
 
 -- ============================================================
+-- 7g1. securities cache (broker instrument names, ISIN, type)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS securities (
+  id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  ticker      TEXT NOT NULL,
+  exchange    TEXT NOT NULL,
+  short_name  TEXT,
+  isin        TEXT,
+  sec_type    TEXT,
+  source      TEXT NOT NULL DEFAULT 'finam',
+  resolved_at TIMESTAMP DEFAULT NOW(),
+  UNIQUE (ticker, exchange)
+);
+
+CREATE INDEX IF NOT EXISTS idx_securities_ticker_exchange ON securities(ticker, exchange);
+
+-- ============================================================
 -- 7g. webhook_events audit log
 -- ============================================================
 CREATE TABLE IF NOT EXISTS webhook_events (
