@@ -7,7 +7,8 @@ import nodeCrypto from 'crypto';
 import * as crypto from './crypto';
 import { getBrokerAdapter, Broker } from './brokerApi';
 import { getCurrentPricesBatch } from './market/marketRouter';
-import { createUserTag, getUserTags } from './tagManager';
+import { createUserTag, getUserTags, backgroundEnrichTag } from './tagManager';
+import { slugifyTagId } from '../utils/slugifyTag';
 import { getPlanById } from './subscription';
 import { BrokerKeyRow } from './brokerKeyService';
 
@@ -341,7 +342,56 @@ export async function applyPositionDiff(
     }
   }
 
+  // Backfill tag names / keywords when broker positions now carry real company names
+  for (const pos of positions) {
+    if (pos.companyName && pos.companyName.trim().length > 0) {
+      await backfillTagFromPositionCompanyName(
+        pos.ticker.toUpperCase(),
+        pos.exchange.toUpperCase(),
+        pos.companyName.trim()
+      );
+    }
+  }
+
   return { added, closed, updated };
+}
+
+async function backfillTagFromPositionCompanyName(
+  ticker: string,
+  exchange: string,
+  companyName: string
+): Promise<void> {
+  try {
+    const result = await query(
+      `SELECT tag_id, tag_name, keywords, enriched_data
+       FROM user_defined_tags
+       WHERE enriched_data->>'ticker' = $1 AND enriched_data->>'exchange' = $2`,
+      [ticker, exchange]
+    );
+    for (const row of result.rows) {
+      const existingName = row.tag_name;
+      const existingKeywords = row.keywords || [];
+      const existingEd = parseJson(row.enriched_data) || {};
+      const isFallback = existingName.toUpperCase() === ticker;
+      const newName = isFallback ? companyName : existingName;
+      const mergedKeywords = mergeKeywords(existingKeywords, [ticker.toLowerCase(), companyName.toLowerCase()]);
+      const mergedEd = { ...existingEd, companyName, ticker, exchange };
+      await query(
+        `UPDATE user_defined_tags
+         SET tag_name = $1,
+             keywords = $2,
+             enriched_data = $3,
+             updated_at = ${nowSql()}
+         WHERE tag_id = $4`,
+        [newName, mergedKeywords, JSON.stringify(mergedEd), row.tag_id]
+      );
+      if (isFallback) {
+        console.log(`[CloudTag] Backfilled tag ${row.tag_id}: "${newName}" from position company_name (${ticker}@${exchange})`);
+      }
+    }
+  } catch (err: any) {
+    console.error(`[CloudTag] Failed to backfill tag for ${ticker}@${exchange}:`, err.message);
+  }
 }
 
 async function logUserEvent(userId: string, type: string, data: Record<string, any>): Promise<void> {
@@ -637,7 +687,7 @@ export async function getRecommendedTags(userId: string): Promise<{ tags: Recomm
       ticker: pos.ticker,
       exchange: pos.exchange,
       companyName: pos.company_name,
-      suggestedTag: `#${pos.ticker}`,
+      suggestedTag: pos.ticker,
       status,
       existingTagId,
       weightPct: pos.weightPct || 0,
@@ -647,47 +697,181 @@ export async function getRecommendedTags(userId: string): Promise<{ tags: Recomm
   return { tags, tagLimit: { used: usedCount, limit } };
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Tag cloud subscription helpers
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function findPositionCompanyName(
+  userId: string,
+  ticker: string,
+  exchange: string
+): Promise<string | null> {
+  const upperTicker = ticker.toUpperCase();
+  const upperExchange = exchange.toUpperCase();
+
+  // 1. Prefer live broker position name
+  const positionResult = await query(
+    `SELECT bp.company_name, bp.ticker
+     FROM broker_positions bp
+     JOIN broker_portfolios b ON b.id = bp.broker_portfolio_id
+     WHERE b.user_id = $1 AND bp.ticker = $2 AND bp.exchange = $3
+     ORDER BY bp.updated_at DESC
+     LIMIT 1`,
+    [userId, upperTicker, upperExchange]
+  );
+  if (positionResult.rows.length > 0) {
+    const companyName = positionResult.rows[0].company_name;
+    if (companyName && typeof companyName === 'string' && companyName.trim().length > 0) {
+      const normalized = companyName.trim();
+      if (normalized.toUpperCase() !== upperTicker) {
+        return normalized;
+      }
+    }
+  }
+
+  // 2. Fallback to securities cache (e.g. Finam /v1/assets short_name)
+  const secResult = await query(
+    `SELECT short_name FROM securities WHERE ticker = $1 AND exchange = $2 LIMIT 1`,
+    [upperTicker, upperExchange]
+  );
+  if (secResult.rows.length > 0) {
+    const shortName = secResult.rows[0].short_name;
+    if (shortName && typeof shortName === 'string' && shortName.trim().length > 0) {
+      const normalized = shortName.trim();
+      if (normalized.toUpperCase() !== upperTicker) {
+        return normalized;
+      }
+    }
+  }
+
+  return null;
+}
+
+function mergeKeywords(existing: string[] | null, incoming: string[]): string[] {
+  const base = Array.isArray(existing) ? existing : [];
+  return [...new Set([...base, ...incoming])].filter(k => k.length > 0);
+}
+
 export async function subscribeFromRecommendedTag(
   userId: string,
   ticker: string,
   exchange: string
 ): Promise<{ success: boolean; tagId?: string; status?: RecommendedTag['status']; error?: string }> {
-  const tagId = nodeCrypto.randomUUID();
-  const tagName = ticker.toUpperCase();
-  const enrichedData = { ticker: tagName, exchange: exchange.toUpperCase() };
+  const upperTicker = ticker.toUpperCase();
+  const upperExchange = exchange.toUpperCase();
 
-  // Ensure the tag exists in user_defined_tags with enriched data so market router works
-  const existing = await query(
-    `SELECT tag_id FROM user_defined_tags
+  const companyName = await findPositionCompanyName(userId, upperTicker, upperExchange);
+  const tagName = companyName || upperTicker;
+  const tagId = slugifyTagId(tagName);
+  const tickerKeywords = [upperTicker.toLowerCase()];
+  const companyKeywords = companyName ? [companyName.toLowerCase()] : [];
+  const baseKeywords = [...tickerKeywords, ...companyKeywords];
+  const enrichedData = { ticker: upperTicker, exchange: upperExchange, companyName: companyName || null };
+
+  // 1. Exact match by ticker+exchange in enriched_data (existing cloud or manually created tag)
+  let existingResult = await query(
+    `SELECT tag_id, tag_name, keywords, enriched_data
+     FROM user_defined_tags
      WHERE enriched_data->>'ticker' = $1 AND enriched_data->>'exchange' = $2
      LIMIT 1`,
-    [tagName, exchange.toUpperCase()]
+    [upperTicker, upperExchange]
   );
 
+  // 2. Fallback match by slug tag_id (new tag created by another user from the cloud)
+  if (existingResult.rows.length === 0) {
+    existingResult = await query(
+      `SELECT tag_id, tag_name, keywords, enriched_data
+       FROM user_defined_tags
+       WHERE tag_id = $1
+       LIMIT 1`,
+      [tagId]
+    );
+  }
+
   let finalTagId: string;
-  if (existing.rows.length > 0) {
-    finalTagId = existing.rows[0].tag_id;
+  let enrichmentStarted = false;
+
+  if (existingResult.rows.length > 0) {
+    const existing = existingResult.rows[0];
+    finalTagId = existing.tag_id;
+    const existingName = existing.tag_name;
+    const existingKeywords = existing.keywords || [];
+    const existingEd = parseJson(existing.enriched_data) || {};
+
+    // If the tag was created as a fallback (tag_name == ticker), upgrade it to the company name
+    const shouldUpgradeName = companyName && existingName.toUpperCase() === upperTicker;
+    const newTagName = shouldUpgradeName ? companyName : existingName;
+    const newKeywords = shouldUpgradeName
+      ? mergeKeywords(existingKeywords, baseKeywords)
+      : mergeKeywords(existingKeywords, tickerKeywords);
+    const newEnrichedData = { ...existingEd, ...enrichedData };
+
     await query(
       `UPDATE user_defined_tags
-       SET enriched_data = $1, updated_at = ${nowSql()}
-       WHERE tag_id = $2`,
-      [enrichedData, finalTagId]
+       SET tag_name = $1,
+           keywords = $2,
+           enriched_data = $3,
+           updated_at = ${nowSql()}
+       WHERE tag_id = $4`,
+      [newTagName, newKeywords, JSON.stringify(newEnrichedData), finalTagId]
     );
+    console.log(`[CloudTag] Upgraded existing tag ${finalTagId} -> "${newTagName}" (companyName=${companyName})`);
   } else {
+    // 3. Create brand-new tag from the cloud
     finalTagId = tagId;
     await query(
       `INSERT INTO user_defined_tags (tag_id, tag_name, tag_type, keywords, enriched_data, created_by, created_at, updated_at)
        VALUES ($1, $2, 'ticker', $3, $4, $5, ${nowSql()}, ${nowSql()})`,
-      [finalTagId, tagName, [tagName.toLowerCase()], enrichedData, userId]
+      [finalTagId, tagName, baseKeywords, JSON.stringify(enrichedData), userId]
     );
+    enrichmentStarted = true;
+    console.log(`[CloudTag] Created tag ${finalTagId}: "${tagName}" ticker=${upperTicker} exchange=${upperExchange}`);
   }
 
+  // 4. Subscribe the user (handles existing manual tag collisions by name/translit/ticker)
   const result = await createUserTag(userId, finalTagId, tagName, 'ticker');
   if (!result.success) {
     return { success: false, error: result.error || 'Failed to subscribe', status: result.limitReached ? 'limit-reached' : undefined };
   }
 
-  return { success: true, tagId: result.finalTagId || finalTagId, status: 'created-new' };
+  const resolvedTagId = result.finalTagId || finalTagId;
+  const resolvedTagName = result.resolvedTagName || tagName;
+
+  // 5. If createUserTag resolved to a different tag (e.g. existing manual "Сбербанк"),
+  //    ensure that tag also carries the ticker/exchange enriched data for the market router.
+  if (resolvedTagId !== finalTagId) {
+    const resolvedTag = await query(
+      `SELECT tag_id, tag_name, keywords, enriched_data
+       FROM user_defined_tags
+       WHERE tag_id = $1
+       LIMIT 1`,
+      [resolvedTagId]
+    );
+    if (resolvedTag.rows.length > 0) {
+      const row = resolvedTag.rows[0];
+      const existingEd = parseJson(row.enriched_data) || {};
+      const mergedKeywords = mergeKeywords(row.keywords || [], baseKeywords);
+      const mergedEnrichedData = { ...existingEd, ...enrichedData };
+      await query(
+        `UPDATE user_defined_tags
+         SET keywords = $1,
+             enriched_data = $2,
+             updated_at = ${nowSql()}
+         WHERE tag_id = $3`,
+        [mergedKeywords, JSON.stringify(mergedEnrichedData), resolvedTagId]
+      );
+      console.log(`[CloudTag] Attached ticker data to resolved tag ${resolvedTagId} (${resolvedTagName})`);
+    }
+  }
+
+  // 6. Fire-and-forget background enrichment for the tag the user finally subscribed to
+  if (enrichmentStarted || resolvedTagId !== finalTagId) {
+    backgroundEnrichTag(resolvedTagId, resolvedTagName).catch(err => {
+      console.error(`[CloudTag] Background enrichment failed for "${resolvedTagName}" (${resolvedTagId}):`, err.message);
+    });
+  }
+
+  return { success: true, tagId: resolvedTagId, status: 'created-new' };
 }
 
 function parseJson(value: any): any {

@@ -927,7 +927,7 @@ export async function createUserTag(userId: string, tagId: string, tagName: stri
 
 // Асинхронное (фоновое) обогащение только что созданного тега.
 // Запускается fire-and-forget из createUserTag — НЕ блокирует HTTP-ответ.
-async function backgroundEnrichTag(tagId: string, tagName: string): Promise<void> {
+export async function backgroundEnrichTag(tagId: string, tagName: string): Promise<void> {
   console.log(`[TagEnrich] Background enrichment started for "${tagName}" (${tagId})`);
 
   try {
