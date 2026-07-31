@@ -86,6 +86,21 @@
 | `external_id` | TEXT | Внешний ID бумаги в брокере |
 | `source` | TEXT | `api` / `manual` / `import` |
 
+### `securities`
+
+Кэш названий бумаг из API брокера (Finam).
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `id` | UUID | PK |
+| `ticker` | TEXT | Тикер / ISIN |
+| `exchange` | TEXT | Биржа |
+| `short_name` | TEXT | Название (NULL при негативном кэше) |
+| `isin` | TEXT | ISIN |
+| `sec_type` | TEXT | `EQUITIES`, `BONDS` и т.д. |
+| `source` | TEXT | Источник (default `finam`) |
+| `resolved_at` | TIMESTAMPTZ | Время кэширования |
+
 ---
 
 ## API Endpoints
@@ -139,6 +154,7 @@ interface BrokerAdapter {
 - Числа приходят в объектах: `quantity.value`, `average_price.value`.
 - `average_price.value === "0.0"` интерпретируется как `NULL` (позиция зачислена без покупки).
 - Символ: `SBER@MISX` (MOEX/RUB), `MDLN@XNGS` (NASDAQ/USD), `SECZ@XNYS` (NYSE/USD), `RU000A1053P7@MISX` (облигации).
+- Названия бумаг (`companyName`) обогащаются через `GET /v1/assets/{symbol}?account_id={id}` и кэшируются в таблице `securities` (30 дней — позитив, 7 дней — негатив). Первичный источник имён — API брокера, не MOEX ISS.
 - Невалидный/протухший токен возвращает **HTTP 500** `{ code: 2, message: "" }` → адаптер переводит в `broker_key_invalid`.
 - Пропускает синхронизацию в техническое окно 05:00–06:15 МСК.
 
@@ -190,7 +206,7 @@ Cron-воркер `services/portfolioSync/worker.ts` запускается ка
 ```json
 {
   "tags": [
-    { "ticker": "SBER", "companyName": "Сбербанк", "suggestedTag": "SBER", "status": "available", "existingTagId": "...", "weightPct": 25.5 }
+    { "ticker": "SBER", "exchange": "MOEX", "companyName": "Сбербанк", "suggestedTag": "SBER", "status": "available", "existingTagId": "...", "weightPct": 25.5 }
   ],
   "tagLimit": { "used": 7, "limit": 10 }
 }
