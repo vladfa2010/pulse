@@ -963,40 +963,6 @@ app.post('/migrate-payments', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ONE-TIME Migration: wipe all broker data (keys + portfolios + positions)
-// TODO: remove this endpoint after successful run
-// ═══════════════════════════════════════════════════════════════════════════
-app.post('/migrate-broker-reset', async (req, res) => {
-  try {
-    const secret = req.headers['x-trigger-secret'];
-    const expected = process.env.CRON_SECRET_KEY;
-    if (!expected) {
-      return res.status(500).json({ success: false, error: 'CRON_SECRET_KEY not configured' });
-    }
-    if (secret !== expected) {
-      return res.status(403).json({ success: false, error: 'Forbidden' });
-    }
-
-    // Order matters because of FK: positions → portfolios → keys
-    const pos = await query(`DELETE FROM broker_positions`);
-    const ports = await query(`DELETE FROM broker_portfolios`);
-    const keys = await query(`DELETE FROM broker_keys`);
-
-    const deleted = {
-      positions: pos.rowCount ?? 0,
-      portfolios: ports.rowCount ?? 0,
-      keys: keys.rowCount ?? 0,
-    };
-
-    console.log(`[Migrate] broker-reset: deleted ${JSON.stringify(deleted)}`);
-    res.json({ success: true, deleted });
-  } catch (err: any) {
-    console.error('[Migrate] broker-reset failed:', err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
 // ADMIN MIDDLEWARE & ENDPOINTS
 // ═══════════════════════════════════════════════════════════════════════════
 
