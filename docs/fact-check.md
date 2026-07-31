@@ -319,11 +319,12 @@ error_message TEXT
 - **Email** — HTML-письмо на основе шаблона `templates/fact-check-result.html`.
 - **Telegram** — краткий отчёт в формате `MarkdownV2` со ссылками на источники и кнопкой "Открыть в приложении".
 
-Отправка не блокирует pipeline и не влияет на статус job'а. Пользователь управляет каналами через два переключателя:
+Отправка не блокирует pipeline и не влияет на статус job'а. Пользователь управляет каналами через матрицу уведомлений:
 
-- `notification_settings.fact_check_email_enabled` — email-отчёт.
-- `notification_settings.fact_check_tg_enabled` — Telegram-отчёт.
+- Продукт: `fact_check`.
+- Каналы: `telegram`, `email`.
+- API: `GET /api/user/notification-matrix`, `PUT /api/user/notification-matrix`.
 
-API для управления: `GET /api/user/notifications` и `PATCH /api/user/notifications`.
+Если у пользователя не подключён соответствующий канал (Telegram-бот или email) или отключена ячейка `fact_check`/`канал`, отправка пропускается.
 
-Telegram-отправка использует `sendTelegramMessage(..., 'MarkdownV2')`. Если у пользователя не подключён Telegram-канал или отключён соответствующий флаг, отправка пропускается.
+Telegram-отправка использует `sendTelegramMessage(..., 'MarkdownV2')`.

@@ -92,7 +92,7 @@ docker-compose up
 
 ### Fact-check
 
-On-demand факт-чекинг новостей через LLM + веб-поиск (5 поисковиков). Результат проверки отправляется в Telegram (MarkdownV2) и/или на email, если пользователь включил соответствующие флаги в `/api/user/notifications`.
+On-demand факт-чекинг новостей через LLM + веб-поиск (5 поисковиков). Результат проверки отправляется в Telegram (MarkdownV2) и/или на email в зависимости от каналов, включённых в матрице уведомлений (`fact_check` → `telegram` / `email`).
 
 | Method | Endpoint | Описание |
 |--------|----------|----------|
@@ -108,7 +108,7 @@ On-demand факт-чекинг новостей через LLM + веб-пои�
 
 ### Push-уведомления
 
-Push реализованы через Firebase Cloud Messaging.  
+Push-канал реализован через Firebase Cloud Messaging (FCM) и VAPID Web Push. Включение и управление каналами происходит через матрицу уведомлений (`/api/user/notification-matrix`).  
 Подробная документация: [`PUSH_NOTIFICATIONS.md`](./PUSH_NOTIFICATIONS.md)
 
 | Method | Endpoint | Описание |
