@@ -792,6 +792,14 @@ router.patch('/plans/:planId', adminMiddleware, validate(UpdatePlanSchema), asyn
       }
     }
 
+    // Insurance: activating a plan must clear the "coming soon" block label
+    // if the admin form did not explicitly send one.
+    if (body.is_active === true && body.coming_soon_label === undefined) {
+      fields.push(`coming_soon_label = $${paramIdx}`);
+      values.push(null);
+      paramIdx++;
+    }
+
     if (fields.length === 0) {
       return res.status(400).json({ error: 'No valid fields to update' });
     }

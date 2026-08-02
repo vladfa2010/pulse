@@ -5231,6 +5231,7 @@ async function start() {
     { sql: `UPDATE subscription_plans SET plan_level = CASE WHEN id = 'free' THEN 0 WHEN id = 'base' THEN 1 WHEN id = 'premium' THEN 2 WHEN id = 'club' THEN 3 WHEN id = 'pro' THEN 4 END WHERE plan_level = 0`, name: 'plans_init_levels' },
     { sql: `UPDATE subscription_plans SET is_popular = TRUE WHERE id = 'premium'`, name: 'plans_premium_popular' },
     { sql: `UPDATE subscription_plans SET is_active = TRUE WHERE id IN ('club', 'pro')`, name: 'plans_activate_club_pro' },
+    { sql: `UPDATE subscription_plans SET coming_soon_label = NULL WHERE id IN ('club', 'pro')`, name: 'plans_clear_coming_soon_club_pro' },
     { sql: `ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT ${_SQL_NOW}`, name: 'plans_updated_at' },
     { sql: `ALTER TABLE payments ADD COLUMN IF NOT EXISTS promo_code VARCHAR(50) DEFAULT NULL`, name: 'payments_promo_code' },
     { sql: `ALTER TABLE payments ADD COLUMN IF NOT EXISTS promo_discount_type VARCHAR(20) DEFAULT NULL`, name: 'payments_promo_discount_type' },
