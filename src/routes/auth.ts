@@ -222,26 +222,7 @@ router.post('/login', validate(LoginSchema), async (req, res) => {
       });
     }
 
-    // ─── Обновляем login-статистику и логируем вход ───────────────────────
-    const now = new Date().toISOString();
-    const clientIp = getClientIp(req);
-    const userAgent = req.headers['user-agent'] as string || null;
-    const platform = req.body.source || detectPlatform(userAgent || undefined);
-    const { device_type, os, browser } = parseUserAgent(userAgent || undefined);
-
-    await query(
-      `UPDATE users SET last_login_at = $1, login_count = COALESCE(login_count, 0) + 1 WHERE id = $2`,
-      [now, user.id]
-    );
-    await query(
-      `INSERT INTO user_logins (user_id, login_at, ip_address, user_agent, platform, device_type, os, browser)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [user.id, now, clientIp, userAgent, platform, device_type, os, browser]
-    );
-
-    logLogin(user.id, user.email).catch(() => {});
-
-    // ─── Генерируем JWT токен ───────────────────────────────────────────
+    // ─── Генерируем JWT токен и отвечаем сразу ───────────────────────────
     const isAdmin = user.is_admin === 1 || user.is_admin === true;
     const token = jwt.sign({ userId: user.id, email: user.email, is_admin: isAdmin }, JWT_SECRET, {
       expiresIn: '7d',
@@ -265,6 +246,29 @@ router.post('/login', validate(LoginSchema), async (req, res) => {
         subscription: subStatus,
       },
     });
+
+    // ─── Статистика логина — ПОСЛЕ ответа, в фоне ────────────────────────
+    const now = new Date().toISOString();
+    const clientIp = getClientIp(req);
+    const userAgent = req.headers['user-agent'] as string || null;
+    const platform = req.body.source || detectPlatform(userAgent || undefined);
+    const { device_type, os, browser } = parseUserAgent(userAgent || undefined);
+
+    Promise.all([
+      query(
+        `UPDATE users SET last_login_at = $1, login_count = COALESCE(login_count, 0) + 1 WHERE id = $2`,
+        [now, user.id]
+      ),
+      query(
+        `INSERT INTO user_logins (user_id, login_at, ip_address, user_agent, platform, device_type, os, browser)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [user.id, now, clientIp, userAgent, platform, device_type, os, browser]
+      ),
+    ]).catch((err: any) => {
+      console.error('[Auth] Login stats write failed:', err.message);
+    });
+
+    logLogin(user.id, user.email).catch(() => {});
   } catch (err: any) {
     console.error('[Auth] Login error:', err.message);
     res.status(500).json({ error: 'Login failed', details: err.message });
