@@ -2959,20 +2959,38 @@ Backend API: отвечает 403 "Tag limit reached (10)"
 | `schema.sql` | LIMIT в коде, не в БД |
 | `portfolios` таблица | Нет ограничения на количество строк |
 
-### 16.3. Чеклист будущих изменений тарифов
+### 16.3. Жизненный цикл подписки
 
-При смене лимитов (любое направление):
+Источник правды: `pulse-backend/docs/subscriptions.md`.
+
+Кратко:
+
+- **Grace-период:** 3 дня после `subscription_expires_at`. Внутри него API возвращает `active: true`, платные фичи и уведомления работают.
+- **Effective-план:** `buildSubscriptionStatus()` вычисляет `plan` по `computeAccessState(expiresAt)`. После грейса лимиты и фичи берутся от `free`, даже если в БД `subscription_plan` ещё не обновился кроном.
+- **Auto-fallback:** крон `processScheduledDowngrades()` каждые 5 мин переводит пользователей с истёкшим премиумом (без scheduled downgrade) на `free`, сбрасывает `auto_renew`, замораживает лишние теги.
+- **Downgrade:** `POST /api/user/downgrade` возвращает `mode: 'scheduled' | 'immediate'`. Immediate применяется сразу для истёкших/грейс-аккаунтов; scheduled применяется по `expires_at` без грейса.
+- **Frontend-хелперы:** `pulse-frontend/src/lib/subscription.ts` (`getEffectivePlanId`, `isPaidFeatureAccessible`, `isInGrace`, `isExpiredPaidPlan`, `getEffectiveTagLimit`).
+- **Глобальный grace-баннер:** `GracePeriodBanner` в `Layout.tsx`.
+- **Баннер лишних тегов:** `FreezeTagsBanner` слушает `subscription:refresh` и `visibilitychange`.
+
+### 16.4. Чеклист будущих изменений тарифов
+
+При смене лимитов или логики жизненного цикла:
 
 - [ ] `digest.ts` — `buildDigest` maxTags
 - [ ] `digest.ts` — `sendDigestToUserNow` maxTags
 - [ ] `user.ts` — API endpoint maxTags 🔴 **критично**
-- [ ] `Home.tsx` — `tagLimit` disabled state
+- [ ] `subscription.ts` — `computeAccessState`, `buildSubscriptionStatus`, `hasFeature`, `applyDowngradeNow` 🔴 **критично**
+- [ ] `Home.tsx` — `getEffectiveTagLimit`
 - [ ] `Pricing.tsx` — текст на странице
-- [ ] `Profile.tsx` — текст в карточке
+- [ ] `Profile.tsx` — текст в карточке и бейджи
 - [ ] `PremiumPromptModal.tsx` — текст в модалке
 - [ ] `Instructions.tsx` — текст в инструкции
 - [ ] `ARCHITECTURE.md` — раздел 16.1 (таблица лимитов)
-- [ ] `ARCHITECTURE.md` — раздел 16.2 (сценарий)
+- [ ] `ARCHITECTURE.md` — раздел 16.3 (жизненный цикл)
+- [ ] `docs/subscriptions.md` — подписки и downgrade
+- [ ] `docs/profile.md` — бейджи и downgrade UI
+- [ ] `docs/home.md` — баннер заморозки
 - [ ] `TELEGRAM_NOTIFICATIONS.md` — если затрагивает дайджест
 
 ---

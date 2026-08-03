@@ -6,12 +6,12 @@
 
 | Поле | Тип | Описание |
 |------|-----|----------|
-| `subscription_active` | BOOLEAN | Активна ли подписка (true и в grace-периоде) |
-| `subscription_plan` | VARCHAR(20) FK → subscription_plans | Текущий тариф |
-| `subscription_expires_at` | TIMESTAMP | Дата окончания |
-| `subscription_auto_renew` | BOOLEAN | Включено ли автопродление |
+| `subscription_active` | BOOLEAN | Сырое значение из БД. Для API/гейтинга используется `computeAccessState(subscription_expires_at)` |
+| `subscription_plan` | VARCHAR(20) FK → subscription_plans | Текущий тариф в БД. После грейса API может сообщать `plan: 'free'`, пока крон не обновит БД |
+| `subscription_expires_at` | TIMESTAMP | Дата окончания оплаченного периода. Источник для единой формулы доступа |
+| `subscription_auto_renew` | BOOLEAN | Включено ли автопродление. Сбрасывается в FALSE при любом downgrade |
 | `auto_renew_failures` | INTEGER | Счётчик неудач автопродления |
-| `scheduled_plan_downgrade` | VARCHAR(20) | Запланированное понижение после истечения |
+| `scheduled_plan_downgrade` | VARCHAR(20) | Запланированное понижение после истечения оплаченного периода (scheduled downgrade) |
 | `expiry_notified` | JSONB / TEXT | Дедупликация email-напоминаний: `{"4d":true,"1d":true,"expired":true}` |
 
 Дедупликация напоминаний в Telegram/Push/Web уже ведётся через `subscription_notifications_sent`, поэтому email-уведомления используют отдельное поле `expiry_notified`.
@@ -35,11 +35,47 @@ subscription_plan IN (SELECT id FROM subscription_plans WHERE plan_level >= 1)
 T-4 дня  → email: "Подписка истекает через 4 дня" (auto ON / OFF)
 T-1 день → email: "Завтра истекает / завтра списание" (auto ON / OFF)
 T-0      → email: "Подписка истекла"
-            auto ON  → "Проверьте карту" (3 дня на обновление)
-            auto OFF → "Что вы потеряли + статистика"
-grace    → Telegram/Push: "Grace-период, день N/3"
-downgrade→ `scheduled_plan_downgrade` → `processScheduledDowngrades()` → заморозка лишних тегов
+           auto ON  → "Проверьте карту" (3 дня на обновление)
+           auto OFF → "Что вы потеряли + статистика"
+grace    → 3 дня после expires_at. Внутри грейса API считает подписку активной,
+           платные фичи работают, уведомления доставляются.
+after grace → lazy `plan='free'` в API; крон каждые 5 мин переводит БД на free,
+              сбрасывает auto_renew, замораживает лишние теги.
+downgrade→ `POST /user/downgrade` { targetPlan } → { mode: 'immediate'|'scheduled' }
+           immediate: применяется сразу, если подписка неактивна или в грейсе.
+           scheduled: записывается в `scheduled_plan_downgrade`, применяется кроном
+           по истечении (без грейса, т.к. пользователь сам инициировал).
 ```
+
+### Единая формула доступа
+
+`computeAccessState(expiresAt)` — единственная функция, решающая, активна ли подписка:
+
+```typescript
+if (now < expiresAt)        return { active: true, inGrace: false, daysLeft }
+if (now < expiresAt + 3d)   return { active: true, inGrace: true,  daysLeft }
+return { active: false, inGrace: false, daysLeft: 0 }
+```
+
+Все server-gated проверки (`hasFeature`, `requirePremium`, `getEntitlement`, `/user/channel-status`) используют эту функцию, а не поле `subscription_active`.
+
+### Ответ API
+
+`buildSubscriptionStatus()` (используется в `/auth/me`, `/auth/login`, `/user/profile`, `/user/tariff-status`):
+
+```json
+{
+  "plan": "premium",
+  "active": true,
+  "inGracePeriod": false,
+  "daysLeft": 12,
+  "scheduledDowngrade": null,
+  "expiresAt": "...",
+  "autoRenew": true
+}
+```
+
+После окончания грейса `plan` становится `'free'`, `active: false`, `scheduledDowngrade: null` (lazy).
 
 ## Cron
 
@@ -133,9 +169,11 @@ PRIMARY KEY: `(user_id, product, channel)`.
 - Если тариф архивирован, но активен, trial продлевается через регулярный платёж по `plan.billing_frequency`.
 - Если `is_active = FALSE`, trial-юзер получает `scheduleDowngrade(..., 'free')`.
 
-## Сброс `subscription_active` при истечении
+## Сброс `subscription_active` при истечении и auto-fallback после грейса
 
-`processScheduledDowngrades()` (каждые 5 минут) в начале работы деактивирует истёкшие paid-подписки, у которых нет запланированного даунгрейда:
+`processScheduledDowngrades()` (каждые 5 минут) делает две вещи:
+
+1. **Деактивация истёкших paid-подписок без scheduled downgrade:**
 
 ```sql
 UPDATE users
@@ -146,20 +184,38 @@ WHERE subscription_active = TRUE
   AND scheduled_plan_downgrade IS NULL
 ```
 
-Это закрывает дыру, при которой `subscription_active` оставался `TRUE` навсегда, и позволяет корректно работать:
+Это закрывает дыру, при которой `subscription_active` оставался `TRUE` навсегда.
+
+2. **Auto-fallback на Free после окончания грейса (expires_at + 3 days):**
+
+```sql
+UPDATE users
+SET subscription_plan = 'free',
+    subscription_active = FALSE,
+    subscription_auto_renew = FALSE,
+    scheduled_plan_downgrade = NULL
+WHERE subscription_plan != 'free'
+  AND subscription_expires_at < NOW() - INTERVAL '3 days'
+  AND scheduled_plan_downgrade IS NULL
+```
+
+Для каждого такого пользователя вызывается `applyDowngradeNow(userId, 'free')`, который замораживает теги сверх лимита Free и уведомляет пользователя.
+
+Это позволяет корректно работать:
 - архивированным тарифам (downgrade на Free);
 - отчётам/дайджестам (`sendAllWeeklyReports`, `sendAllDigests`);
-- `hasFeature`.
+- `hasFeature` и `computeAccessState`.
 
 ## Защита от race condition при scheduled downgrade
 
-`processScheduledDowngrades()` обрабатывает каждого пользователя внутри `withUserLock`, а `UPDATE` дополнительно проверяет, что подписка всё ещё истекла:
+`processScheduledDowngrades()` обрабатывает каждого пользователя внутри `withUserLock`, а `applyDowngradeNow` делает atomic UPDATE с проверкой, что подписка всё ещё истекла:
 
 ```sql
 UPDATE users
 SET subscription_plan = $1,
     scheduled_plan_downgrade = NULL,
-    subscription_active = $2
+    subscription_active = $2,
+    subscription_auto_renew = FALSE
 WHERE id = $3
   AND subscription_expires_at < NOW()
 RETURNING id
@@ -167,17 +223,34 @@ RETURNING id
 
 Если между `SELECT` и `UPDATE` webhook/force-check продлил подписку, `UPDATE` не изменит строку (`RETURNING` вернёт 0 строк) и `freezeExcessTags` не вызовется. Это предотвращает случайную перезапись активной продлённой подписки.
 
-## Запланированный downgrade
+`applyDowngradeNow(userId, targetPlanId)` используется единообразно:
+- В кроне `processScheduledDowngrades` для scheduled downgrades и auto-fallback.
+- В API `POST /user/downgrade` при `mode: 'immediate'`.
 
-Пользователь может запросить понижение тарифа через `POST /api/user/downgrade`.
+## Запланированный и немедленный downgrade
+
+Пользователь запрашивает понижение через `POST /api/user/downgrade`.
 
 **Валидация `targetPlan` (TZ_DOWNGRADE_VALIDATE):**
 - `targetPlan` должен быть непустой строкой.
 - Тариф должен существовать (`getPlanById`).
 - Тариф должен быть активным (`is_active = TRUE` и `deleted_at IS NULL`).
-- `plan_level` целевого тарифа должен быть **строго меньше** текущего (downgrade — только на более дешёвый тариф).
+- `plan_level` целевого тарифа должен быть **строго меньше** текущего.
 
-При успешной валидации в `users.scheduled_plan_downgrade` записывается целевой тариф, а текущий тариф продолжает действовать до `subscription_expires_at`. После истечения срока `processScheduledDowngrades` выполняет переход и заморозку лишних тегов.
+**Ответ:**
+
+```json
+// scheduled — активная подписка, downgrade применится по истечении
+{ "success": true, "mode": "scheduled", "scheduledPlan": "free" }
+
+// immediate — подписка истекла или в грейсе, downgrade применён сразу
+{ "success": true, "mode": "immediate", "subscription": { ... } }
+```
+
+- При `mode: 'immediate'` вызывается `applyDowngradeNow(userId, targetPlan)` — atomic UPDATE с проверкой `subscription_expires_at < NOW()`, сброс `auto_renew=FALSE`, `freezeExcessTags()`.
+- При `mode: 'scheduled'` записывается `scheduled_plan_downgrade`, `auto_renew` сбрасывается в FALSE.
+- `scheduled` downgrade применяется кроном по `expires_at` **без грейса** — пользователь сам инициировал переход.
+- `auto-fallback` (без scheduled downgrade) применяется кроном после `expires_at + 3 days` **с грейсом** — пользователь не инициировал ничего.
 
 ## Заморозка тегов
 
@@ -244,9 +317,40 @@ active_tags <= tag_limit → баннер скрыт (в т.ч. при 0 тег�
 
 ## API
 
+### `POST /api/user/downgrade`
+
+Запрос понижения тарифа.
+
+**Body:**
+```json
+{ "targetPlan": "free" }
+```
+
+**Ответ:**
+```json
+{ "success": true, "mode": "scheduled", "scheduledPlan": "free" }
+// или
+{ "success": true, "mode": "immediate", "subscription": { "plan": "free", "active": false, ... } }
+```
+
+- `scheduled` — активная подписка, переход запланирован на конец периода.
+- `immediate` — подписка истекла или в грейс-периоде, переход применён сразу.
+
+### `GET /api/user/tariff-status`
+
+Полный статус тарифа. Все поля `subscription.*` и `tagUsage.limit` вычисляются по effective плану (`buildSubscriptionStatus`), то есть после грейса лимит будет от `free`.
+
+### `GET /api/user/tag-status`
+
+Снапшот для `FreezeTagsBanner`. `tag_limit` берётся по effective плану (`buildSubscriptionStatus`).
+
+Возвращает `current_plan`, `plan_name`, `tag_limit`, `total_tags`, `active_tags`, `frozen_tags`, `to_remove`, `tags`.
+
+`to_remove` считается как `max(0, active_tags - tag_limit)`. Замороженные теги не учитываются.
+
 ### `GET /api/user/tags`
 
-Возвращает **активный** портфель (только теги с `is_frozen = FALSE`):
+Возвращает **активный** портфель (только теги с `is_frozen = FALSE`). Замороженные теги не отображаются в портфеле на главной и не участвуют в ленте новостей.
 
 ```json
 {
