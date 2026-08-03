@@ -9,7 +9,7 @@ import {
   getPlanById, getUserSubscription, buildSubscriptionStatus,
   scheduleDowngrade, cancelScheduledDowngrade, requireMinPlan,
   getExcessTagsForDowngrade, parseDbJson, setActiveTags, reconcileFrozenTags,
-  planLevel, planLevelOf,
+  planLevel, planLevelOf, computeAccessState, applyDowngradeNow,
 } from '../services/subscription';
 import type { TagType, TagEnrichment } from '../services/tagManager';
 import axios from 'axios';
@@ -999,7 +999,8 @@ router.get('/tariff-status', authMiddleware, async (req: AuthRequest, res) => {
     const userId = req.user!.userId;
     const sub = await getUserSubscription(userId);
     const status = buildSubscriptionStatus(sub);
-    const plan = await getPlanById(sub.plan);
+    // DEFSUB-1: используем вычисленный effective plan (free после грейса)
+    const plan = await getPlanById(status.plan);
     if (!plan) {
       return res.status(500).json({ error: 'Plan not configured', planId: sub.plan });
     }
@@ -1063,7 +1064,9 @@ router.get('/tag-status', authMiddleware, async (req: AuthRequest, res) => {
   try {
     const userId = req.user!.userId;
     const sub = await getUserSubscription(userId);
-    const plan = await getPlanById(sub.plan);
+    const status = buildSubscriptionStatus(sub);
+    // DEFSUB-1: лимит берём по вычисленному effective plan
+    const plan = await getPlanById(status.plan);
     if (!plan) {
       return res.status(500).json({ error: 'Plan not configured', planId: sub.plan });
     }
@@ -1306,7 +1309,7 @@ router.post('/auto-renew', authMiddleware, async (req: AuthRequest, res) => {
   }
 });
 
-// POST /api/user/downgrade — запланировать понижение тарифа
+// POST /api/user/downgrade — запланировать или немедленно применить понижение тарифа
 router.post('/downgrade', authMiddleware, async (req: AuthRequest, res) => {
   try {
     const userId = req.user!.userId;
@@ -1335,10 +1338,25 @@ router.post('/downgrade', authMiddleware, async (req: AuthRequest, res) => {
       });
     }
 
-    await scheduleDowngrade(userId, trimmedPlan);
-    res.json({ success: true, scheduledPlan: trimmedPlan });
+    const access = computeAccessState(sub.expiresAt);
+
+    // DEFSUB-14: если подписка неактивна или в грейс-периоде — применяем сразу,
+    // иначе планируем на момент окончания оплаченного периода.
+    if (!access.active || access.inGrace) {
+      await applyDowngradeNow(userId, trimmedPlan);
+      const freshSub = await getUserSubscription(userId);
+      res.json({
+        success: true,
+        mode: 'immediate',
+        subscription: buildSubscriptionStatus(freshSub),
+      });
+    } else {
+      await scheduleDowngrade(userId, trimmedPlan);
+      res.json({ success: true, mode: 'scheduled', scheduledPlan: trimmedPlan });
+    }
   } catch (err) {
-    res.status(500).json({ error: 'Failed to schedule downgrade' });
+    console.error('[Downgrade] Error:', err);
+    res.status(500).json({ error: 'Failed to process downgrade' });
   }
 });
 

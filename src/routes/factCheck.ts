@@ -13,7 +13,7 @@ import { Router, type Response } from 'express';
 import { EventEmitter } from 'events';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { query } from '../config/db';
-import { getUserSubscription, planLevel } from '../services/subscription';
+import { getUserSubscription, planLevel, computeAccessState } from '../services/subscription';
 import { createFactCheckJob, updateNewsFactCheck, setEmitter, removeEmitter } from '../services/factCheck';
 import { logFactCheckOrdered } from '../services/activityLog';
 
@@ -29,11 +29,12 @@ function nowSql(): string {
 async function requirePremium(req: AuthRequest, res: Response): Promise<boolean> {
   const userId = req.user!.userId;
   const sub = await getUserSubscription(userId);
+  const access = computeAccessState(sub.expiresAt);
   const [currentLevel, premiumLevel] = await Promise.all([
     planLevel(sub.plan),
     planLevel('premium'),
   ]);
-  const isEligible = sub.active && currentLevel >= premiumLevel;
+  const isEligible = access.active && currentLevel >= premiumLevel;
 
   if (!isEligible) {
     res.status(403).json({

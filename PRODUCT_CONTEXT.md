@@ -75,9 +75,14 @@
 
 ---
 
-## Тарифы
-- Free: 3 тега, лента на сайте
-- Premium: 10 тегов, 490 ₽/мес, репорты + алерты
+## Тарифы и жизненный цикл подписки
+- **Планы:** free, base, premium, club, pro. Источник правды — `subscription_plans` (админка) + `features_registry`.
+- **Grace-период:** 3 дня после `subscription_expires_at`. Внутри грейса платные фичи продолжают работать, API возвращает `active: true, inGracePeriod: true`.
+- **После грейса:** lazy-переход на `plan: 'free'` в ответах API (`buildSubscriptionStatus`); крон `processScheduledDowngrades` каждые 5 минут переводит БД на `free`, сбрасывает `auto_renew`, замораживает теги сверх лимита.
+- **Scheduled downgrade:** применяется сразу по `expires_at` (без грейса), т.к. пользователь сам инициировал смену. Любой downgrade сбрасывает `subscription_auto_renew = FALSE`.
+- **Immediate downgrade:** `POST /api/user/downgrade` применяет downgrade сразу, если подписка неактивна или в грейсе; иначе планирует на конец оплаченного периода.
+- **Server-gated фичи:** `hasFeature`, `requirePremium`, `getEntitlement`, `/user/channel-status` используют `computeAccessState` — единую grace-aware формулу доступа.
+- **Лимит тегов:** `GET /user/tariff-status` и `GET /user/tag-status` берут лимит по вычисленному effective-плану (free после грейса).
 
 ## Источники новостей (20+)
 - RU + EN (см. DESIGN_SPEC.md)

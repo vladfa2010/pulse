@@ -18,7 +18,7 @@
  */
 
 import { query } from '../../config/db';
-import { hasFeature } from '../subscription';
+import { hasFeature, computeAccessState } from '../subscription';
 import { Product, Channel, Entitlement } from './types';
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
@@ -69,14 +69,14 @@ async function resolvePlan(userId: string): Promise<ResolvedPlan> {
   if (result.rows.length === 0) return FREE_FALLBACK;
 
   const row = result.rows[0];
-  const expired = row.subscription_expires_at && new Date(row.subscription_expires_at) < new Date();
-  const active = !!row.subscription_active && !expired;
+  const access = computeAccessState(row.subscription_expires_at ? new Date(row.subscription_expires_at) : null);
   // Trial-пользователи и так сидят на платном плане (промо выдаёт plan с price > 0),
   // отдельный флаг не нужен
-  const paid = (row.price_monthly ?? 0) > 0;
+  const paid = access.active && (row.price_monthly ?? 0) > 0;
 
   // Неактивная подписка = план free (поведение как раньше, но теперь управляется из админки)
-  if (!active || !row.features) {
+  // Grace-период учитывается через computeAccessState
+  if (!access.active || !row.features) {
     return {
       ...FREE_FALLBACK,
       paid: false,

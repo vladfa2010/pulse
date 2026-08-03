@@ -190,6 +190,46 @@ export function computePlanPrice(plan: Plan, billingCycle: BillingCycle): number
 }
 
 // ─── User subscription helpers ─────────────────────────────────────────────
+
+export const GRACE_DAYS = 3;
+export const GRACE_PERIOD_MS = GRACE_DAYS * 24 * 60 * 60 * 1000;
+
+export interface AccessState {
+  active: boolean;
+  inGrace: boolean;
+  daysLeft: number;
+}
+
+/**
+ * Единая формула доступа по подписке.
+ * - active: подписка оплачена ИЛИ внутри грейс-периода.
+ * - inGrace: подписка истекла, но грейс ещё идёт.
+ * - daysLeft: дней до конца оплаченного периода или до конца грейса.
+ */
+export function computeAccessState(expiresAt: Date | null): AccessState {
+  const now = Date.now();
+  if (!expiresAt) {
+    return { active: false, inGrace: false, daysLeft: 0 };
+  }
+  const expires = expiresAt.getTime();
+  const graceEnd = expires + GRACE_PERIOD_MS;
+  if (now < expires) {
+    return {
+      active: true,
+      inGrace: false,
+      daysLeft: Math.max(0, Math.ceil((expires - now) / (24 * 60 * 60 * 1000))),
+    };
+  }
+  if (now < graceEnd) {
+    return {
+      active: true,
+      inGrace: true,
+      daysLeft: Math.max(0, Math.ceil((graceEnd - now) / (24 * 60 * 60 * 1000))),
+    };
+  }
+  return { active: false, inGrace: false, daysLeft: 0 };
+}
+
 export async function getUserSubscription(userId: string): Promise<{
   plan: string;
   active: boolean;
@@ -217,36 +257,17 @@ export async function getUserSubscription(userId: string): Promise<{
 }
 
 export function buildSubscriptionStatus(sub: ReturnType<typeof getUserSubscription> extends Promise<infer T> ? T : never): SubscriptionStatus {
-  const now = Date.now();
-  const expires = sub.expiresAt ? sub.expiresAt.getTime() : 0;
-  const graceEnd = expires + 3 * 24 * 60 * 60 * 1000;
-
-  let active = false;
-  let inGrace = false;
-  let daysLeft = 0;
-
-  if (!sub.expiresAt) {
-    active = false;
-  } else if (now < expires) {
-    active = true;
-    daysLeft = Math.max(0, Math.ceil((expires - now) / (24 * 60 * 60 * 1000)));
-  } else if (now < graceEnd) {
-    active = true; // grace period keeps features
-    inGrace = true;
-    daysLeft = Math.max(0, Math.ceil((graceEnd - now) / (24 * 60 * 60 * 1000)));
-  } else {
-    active = false;
-    daysLeft = 0;
-  }
+  const access = computeAccessState(sub.expiresAt);
+  const plan = access.active ? sub.plan : 'free';
 
   return {
-    plan: sub.plan,
-    active,
+    plan,
+    active: access.active,
     expiresAt: sub.expiresAt ? sub.expiresAt.toISOString() : null,
     autoRenew: sub.autoRenew,
-    daysLeft,
-    inGracePeriod: inGrace,
-    scheduledDowngrade: sub.scheduledDowngrade,
+    daysLeft: access.daysLeft,
+    inGracePeriod: access.inGrace,
+    scheduledDowngrade: access.active ? sub.scheduledDowngrade : null,
   };
 }
 
@@ -1010,6 +1031,43 @@ export async function getExcessTagsForDowngrade(
 }
 
 // ─── Downgrade scheduling ──────────────────────────────────────────────────
+export async function applyDowngradeNow(
+  userId: string,
+  targetPlanId: string
+): Promise<void> {
+  const now = nowSql();
+  const keepActive = targetPlanId !== 'free';
+
+  // TZ_DOWNGRADE_RACE: atomic UPDATE with expires_at check so a just-renewed
+  // subscription is not overwritten by the downgrade.
+  const updateResult = await query(
+    `UPDATE users
+     SET subscription_plan = $1,
+         scheduled_plan_downgrade = NULL,
+         subscription_active = $2,
+         subscription_auto_renew = FALSE
+     WHERE id = $3
+       AND subscription_expires_at < ${now}
+     RETURNING id`,
+    [targetPlanId, keepActive, userId]
+  );
+
+  if (updateResult.rows.length === 0) {
+    console.log(`[DowngradeNow] User ${userId} subscription was renewed, skipping downgrade to ${targetPlanId}`);
+    return;
+  }
+
+  await freezeExcessTags(userId, targetPlanId);
+  console.log(`[DowngradeNow] User ${userId} → ${targetPlanId}, auto_renew=FALSE, tags frozen`);
+
+  // DEFSUB-14: уведомляем пользователя о фактическом понижении тарифа
+  await notifySubscriptionEvent(
+    userId,
+    'downgrade_done',
+    `Тариф PULSE снижен до ${targetPlanId}. Лишние теги заморожены. Чтобы восстановить функции, продлите подписку.`
+  ).catch(() => {});
+}
+
 export async function scheduleDowngrade(
   userId: string,
   targetPlanId: string
@@ -1037,12 +1095,39 @@ export async function cancelScheduledDowngrade(userId: string): Promise<void> {
 
 export async function processScheduledDowngrades(): Promise<number> {
   const now = nowSql();
+  const graceThreshold = USE_SQLITE
+    ? `datetime('now', '-${GRACE_DAYS} days')`
+    : `NOW() - INTERVAL '${GRACE_DAYS} days'`;
   let processed = 0;
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // DEFSUB-1: auto-fallback to free after grace period ends (for users without
+  // scheduled downgrade). Fixes stuck premium plans that stay on 'premium'
+  // forever after expiry + grace.
+  // ═══════════════════════════════════════════════════════════════════════════
+  const graceExpiredResult = await query(
+    `UPDATE users
+     SET subscription_plan = 'free',
+         subscription_active = FALSE,
+         subscription_auto_renew = FALSE,
+         scheduled_plan_downgrade = NULL
+     WHERE subscription_plan != 'free'
+       AND subscription_expires_at < ${graceThreshold}
+       AND scheduled_plan_downgrade IS NULL
+     RETURNING id`,
+    []
+  );
+  for (const row of graceExpiredResult.rows) {
+    await withUserLock(row.id, async () => {
+      await applyDowngradeNow(row.id, 'free');
+    });
+    processed++;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // TZ_SUBSCRIPTION_EXPIRE: deactivate expired paid subscriptions that have
-  // no scheduled downgrade. Without this step subscription_active stays TRUE
-  // forever and the archived-plan downgrade branch never runs.
+  // no scheduled downgrade. DB-flag hygiene for reporting; access logic uses
+  // computeAccessState, so this does not gate features in the middle of grace.
   // ═══════════════════════════════════════════════════════════════════════════
   const expiredResult = await query(
     `UPDATE users
@@ -1075,27 +1160,7 @@ export async function processScheduledDowngrades(): Promise<number> {
   for (const row of result.rows) {
     await withUserLock(row.id, async () => {
       const targetPlan = row.scheduled_plan_downgrade || 'free';
-      const keepActive = targetPlan !== 'free';
-
-      // TZ_DOWNGRADE_RACE: atomic UPDATE with expires_at check so a just-renewed
-      // subscription is not overwritten by the cron.
-      const updateResult = await query(
-        `UPDATE users
-         SET subscription_plan = $1,
-             scheduled_plan_downgrade = NULL,
-             subscription_active = $2
-         WHERE id = $3
-           AND subscription_expires_at < ${now}
-         RETURNING id`,
-        [targetPlan, keepActive, row.id]
-      );
-
-      if (updateResult.rows.length === 0) {
-        console.log(`[ScheduledDowngrade] User ${row.id} subscription was renewed, skipping downgrade`);
-        return;
-      }
-
-      await freezeExcessTags(row.id, targetPlan);
+      await applyDowngradeNow(row.id, targetPlan);
       processed++;
     });
   }
@@ -1479,8 +1544,11 @@ export async function hasFeature(userId: string, featureId: string): Promise<boo
 
   // Бесплатный план (plan_level === 0) не требует активной подписки —
   // фичи free-тарифа управляются напрямую из features_registry.
-  // Платные плановые фичи доступны только при активной подписке.
-  if (plan.plan_level > 0 && !sub.active) return false;
+  // Платные плановые фичи доступны только при grace-aware активности.
+  if (plan.plan_level > 0) {
+    const access = computeAccessState(sub.expiresAt);
+    if (!access.active) return false;
+  }
 
   const registry = await loadFeaturesRegistry();
   const feature = registry[featureId];
