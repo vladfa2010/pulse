@@ -40,6 +40,7 @@
 - `notification_settings` — оставлена для тихих часов, `digest_email` и обратной совместимости.
 - `user_channels` — активные Telegram chat_id и FCM токены.
 - `push_subscriptions` — VAPID-подписки браузеров.
+- Проверка доступа к каналу (`telegram`/`push`) идёт через `hasFeature()` с учётом `features_registry.is_active` — админ может глобально выключить канал (kill switch).
 - Воркеры **не** фильтруют по `subscription_active` в SQL. Тарифная проверка делается диспетчером через `entitlement.ts`, и каждый отказ логируется с причиной.
 - Тихие часы сравниваются с **московским временем** (UTC+3), не с локальным временем сервера.
 - Push-уведомления рассылаются **fan-out** в обе системы: Firebase Cloud Messaging и VAPID Web Push.
@@ -79,6 +80,7 @@
 | POST | `/api/user/notification-matrix/quiet-hours` | `{ enabled?, start?, end? }` (формат `HH:MM`) |
 | GET | `/api/user/notification-delivery-target` | Адрес доставки по каналу (`?channel=...&product=...`) |
 | GET/PATCH | `/api/user/notifications` | **Legacy**: маппится на матрицу |
+| GET | `/api/user/channel-status` | Доступность каналов по тарифу: `{ telegram, push, email }` |
 | GET | `/api/user/vapid-public-key` | VAPID public key для Web Push |
 | POST | `/api/user/push-subscribe` | Подписать браузер: `{ endpoint, p256dh, auth }` |
 | POST | `/api/user/push-unsubscribe` | Отписать: `{ endpoint }` |
@@ -95,13 +97,15 @@
 
 2. **Доступ к каналу**
    - `email` — неявный, доступен всегда.
-   - `telegram` — требует фичу `telegram` в `subscription_plans.features`.
-   - `push` — требует фичу `push` в `subscription_plans.features`.
+   - `telegram` — требует фичу `telegram` в `subscription_plans.features` **и** `features_registry.telegram.is_active = TRUE`.
+   - `push` — требует фичу `push` в `subscription_plans.features` **и** `features_registry.push.is_active = TRUE`.
+   - Проверка реализована в `services/subscription.ts::hasFeature()`. Для бесплатных тарифов (`plan_level = 0`) активная подписка не требуется.
 
-3. **Лимит тегов**
-   - Берётся из `subscription_plans.tag_limit` (`free=3`, `base=10`, `premium=25`, `-1=без лимита`).
-   - Для `digest`/`weekly_report`/`news_alert` используется первые N тегов по `created_at ASC`.
-   - Ручная отправка `/now` игнорирует лимит (`maxTags = null`).
+3. **Лимит тегов в дайджесте/weekly_report**
+   - `tag_limit` в `subscription_plans` определяет, **сколько тегов можно добавить** в портфель (`free=3`, `base=10`, `premium=25`, `-1=без лимита`).
+   - В дайджест и weekly_report попадают **все активные (не frozen)** теги пользователя, но не более `HARD_TAG_CAP = 200`.
+   - Фактический cap: `min(tag_limit, 200)`. Для `tag_limit = -1` (безлимитные тарифы) и для ручной отправки `/now` cap = `200`.
+   - Замороженные теги (`is_frozen = TRUE`) не участвуют в рассылках.
 
 ---
 
@@ -125,6 +129,18 @@
 ### Рассылка всем `broadcastProduct(product)`
 
 Вызывается воркерами. Собирает `recipients` из `notification_subscriptions` и активных каналов.
+Для теговых продуктов (`digest`, `weekly_report`, `news_alert`) в `getRecipients()` проверяется наличие хотя бы одного **активного** тега (`portfolios.is_frozen = FALSE`), чтобы не делать лишних roundtrip для пользователей с замороженными тегами.
+
+---
+
+## Features registry и kill switch
+
+`features_registry` — реестр фич, управляемый из админки. Для уведомлений используются записи `telegram` и `push`.
+
+- `subscription_plans.features` определяет, включён ли канал в конкретном тарифе.
+- `features_registry.<feature>.is_active` — глобальный kill switch: если `FALSE`, канал недоступен **всем** пользователям независимо от тарифа.
+- Проверка объединяется в `services/subscription.ts::hasFeature()`.
+- `featuresRegistryCache` кеширует реестр на 5 минут. При любом изменении фичи через `POST/PUT /api/admin/features` кеш сбрасывается через `invalidateFeaturesRegistryCache()`, чтобы kill switch срабатывал моментально.
 
 ---
 
