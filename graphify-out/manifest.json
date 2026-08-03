@@ -20,8 +20,8 @@
     "semantic_hash": "0625ff4a95e1d24294ff9d9bd8e886f4"
   },
   "pulse-backend/src/config/db-sqlite.ts": {
-    "mtime": 1785418098.0528998,
-    "ast_hash": "419595ba24029dfb3eeabdf90617d214",
+    "mtime": 1785694535.8185158,
+    "ast_hash": "c4c5ceb3fd07995d8e07f6500572b121",
     "semantic_hash": ""
   },
   "pulse-backend/src/config/db.ts": {
@@ -30,8 +30,8 @@
     "semantic_hash": "5c4e5032b7f9546b8c13768da0c3c2e1"
   },
   "pulse-backend/src/index.ts": {
-    "mtime": 1785421463.2143896,
-    "ast_hash": "26ddc5f6e424fe1d9e016afd5548e830",
+    "mtime": 1785694517.2940946,
+    "ast_hash": "460b28e40457227e7e3040a62f3a33b3",
     "semantic_hash": ""
   },
   "pulse-backend/src/middleware/auth.ts": {
@@ -105,13 +105,13 @@
     "semantic_hash": "3228665e456188bb91325f16462ccad4"
   },
   "pulse-backend/src/models/schema.sql": {
-    "mtime": 1785008439.8153648,
-    "ast_hash": "0d2c934d7521804a17133bf620951b8a",
-    "semantic_hash": "0d2c934d7521804a17133bf620951b8a"
+    "mtime": 1785487561.7519732,
+    "ast_hash": "ea9c9f9d0aac04f98d62afa614ec2f79",
+    "semantic_hash": ""
   },
   "pulse-backend/src/routes/admin.ts": {
-    "mtime": 1785138236.4487233,
-    "ast_hash": "a0d0e15efaaa99af52c482b7b1635d2d",
+    "mtime": 1785694546.188584,
+    "ast_hash": "df3e6b1ddff4c8475a2c3b9a07b14829",
     "semantic_hash": ""
   },
   "pulse-backend/src/routes/adminMetrics.ts": {
@@ -125,8 +125,8 @@
     "semantic_hash": "a53b5a82bb6fc02b51f0ca885a648560"
   },
   "pulse-backend/src/routes/auth.ts": {
-    "mtime": 1785355578.6834805,
-    "ast_hash": "726fd995139ef1007767c4a4041d7369",
+    "mtime": 1785701784.0148704,
+    "ast_hash": "b7bcc2bb28f8efbbf1826ecd41fd9f45",
     "semantic_hash": ""
   },
   "pulse-backend/src/routes/factCheck.ts": {
@@ -335,9 +335,9 @@
     "semantic_hash": "c284f7208450c1d2ffbe7da41e8979d4"
   },
   "pulse-backend/src/services/tagManager.ts": {
-    "mtime": 1785061206.4850082,
-    "ast_hash": "ccbad2520b914cf2e914d0664e9079a7",
-    "semantic_hash": "ccbad2520b914cf2e914d0664e9079a7"
+    "mtime": 1785492725.5747893,
+    "ast_hash": "2c664b547bfa2034383b5952fbd3f83d",
+    "semantic_hash": ""
   },
   "pulse-backend/src/services/telegram.ts": {
     "mtime": 1785355888.3926933,
@@ -410,12 +410,12 @@
     "semantic_hash": "93af69d6865c62bb06614f81696cf1dd"
   },
   "pulse-frontend/android/app/build.gradle": {
-    "mtime": 1785412125.9243255,
-    "ast_hash": "efbbfbc6b2713adfe334031e664405bc",
+    "mtime": 1785740124.6391206,
+    "ast_hash": "a73cdc1681ac7ad3aa19313beab52a07",
     "semantic_hash": ""
   },
   "pulse-frontend/android/app/capacitor.build.gradle": {
-    "mtime": 1784321104.3364275,
+    "mtime": 1785500844.3713458,
     "ast_hash": "abbe4d88f3ff4cd8418bba0d94550124",
     "semantic_hash": "abbe4d88f3ff4cd8418bba0d94550124"
   },
@@ -465,7 +465,7 @@
     "semantic_hash": "aa22bb37636c7cc4c31b134a17e8b204"
   },
   "pulse-frontend/android/capacitor.settings.gradle": {
-    "mtime": 1784321104.3363035,
+    "mtime": 1785500844.3712223,
     "ast_hash": "9119dead58c4e80f4cbc9397fe6735e3",
     "semantic_hash": "9119dead58c4e80f4cbc9397fe6735e3"
   },
@@ -490,8 +490,8 @@
     "semantic_hash": "95dbddc5cc1a9d333fe4a925cb2475c2"
   },
   "pulse-frontend/package.json": {
-    "mtime": 1785412125.924336,
-    "ast_hash": "3b5458bfc5308acb2f5916aee84b525c",
+    "mtime": 1785740124.6391306,
+    "ast_hash": "0327293d60a5d88464a85bc74b11bcdd",
     "semantic_hash": ""
   },
   "pulse-frontend/postcss.config.js": {
@@ -565,9 +565,9 @@
     "semantic_hash": "aed106f6a52f27965e67e9918e69cbbe"
   },
   "pulse-frontend/src/components/HeroAnimation.tsx": {
-    "mtime": 1783347061.8063748,
+    "mtime": 1785698496.1775622,
     "ast_hash": "d92f11c95a26c6f2502230ba7b26ec7c",
-    "semantic_hash": "d92f11c95a26c6f2502230ba7b26ec7c"
+    "semantic_hash": ""
   },
   "pulse-frontend/src/components/Layout.tsx": {
     "mtime": 1781770164.9632397,
@@ -680,9 +680,9 @@
     "semantic_hash": "dd37328133118d0495b1ed8e05bbebd4"
   },
   "pulse-frontend/src/components/admin/Hint.tsx": {
-    "mtime": 1784567084.114652,
-    "ast_hash": "dc2ff7e7364506a9ea03b949b8f71983",
-    "semantic_hash": "dc2ff7e7364506a9ea03b949b8f71983"
+    "mtime": 1785696824.2713237,
+    "ast_hash": "73788c62ebe8764ce16681e5504c8721",
+    "semantic_hash": ""
   },
   "pulse-frontend/src/components/admin/SitesListInput.tsx": {
     "mtime": 1784567100.1940792,
@@ -745,9 +745,9 @@
     "semantic_hash": "1df22e88baa2201231861adf1780e2ec"
   },
   "pulse-frontend/src/hooks/useAuth.tsx": {
-    "mtime": 1784881559.366308,
-    "ast_hash": "dce9e1592eb831eb81b244965276131d",
-    "semantic_hash": "dce9e1592eb831eb81b244965276131d"
+    "mtime": 1785700572.240045,
+    "ast_hash": "4e224b6cf82a5db107d79807b07ef9fb",
+    "semantic_hash": ""
   },
   "pulse-frontend/src/hooks/useBackButton.ts": {
     "mtime": 1783615402.2515452,
@@ -855,9 +855,9 @@
     "semantic_hash": "3984777f5cabb51bca6f1246e32de189"
   },
   "pulse-frontend/src/pages/Home.tsx": {
-    "mtime": 1784892452.193087,
+    "mtime": 1785698496.1778216,
     "ast_hash": "6c10b01d1b09ceaa2100f95aa45c6a4b",
-    "semantic_hash": "6c10b01d1b09ceaa2100f95aa45c6a4b"
+    "semantic_hash": ""
   },
   "pulse-frontend/src/pages/Instructions.tsx": {
     "mtime": 1781770164.9666426,
@@ -920,9 +920,9 @@
     "semantic_hash": "f621ed6a2dee0a1d1deb4ca65ba59171"
   },
   "pulse-frontend/src/pages/admin/PlansSubTab.tsx": {
-    "mtime": 1784536947.4880347,
-    "ast_hash": "71215dc0bbe9d35ee8e50293ef19dd4c",
-    "semantic_hash": "71215dc0bbe9d35ee8e50293ef19dd4c"
+    "mtime": 1785696844.6140292,
+    "ast_hash": "aa6c340e15152ac0c9074cd455931c31",
+    "semantic_hash": ""
   },
   "pulse-frontend/src/pages/admin/ProductMetricsTab.tsx": {
     "mtime": 1784631348.9062319,
@@ -1830,8 +1830,8 @@
     "semantic_hash": ""
   },
   "pulse-backend/DEPLOYMENT.md": {
-    "mtime": 1785422785.9140408,
-    "ast_hash": "b2806ca62962e192a77caf771532f5a3",
+    "mtime": 1785525532.4522653,
+    "ast_hash": "14465003190af0b5c51bbbb311b689dc",
     "semantic_hash": ""
   },
   "pulse-backend/DESIGN_SPEC.md": {
@@ -1880,13 +1880,13 @@
     "semantic_hash": ""
   },
   "pulse-backend/PUSH_NOTIFICATIONS.md": {
-    "mtime": 1783624702.7162468,
-    "ast_hash": "a5c5b61eab2a788dc3b7d717416bee67",
+    "mtime": 1785486479.772679,
+    "ast_hash": "fe4a97632639b177ae8c419cd195ccf1",
     "semantic_hash": ""
   },
   "pulse-backend/README.md": {
-    "mtime": 1785422638.4857588,
-    "ast_hash": "fbebfaf90121120370d7f3e5bb218dae",
+    "mtime": 1785486525.906931,
+    "ast_hash": "62c09599d74a874cd26a74919f9bd681",
     "semantic_hash": ""
   },
   "pulse-backend/SECURITY.md": {
@@ -1915,8 +1915,8 @@
     "semantic_hash": ""
   },
   "pulse-backend/TELEGRAM_NOTIFICATIONS.md": {
-    "mtime": 1784820942.4858675,
-    "ast_hash": "56cdf72c86fc288fbb203b1cbf09a0dc",
+    "mtime": 1785486581.9124255,
+    "ast_hash": "7bc2229760a6ca6002de847a14e7757f",
     "semantic_hash": ""
   },
   "pulse-backend/TODO.md": {
@@ -1995,8 +1995,8 @@
     "semantic_hash": ""
   },
   "pulse-backend/docs/fact-check.md": {
-    "mtime": 1784215923.6601079,
-    "ast_hash": "b53ff294059be38c7016b3b96fa3e31c",
+    "mtime": 1785486569.0074332,
+    "ast_hash": "f2dc1b6a58158321c7eb795232679fb5",
     "semantic_hash": ""
   },
   "pulse-backend/docs/subscriptions.md": {
@@ -2200,8 +2200,8 @@
     "semantic_hash": ""
   },
   "pulse-frontend/docs/profile.md": {
-    "mtime": 1785422801.4407787,
-    "ast_hash": "bed4d33643936c0ad7bde1ca4101030d",
+    "mtime": 1785486628.9246073,
+    "ast_hash": "66ae93ec21c5b288e78678b8e8622ee0",
     "semantic_hash": ""
   },
   "pulse-frontend/index.html": {
@@ -2805,8 +2805,8 @@
     "semantic_hash": ""
   },
   "pulse-backend/src/services/brokerApi/finamAdapter.ts": {
-    "mtime": 1785423354.4190493,
-    "ast_hash": "e77b89e86961ae854eb70ea658e98b6a",
+    "mtime": 1785487728.7137246,
+    "ast_hash": "f9d4bd04f637c40cbf7ab0123da31b6c",
     "semantic_hash": ""
   },
   "pulse-backend/src/services/brokerApi/index.ts": {
@@ -2820,13 +2820,13 @@
     "semantic_hash": ""
   },
   "pulse-backend/src/services/brokerKeyService.ts": {
-    "mtime": 1785418263.315345,
-    "ast_hash": "fea709f9906982724d002a3045a445a4",
+    "mtime": 1785438657.5099113,
+    "ast_hash": "21ee13111d86aa8b488e8809e3c2b1bd",
     "semantic_hash": ""
   },
   "pulse-backend/src/services/brokerPortfolioService.ts": {
-    "mtime": 1785428923.0412085,
-    "ast_hash": "455d283a63308daec402047322a6225e",
+    "mtime": 1785492962.4199207,
+    "ast_hash": "54bf5553bf7307041becbdc79b5bc94e",
     "semantic_hash": ""
   },
   "pulse-backend/src/services/crypto.ts": {
@@ -2835,8 +2835,8 @@
     "semantic_hash": ""
   },
   "pulse-backend/src/services/portfolioSync/worker.ts": {
-    "mtime": 1785418555.5528321,
-    "ast_hash": "f792daa5a0177459621c0ab5a4ccdee0",
+    "mtime": 1785438690.061042,
+    "ast_hash": "a9806fbe7975108cd4b4862c29204634",
     "semantic_hash": ""
   },
   "pulse-frontend/src/components/GlassCard.tsx": {
@@ -2870,8 +2870,8 @@
     "semantic_hash": ""
   },
   "pulse-frontend/src/components/portfolio/DeleteKeyConfirm.tsx": {
-    "mtime": 1785418245.68355,
-    "ast_hash": "f478a80c6518daa9309f0c511b1540f1",
+    "mtime": 1785438747.8466058,
+    "ast_hash": "bb20acbe7771448f7481479ceb36b821",
     "semantic_hash": ""
   },
   "pulse-frontend/src/components/portfolio/GrandTotalStrip.tsx": {
@@ -2890,18 +2890,18 @@
     "semantic_hash": ""
   },
   "pulse-frontend/src/components/portfolio/RecommendedTagsCloud.tsx": {
-    "mtime": 1785419463.7825158,
-    "ast_hash": "35d34137ad46d203b1f526e18daaca51",
+    "mtime": 1785501242.970805,
+    "ast_hash": "c3d65176d2ef156c04158e31b8ca3b5f",
     "semantic_hash": ""
   },
   "pulse-frontend/src/hooks/useBrokerKeys.ts": {
-    "mtime": 1785418121.5851388,
-    "ast_hash": "1a5ddccda5fb013db5a0299ce4dcdef4",
+    "mtime": 1785438777.854821,
+    "ast_hash": "9af487fc48b4b69d9333484d437d5f20",
     "semantic_hash": ""
   },
   "pulse-frontend/src/hooks/usePortfolio.ts": {
-    "mtime": 1785428983.1395953,
-    "ast_hash": "31693435399dae9b7b9252b21f602f3e",
+    "mtime": 1785498976.4852853,
+    "ast_hash": "2fb66f71ffb0b756c5bc40278528f03b",
     "semantic_hash": ""
   },
   "pulse-frontend/src/hooks/useToast.ts": {
@@ -2920,13 +2920,13 @@
     "semantic_hash": ""
   },
   "pulse-frontend/src/pages/account/BrokersTab.tsx": {
-    "mtime": 1785418553.0587838,
-    "ast_hash": "8fb2a9436d245f7447e90850421ed7b5",
+    "mtime": 1785438757.1117425,
+    "ast_hash": "260e598f82fadb6c0cee4ec9742f8f1c",
     "semantic_hash": ""
   },
   "pulse-frontend/src/types/portfolio.ts": {
-    "mtime": 1785428967.378705,
-    "ast_hash": "846c9a0c9edfa0200b56da14eb916b3b",
+    "mtime": 1785487925.212181,
+    "ast_hash": "4705fc5bc470dd41e6d9cedecb2b85c2",
     "semantic_hash": ""
   },
   "\u041c\u043e\u043a\u0430\u043f_\u041b\u041a_\u0411\u0440\u043e\u043a\u0435\u0440\u044b.html": {
@@ -2940,18 +2940,18 @@
     "semantic_hash": ""
   },
   "pulse-backend/docs/portfolio.md": {
-    "mtime": 1785423464.905849,
-    "ast_hash": "38a3abf2c90e289e7408ba93914d1e37",
+    "mtime": 1785493125.6618075,
+    "ast_hash": "abe1e2edb8a5db171d4948fb11642e9d",
     "semantic_hash": ""
   },
   "pulse-frontend/docs/portfolio.md": {
-    "mtime": 1785422585.9180412,
-    "ast_hash": "55660bf01583962b3ccd72ac1c594e45",
+    "mtime": 1785499065.0089483,
+    "ast_hash": "4cda8cffe53e6edeaca2af6a718d0476",
     "semantic_hash": ""
   },
   "pulse-backend/src/scripts/testFinamAdapter.ts": {
-    "mtime": 1785423437.846364,
-    "ast_hash": "808be73a968e8df75ae5b944c53b0508",
+    "mtime": 1785488012.3852515,
+    "ast_hash": "bb3c56d31a864d9c6e0247110ea3166d",
     "semantic_hash": ""
   },
   "pulse-backend/src/services/brokerApi/__fixtures__/finam/account.json": {
@@ -2977,6 +2977,86 @@
   "\u0422\u0417_\u043c\u0438\u043d\u0438_\u043a\u043d\u043e\u043f\u043a\u0430_\u0441\u0438\u043d\u0445\u0440\u043e\u043d\u0438\u0437\u0430\u0446\u0438\u0438.md": {
     "mtime": 1785428851.5012302,
     "ast_hash": "696115fa03dc32f1c57e78873692a287",
+    "semantic_hash": ""
+  },
+  "\u0422\u0417_\u043c\u0438\u043d\u0438_\u0443\u0434\u0430\u043b\u0435\u043d\u0438\u0435_\u043f\u043e\u0440\u0442\u0444\u0435\u043b\u044f_\u0441_\u043a\u043b\u044e\u0447\u043e\u043c.md": {
+    "mtime": 1785438585.3717372,
+    "ast_hash": "1e2a7e3c0ce8b849e00489562bf37756",
+    "semantic_hash": ""
+  },
+  "\u0422\u0417_hotfix_\u043e\u0447\u0438\u0441\u0442\u043a\u0430_\u0431\u0440\u043e\u043a\u0435\u0440\u0441\u043a\u0438\u0445_\u0434\u0430\u043d\u043d\u044b\u0445.md": {
+    "mtime": 1785477281.3363214,
+    "ast_hash": "8801a9a889aada66d0e928d564f6a5e2",
+    "semantic_hash": ""
+  },
+  "\u0422\u0417_\u0440\u0435\u0437\u043e\u043b\u0432\u0435\u0440_\u043d\u0430\u0437\u0432\u0430\u043d\u0438\u0438\u0306_\u0431\u0443\u043c\u0430\u0433.md": {
+    "mtime": 1785485892.2961955,
+    "ast_hash": "d43b8983fa75515551489b31babc7c7f",
+    "semantic_hash": ""
+  },
+  "pulse-backend/src/migrations/securities_cache.sql": {
+    "mtime": 1785487547.708426,
+    "ast_hash": "c5863f3c746664e02083431eaa53e343",
+    "semantic_hash": ""
+  },
+  "pulse-backend/src/utils/slugifyTag.ts": {
+    "mtime": 1785492705.8212683,
+    "ast_hash": "e33e365d5f19ce4c6700317e8f374245",
+    "semantic_hash": ""
+  },
+  "\u0422\u0417_\u0442\u0435\u0433\u0438_\u0438\u0437_\u043e\u0431\u043b\u0430\u043a\u0430_\u0441\u043e\u0437\u0434\u0430\u043d\u0438\u0435.md": {
+    "mtime": 1785492265.310735,
+    "ast_hash": "7f3e33a58205f98e0d27b36e19f980f4",
+    "semantic_hash": ""
+  },
+  "\u0422\u0417_\u0444\u0438\u043a\u0441_\u043f\u043e\u0434\u043f\u0438\u0441\u043a\u0438_\u0438\u0437_\u043e\u0431\u043b\u0430\u043a\u0430.md": {
+    "mtime": 1785497796.8234518,
+    "ast_hash": "8069d58dd1fdfc7989ef4aab6e01c69f",
+    "semantic_hash": ""
+  },
+  "\u0422\u0417_\u0444\u0438\u043a\u0441_\u043a\u044d\u0448\u0430_\u043e\u0431\u043b\u0430\u043a\u0430_\u0442\u0435\u0433\u043e\u0432.md": {
+    "mtime": 1785501118.0143301,
+    "ast_hash": "7e747982b1a2f5172099b6b57c383d6f",
+    "semantic_hash": ""
+  },
+  "pulse-frontend/.github/workflows/telegram-notify.yml": {
+    "mtime": 1785525195.3663738,
+    "ast_hash": "e057c897ea46bdf8a8772c8a7054f674",
+    "semantic_hash": ""
+  },
+  "pulse-backend/.github/workflows/telegram-notify.yml": {
+    "mtime": 1785525210.208063,
+    "ast_hash": "e057c897ea46bdf8a8772c8a7054f674",
+    "semantic_hash": ""
+  },
+  "pulse-backend/src/migrations/fix_club_pro_coming_soon.sql": {
+    "mtime": 1785694568.695815,
+    "ast_hash": "e91bdc484b9ce4ae02cf0d2dc79e0746",
+    "semantic_hash": ""
+  },
+  "\u0422\u0417_\u0444\u0438\u043a\u0441_\u0442\u0430\u0440\u0438\u0444\u043e\u0432_CLUB_PRO.md": {
+    "mtime": 1785694317.4794703,
+    "ast_hash": "a866f208fdf3e9cf5d9ba9dd94e98bbb",
+    "semantic_hash": ""
+  },
+  "\u0422\u0417_\u0442\u0443\u043b\u0442\u0438\u043f_\u043c\u0435\u0442\u043a\u0430_\u0441\u043a\u043e\u0440\u043e.md": {
+    "mtime": 1785696709.1790693,
+    "ast_hash": "058957cc5a80656be296a8cf821bccd1",
+    "semantic_hash": ""
+  },
+  "\u0422\u0417-01_HeroAnimation_\u0441\u043d\u0438\u0436\u0435\u043d\u0438\u0435_\u043d\u0430\u0433\u0440\u0443\u0437\u043a\u0438_Canvas_v2.md": {
+    "mtime": 1785697570.1781335,
+    "ast_hash": "9d1d63b978e55c8b6b4310834e044215",
+    "semantic_hash": ""
+  },
+  "\u0422\u0417-02_\u041b\u043e\u0433\u0438\u043d_\u0444\u0440\u043e\u043d\u0442_\u043c\u0433\u043d\u043e\u0432\u0435\u043d\u043d\u044b\u0438\u0306_\u043e\u0442\u043a\u043b\u0438\u043a.md": {
+    "mtime": 1785700453.7206566,
+    "ast_hash": "c9c364f6e9b1c4b2508ab14168643486",
+    "semantic_hash": ""
+  },
+  "\u0422\u0417-03_\u041b\u043e\u0433\u0438\u043d_\u0431\u044d\u043a\u0435\u043d\u0434_\u0441\u0442\u0430\u0442\u0438\u0441\u0442\u0438\u043a\u0430_\u043f\u043e\u0441\u043b\u0435_\u043e\u0442\u0432\u0435\u0442\u0430.md": {
+    "mtime": 1785701680.724597,
+    "ast_hash": "987596567e45422e9bcc0eb7d23b202b",
     "semantic_hash": ""
   }
 }

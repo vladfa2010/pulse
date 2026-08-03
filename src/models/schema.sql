@@ -748,3 +748,6 @@ CREATE TABLE IF NOT EXISTS search_cache (
 );
 
 CREATE INDEX IF NOT EXISTS idx_search_cache_expires ON search_cache(expires_at);
+
+-- TZ-04 v4: functional index for case-insensitive email lookups
+CREATE INDEX IF NOT EXISTS idx_users_lower_email ON users (LOWER(email));

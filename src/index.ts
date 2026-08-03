@@ -5294,6 +5294,8 @@ async function start() {
     { sql: `CREATE INDEX IF NOT EXISTS idx_broker_positions_portfolio_ticker_exchange ON broker_positions(broker_portfolio_id, ticker, exchange)`, name: 'idx_broker_positions_portfolio_ticker_exchange' },
     { sql: `CREATE TABLE IF NOT EXISTS securities (id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), ticker TEXT NOT NULL, exchange TEXT NOT NULL, short_name TEXT, isin TEXT, sec_type TEXT, source TEXT NOT NULL DEFAULT 'finam', resolved_at TIMESTAMPTZ NOT NULL DEFAULT ${_SQL_NOW}, UNIQUE (ticker, exchange))`, name: 'securities' },
     { sql: `CREATE INDEX IF NOT EXISTS idx_securities_ticker_exchange ON securities(ticker, exchange)`, name: 'idx_securities_ticker_exchange' },
+    // TZ-04 v4: functional index for case-insensitive email lookups (login / register / forgot-password / verify-code)
+    { sql: `CREATE INDEX IF NOT EXISTS idx_users_lower_email ON users (LOWER(email))`, name: 'idx_users_lower_email' },
   ];
   for (const m of migrations) {
     try {
