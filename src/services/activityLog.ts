@@ -128,6 +128,36 @@ export async function logPageViewPlans(userId: string): Promise<void> {
   return logUserEvent(userId, 'page_view_plans', { page: 'plans' });
 }
 
+/**
+ * Пользователь открыл страницу /portfolio.
+ */
+export async function logPageViewPortfolio(userId: string): Promise<void> {
+  return logUserEvent(userId, 'page_view_portfolio', { page: '/portfolio' });
+}
+
+/**
+ * Пользователь нажал "+ Портфель" (открыл форму добавления).
+ */
+export async function logPortfolioAddClicked(userId: string): Promise<void> {
+  return logUserEvent(userId, 'portfolio_add_clicked', {});
+}
+
+/**
+ * Пользователь создал портфель (успешно сохранил форму).
+ */
+export async function logPortfolioCreated(
+  userId: string,
+  broker: string,
+  name: string,
+  portfolioId: string
+): Promise<void> {
+  return logUserEvent(userId, 'portfolio_created', {
+    broker,
+    name,
+    portfolio_id: portfolioId,
+  });
+}
+
 export async function logAdminChangedPlan(
   adminId: string,
   userId: string,

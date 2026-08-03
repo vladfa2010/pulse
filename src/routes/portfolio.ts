@@ -5,6 +5,7 @@
 import { Router } from 'express';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
 import * as service from '../services/brokerPortfolioService';
+import { logPortfolioCreated } from '../services/activityLog';
 
 const router = Router();
 
@@ -37,6 +38,9 @@ router.post('/', authMiddleware, async (req: AuthRequest, res) => {
     }
 
     const portfolio = await service.createBrokerPortfolio(req.user!.userId, { broker, name, brokerKeyId });
+
+    logPortfolioCreated(req.user!.userId, broker, name || portfolio.name, portfolio.id).catch(() => {});
+
     res.status(201).json({ portfolio });
   } catch (err: any) {
     console.error('[PortfolioAPI] POST create error:', err.message);

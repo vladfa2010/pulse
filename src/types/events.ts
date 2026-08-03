@@ -29,6 +29,9 @@ export const USER_EVENT_TYPES = [
   'page_view_plans',
   'admin_changed_plan',
   'admin_extended_subscription',
+  'page_view_portfolio',
+  'portfolio_add_clicked',
+  'portfolio_created',
 ] as const;
 
 export type UserEventType = typeof USER_EVENT_TYPES[number];

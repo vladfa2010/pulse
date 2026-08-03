@@ -32,6 +32,9 @@ export const ALERT_EVENT_TYPES: { value: UserEventType | 'sentiment_vote'; label
   { value: 'sentiment_vote', label: 'Прогноз индекса (голос)' },
   { value: 'page_view_plans', label: 'Просмотр тарифов' },
   { value: 'factcheck_ordered', label: 'Заказан фактчек' },
+  { value: 'page_view_portfolio', label: 'Просмотр портфеля' },
+  { value: 'portfolio_add_clicked', label: 'Нажал + Портфель' },
+  { value: 'portfolio_created', label: 'Портфель создан' },
 ];
 
 export interface AdminTgSettings {

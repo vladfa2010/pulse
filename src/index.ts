@@ -53,7 +53,7 @@ import { resetDailyWindows, refreshImoexCache } from './services/sentimentIndex'
 import { sendSentimentVotePush } from './services/push';
 import { processScheduledDowngrades, processAutoRenewals, processTrialExpirations, getPlanById, sendExpiryNotifications } from './services/subscription';
 import { isUserEventType } from './types/events';
-import { logPageViewPlans } from './services/activityLog';
+import { logPageViewPlans, logPageViewPortfolio, logPortfolioAddClicked } from './services/activityLog';
 import { getAdminTgSettings, saveAdminTgSettings, sendTestAlert, ALERT_EVENT_TYPES } from './services/adminAlerts';
 import { logNewsDataCheck } from './services/newsDataCheck';
 import { setupYookassaWebhook } from './routes/payment'; // ← Auto-setup YuKassa webhook
@@ -4369,10 +4369,34 @@ app.post('/api/events/page-view', authMiddleware, async (req: AuthRequest, res) 
     const { page } = req.body;
     if (page === 'plans') {
       logPageViewPlans(req.user!.userId).catch(() => {});
+    } else if (page === 'portfolio') {
+      logPageViewPortfolio(req.user!.userId).catch(() => {});
     }
     res.json({ success: true });
   } catch (err: any) {
     console.error('[PageView] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Button click events
+// ═══════════════════════════════════════════════════════════════════════════
+app.post('/api/events/click', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const { button } = req.body;
+
+    if (!button) {
+      return res.status(400).json({ error: 'button required' });
+    }
+
+    if (button === 'add_portfolio') {
+      logPortfolioAddClicked(req.user!.userId).catch(() => {});
+    }
+
+    res.json({ success: true });
+  } catch (err: any) {
+    console.error('[ClickEvent] Error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
