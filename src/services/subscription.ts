@@ -1469,10 +1469,13 @@ async function loadFeaturesRegistry(): Promise<Record<string, FeatureRegistryEnt
 
 export async function hasFeature(userId: string, featureId: string): Promise<boolean> {
   const sub = await getUserSubscription(userId);
-  if (!sub.active) return false;
-
   const plan = await getPlanById(sub.plan);
   if (!plan?.features?.[featureId]) return false;
+
+  // Бесплатный план (plan_level === 0) не требует активной подписки —
+  // фичи free-тарифа управляются напрямую из features_registry.
+  // Платные плановые фичи доступны только при активной подписке.
+  if (plan.plan_level > 0 && !sub.active) return false;
 
   const registry = await loadFeaturesRegistry();
   const feature = registry[featureId];

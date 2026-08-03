@@ -13,6 +13,8 @@ import { query } from '../../config/db';
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
+const HARD_TAG_CAP = 200; // защита от тяжёлых запросов, не per-plan
+
 export interface DigestArticle {
   id?: string;
   title: string;
@@ -32,7 +34,7 @@ export interface DigestContent {
 
 /**
  * @param userId     пользователь
- * @param maxTags    лимит тегов из Entitlement (null = все теги, ручной /now)
+ * @param maxTags    лимит тегов из Entitlement (null = без plan-лимита, ручной /now)
  * @param since      last_sent_at этого канала (null = первый запуск → окно 24ч)
  */
 export async function buildDigestContent(
@@ -41,12 +43,16 @@ export async function buildDigestContent(
   since: Date | null,
   context: string = 'scheduled'
 ): Promise<DigestContent> {
-  // Теги пользователя (лимит из тарифа)
-  const limitClause = maxTags !== null ? `LIMIT $2` : '';
-  const limitParams = maxTags !== null ? [userId, maxTags] : [userId];
+  // Cap: min(tagLimit, 200). Бесконечные (-1) и ручной запуск (null) → 200.
+  const rawLimit = maxTags ?? HARD_TAG_CAP;
+  const limit = rawLimit < 0 ? HARD_TAG_CAP : Math.min(rawLimit, HARD_TAG_CAP);
+
+  // Только активные (не frozen) теги пользователя
   const portfolioResult = await query(
-    `SELECT tag_id, tag_name FROM portfolios WHERE user_id = $1 ORDER BY created_at ASC ${limitClause}`,
-    limitParams
+    `SELECT tag_id, tag_name FROM portfolios 
+     WHERE user_id = $1 AND is_frozen = FALSE 
+     ORDER BY created_at ASC LIMIT $2`,
+    [userId, limit]
   );
 
   if (portfolioResult.rows.length === 0) {
@@ -66,8 +72,8 @@ export async function buildDigestContent(
   const maxAge = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
   console.log(
-    `[Digest:${context}] user=${userId} maxTags=${maxTags ?? 'all'} ` +
-    `tagCount=${tagIds.length} since=${since?.toISOString() ?? 'null(24h fallback)'}`
+    `[Digest:${context}] user=${userId} tags=${tagIds.length} limit=${limit} ` +
+    `since=${since?.toISOString() ?? 'null(24h fallback)'}`
   );
 
   let articlesResult;

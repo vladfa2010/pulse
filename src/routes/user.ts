@@ -269,6 +269,24 @@ router.get('/notifications', authMiddleware, async (req: AuthRequest, res) => {
   }
 });
 
+// GET /api/user/channel-status — какие каналы доступны по тарифу + features_registry
+router.get('/channel-status', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.userId;
+    const { hasFeature } = await import('../services/subscription');
+
+    const [telegramOk, pushOk] = await Promise.all([
+      hasFeature(userId, 'telegram'),
+      hasFeature(userId, 'push'),
+    ]);
+
+    res.json({ telegram: telegramOk, push: pushOk, email: true });
+  } catch (err: any) {
+    console.error('[ChannelStatus] Error:', err);
+    res.status(500).json({ error: 'Failed to fetch channel status' });
+  }
+});
+
 // PATCH /api/user/notifications (legacy → маппим в матрицу)
 router.patch('/notifications', authMiddleware, async (req: AuthRequest, res) => {
   try {

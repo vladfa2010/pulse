@@ -9,6 +9,8 @@ import { query } from '../../config/db';
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
+const HARD_TAG_CAP = 200; // защита от тяжёлых запросов, не per-plan
+
 export interface WeeklyReportArticle {
   title: string;
   summary: string;
@@ -37,18 +39,22 @@ function formatDate(d: Date): string {
 
 /**
  * @param userId  пользователь
- * @param maxTags лимит тегов из Entitlement (null = все теги)
+ * @param maxTags лимит тегов из Entitlement (null = без plan-лимита)
  */
 export async function buildWeeklyReportContent(
   userId: string,
   maxTags: number | null
 ): Promise<WeeklyReportContent | null> {
-  // Теги пользователя (лимит из тарифа)
-  const limitClause = maxTags !== null ? `LIMIT $2` : '';
-  const limitParams = maxTags !== null ? [userId, maxTags] : [userId];
+  // Cap: min(tagLimit, 200). Бесконечные (-1) и ручной запуск (null) → 200.
+  const rawLimit = maxTags ?? HARD_TAG_CAP;
+  const limit = rawLimit < 0 ? HARD_TAG_CAP : Math.min(rawLimit, HARD_TAG_CAP);
+
+  // Только активные (не frozen) теги пользователя
   const portfolioResult = await query(
-    `SELECT tag_id, tag_name FROM portfolios WHERE user_id = $1 ORDER BY created_at ASC ${limitClause}`,
-    limitParams
+    `SELECT tag_id, tag_name FROM portfolios 
+     WHERE user_id = $1 AND is_frozen = FALSE 
+     ORDER BY created_at ASC LIMIT $2`,
+    [userId, limit]
   );
 
   if (portfolioResult.rows.length === 0) {
@@ -66,7 +72,7 @@ export async function buildWeeklyReportContent(
   const sinceFetched = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
 
   console.log(
-    `[WeeklyReport] user=${userId} maxTags=${maxTags ?? 'all'} tagCount=${tagIds.length}`
+    `[WeeklyReport] user=${userId} tags=${tagIds.length} limit=${limit}`
   );
 
   let newsResult;

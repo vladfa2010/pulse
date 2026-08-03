@@ -18,6 +18,7 @@
  */
 
 import { query } from '../../config/db';
+import { hasFeature } from '../subscription';
 import { Product, Channel, Entitlement } from './types';
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
@@ -106,21 +107,25 @@ export async function getEntitlement(
     return { allowed: false, maxTags: 0, reason: `product '${product}' requires paid plan (current: ${plan.planId})` };
   }
 
-  // 2. Канал
+  // 2. Канал — через hasFeature() чтобы учитывать features_registry.is_active
   if (channel) {
     const featureKey = CHANNEL_FEATURE[channel];
-    if (featureKey && plan.features[featureKey] !== true) {
-      return {
-        allowed: false, maxTags: 0,
-        reason: `channel '${channel}' not in plan '${plan.planId}' features (feature '${featureKey}'=false)`,
-      };
+    if (featureKey) {
+      const has = await hasFeature(userId, featureKey);
+      if (!has) {
+        return {
+          allowed: false,
+          maxTags: 0,
+          reason: `channel '${channel}' not available (feature '${featureKey}' disabled in registry or plan)`,
+        };
+      }
     }
   }
 
-  // 3. Лимит тегов из плана
+  // 3. Лимит тегов из плана (используется как soft cap в дайджесте)
   return {
     allowed: true,
-    maxTags: plan.tagLimit < 0 ? null : plan.tagLimit,   // -1 (club/pro) = без лимита
+    maxTags: plan.tagLimit < 0 ? null : plan.tagLimit,
   };
 }
 

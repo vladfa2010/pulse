@@ -34,7 +34,7 @@ export interface DeliveryTarget {
 /** Решение тарифа: может ли юзер получать продукт и с какими лимитами */
 export interface Entitlement {
   allowed: boolean;
-  maxTags: number | null;        // null = без лимита (ручной /now)
+  maxTags: number | null;        // null = без лимита (ручной /now); иначе plan.tagLimit
   reason?: string;               // для логов: 'free_not_allowed' | 'no_subscription' ...
 }
 
