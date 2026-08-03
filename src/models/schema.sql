@@ -186,24 +186,25 @@ CREATE INDEX IF NOT EXISTS idx_user_promo_uses_promo ON user_promo_uses(promo_co
 -- 3d. features_registry
 -- ============================================================
 CREATE TABLE IF NOT EXISTS features_registry (
-  id          VARCHAR(50) PRIMARY KEY,
-  label       VARCHAR(100) NOT NULL,
-  description VARCHAR(255) DEFAULT NULL,
-  is_active   BOOLEAN NOT NULL DEFAULT TRUE,
-  created_at  TIMESTAMP DEFAULT NOW(),
-  updated_at  TIMESTAMP DEFAULT NOW()
+  id                  VARCHAR(50) PRIMARY KEY,
+  label               VARCHAR(100) NOT NULL,
+  description         VARCHAR(255) DEFAULT NULL,
+  is_active           BOOLEAN NOT NULL DEFAULT TRUE,
+  integration_status  VARCHAR(20) NOT NULL DEFAULT 'pending',
+  created_at          TIMESTAMP DEFAULT NOW(),
+  updated_at          TIMESTAMP DEFAULT NOW()
 );
 
-INSERT INTO features_registry (id, label, description) VALUES
-  ('telegram', 'Telegram-дайджест', 'Дайджест новостей в Telegram'),
-  ('push', 'Push-уведомления', 'Push-уведомления в браузере/приложении'),
-  ('ai_summary', 'AI-саммари по портфелю', 'AI-анализ портфеля каждый час'),
-  ('alerts', 'Sentiment-алерты', 'Уведомления при резком изменении сентимента'),
-  ('priority', 'Приоритетная доставка', 'Приоритет обработки новостей'),
-  ('early_delivery', 'Ранняя доставка', 'Доступ к новостям на 5 минут раньше'),
-  ('custom_thresholds', 'Кастомные пороги', 'Настройка порогов для алертов'),
-  ('club_access', 'Club доступ', 'Доступ к закрытому Telegram-чату'),
-  ('api_access', 'API доступ', 'Доступ к REST API с токеном')
+INSERT INTO features_registry (id, label, description, integration_status) VALUES
+  ('telegram', 'Telegram-дайджест', 'Дайджест новостей в Telegram', 'integrated'),
+  ('push', 'Push-уведомления', 'Push-уведомления в браузере/приложении', 'integrated'),
+  ('ai_summary', 'AI-саммари по портфелю', 'AI-анализ портфеля каждый час', 'pending'),
+  ('alerts', 'Sentiment-алерты', 'Уведомления при резком изменении сентимента', 'pending'),
+  ('priority', 'Приоритетная доставка', 'Приоритет обработки новостей', 'pending'),
+  ('early_delivery', 'Ранняя доставка', 'Доступ к новостям на 5 минут раньше', 'pending'),
+  ('custom_thresholds', 'Кастомные пороги', 'Настройка порогов для алертов', 'pending'),
+  ('club_access', 'Club доступ', 'Доступ к закрытому Telegram-чату', 'pending'),
+  ('api_access', 'API доступ', 'Доступ к REST API с токеном', 'pending')
 ON CONFLICT (id) DO NOTHING;
 
 -- ============================================================

@@ -23,6 +23,7 @@ function normalizeFeatureRow(row: any): any {
     label: row.label,
     description: row.description,
     is_active: USE_SQLITE ? Boolean(row.is_active) : row.is_active,
+    integration_status: row.integration_status || 'pending',
   };
 }
 
@@ -30,7 +31,7 @@ function normalizeFeatureRow(row: any): any {
 export async function listFeatures(_req: Request, res: Response): Promise<void> {
   try {
     const result = await query(
-      `SELECT id, label, description, is_active
+      `SELECT id, label, description, is_active, integration_status
        FROM features_registry
        WHERE is_active = TRUE
        ORDER BY created_at ASC`,
@@ -47,7 +48,7 @@ export async function listFeatures(_req: Request, res: Response): Promise<void> 
 export async function listAllFeatures(_req: Request, res: Response): Promise<void> {
   try {
     const result = await query(
-      `SELECT id, label, description, is_active
+      `SELECT id, label, description, is_active, integration_status
        FROM features_registry
        ORDER BY created_at ASC`,
       []
@@ -69,7 +70,7 @@ export async function createFeature(req: Request, res: Response): Promise<void> 
       [id, label, description || null, is_active !== false]
     );
     const result = await query(
-      `SELECT id, label, description, is_active
+      `SELECT id, label, description, is_active, integration_status
        FROM features_registry WHERE id = $1`,
       [id]
     );
@@ -89,7 +90,7 @@ export async function updateFeature(req: Request, res: Response): Promise<void> 
   try {
     const { id } = req.params;
     const updates = req.body;
-    const allowed = ['label', 'description', 'is_active'];
+    const allowed = ['label', 'description', 'is_active', 'integration_status'];
     const fields: string[] = [];
     const values: any[] = [];
     let paramIdx = 1;
@@ -114,7 +115,7 @@ export async function updateFeature(req: Request, res: Response): Promise<void> 
     );
 
     const result = await query(
-      `SELECT id, label, description, is_active
+      `SELECT id, label, description, is_active, integration_status
        FROM features_registry WHERE id = $1`,
       [id]
     );
