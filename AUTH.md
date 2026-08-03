@@ -1,8 +1,8 @@
 # PULSE — Аутентификация и авторизация
 
-> Дата актуализации: 2026-07-23  
-> Файлы: `pulse-backend/src/routes/auth.ts`, `pulse-backend/src/index.ts`  
-> Зависимости: `bcrypt`, `jsonwebtoken`
+> Дата актуализации: 2026-08-03  
+> Файлы: `pulse-backend/src/routes/auth.ts`, `pulse-backend/src/services/tagManager.ts`, `pulse-backend/src/index.ts`, `pulse-frontend/src/hooks/useAuth.tsx`  
+> Зависимости: `bcrypt`, `jsonwebtoken`, `pg`
 
 ---
 
@@ -32,6 +32,12 @@
 
 При одновременных логинах это существенно снижает задержки очереди запросов.
 
+### 2.4 Неблокирующий UI логина
+
+Фронтенд (`pulse-frontend/src/hooks/useAuth.tsx`) после получения ответа `/auth/login` сразу обновляет состояние и закрывает модалку. Фоновые операции (push-уведомления, нативное хранилище токена) выполняются без блокировки интерфейса.
+
+Backend, в свою очередь, не выполняет тяжёлых запросов после `bcrypt.compare` до момента `res.json`: JWT генерируется мгновенно, теги возвращаются через оптимизированный запрос (см. §3), а статистика логина (`UPDATE users`, `INSERT INTO user_logins`) пишется **после** ответа (TZ-03).
+
 ### 2.2 Где используется
 
 | Endpoint / место | Операция |
@@ -47,9 +53,23 @@ bcrypt и bcryptjs генерируют хэши в одном формате. �
 
 ---
 
-## 3. Endpoints
+## 3. Оптимизация логина
 
-### 3.1 `POST /api/auth/register`
+За последние итерации обработчик логина прошёл несколько доработок, направленных на скорость отклика и снижение числа roundtrip'ов:
+
+| TZ | Что изменилось | Где |
+|---|---|---|
+| TZ-02 | Frontend не блокирует UI при логине: `setUser`, `setIsLoggedIn` и закрытие модалки происходят до фоновых задач. | `pulse-frontend/src/hooks/useAuth.tsx` |
+| TZ-03 | Статистика логина (`UPDATE users`, `INSERT INTO user_logins`) вынесена за пределы `res.json` — после отправки ответа. | `pulse-backend/src/routes/auth.ts` |
+| TZ-04 | Добавлен функциональный индекс `idx_users_lower_email ON users (LOWER(email))` для case-insensitive поиска. | `pulse-backend/src/index.ts`, `schema.sql` |
+| TZ-05 | Теги пользователя (`tags`) возвращаются прямо в ответе логина; frontend сразу делает `setPortfolio(data.tags)`. | `pulse-backend/src/services/tagManager.ts`, `auth.ts`; `pulse-frontend/src/hooks/useAuth.tsx` |
+| TZ-07 | Запрос `getUserTagsFull` переписан на подзапрос-агрегат, ограниченный тегами пользователя; добавлен индекс `idx_news_tag_links_tag_news ON news_tag_links(tag_id, news_id)`. | `pulse-backend/src/services/tagManager.ts`, `index.ts`, `schema.sql` |
+
+Результат: логин — один roundtrip клиент ↔ backend, после которого интерфейс сразу показывает пользователя и его портфель. Тяжёлый запрос тегов не размножается по всей истории новостей, а работает только с новостями за последний месяц по тегам конкретного пользователя.
+
+## 4. Endpoints
+
+### 4.1 `POST /api/auth/register`
 
 **Назначение:** регистрация нового пользователя.
 
@@ -95,7 +115,7 @@ bcrypt и bcryptjs генерируют хэши в одном формате. �
 
 ---
 
-### 3.2 `POST /api/auth/login`
+### 4.2 `POST /api/auth/login`
 
 **Назначение:** вход по email и паролю.
 
@@ -137,9 +157,22 @@ bcrypt и bcryptjs генерируют хэши в одном формате. �
       "daysRemaining": null,
       "isExpired": false
     }
-  }
+  },
+  "tags": [
+    {
+      "id": "...",
+      "tag_id": "sber",
+      "tag_name": "Сбербанк",
+      "tag_type": "company",
+      "is_frozen": false,
+      "enriched": true,
+      "news_per_month": 12
+    }
+  ]
 }
 ```
+
+> Поле `tags` добавлено в рамках оптимизации логина (TZ-05). Фронтенд сразу отрисовывает портфель, не делая второй запрос `GET /api/user/tags`. Ошибка запроса тегов не ломает вход — возвращается `tags: []`.
 
 **Ошибки:**
 
@@ -150,7 +183,7 @@ bcrypt и bcryptjs генерируют хэши в одном формате. �
 
 ---
 
-### 3.3 `GET /api/auth/me`
+### 4.3 `GET /api/auth/me`
 
 **Назначение:** проверка токена и получение текущего пользователя.
 
@@ -177,7 +210,7 @@ bcrypt и bcryptjs генерируют хэши в одном формате. �
 
 ---
 
-### 3.4 `POST /api/auth/forgot-password`
+### 4.4 `POST /api/auth/forgot-password`
 
 **Назначение:** запрос кода восстановления пароля.
 
@@ -195,7 +228,7 @@ bcrypt и bcryptjs генерируют хэши в одном формате. �
 
 ---
 
-### 3.5 `POST /api/auth/verify-code`
+### 4.5 `POST /api/auth/verify-code`
 
 **Назначение:** проверка кода и выдача reset-токена.
 
@@ -213,7 +246,7 @@ bcrypt и bcryptjs генерируют хэши в одном формате. �
 
 ---
 
-### 3.6 `POST /api/auth/reset-password`
+### 4.6 `POST /api/auth/reset-password`
 
 **Назначение:** установка нового пароля по reset-токену.
 
@@ -232,7 +265,7 @@ bcrypt и bcryptjs генерируют хэши в одном формате. �
 
 ---
 
-### 3.7 `POST /api/auth/telegram`
+### 4.7 `POST /api/auth/telegram`
 
 **Назначение:** подключение Telegram-аккаунта через Login Widget (OAuth popup).
 
@@ -268,7 +301,7 @@ bcrypt и bcryptjs генерируют хэши в одном формате. �
 
 ---
 
-### 3.8 `POST /admin/users/:id/reset-password` (admin)
+### 4.8 `POST /admin/users/:id/reset-password` (admin)
 
 **Назначение:** админский сброс пароля пользователя.
 
@@ -280,7 +313,7 @@ bcrypt и bcryptjs генерируют хэши в одном формате. �
 
 ---
 
-## 4. JWT
+## 5. JWT
 
 - **Секрет:** `process.env.JWT_SECRET` (fallback `'dev-secret'` только для локальной разработки).
 - **Алгоритм:** HS256 (по умолчанию `jsonwebtoken`).
@@ -289,7 +322,7 @@ bcrypt и bcryptjs генерируют хэши в одном формате. �
 
 ---
 
-## 5. Case-insensitive email
+## 6. Case-insensitive email
 
 PostgreSQL сравнивает `VARCHAR` с учётом регистра. Чтобы избежать дублей (`Vladfa@ya.ru` и `vladfa@ya.ru` — разные аккаунты), все auth-запросы используют `LOWER(email)`:
 
@@ -299,9 +332,17 @@ SELECT id FROM users WHERE LOWER(email) = LOWER($1);
 
 Это касается регистрации, логина, forgot-password и verify-code.
 
+Существующий UNIQUE-индекс по колонке `email` case-sensitive и не подходит для `LOWER(email)`. Поэтому добавлен функциональный индекс:
+
+```sql
+CREATE INDEX IF NOT EXISTS idx_users_lower_email ON users (LOWER(email));
+```
+
+Индекс добавлен в boot-миграции (`src/index.ts`) и в `schema.sql` (TZ-04).
+
 ---
 
-## 6. Логирование активностей
+## 7. Логирование активностей
 
 Auth-события пишутся в `activity_log` через `services/activityLog`:
 
@@ -316,7 +357,7 @@ Auth-события пишутся в `activity_log` через `services/activi
 
 ---
 
-## 7. Безопасность и замечания
+## 8. Безопасность и замечания
 
 - `is_admin` в payload JWT — convenience claim. Критичные admin-операции всё равно проверяют `is_admin` в БД (`requireAdmin`).
 - `is_blocked` проверяется при логине, но **не при каждом запросе** через `authMiddleware`. Для полного блокирования нужен дополнительный middleware или проверка в БД.
@@ -325,7 +366,7 @@ Auth-события пишутся в `activity_log` через `services/activi
 
 ---
 
-## 8. Тестовые запросы
+## 9. Тестовые запросы
 
 ```bash
 # Регистрация
@@ -345,7 +386,7 @@ curl -X GET https://pulse-api-bsov.onrender.com/api/auth/me \
 
 ---
 
-## 9. Связанные документы
+## 10. Связанные документы
 
 - `ARCHITECTURE.md` — высокоуровневая архитектура, раздел Auth Endpoints.
 - `AUTH_MODAL_SPEC.md` (frontend) — спецификация модалки авторизации на фронтенде.
