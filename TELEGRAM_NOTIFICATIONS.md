@@ -26,7 +26,7 @@
 | **Sentiment Alerts** | ✅ Реализовано | Асинхронные алерты по тегам |
 | **Fact-check Reports** | ✅ Реализовано | Telegram (MarkdownV2) + HTML email после завершения проверки |
 | **Rate limiting** | ✅ Реализовано | 300ms/200ms задержки |
-| **Admin Telegram Alerts** | ✅ Реализовано | Алерты админам о событиях пользователей (register, payment, page_view_plans, telegram_connected/disconnected, email_connected/disconnected и др.) |
+| **Admin Telegram Alerts** | ✅ Реализовано | Алерты админам о событиях пользователей (register, payment, page_view_plans, page_view_portfolio, portfolio_add_clicked, portfolio_created, telegram_connected/disconnected, email_connected/disconnected и др.) |
 
 ---
 
@@ -1165,6 +1165,9 @@ ${sentimentEmoji} <b>${newsItem.title_ru}</b>
 | `sentiment_vote` | Прогноз индекса (голос) | Пользователь проголосовал в Sentiment Index |
 | `page_view_plans` | Просмотр тарифов | Пользователь открыл страницу тарифов |
 | `factcheck_ordered` | Заказан фактчек | Пользователь заказал факт-чекинг |
+| `page_view_portfolio` | Просмотр портфеля | Пользователь открыл страницу `/portfolio` |
+| `portfolio_add_clicked` | Нажал + Портфель | Пользователь открыл форму добавления портфеля |
+| `portfolio_created` | Портфель создан | Пользователь успешно создал портфель |
 
 > **Примечание:** типы `channel_connected` / `channel_disconnected` (универсальные) устарели; используются специфичные `telegram_connected` / `telegram_disconnected` / `email_connected` / `email_disconnected`.
 
@@ -1206,6 +1209,18 @@ Flow:
   → notifyAdmins('page_view_plans', ...)
   → sendTelegramMessage(chat_id, formatted_alert)
 ```
+
+### События портфеля (`page_view_portfolio`, `portfolio_add_clicked`, `portfolio_created`)
+
+Триггерятся при взаимодействии пользователя с разделом **Портфель**:
+
+| Событие | Frontend | Backend |
+|---------|----------|---------|
+| `page_view_portfolio` | `PortfolioPage.tsx` mount → `api.post('/events/page-view', { page: 'portfolio' })` | `logPageViewPortfolio(userId)` |
+| `portfolio_add_clicked` | Кнопка «+ Портфель» / «Подключить портфель» → `api.post('/events/click', { button: 'add_portfolio' })` | `logPortfolioAddClicked(userId)` |
+| `portfolio_created` | — | `POST /api/portfolio` после `createBrokerPortfolio()` → `logPortfolioCreated(userId, broker, name, portfolioId)` |
+
+> Ошибки логирования page-view / click не влияют на UI — запросы fire-and-forget.
 
 ### API Endpoints
 

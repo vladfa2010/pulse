@@ -344,16 +344,33 @@ CREATE INDEX IF NOT EXISTS idx_users_lower_email ON users (LOWER(email));
 
 ## 7. Логирование активностей
 
-Auth-события пишутся в `activity_log` через `services/activityLog`:
+Пользовательские события пишутся в `user_events` через `services/activityLog.ts`. Все вызовы обёрнуты в `try/catch` — логирование не ломает основной flow.
 
 | Событие | Место | Описание |
 |---------|-------|----------|
-| `register` | `register` | Новый пользователь |
-| `login` | `login` | Успешный вход |
-| `email_connected` | `register` | Email сохранён при регистрации |
-| `forgot_password` | `forgot-password` | Запрос кода восстановления |
-| `password_reset` | `reset-password` | Установлен новый пароль |
+| `register` | `POST /api/auth/register` | Новый пользователь |
+| `login` | `POST /api/auth/login` | Успешный вход |
+| `forgot_password` | `POST /api/auth/forgot-password` | Запрос кода восстановления |
+| `password_reset` | `POST /api/auth/reset-password` | Установлен новый пароль |
+| `tag_added` | `POST /api/user/tags` | Добавлен тег |
+| `tag_removed` | `DELETE /api/user/tags/:id` | Удалён тег |
+| `payment_completed` | `POST /api/payments/...` | Успешная оплата |
+| `subscription_activated` | — | Подписка активирована |
+| `subscription_cancelled` | — | Подписка отменена |
 | `telegram_connected` | `POST /api/auth/telegram` | Подключён Telegram |
+| `telegram_disconnected` | — | Telegram отключён |
+| `email_connected` | `register` | Email подключён |
+| `email_disconnected` | — | Email отключён |
+| `sentiment_vote` | `POST /api/sentiment/vote` | Голос в Sentiment Index |
+| `factcheck_ordered` | — | Заказан фактчек |
+| `page_view_plans` | `POST /api/events/page-view` | Просмотр страницы тарифов |
+| `page_view_portfolio` | `POST /api/events/page-view` | Просмотр страницы /portfolio |
+| `portfolio_add_clicked` | `POST /api/events/click` | Нажатие «+ Портфель» |
+| `portfolio_created` | `POST /api/portfolio` | Портфель создан |
+| `admin_changed_plan` | admin | Ручная смена тарифа |
+| `admin_extended_subscription` | admin | Ручное продление подписки |
+
+События просмотра страниц (`page_view_*`) и кликов (`portfolio_add_clicked`) логируются с фронтенда через dedicated endpoints. Ошибки запросов игнорируются — не влияют на UX.
 
 ---
 
