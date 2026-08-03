@@ -751,3 +751,6 @@ CREATE INDEX IF NOT EXISTS idx_search_cache_expires ON search_cache(expires_at);
 
 -- TZ-04 v4: functional index for case-insensitive email lookups
 CREATE INDEX IF NOT EXISTS idx_users_lower_email ON users (LOWER(email));
+
+-- TZ-07 v2: composite index for tag-news lookups in getUserTagsFull
+CREATE INDEX IF NOT EXISTS idx_news_tag_links_tag_news ON news_tag_links(tag_id, news_id);

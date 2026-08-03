@@ -5296,6 +5296,8 @@ async function start() {
     { sql: `CREATE INDEX IF NOT EXISTS idx_securities_ticker_exchange ON securities(ticker, exchange)`, name: 'idx_securities_ticker_exchange' },
     // TZ-04 v4: functional index for case-insensitive email lookups (login / register / forgot-password / verify-code)
     { sql: `CREATE INDEX IF NOT EXISTS idx_users_lower_email ON users (LOWER(email))`, name: 'idx_users_lower_email' },
+    // TZ-07 v2: composite index for tag-news lookups in getUserTagsFull
+    { sql: `CREATE INDEX IF NOT EXISTS idx_news_tag_links_tag_news ON news_tag_links(tag_id, news_id)`, name: 'idx_news_tag_links_tag_news' },
   ];
   for (const m of migrations) {
     try {
