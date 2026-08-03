@@ -16,6 +16,10 @@
 export type Product = 'digest' | 'weekly_report' | 'fact_check' | 'news_alert' | 'billing' | 'engagement';
 export type Channel = 'telegram' | 'email' | 'push';
 
+// Защита от тяжёлых запросов в дайджесте/weekly report
+// Не per-plan лимит, а глобальный hard cap
+export const HARD_TAG_CAP = 200;
+
 export interface Subscription {
   userId: string;
   product: Product;

@@ -1448,9 +1448,14 @@ interface FeatureRegistryEntry {
   loadedAt: number;
 }
 
-let featuresRegistryCache: Record<string, FeatureRegistryEntry> | null = null;
+export let featuresRegistryCache: Record<string, FeatureRegistryEntry> | null = null;
 let featuresRegistryCacheAt = 0;
 const FEATURE_REGISTRY_TTL = 5 * 60 * 1000; // 5 minutes
+
+export function invalidateFeaturesRegistryCache(): void {
+  featuresRegistryCache = null;
+  featuresRegistryCacheAt = 0;
+}
 
 async function loadFeaturesRegistry(): Promise<Record<string, FeatureRegistryEntry>> {
   const now = Date.now();

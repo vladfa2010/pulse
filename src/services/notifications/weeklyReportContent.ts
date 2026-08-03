@@ -6,10 +6,9 @@
  */
 
 import { query } from '../../config/db';
+import { HARD_TAG_CAP } from './types';
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
-
-const HARD_TAG_CAP = 200; // защита от тяжёлых запросов, не per-plan
 
 export interface WeeklyReportArticle {
   title: string;

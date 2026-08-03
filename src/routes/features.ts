@@ -9,6 +9,7 @@
 
 import { Router, Request, Response } from 'express';
 import { query } from '../config/db';
+import { invalidateFeaturesRegistryCache } from '../services/subscription';
 
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
@@ -74,6 +75,8 @@ export async function createFeature(req: Request, res: Response): Promise<void> 
        FROM features_registry WHERE id = $1`,
       [id]
     );
+    invalidateFeaturesRegistryCache();
+    console.log(`[Feature] Cache invalidated after create: ${id}`);
     res.status(201).json({ feature: normalizeFeatureRow(result.rows[0]) });
   } catch (err: any) {
     console.error('[Features] Create error:', err.message);
@@ -123,6 +126,8 @@ export async function updateFeature(req: Request, res: Response): Promise<void> 
       res.status(404).json({ error: 'Feature not found' });
       return;
     }
+    invalidateFeaturesRegistryCache();
+    console.log(`[Feature] Cache invalidated after update: ${id}`);
     res.json({ feature: normalizeFeatureRow(result.rows[0]) });
   } catch (err: any) {
     console.error('[Features] Update error:', err.message);

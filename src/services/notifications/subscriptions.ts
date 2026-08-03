@@ -200,9 +200,9 @@ export async function getRecipients(product: Product): Promise<Recipient[]> {
          SELECT 1 FROM push_subscriptions ps
          WHERE ps.user_id = ns.user_id AND ps.is_active = TRUE
        )))
-       -- для теговых продуктов нужен хотя бы один тег (billing/fact_check/engagement — без тегов)
+       -- для теговых продуктов нужен хотя бы один активный (не frozen) тег
        AND ($2 IN ('fact_check', 'billing', 'engagement') OR EXISTS (
-         SELECT 1 FROM portfolios p WHERE p.user_id = ns.user_id LIMIT 1
+         SELECT 1 FROM portfolios p WHERE p.user_id = ns.user_id AND p.is_frozen = FALSE LIMIT 1
        ))`,
     [product, product]
   );
