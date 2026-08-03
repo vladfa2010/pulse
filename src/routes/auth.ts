@@ -31,6 +31,7 @@ import {
 } from '../schemas/auth';
 import { buildSubscriptionStatus } from '../services/subscription';
 import { ensureDefaultSubscriptions } from '../services/notifications/subscriptions';
+import { getUserTagsFull } from '../services/tagManager';
 import { sendPasswordResetCodeEmail, sendWelcomeEmail } from '../services/email';
 import { sendTelegramMessage } from '../services/telegram';
 import {
@@ -236,6 +237,15 @@ router.post('/login', validate(LoginSchema), async (req, res) => {
       scheduledDowngrade: user.scheduled_plan_downgrade || null,
     });
 
+    // ─── Теги пользователя — сразу в ответе логина (TZ-05) ─────────────────
+    let tags: any[] = [];
+    try {
+      tags = await getUserTagsFull(user.id);
+    } catch (err: any) {
+      // Логин важнее тегов: ошибка запроса не ломает вход
+      console.error('[Auth] Login tags fetch failed:', err.message);
+    }
+
     res.json({
       token,
       user: {
@@ -245,6 +255,7 @@ router.post('/login', validate(LoginSchema), async (req, res) => {
         is_admin: user.is_admin === 1 || user.is_admin === true,
         subscription: subStatus,
       },
+      tags,
     });
 
     // ─── Статистика логина — ПОСЛЕ ответа, в фоне ────────────────────────

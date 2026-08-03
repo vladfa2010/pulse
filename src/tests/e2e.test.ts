@@ -76,7 +76,11 @@ async function runCriticalPath(): Promise<TestResult[]> {
     const r = await post('/auth/login', { email, password });
     if (r.status === 200 && r.data.token) {
       token = r.data.token; // Обновляем токен
-      results.push({ step: '2. Логин', passed: true });
+      if (!Array.isArray(r.data.tags)) {
+        results.push({ step: '2. Логин', passed: false, error: 'login response must contain tags array' });
+      } else {
+        results.push({ step: '2. Логин', passed: true });
+      }
     } else {
       results.push({ step: '2. Логин', passed: false, error: r.data.error || `HTTP ${r.status}` });
       return results;

@@ -4,7 +4,7 @@ import { query } from '../config/db';
 import { validate } from '../middleware/validate';
 import { AddTagSchema } from '../schemas/user';
 import { getRelatedTags, matchTagsByKeywords } from '../services/smartTagMatcher';
-import { createUserTag, getAllTagNames, detectTagTypeViaLLM, TAG_TYPE_LABELS } from '../services/tagManager';
+import { createUserTag, getAllTagNames, detectTagTypeViaLLM, TAG_TYPE_LABELS, getUserTagsFull } from '../services/tagManager';
 import {
   getPlanById, getUserSubscription, buildSubscriptionStatus,
   scheduleDowngrade, cancelScheduledDowngrade, requireMinPlan,
@@ -127,30 +127,8 @@ router.patch('/profile', authMiddleware, async (req: AuthRequest, res) => {
 router.get('/tags', authMiddleware, async (req: AuthRequest, res) => {
   try {
     const userId = req.user!.userId;
-    const since = new Date();
-    since.setMonth(since.getMonth() - 1);
-
-    const result = await query(
-      `SELECT
-         p.id,
-         p.tag_id,
-         p.tag_name,
-         p.tag_type,
-         p.is_frozen,
-         p.created_at,
-         CASE WHEN udt.enriched_data IS NOT NULL THEN TRUE ELSE FALSE END AS enriched,
-         COUNT(DISTINCT CASE WHEN n.published_at > $2 THEN ntl.news_id END) AS news_per_month
-       FROM portfolios p
-       LEFT JOIN user_defined_tags udt ON udt.tag_id = p.tag_id
-       LEFT JOIN news_tag_links ntl ON ntl.tag_id = p.tag_id
-       LEFT JOIN news n ON n.id = ntl.news_id
-       WHERE p.user_id = $1 AND p.is_frozen = FALSE
-       GROUP BY p.id, p.tag_id, p.tag_name, p.tag_type, p.is_frozen, p.created_at, udt.enriched_data
-       ORDER BY p.created_at DESC`,
-      [userId, since.toISOString()]
-    );
-
-    res.json({ tags: result.rows });
+    const tags = await getUserTagsFull(userId);
+    res.json({ tags });
   } catch (err) {
     console.error('[Tags] Fetch error:', err);
     res.status(500).json({ error: 'Failed to fetch tags' });

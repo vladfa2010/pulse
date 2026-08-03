@@ -7,7 +7,7 @@ import nodeCrypto from 'crypto';
 import * as crypto from './crypto';
 import { getBrokerAdapter, Broker } from './brokerApi';
 import { getCurrentPricesBatch } from './market/marketRouter';
-import { createUserTag, getUserTags, backgroundEnrichTag } from './tagManager';
+import { createUserTag, getUserTagsSimple, backgroundEnrichTag } from './tagManager';
 import { slugifyTagId } from '../utils/slugifyTag';
 import { getPlanById } from './subscription';
 import { BrokerKeyRow } from './brokerKeyService';
@@ -640,7 +640,7 @@ export async function getRecommendedTags(userId: string): Promise<{ tags: Recomm
   const summary = await getPortfolioSummary(userId, 'consolidated');
   const positions = summary.portfolios[0]?.positions || [];
 
-  const allUserTags = await getUserTags(userId);
+  const allUserTags = await getUserTagsSimple(userId);
   const subscribedTagIds = new Set(allUserTags.map(t => t.tag_id));
 
   const existingByTicker = await query(

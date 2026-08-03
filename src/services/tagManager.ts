@@ -971,12 +971,48 @@ export async function backgroundEnrichTag(tagId: string, tagName: string): Promi
   }
 }
 
-// Получить все теги пользователя (стандартные + созданные)
-export async function getUserTags(userId: string): Promise<any[]> {
+/**
+ * Получить минимальный список тегов пользователя (tag_id, tag_name, tag_type).
+ * Для внутренних сервисов; для UI используйте getUserTagsFull.
+ */
+export async function getUserTagsSimple(userId: string): Promise<any[]> {
   try {
     const result = await query(
       `SELECT tag_id, tag_name, tag_type FROM portfolios WHERE user_id = $1`,
       [userId]
+    );
+    return result.rows;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Получить полный портфель пользователя в формате UI (с enriched, news_per_month).
+ * Используется в GET /api/user/tags и в ответе логина.
+ */
+export async function getUserTagsFull(userId: string): Promise<any[]> {
+  try {
+    const since = new Date();
+    since.setMonth(since.getMonth() - 1);
+    const result = await query(
+      `SELECT
+         p.id,
+         p.tag_id,
+         p.tag_name,
+         p.tag_type,
+         p.is_frozen,
+         p.created_at,
+         CASE WHEN udt.enriched_data IS NOT NULL THEN TRUE ELSE FALSE END AS enriched,
+         COUNT(DISTINCT CASE WHEN n.published_at > $2 THEN ntl.news_id END) AS news_per_month
+       FROM portfolios p
+       LEFT JOIN user_defined_tags udt ON udt.tag_id = p.tag_id
+       LEFT JOIN news_tag_links ntl ON ntl.tag_id = p.tag_id
+       LEFT JOIN news n ON n.id = ntl.news_id
+       WHERE p.user_id = $1 AND p.is_frozen = FALSE
+       GROUP BY p.id, p.tag_id, p.tag_name, p.tag_type, p.is_frozen, p.created_at, udt.enriched_data
+       ORDER BY p.created_at DESC`,
+      [userId, since.toISOString()]
     );
     return result.rows;
   } catch {
