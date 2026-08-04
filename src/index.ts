@@ -107,7 +107,9 @@ async function runMigration(sql: string, name: string) {
 // Middleware — обработка входящих запросов
 // ═══════════════════════════════════════════════════════════════════════════
 app.set('trust proxy', true); // Required for X-Forwarded-For behind Render proxy
-app.use(cors());
+app.use(cors({
+  maxAge: 7200, // 2 часа — кап Chrome; больше ставить бессмысленно
+}));
 app.use(express.json());
 app.use(apiLimiter);  // ← Rate limiting для всех API запросов (Task 4)
 
