@@ -10,6 +10,7 @@ import {
   scheduleDowngrade, cancelScheduledDowngrade, requireMinPlan,
   getExcessTagsForDowngrade, parseDbJson, setActiveTags, reconcileFrozenTags,
   planLevel, planLevelOf, computeAccessState, applyDowngradeNow,
+  unfreezeTagsUpToLimit,
 } from '../services/subscription';
 import type { TagType, TagEnrichment } from '../services/tagManager';
 import axios from 'axios';
@@ -157,6 +158,11 @@ router.post('/tags', authMiddleware, validate(AddTagSchema), async (req: AuthReq
       return res.status(500).json({ error: 'Plan not configured' });
     }
     const maxTags = plan.tag_limit;
+
+    // DEFSUB-17: если есть слоты, разморозить замороженные теги перед добавлением
+    if (maxTags >= 0) {
+      await unfreezeTagsUpToLimit(userId, planId);
+    }
 
     const countResult = await query(
       'SELECT COUNT(*) as count FROM portfolios WHERE user_id = $1 AND is_frozen = FALSE',

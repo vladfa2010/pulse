@@ -1020,7 +1020,7 @@ export async function getUserTagsFull(userId: string): Promise<any[]> {
            )
          GROUP BY ntl.tag_id
        ) cnt ON cnt.tag_id = p.tag_id
-       WHERE p.user_id = $1 AND p.is_frozen = FALSE
+       WHERE p.user_id = $1
        ORDER BY p.created_at DESC`,
       [userId, since.toISOString()]
     );
