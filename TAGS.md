@@ -61,9 +61,12 @@
     → проверка: уже подписан ли пользователь на finalTagId?
       → да: return { alreadySubscribed: true }
       → нет: INSERT INTO portfolios (user_id, finalTagId, resolvedTagName, finalType)
+  → unfreezeTagsUpToLimit(userId, planId) — разморозить замороженные теги в пределах лимита (DEFSUB-17)
   → invalidateUserTagsCache()
   → wakeUpNoTagsArticles()
 ```
+
+> Перед проверкой лимита endpoint вызывает `unfreezeTagsUpToLimit(userId, planId)`. Если после апгрейда/понижения появились свободные слоты, замороженные теги автоматически размораживаются, и пользователь сразу может добавить новый тег без ручного «сохранения» в баннере.
 
 > При `tagType = 'auto'` (по умолчанию) ответ возвращается мгновенно (~100–300 мс), а LLM-обогащение выполняется в фоне. Frontend показывает тег сразу и индикатор «Обогащается…», затем опрашивает статус через 5/10/20 сек.
 >

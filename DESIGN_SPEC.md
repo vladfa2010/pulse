@@ -907,8 +907,9 @@ Sentiment: 🟢 Позитив (4/4)
 #### Architecture
 - **Frontend state:** `portfolio` в `useAuth` контексте (не локальный `useState`!)
 - **API:** `GET /api/user/tags`, `POST /api/user/tags`, `DELETE /api/user/tags/:tagId`
-- **DB:** таблица `portfolios` (user_id, tag_id, tag_name, tag_type)
+- **DB:** таблица `portfolios` (user_id, tag_id, tag_name, tag_type, is_frozen)
 - **Load on login:** `loadPortfolio()` вызывается после успешного входа
+- **Frozen tags:** `GET /api/user/tags` возвращает все теги, включая замороженные; `news_per_month` считается только по активным тегам.
 
 #### Flow
 ```
