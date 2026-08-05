@@ -11,12 +11,9 @@ import { createUserTag, getUserTagsSimple, backgroundEnrichTag } from './tagMana
 import { slugifyTagId } from '../utils/slugifyTag';
 import { getPlanById } from './subscription';
 import { BrokerKeyRow } from './brokerKeyService';
+import { nowSql } from '../utils/nowSql';
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
-
-function nowSql(): string {
-  return USE_SQLITE ? "datetime('now')" : 'NOW()';
-}
 
 function validateBroker(broker: string): asserts broker is Broker {
   if (!['inside', 'finam', 'bcs'].includes(broker)) {

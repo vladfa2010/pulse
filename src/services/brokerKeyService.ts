@@ -6,12 +6,7 @@ import { query } from '../config/db';
 import * as crypto from './crypto';
 import nodeCrypto from 'crypto';
 import { getBrokerAdapter, Broker } from './brokerApi';
-
-const USE_SQLITE = process.env.USE_SQLITE === 'true';
-
-function nowSql(): string {
-  return USE_SQLITE ? "datetime('now')" : 'NOW()';
-}
+import { nowSql } from '../utils/nowSql';
 
 function validateBroker(broker: string): asserts broker is Broker {
   if (!['inside', 'finam', 'bcs'].includes(broker)) {

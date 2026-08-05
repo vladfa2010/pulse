@@ -28,6 +28,7 @@ import {
   sendEmail,
 } from './email';
 import { logPaymentCompleted } from './activityLog';
+import { nowSql } from '../utils/nowSql';
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
@@ -67,10 +68,6 @@ export interface SubscriptionStatus {
 }
 
 // ─── SQL helpers ───────────────────────────────────────────────────────────
-function nowSql(): string {
-  return USE_SQLITE ? "datetime('now')" : 'NOW()';
-}
-
 function nowPlusDaysSql(days: number): string {
   return USE_SQLITE
     ? `datetime('now', '${days >= 0 ? '+' : ''}${days} days')`
