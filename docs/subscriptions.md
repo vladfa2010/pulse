@@ -477,6 +477,20 @@ export function applyPercentDiscount(basePrice: number, discountValue: number): 
 - `percent` — зелёное сообщение "Скидка {value}% применена! Цена: {price} ₽".
 - `trial` — зелёное сообщение "{value} дней бесплатно! Списание 1 ₽ для проверки карты — вернём сразу."
 
+## Кеширование тарифных планов
+
+`getPlanById` использует in-memory кеш всех планов с TTL 60 секунд (`PLANS_CACHE_TTL_MS`).
+
+- Кеш хранит `Map<string, Plan>`, построенный один раз запросом `SELECT * FROM subscription_plans ORDER BY display_order ASC`.
+- Контракт кеша совпадает с оригинальным `getPlanById`: фильтр `deleted_at IS NULL` не применяется. `getActivePlans` и другие call-site'ы фильтруют сами.
+- Объекты `Plan` из кеша не мутировать — все call-site'ы получают одну и ту же ссылку.
+- Инвалидация (`invalidatePlansCache`) вызывается в `routes/admin.ts` после мутаций `subscription_plans`:
+  - `POST /api/admin/plans` — создание плана;
+  - `PATCH /api/admin/plans/:planId` — обновление плана;
+  - `DELETE /api/admin/plans/:planId` и `POST /api/admin/plans/:planId/archive` — архивация;
+  - `POST /api/admin/plans/:planId/restore` — восстановление.
+- Boot-миграции в `index.ts` не инвалидируют кеш: кеш ленивый и подхватит актуальные данные при первом обращении.
+
 ## Функции статистики
 
 `src/services/subscription.ts`:

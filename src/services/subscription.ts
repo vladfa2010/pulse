@@ -108,6 +108,37 @@ export function parseDbJson<T = any>(value: unknown): T | null {
 }
 
 // ─── Plan helpers ──────────────────────────────────────────────────────────
+// ⚠️ Инвариант: объекты Plan из кеша НЕ мутировать — все call-site'ы получают одну ссылку.
+let plansCache: { data: Map<string, Plan>; expiresAt: number } | null = null;
+const PLANS_CACHE_TTL_MS = 60_000;
+
+async function getAllPlansCached(): Promise<Map<string, Plan>> {
+  const now = Date.now();
+  if (plansCache && plansCache.expiresAt > now) {
+    return plansCache.data;
+  }
+  // КРИТИЧНО: без WHERE deleted_at IS NULL — оригинальный контракт getPlanById.
+  // Фильтрация is_active / deleted_at — ответственность call-site'ов.
+  const result = await query(
+    `SELECT * FROM subscription_plans ORDER BY display_order ASC`,
+    []
+  );
+  const data = new Map(
+    result.rows.map((p: any) => [p.id, { ...p, features: parseDbJson(p.features) || {} }])
+  );
+  plansCache = { data, expiresAt: now + PLANS_CACHE_TTL_MS };
+  return data;
+}
+
+export function invalidatePlansCache(): void {
+  plansCache = null;
+}
+
+export async function getPlanById(planId: string): Promise<Plan | null> {
+  const plans = await getAllPlansCached();
+  return plans.get(planId) ?? null;
+}
+
 export async function planLevel(planId: string): Promise<number> {
   const plan = await getPlanById(planId);
   return plan?.plan_level ?? 0;
@@ -124,14 +155,6 @@ export async function isAtLeast(currentPlanId: string, minPlanId: string): Promi
 
 export async function isPaid(planId: string): Promise<boolean> {
   return (await planLevel(planId)) >= 1;
-}
-
-export async function getPlanById(planId: string): Promise<Plan | null> {
-  const result = await query(`SELECT * FROM subscription_plans WHERE id = $1`, [planId]);
-  if (!result.rows[0]) return null;
-  const plan = result.rows[0];
-  plan.features = parseDbJson(plan.features) || {};
-  return plan;
 }
 
 export async function getActivePlans(): Promise<Plan[]> {

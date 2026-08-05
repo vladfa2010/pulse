@@ -18,6 +18,7 @@ import {
   getUserSubscription,
   freezeExcessTags,
   unfreezeTagsUpToLimit,
+  invalidatePlansCache,
 } from '../services/subscription';
 import { listAllFeatures, createFeature, updateFeature } from './features';
 import { getPromoByCode } from '../services/promo';
@@ -735,6 +736,8 @@ router.post('/plans', adminMiddleware, validate(CreatePlanSchema), async (req: A
       ]
     );
 
+    invalidatePlansCache();
+
     const plan = await getPlanById(body.id);
     res.status(201).json({ plan: plan ? normalizePlanRow(plan) : null });
   } catch (err: any) {
@@ -810,6 +813,8 @@ router.patch('/plans/:planId', adminMiddleware, validate(UpdatePlanSchema), asyn
       values
     );
 
+    invalidatePlansCache();
+
     const updated = await getPlanById(planId);
     res.json({ plan: updated ? normalizePlanRow(updated) : null });
   } catch (err: any) {
@@ -840,6 +845,7 @@ async function archivePlan(planId: string): Promise<{ subscriberCount: number; m
 
   const subscriberCount = await getActiveSubscriberCount(planId);
   await query(`UPDATE subscription_plans SET deleted_at = ${nowSql()} WHERE id = $1`, [planId]);
+  invalidatePlansCache();
 
   return {
     subscriberCount,
@@ -897,6 +903,8 @@ router.post('/plans/:planId/restore', adminMiddleware, async (req: AuthRequest, 
       `UPDATE subscription_plans SET deleted_at = NULL, updated_at = ${nowSql()} WHERE id = $1`,
       [planId]
     );
+    invalidatePlansCache();
+
     const plan = await getPlanById(planId);
     if (!plan) {
       return res.status(404).json({ error: 'Plan not found' });
