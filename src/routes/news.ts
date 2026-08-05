@@ -27,6 +27,7 @@ import { Router } from 'express';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { query } from '../config/db';
 import { getCachedPopularTags, setCachedPopularTags } from '../utils/tagCache';
+import { nowSql } from '../utils/nowSql';
 
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
@@ -36,11 +37,6 @@ function timeFilterSql(): string {
   return USE_SQLITE
     ? "published_at > datetime('now', '-90 days')"
     : "published_at > NOW() - INTERVAL '90 days'";
-}
-
-// ─── SQL для текущего времени ─────────────────────────────────────────────
-function nowSql(): string {
-  return USE_SQLITE ? "datetime('now')" : 'NOW()';
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

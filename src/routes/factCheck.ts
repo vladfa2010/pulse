@@ -16,15 +16,12 @@ import { query } from '../config/db';
 import { getUserSubscription, planLevel, computeAccessState } from '../services/subscription';
 import { createFactCheckJob, updateNewsFactCheck, setEmitter, removeEmitter } from '../services/factCheck';
 import { logFactCheckOrdered } from '../services/activityLog';
+import { nowSql } from '../utils/nowSql';
 
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
 const ELIGIBLE_PLANS = ['premium', 'club', 'pro'];
-
-function nowSql(): string {
-  return USE_SQLITE ? "datetime('now')" : 'NOW()';
-}
 
 async function requirePremium(req: AuthRequest, res: Response): Promise<boolean> {
   const userId = req.user!.userId;

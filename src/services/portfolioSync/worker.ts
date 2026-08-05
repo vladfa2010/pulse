@@ -18,12 +18,7 @@ import {
   updateKeyTokenAfterSync,
 } from '../brokerPortfolioService';
 import { BrokerKeyRow } from '../brokerKeyService';
-
-const USE_SQLITE = process.env.USE_SQLITE === 'true';
-
-function nowSql(): string {
-  return USE_SQLITE ? "datetime('now')" : 'NOW()';
-}
+import { nowSql } from '../../utils/nowSql';
 
 function isInFinamMaintenanceWindow(): boolean {
   const now = new Date();

@@ -14,6 +14,7 @@
 import axios from 'axios';
 import { BrokerAdapter, TestKeyResult, BrokerPosition } from './index';
 import { query } from '../../config/db';
+import { nowSql } from '../../utils/nowSql';
 
 const BASE_URL = 'https://api.finam.ru';
 const REQUEST_TIMEOUT_MS = 15000;
@@ -106,10 +107,6 @@ const USE_SQLITE = process.env.USE_SQLITE === 'true';
 const ASSET_TIMEOUT_MS = 10000;
 const POSITIVE_CACHE_DAYS = 30;
 const NEGATIVE_CACHE_DAYS = 7;
-
-function nowSql(): string {
-  return USE_SQLITE ? "datetime('now')" : 'NOW()';
-}
 
 function cacheFreshSql(positive: boolean): string {
   if (USE_SQLITE) {

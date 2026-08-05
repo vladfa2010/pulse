@@ -9,6 +9,7 @@ import {
   logTelegramConnected,
   logTelegramDisconnected,
 } from '../services/activityLog';
+import { nowSql } from '../utils/nowSql';
 
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
@@ -46,10 +47,6 @@ function verifyLinkToken(userId: string, token: string): boolean {
   if (!secret) return false;
   const expected = require('crypto').createHmac('sha256', secret).update(userId).digest('hex').slice(0, 16);
   return expected === token;
-}
-
-function nowSql(): string {
-  return USE_SQLITE ? "datetime('now')" : 'NOW()';
 }
 
 function nowPlusDaysSql(days: number): string {

@@ -20,6 +20,7 @@ import { query } from '../config/db';
 import { yandexSearch, YandexSearchType, YandexSource } from './yandexSearch';
 import { serperSearch, SerperSource } from './serperSearch';
 import { sendFactCheckNotifications } from './factCheckNotifications';
+import { nowSql } from '../utils/nowSql';
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 const KIMI_API_KEY = process.env.KIMI_API_KEY;
@@ -123,10 +124,6 @@ function emitStage(newsId: string, userId: string, stage: string, payload: any):
 }
 
 // ─── DB helpers: fact_check_jobs ────────────────────────────────────────────
-
-function nowSql(): string {
-  return USE_SQLITE ? "datetime('now')" : 'NOW()';
-}
 
 export async function createFactCheckJob(newsId: string, userId: string): Promise<string | null> {
   try {

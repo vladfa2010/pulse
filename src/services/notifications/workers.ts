@@ -10,8 +10,7 @@ import cron from 'node-cron';
 import { query } from '../../config/db';
 import { broadcastProduct } from './dispatcher';
 import { Product } from './types';
-
-const USE_SQLITE = process.env.USE_SQLITE === 'true';
+import { nowSql } from '../../utils/nowSql';
 
 type TaskName = 'digest' | 'weekly_report';
 
@@ -53,10 +52,6 @@ async function runBroadcast(product: Product): Promise<void> {
       [taskName, result.sent + result.skipped + result.empty + result.errors, result.sent]
     );
   } catch { /* ignore */ }
-}
-
-function nowSql(): string {
-  return USE_SQLITE ? "datetime('now')" : 'NOW()';
 }
 
 export { runBroadcast };

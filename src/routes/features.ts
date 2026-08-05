@@ -10,13 +10,10 @@
 import { Router, Request, Response } from 'express';
 import { query } from '../config/db';
 import { invalidateFeaturesRegistryCache } from '../services/subscription';
+import { nowSql } from '../utils/nowSql';
 
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
-
-function nowSql(): string {
-  return USE_SQLITE ? "datetime('now')" : 'NOW()';
-}
 
 function normalizeFeatureRow(row: any): any {
   return {

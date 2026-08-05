@@ -19,6 +19,7 @@ import { logTagAdded, logTagRemoved } from '../services/activityLog';
 import { savePaymentMethod } from '../services/subscription';
 import { setDigestEnabled } from '../services/digest';
 import { setSubscription, getSubscription, setQuietHours, ensureDefaultSubscriptions } from '../services/notifications/subscriptions';
+import { nowSql } from '../utils/nowSql';
 
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
@@ -29,10 +30,6 @@ function uuidv4(): string {
     const v = c === 'x' ? r : (r & 0x3 | 0x8);
     return v.toString(16);
   });
-}
-
-function nowSql(): string {
-  return USE_SQLITE ? "datetime('now')" : 'NOW()';
 }
 
 function insertOrReplace(table: string, columns: string[], values: any[]): string {

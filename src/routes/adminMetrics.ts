@@ -1,11 +1,11 @@
 import { Router } from 'express';
 import { adminMiddleware } from './admin';
 import { query } from '../config/db';
+import { nowSql } from '../utils/nowSql';
 
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
-const nowSql = () => (USE_SQLITE ? "datetime('now')" : 'NOW()');
 const agoSql = (days: number) =>
   USE_SQLITE ? `datetime('now', '-${days} days')` : `NOW() - INTERVAL '${days} days'`;
 

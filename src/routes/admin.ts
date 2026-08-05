@@ -23,13 +23,10 @@ import {
 import { listAllFeatures, createFeature, updateFeature } from './features';
 import { getPromoByCode } from '../services/promo';
 import { logAdminChangedPlan, logAdminExtendedSubscription } from '../services/activityLog';
+import { nowSql } from '../utils/nowSql';
 
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
-
-function nowSql(): string {
-  return USE_SQLITE ? "datetime('now')" : 'NOW()';
-}
 
 // Middleware: check is_admin flag in database
 export function adminMiddleware(req: AuthRequest, res: any, next: any) {
