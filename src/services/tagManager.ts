@@ -14,7 +14,6 @@ import axios from 'axios';
 import { invalidateUserTagsCache } from './smartTagMatcher';
 import { backfillTagMatches } from './tagBackfill';
 import { getPlanById } from './subscription';
-import { getUserPlanId } from '../utils/users';
 
 const KIMI_API_KEY = process.env.KIMI_API_KEY;
 const KIMI_MODEL = process.env.KIMI_MODEL || 'moonshot-v1-32k';
@@ -866,7 +865,11 @@ export async function createUserTag(userId: string, tagId: string, tagName: stri
     }
 
     // 6. Проверка лимита тегов по тарифу (TZ_BOT_TAG_LIMIT)
-    const planId = (await getUserPlanId(userId)) || 'free';
+    const subResult = await query(
+      `SELECT subscription_plan FROM users WHERE id = $1`,
+      [userId]
+    );
+    const planId = subResult.rows[0]?.subscription_plan || 'free';
     const plan = await getPlanById(planId);
     if (!plan) {
       console.error(`[TagManager] Plan not found: ${planId}`);

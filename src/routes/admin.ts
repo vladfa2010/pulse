@@ -24,7 +24,6 @@ import { listAllFeatures, createFeature, updateFeature } from './features';
 import { getPromoByCode } from '../services/promo';
 import { logAdminChangedPlan, logAdminExtendedSubscription } from '../services/activityLog';
 import { nowSql } from '../utils/nowSql';
-import { getUserId } from '../utils/users';
 
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
@@ -291,7 +290,8 @@ router.post('/users/:id/auto-renew', adminMiddleware, async (req: AuthRequest, r
       return res.status(400).json({ error: 'enabled required' });
     }
 
-    if (!await getUserId(userId)) {
+    const current = await query(`SELECT id FROM users WHERE id = $1`, [userId]);
+    if (current.rows.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
 
@@ -484,7 +484,8 @@ router.post('/users/:id/reset-password', adminMiddleware, async (req: AuthReques
       return res.status(400).json({ error: 'Password must be at least 6 characters' });
     }
 
-    if (!await getUserId(userId)) {
+    const current = await query(`SELECT id FROM users WHERE id = $1`, [userId]);
+    if (current.rows.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
 
@@ -557,7 +558,8 @@ router.delete('/users/:id', adminMiddleware, async (req: AuthRequest, res) => {
       return res.status(409).json({ error: 'You cannot delete yourself' });
     }
 
-    if (!await getUserId(userId)) {
+    const current = await query(`SELECT id FROM users WHERE id = $1`, [userId]);
+    if (current.rows.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
 

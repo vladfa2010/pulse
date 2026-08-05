@@ -12,7 +12,6 @@ import { slugifyTagId } from '../utils/slugifyTag';
 import { getPlanById } from './subscription';
 import { BrokerKeyRow } from './brokerKeyService';
 import { nowSql } from '../utils/nowSql';
-import { getUserPlanId } from '../utils/users';
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
@@ -656,7 +655,8 @@ export async function getRecommendedTags(userId: string): Promise<{ tags: Recomm
   }
 
   // Tag limit
-  const planId = (await getUserPlanId(userId)) || 'free';
+  const userResult = await query(`SELECT subscription_plan FROM users WHERE id = $1`, [userId]);
+  const planId = userResult.rows[0]?.subscription_plan || 'free';
   const plan = await getPlanById(planId);
   const limit = plan?.tag_limit ?? 0;
   const activeTagsResult = await query(
