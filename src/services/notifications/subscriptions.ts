@@ -100,6 +100,15 @@ export async function setSubscription(
   }
 }
 
+/** DB-обёртка для включения/выключения дайджеста в канале (перенесена из digest.ts, TZ-10b). */
+export function setDigestEnabled(
+  userId: string,
+  channel: 'telegram' | 'email' | 'push',
+  enabled: boolean
+) {
+  return setSubscription(userId, 'digest', channel, { enabled });
+}
+
 export async function setSubscriptionsBatch(
   userId: string,
   patches: { product: Product; channel: Channel; enabled?: boolean; frequency?: string }[]

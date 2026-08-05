@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { query } from '../config/db';
-import { setDigestEnabled } from './digest';
+import { setDigestEnabled } from './notifications/subscriptions';
 import { isQuietHoursMsk } from './notifications/quietHours';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;

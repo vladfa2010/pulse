@@ -37,10 +37,6 @@ export function startDigestCron(): void {
 // webhook.ts (start_digest/stop_digest), user.ts (telegram-disconnect),
 // index.ts (Telegram Widget connect) — переводим их на эти функции:
 
-export function setDigestEnabled(userId: string, channel: 'telegram' | 'email' | 'push', enabled: boolean) {
-  return setSubscription(userId, 'digest', channel, { enabled });
-}
-
 export function setDigestFrequency(userId: string, channel: 'telegram' | 'email' | 'push', frequency: string) {
   return setSubscription(userId, 'digest', channel, { frequency });
 }
@@ -58,7 +54,7 @@ export function ensureDefaultNotificationSubscriptions(userId: string): Promise<
   return ensureDefaultSubscriptions(userId);
 }
 
-export { ensureDefaultSubscriptions } from './notifications/subscriptions';
+export { ensureDefaultSubscriptions, setDigestEnabled } from './notifications/subscriptions';
 export { getEntitlement, isPremiumActive, isPremium } from './notifications/entitlement';
 export { getQuietHours } from './notifications/subscriptions';
 export { isQuietHoursMsk } from './notifications/quietHours';
