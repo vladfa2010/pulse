@@ -20,6 +20,7 @@ import { savePaymentMethod } from '../services/subscription';
 import { setDigestEnabled } from '../services/digest';
 import { setSubscription, getSubscription, setQuietHours, ensureDefaultSubscriptions } from '../services/notifications/subscriptions';
 import { nowSql } from '../utils/nowSql';
+import { getUserPlanId } from '../utils/users';
 
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
@@ -144,11 +145,7 @@ router.post('/tags', authMiddleware, validate(AddTagSchema), async (req: AuthReq
     }
 
     // Check tag limit based on subscription plan
-    const subResult = await query(
-      `SELECT subscription_plan FROM users WHERE id = $1`,
-      [userId]
-    );
-    const planId = subResult.rows[0]?.subscription_plan || 'free';
+    const planId = (await getUserPlanId(userId)) || 'free';
     const plan = await getPlanById(planId);
     if (!plan) {
       console.error(`[tagLimit] Plan not found: ${planId}`);
@@ -882,11 +879,7 @@ router.get('/stats', authMiddleware, async (req: AuthRequest, res) => {
 router.get('/my-plan', authMiddleware, async (req: AuthRequest, res) => {
   try {
     const userId = req.user!.userId;
-    const userResult = await query(
-      `SELECT subscription_plan FROM users WHERE id = $1`,
-      [userId]
-    );
-    const planId = userResult.rows[0]?.subscription_plan || 'free';
+    const planId = (await getUserPlanId(userId)) || 'free';
     const planResult = await query(
       `SELECT * FROM subscription_plans WHERE id = $1`,
       [planId]

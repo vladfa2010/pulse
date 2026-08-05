@@ -58,6 +58,7 @@ import { getAdminTgSettings, saveAdminTgSettings, sendTestAlert, ALERT_EVENT_TYP
 import { logNewsDataCheck } from './services/newsDataCheck';
 import { setupYookassaWebhook } from './routes/payment'; // ← Auto-setup YuKassa webhook
 import { addSubscriber, getSubscriberCount, addSentimentSubscriber } from './services/sse'; // ← Real-time news stream
+import { getUserSubscriptionActive } from './utils/users';
 
 dotenv.config();
 
@@ -4407,20 +4408,13 @@ app.post('/api/events/click', authMiddleware, async (req: AuthRequest, res) => {
 app.get('/api/telegram/link', authMiddleware, async (req: AuthRequest, res) => {
   try {
     const userId = req.user!.userId;
-    console.log(`[Telegram Link] User ${userId} requesting link`);
 
     // Check subscription
-    const userResult = await query(
-      `SELECT subscription_active FROM users WHERE id = $1`,
-      [userId]
-    );
-    console.log(`[Telegram Link] User ${userId} subscription:`, userResult.rows[0]);
-
-    if (userResult.rows.length === 0) {
+    const active = await getUserSubscriptionActive(userId);
+    if (active === null) {
       return res.status(404).json({ error: 'User not found' });
     }
-
-    if (!userResult.rows[0].subscription_active) {
+    if (!active) {
       return res.status(403).json({ error: 'Premium subscription required' });
     }
 
@@ -4449,14 +4443,11 @@ app.post('/api/auth/telegram', authMiddleware, async (req: AuthRequest, res) => 
     const userId = req.user!.userId;
 
     // ── 1. Check Premium ──
-    const userResult = await query(
-      `SELECT subscription_active FROM users WHERE id = $1`,
-      [userId]
-    );
-    if (userResult.rows.length === 0) {
+    const active = await getUserSubscriptionActive(userId);
+    if (active === null) {
       return res.status(404).json({ error: 'User not found' });
     }
-    if (!userResult.rows[0].subscription_active) {
+    if (!active) {
       return res.status(403).json({ error: 'Premium subscription required' });
     }
 
