@@ -57,7 +57,7 @@ import { logPageViewPlans, logPageViewPortfolio, logPortfolioAddClicked } from '
 import { getAdminTgSettings, saveAdminTgSettings, sendTestAlert, ALERT_EVENT_TYPES } from './services/adminAlerts';
 import { logNewsDataCheck } from './services/newsDataCheck';
 import { setupYookassaWebhook } from './routes/payment'; // ← Auto-setup YuKassa webhook
-import { addSubscriber, getSubscriberCount, addSentimentSubscriber } from './services/sse'; // ← Real-time news stream
+import { addSubscriber, getSubscriberCount, addSentimentSubscriber, closeAllSSE } from './services/sse'; // ← Real-time news stream
 import { getUserSubscriptionActive } from './utils/users';
 
 dotenv.config();
@@ -4973,6 +4973,31 @@ app.use((req, res) => {
 // Инициализация и запуск сервера
 // ═══════════════════════════════════════════════════════════════════════════
 async function start() {
+  let shuttingDown = false;
+
+  // Start HTTP server immediately so /health is available and Render can route traffic
+  // before migrations finish. Migrations and background jobs run in parallel.
+  const server = app.listen(PORT, () => {
+    console.log(`PULSE backend running on port ${PORT}`);
+    console.log(`Routes: /api/auth, /api/news, /api/payment, /api/user, /api/translate, /api/webhook, /api/admin`);
+
+    if (!encryptionKeyConfigured()) {
+      const keyHex = process.env.ENCRYPTION_KEY || '';
+      console.warn(`[Security] ENCRYPTION_KEY is not configured. present=${!!keyHex}, length=${keyHex.length}, valid=${encryptionKeyConfigured()}. Broker API keys will be unavailable until the variable is set.`);
+    } else {
+      console.log('[Security] ENCRYPTION_KEY is configured.');
+    }
+  });
+
+  // Graceful shutdown: stop accepting new connections, close SSE streams, drain in-flight requests
+  process.on('SIGTERM', () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log('[Shutdown] SIGTERM received, draining…');
+    closeAllSSE();
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 8000).unref();
+  });
 
   // ─── Шаг 1: Инициализация базы данных ─────────────────────────────────
   if (USE_SQLITE) {
@@ -5596,30 +5621,20 @@ async function start() {
     console.error('[DB] Connection test FAILED:', err.message);
   }
 
-// ─── Шаг 4: Запуск HTTP-сервера ───────────────────────────────────────
-  app.listen(PORT, () => {
-    console.log(`PULSE backend running on port ${PORT}`);
-    console.log(`Routes: /api/auth, /api/news, /api/payment, /api/user, /api/translate, /api/webhook, /api/admin`);
-
-    if (!encryptionKeyConfigured()) {
-      const keyHex = process.env.ENCRYPTION_KEY || '';
-      console.warn(`[Security] ENCRYPTION_KEY is not configured. present=${!!keyHex}, length=${keyHex.length}, valid=${encryptionKeyConfigured()}. Broker API keys will be unavailable until the variable is set.`);
-    } else {
-      console.log('[Security] ENCRYPTION_KEY is configured.');
-    }
-
-    // ─── Шаг 5: Запуск фоновых задач ──────────────────────────────────
+// ─── Шаг 5: Запуск фоновых задач ──────────────────────────────────
     // startCron() — ОТКЛЮЧЕН (TZ_REMOVE_DUPLICATE_RSS_CRON)
     // RSS обрабатывается NewsSourceManager каждые 5 мин
     // startReportCron() — ОТКЛЮЧЕН: weekly report переехал в notification workers (startDigestCron)
 
     // ─── Шаг 6: Настройка YuKassa webhook ─────────────────────────────
     setTimeout(() => {
+      if (shuttingDown) return;
       setupYookassaWebhook().catch(err => console.error('[YuKassa] Webhook setup error:', err));
     }, 5000); // Задержка 5с чтобы сервер точно был доступен
 
     // ─── Шаг 7: Настройка Telegram Bot webhook ────────────────────────
     setTimeout(async () => {
+      if (shuttingDown) return;
       const TG_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
       if (!TG_TOKEN) {
         console.log('[TG Bot] No TELEGRAM_BOT_TOKEN, skipping webhook setup');
@@ -5649,22 +5664,27 @@ async function start() {
       }
     }, 8000);
 
-    startDigestCron(); // TG digest cron (every hour)
-    startPortfolioSyncWorker(); // Broker portfolio sync (every 15 min MSK)
-    startFactCheckCron(); // Fact-check worker (every 10s)
+    if (!shuttingDown) {
+      startDigestCron(); // TG digest cron (every hour)
+      startPortfolioSyncWorker(); // Broker portfolio sync (every 15 min MSK)
+      startFactCheckCron(); // Fact-check worker (every 10s)
+    }
 
     // Sentiment Index — daily reset of vote_count_today / streak at 00:00 MSK (21:00 UTC)
     cron.schedule('0 21 * * *', () => {
+      if (shuttingDown) return;
       resetDailyWindows().catch((e: any) => console.error('[Sentiment] daily reset error:', e.message));
     });
 
     // IMOEX 5-min cache refresh during trading hours (MSK 10:00–23:00 → UTC 07:00–20:00)
     cron.schedule('*/5 7-20 * * 1-5', () => {
+      if (shuttingDown) return;
       refreshImoexCache().catch((e: any) => console.error('[IMOEX] cron refresh error:', e.message));
     });
 
     // Auto-renewal — daily at 09:00 UTC (process subscriptions expiring within 3 days)
     cron.schedule('0 9 * * *', () => {
+      if (shuttingDown) return;
       processAutoRenewals()
         .then((result) => console.log('[Cron] Auto-renew:', result))
         .catch((e: any) => console.error('[Cron] Auto-renew failed:', e.message));
@@ -5673,6 +5693,7 @@ async function start() {
 
     // Expiry email notifications — daily at 09:00 UTC (12:00 MSK)
     cron.schedule('0 9 * * *', () => {
+      if (shuttingDown) return;
       sendExpiryNotifications()
         .then((result) => console.log('[Cron] Expiry notifications:', result))
         .catch((e: any) => console.error('[Cron] Expiry notifications failed:', e.message));
@@ -5681,6 +5702,7 @@ async function start() {
 
     // Trial expirations — every 6 hours
     cron.schedule('0 */6 * * *', () => {
+      if (shuttingDown) return;
       processTrialExpirations()
         .then((result) => console.log('[Cron] Trial expirations:', result))
         .catch((e: any) => console.error('[Cron] Trial expirations failed:', e.message));
@@ -5690,6 +5712,7 @@ async function start() {
     // ═══════════════════════════════════════════════════════════════════
     // Cron: scheduled downgrades
     setInterval(async () => {
+      if (shuttingDown) return;
       try {
         const processed = await processScheduledDowngrades();
         if (processed > 0) {
@@ -5720,6 +5743,7 @@ async function start() {
     }
 
     setInterval(async () => {
+      if (shuttingDown) return;
       try {
         const pushTime = getTodayPushTimeMsk();
         if (!pushTime) return;
@@ -5784,12 +5808,14 @@ async function start() {
     // NewsSourceManager — фоновый запуск каждые 5 мин
     // NOTE: /trigger/nsm endpoint зарегистрирован в основном потоке выше
     setInterval(() => {
+      if (shuttingDown) return;
       nsm.run().catch((e: any) => console.error('[NSM] interval error:', e.message));
     }, 5 * 60 * 1000);
 
     // News Processor cron — Layer 1 + Layer 2 (translate + sentiment)
     // Обрабатывает "сырые" статьи (needs_translation = TRUE)
     setInterval(() => {
+      if (shuttingDown) return;
       import('./services/newsProcessor').then(({ processRawArticles }) => {
         processRawArticles().catch(e => console.error('[NewsProcessor] interval error:', e.message));
       });
@@ -5797,6 +5823,7 @@ async function start() {
 
     // Catch-up: если давно не запускали — запустить
     query(`SELECT MAX(last_fetch_at) as max FROM news_sources WHERE type = 'api_search'`).then(lastFetch => {
+      if (shuttingDown) return;
       const hoursSince = lastFetch.rows[0]?.max
         ? (Date.now() - new Date(lastFetch.rows[0].max).getTime()) / 3600000
         : 999;
@@ -5805,7 +5832,6 @@ async function start() {
         nsm.run().catch((e: any) => console.error('[NSM] catch-up error:', e.message));
       }
     });
-  });
 }
 
 start();

@@ -169,3 +169,30 @@ export function broadcastSentimentUpdate(payload: any): void {
     console.log(`[SSE] Broadcasted sentiment update to ${sent} subscriber(s): ${data.slice(0, 80)}`);
   }
 }
+
+/**
+ * Gracefully close all SSE connections (used during shutdown).
+ * Clients will auto-reconnect to the new backend instance.
+ */
+export function closeAllSSE(): void {
+  let closed = 0;
+  for (const res of subscribers) {
+    if (!res.writableEnded) {
+      res.end();
+      closed++;
+    }
+  }
+  subscribers.clear();
+
+  for (const res of sentimentSubscribers) {
+    if (!res.writableEnded) {
+      res.end();
+      closed++;
+    }
+  }
+  sentimentSubscribers.clear();
+
+  if (closed > 0) {
+    console.log(`[SSE] Closed ${closed} SSE connection(s) during shutdown`);
+  }
+}
