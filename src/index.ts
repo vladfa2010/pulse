@@ -110,32 +110,9 @@ async function runMigration(sql: string, name: string) {
 app.set('trust proxy', true); // Required for X-Forwarded-For behind Render proxy
 app.use(cors());
 app.use(express.json());
-app.use(apiLimiter);  // ← Rate limiting для всех API запросов (Task 4)
 
+// Health endpoints — before rate limiter, so monitoring can always reach them
 // ═══════════════════════════════════════════════════════════════════════════
-// Корневая страница — статус API (показывает что сервер жив)
-// ═══════════════════════════════════════════════════════════════════════════
-app.get('/', (req, res) => {
-  res.send(`<!DOCTYPE html>...PULSE API status page...</html>`);
-});
-
-// Debug version — точный git commit hash на сервере
-app.get('/debug/version', async (req, res) => {
-  try {
-    const fs = await import('fs');
-    const path = await import('path');
-    const gitPath = path.join(__dirname, '..', '.git', 'refs', 'heads', 'main');
-    let commit = 'unknown';
-    if (fs.existsSync(gitPath)) {
-      commit = fs.readFileSync(gitPath, 'utf-8').trim().substring(0, 7);
-    }
-    res.json({ commit, full: commit === 'unknown' ? null : fs.readFileSync(gitPath, 'utf-8').trim() });
-  } catch {
-    res.json({ commit: 'unknown', full: null });
-  }
-});
-
-// Health check — Render использует это для мониторинга
 app.get('/health', async (req, res) => {
   // Check cron health
   let cronStatus = 'unknown';
@@ -166,6 +143,47 @@ app.get('/health', async (req, res) => {
       valid: keyValid,
     },
   });
+});
+
+app.get('/api/health', (req, res) => {
+  res.json({ ok: true, uptime: process.uptime() });
+});
+
+// Slow request log — excludes health endpoints (monitoring noise)
+app.use((req, res, next) => {
+  const t0 = Date.now();
+  res.on('finish', () => {
+    const ms = Date.now() - t0;
+    if (ms > 3000 && !req.path.endsWith('/health')) {
+      console.warn('[SLOW]', req.method, req.path, res.statusCode, ms);
+    }
+  });
+  next();
+});
+
+app.use(apiLimiter);  // ← Rate limiting для всех API запросов (Task 4)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Корневая страница — статус API (показывает что сервер жив)
+// ═══════════════════════════════════════════════════════════════════════════
+app.get('/', (req, res) => {
+  res.send(`<!DOCTYPE html>...PULSE API status page...</html>`);
+});
+
+// Debug version — точный git commit hash на сервере
+app.get('/debug/version', async (req, res) => {
+  try {
+    const fs = await import('fs');
+    const path = await import('path');
+    const gitPath = path.join(__dirname, '..', '.git', 'refs', 'heads', 'main');
+    let commit = 'unknown';
+    if (fs.existsSync(gitPath)) {
+      commit = fs.readFileSync(gitPath, 'utf-8').trim().substring(0, 7);
+    }
+    res.json({ commit, full: commit === 'unknown' ? null : fs.readFileSync(gitPath, 'utf-8').trim() });
+  } catch {
+    res.json({ commit: 'unknown', full: null });
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
