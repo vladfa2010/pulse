@@ -157,7 +157,7 @@ npm run build   # выход в dist/
 
 - `GET /health` возвращает `200 OK` сразу после старта процесса.
 - Миграции БД, инициализация cron-задач, SSE и фоновые воркеры стартуют после того, как сервер начал слушать порт.
-- Ожидаемый лог на старте: `[Startup] Server listening on port ...`.
+- Ожидаемый лог на старте: `PULSE backend running on port ...`.
 
 #### Graceful shutdown
 
@@ -170,9 +170,8 @@ npm run build   # выход в dist/
 
 Ожидаемые логи при shutdown:
 ```
-[Shutdown] SIGTERM received, draining connections...
-[Shutdown] Server closed, X SSE connections terminated
-[Shutdown] Graceful exit completed
+[Shutdown] SIGTERM received, draining…
+[SSE] Closed X SSE connection(s) during shutdown   # только если были активные SSE-подписчики
 ```
 
 > **Важно:** если graceful shutdown не завершился вовремя, Render пришлёт `SIGKILL`. Убедитесь, что длительные фоновые задачи обрабатывают `SIGTERM` корректно.
