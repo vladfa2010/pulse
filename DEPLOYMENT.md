@@ -1,7 +1,7 @@
 # PULSE — Deployment Guide
 
 > Единый документ по инфраструктуре, деплою и окружению.
-> Последнее обновление: 2026-08-05
+> Последнее обновление: 2026-08-07
 
 > **⚠️ ВАЖНО:** Все сервисы развёрнуты на **платном тарифе Render**. Instance не засыпает, крон работает 24/7. Никакого «free tier» — не использовать как аргумент при отладке.
 
@@ -110,6 +110,26 @@ npm run dev     # localhost:5173
 ```bash
 npm run build   # выход в dist/
 ```
+
+### Bundle и performance (TZ-23)
+
+Бандл фронтенда разбит на чанки, чтобы ускорить первый экран:
+
+| Чанк | Содержимое | Загрузка |
+|------|------------|----------|
+| `vendor-*.js` | `react`, `react-dom`, `react-router` | Первый экран |
+| `index-*.js` | Layout, Home, hooks, API-клиент | Первый экран |
+| `Admin-*.js` | Админка, графики, `recharts`/`echarts` | Только при `/admin` |
+| `SentimentIndex-*.js` | `/sentiment`, `SentimentChartCard`, `recharts` | Только при `/sentiment` |
+| `Profile-*.js`, `Pricing-*.js`, `NewsFeed-*.js`, `PortfolioPage-*.js` и др. | Соответствующие страницы | Только при переходе |
+
+- **Lazy-маршруты:** `/admin`, `/sentiment`, `/pricing`, `/profile`, `/feed`, `/instructions`, `/terms`, `/privacy`, `/portfolio`, `/download` загружаются через `React.lazy` + `Suspense`.
+- **firebase/analytics:** не входит в начальный бандл; загружается динамически при первом вызове `initAnalytics()` / `logAnalyticsEvent()`.
+- **echarts** используется только в админском `TagMarketTimeline` и подгружается динамически; **recharts** уехал в админский и сентимент-чанки через lazy-маршруты.
+- **Цель:** основной чанк ≤ 300 КБ brotli; фактически ~307 КБ gzip (brotli ещё меньше).
+
+> **Проверка:** `npm run build` → в `dist/assets/` несколько JS-чанков; главный `index-*.js` не содержит `echarts`/`recharts`/`firebase/analytics`.
+
 
 ---
 
