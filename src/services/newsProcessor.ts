@@ -405,6 +405,7 @@ async function analyzeSentiment(
             _llmErrorMsg: err.message?.slice(0, 500),
           } as UnifiedResult;
         }
+        batchResults = chunk.map(({ originalIndex }) => unifiedResults[originalIndex]);
       }
 
       // Fill results and propagate tag impacts
