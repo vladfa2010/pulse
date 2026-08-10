@@ -1,11 +1,11 @@
 /**
  * News Processor — единое окно обработки (Layer 1 + Layer 2)
- * TZ: TZ_NEWS_PROCESSOR_v3
+ * TZ: TZ-31 v5
  *
  * Отвечает за:
  * - Перевод EN → RU (translateBatch)
  * - Sentiment analysis (analyzeUnifiedBatch)
- * - Tag matching (smartMatchTags)
+ * - Tag matching (smartMatchTagsBatch)
  * - Tag impact + is_political
  *
  * НЕ отвечает за:
@@ -15,10 +15,11 @@
 
 import { query } from '../config/db';
 import { translateBatch } from './translate';
-import { smartMatchTags, analyzeUnifiedBatch, UnifiedResult, matchTagsByKeywords } from './smartTagMatcher';
+import { smartMatchTagsBatch, analyzeUnifiedBatch, UnifiedResult, matchTagsByKeywords } from './smartTagMatcher';
 import { getAllTagNames } from './tagManager';
 import { sendNewArticlePush } from './push';
 import { slugify } from '../utils/slugify';
+import { populateNewsTagLinksBatch, EnrichmentTask } from './enrichment';
 
 const INSTANCE_ID = `${process.env.HOSTNAME || 'unknown'}-${Date.now()}`;
 const SQL_NOW = "NOW()";
@@ -36,35 +37,57 @@ interface RawArticle {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// AbortController state for graceful shutdown
+// ═══════════════════════════════════════════════════════════════════════════
+let currentController: AbortController | null = null;
+let processorShuttingDown = false;
+
+export function markProcessorShutdown(): void {
+  processorShuttingDown = true;
+  currentController?.abort();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // MAIN: processRawArticles()
 // ═══════════════════════════════════════════════════════════════════════════
 export async function processRawArticles(): Promise<void> {
+  if (processorShuttingDown) {
+    console.log('[Processor] shutdown in progress, run skipped');
+    return;
+  }
+
   const acquired = await acquireCronLock('news-processor');
   if (!acquired) {
     console.log('[NewsProcessor] ⏳ Skip, another instance running');
     return;
   }
 
+  const controller = new AbortController();
+  currentController = controller;
+
   try {
-    await processRawArticlesLocked();
+    await processRawArticlesLocked(controller.signal);
   } finally {
+    if (currentController === controller) {
+      currentController = null;
+    }
     await releaseCronLock('news-processor');
   }
 }
 
-const PROCESSOR_MAX_RUNTIME_MS = 8 * 60 * 1000; // 8 minutes — ниже интервала 10 мин
-const PROCESSOR_BATCH_SIZE = 15;                // было 50: слишком долго при sequential LLM
-const TAG_MATCH_CONCURRENCY = 5;              // parallelism для smartMatchTags
+const PROCESSOR_BATCH_SIZE = 15;
+const CHUNK_SIZE = 5;
 
-async function processRawArticlesLocked(): Promise<void> {
+function chunks<T>(arr: T[], size: number): T[][] {
+  const result: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) {
+    result.push(arr.slice(i, i + size));
+  }
+  return result;
+}
+
+async function processRawArticlesLocked(signal: AbortSignal): Promise<void> {
   const startAt = Date.now();
-  const deadline = startAt + PROCESSOR_MAX_RUNTIME_MS;
-
-  // Hard timeout: один прогон не может занимать больше 8 минут.
-  // Это предотвращает фриз/перегрузку инстанса, если LLM залипает.
-  const runtimeGuard = setTimeout(() => {
-    console.error(`[NewsProcessor] HARD TIMEOUT after ${PROCESSOR_MAX_RUNTIME_MS}ms, aborting current run to protect instance`);
-  }, PROCESSOR_MAX_RUNTIME_MS);
 
   try {
     const rawArticles = await selectRawArticles(PROCESSOR_BATCH_SIZE);
@@ -72,6 +95,7 @@ async function processRawArticlesLocked(): Promise<void> {
       console.log('[NewsProcessor] No raw articles to process');
       return;
     }
+
     const enCount = rawArticles.filter(a => a.lang_original === 'en').length;
     const ruCount = rawArticles.filter(a => a.lang_original === 'ru').length;
     console.log(`[NewsProcessor] Processing ${rawArticles.length} articles (EN:${enCount}, RU:${ruCount})`);
@@ -99,23 +123,71 @@ async function processRawArticlesLocked(): Promise<void> {
 
     console.log(`[NewsProcessor] Tag pre-filter: withTags=${withTags.length}, withoutTags=${withoutTags.length}`);
 
-    // 2. Articles WITH tags: translate -> Layer 1/2 smart tags -> Layer 3 sentiment
+    // 2. Articles WITH tags: process in chunks of 5 (checkpoint pattern)
     if (withTags.length > 0) {
-      // Translate — best effort, не блокирует sentiment
-      try {
-        await translateArticles(withTags, deadline);
-      } catch (err: any) {
-        console.log('[NewsProcessor] Translate skipped (API unavailable), continuing with sentiment');
+      const availableTags = await getAllTagNames();
+
+      let chunkIndex = 0;
+      const totalChunks = Math.ceil(withTags.length / CHUNK_SIZE);
+
+      for (const chunk of chunks(withTags, CHUNK_SIZE)) {
+        chunkIndex++;
+        const chunkStart = Date.now();
+        let translateMs = 0;
+        let tagsMs = 0;
+        let sentimentMs = 0;
+        let saveMs = 0;
+
+        try {
+          // Translate — best effort, не блокирует sentiment
+          const translateStart = Date.now();
+          try {
+            await translateArticles(chunk, signal);
+          } catch (err: any) {
+            if (isAbortError(err)) {
+              console.log('[NewsProcessor] Translate aborted (shutdown)');
+              throw err;
+            }
+            console.log('[NewsProcessor] Translate skipped (API unavailable), continuing with sentiment');
+          }
+          translateMs = Date.now() - translateStart;
+
+          // Tag matching — Layer 1 + Layer 2 (batch LLM)
+          const tagsStart = Date.now();
+          const matchedTagsList = await matchTagsWithLLM(chunk, availableTags, signal);
+          tagsMs = Date.now() - tagsStart;
+
+          // Sentiment analysis — для статей с тегами
+          const sentimentStart = Date.now();
+          const sentimentResults = await analyzeSentiment(chunk, matchedTagsList, signal);
+          sentimentMs = Date.now() - sentimentStart;
+
+          // Bulk UPDATE
+          const saveStart = Date.now();
+          await saveProcessedArticles(chunk, matchedTagsList, sentimentResults);
+          saveMs = Date.now() - saveStart;
+
+          // Enrichment: news_tag_links (fire-and-forget)
+          const tasks: EnrichmentTask[] = chunk.map((a, i) => ({
+            newsId: a.id,
+            matchedTags: matchedTagsList[i],
+            tagImpacts: (a as any)._tagImpacts ?? [],
+          }));
+          void populateNewsTagLinksBatch(tasks).catch(err =>
+            console.warn('[Enrichment] news_tag_links write failed (non-fatal):', err.message));
+
+        } catch (err: any) {
+          if (isAbortError(err)) {
+            console.log('[NewsProcessor] Chunk aborted (shutdown)');
+            throw err;
+          }
+          console.error(`[NewsProcessor] Chunk ${chunkIndex}/${totalChunks} failed:`, err.message);
+          // Continue with next chunk rather than killing whole run
+          continue;
+        }
+
+        console.log(`[Processor] chunk ${chunkIndex}/${totalChunks}: translate=${translateMs}ms tags=${tagsMs}ms sentiment=${sentimentMs}ms save=${saveMs}ms`);
       }
-
-      // Tag matching — Layer 1 + Layer 2 (force LLM even when Layer 1 found tags)
-      const matchedTagsList = await matchTagsWithLLM(withTags, deadline);
-
-      // Sentiment analysis — для статей с тегами
-      const sentimentResults = await analyzeSentiment(withTags, matchedTagsList, deadline);
-
-      // UPDATE — needs_translation = FALSE
-      await saveProcessedArticles(withTags, matchedTagsList, sentimentResults);
     }
 
     // 3. Articles WITHOUT tags: save raw, skip all LLM. Rechecked when new tags are added.
@@ -126,11 +198,17 @@ async function processRawArticlesLocked(): Promise<void> {
     const duration = Date.now() - startAt;
     console.log(`[NewsProcessor] Done: ${rawArticles.length} articles processed in ${duration}ms`);
   } catch (err: any) {
+    if (isAbortError(err)) {
+      console.log('[NewsProcessor] Run aborted (shutdown)');
+      return;
+    }
     console.error('[NewsProcessor] Fatal error in processRawArticlesLocked:', err.message?.slice(0, 200));
     throw err;
-  } finally {
-    clearTimeout(runtimeGuard);
   }
+}
+
+function isAbortError(err: any): boolean {
+  return err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED' || err?.message?.includes('aborted');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -170,24 +248,19 @@ async function selectRawArticles(limit: number): Promise<RawArticle[]> {
 // ═══════════════════════════════════════════════════════════════════════════
 // Translate (best effort — НЕ throw, НЕ блокирует sentiment)
 // ═══════════════════════════════════════════════════════════════════════════
-async function translateArticles(articles: RawArticle[], deadline: number): Promise<void> {
+async function translateArticles(articles: RawArticle[], signal: AbortSignal): Promise<void> {
   const toTranslate = articles.filter(
     a => a.lang_original === 'en' &&
          (!((a as any).title_ru) || (a as any).title_ru === a.title_original)
   );
   if (toTranslate.length === 0) return;
 
-  if (Date.now() >= deadline) {
-    console.warn('[NewsProcessor] translateArticles: deadline reached, skipping translation');
-    return;
-  }
-
   try {
     const titles = toTranslate.map(a => a.title_original);
     const summaries = toTranslate.map(a => a.summary_original);
 
-    const translatedTitles = await translateBatch(titles);
-    const translatedSummaries = await translateBatch(summaries);
+    const translatedTitles = await translateBatch(titles, signal);
+    const translatedSummaries = await translateBatch(summaries, signal);
 
     for (let i = 0; i < toTranslate.length; i++) {
       const a = toTranslate[i];
@@ -209,6 +282,7 @@ async function translateArticles(articles: RawArticle[], deadline: number): Prom
       }
     }
   } catch (err: any) {
+    if (isAbortError(err)) throw err;
     console.error('[NewsProcessor] Translate error:', err.message);
     // Записываем ошибку LLM для всех статей батча
     const errorMsg = err.message?.slice(0, 500) || 'Translate API error';
@@ -221,37 +295,25 @@ async function translateArticles(articles: RawArticle[], deadline: number): Prom
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Tag Matching (Layer 1 + Layer 2 LLM, forced even if Layer 1 found tags)
+// Tag Matching (Layer 1 + Layer 2 LLM, batch mode)
 // ═══════════════════════════════════════════════════════════════════════════
-async function matchTagsWithLLM(articles: RawArticle[], deadline: number): Promise<string[][]> {
-  const availableTags = await getAllTagNames();
-  const results = new Array<string[]>(articles.length);
+async function matchTagsWithLLM(
+  articles: RawArticle[],
+  availableTags: string[],
+  signal: AbortSignal
+): Promise<string[][]> {
+  const items = articles.map(a => ({
+    title: (a as any).title_ru || a.title_original || '',
+    summary: (a as any).summary_ru || a.summary_original || '',
+    keywordTags: (a as any)._keywordTags || [],
+  }));
 
-  // Process with limited concurrency to avoid serial 50×LLM calls,
-  // but also avoid overwhelming the event loop / Kimi API.
-  for (let i = 0; i < articles.length; i += TAG_MATCH_CONCURRENCY) {
-    if (Date.now() >= deadline) {
-      console.warn(`[NewsProcessor] matchTagsWithLLM: deadline reached at article ${i}/${articles.length}, filling remaining with keyword tags`);
-      for (let j = i; j < articles.length; j++) {
-        const a = articles[j];
-        results[j] = [...new Set([...((a as any)._keywordTags || []), ...((a as any).matched_tags || [])])];
-      }
-      break;
-    }
-    const chunk = articles.slice(i, i + TAG_MATCH_CONCURRENCY);
-    const chunkResults = await Promise.all(
-      chunk.map(async (article, idx) => {
-        const title = (article as any).title_ru || article.title_original || '';
-        const summary = (article as any).summary_ru || article.summary_original || '';
-        const tags = await smartMatchTags(title, summary, { forceLLM: true, availableTags });
-        return [...new Set([...((article as any)._keywordTags || []), ...tags])];
-      })
-    );
-    for (let k = 0; k < chunkResults.length; k++) {
-      results[i + k] = chunkResults[k];
-    }
-  }
-  return results;
+  const results = await smartMatchTagsBatch(items, { availableTags, signal });
+
+  return results.map((tags, i) => {
+    const a = articles[i];
+    return [...new Set([...((a as any)._keywordTags || []), ...tags])];
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -260,7 +322,7 @@ async function matchTagsWithLLM(articles: RawArticle[], deadline: number): Promi
 async function analyzeSentiment(
   articles: RawArticle[],
   matchedTagsList: string[][],
-  deadline: number
+  signal: AbortSignal
 ): Promise<UnifiedResult[]> {
 
   const llmAvailable = !!process.env.KIMI_API_KEY;
@@ -272,7 +334,7 @@ async function analyzeSentiment(
     const contentHashes = articles.map(a => a.content_hash);
     const existingResult = await query(
       `SELECT content_hash, sentiment_reasoning, sentiment_source
-       FROM news WHERE content_hash = ANY($1)`,
+       FROM news WHERE content_hash = ANY($1::text[])`,
       [contentHashes]
     );
     const existingMap = new Map(existingResult.rows.map(r => [r.content_hash, r]));
@@ -302,20 +364,21 @@ async function analyzeSentiment(
   }
 
   if (llmAvailable && needLLMWithIndex.length > 0) {
-    const BATCH_SIZE = 5;
-    for (let batchStart = 0; batchStart < needLLMWithIndex.length; batchStart += BATCH_SIZE) {
-      if (Date.now() >= deadline) {
-        console.warn(`[NewsProcessor] analyzeSentiment: deadline reached at batch ${batchStart}/${needLLMWithIndex.length}, falling back to keyword sentiment`);
+    for (let batchStart = 0; batchStart < needLLMWithIndex.length; batchStart += CHUNK_SIZE) {
+      if (signal.aborted) {
+        console.warn('[NewsProcessor] analyzeSentiment: aborted, falling back to neutral');
         for (const { originalIndex } of needLLMWithIndex.slice(batchStart)) {
           unifiedResults[originalIndex] = {
             sentiment: 'neutral', score: 0, reasoning: '',
             is_political: false, article_type: 'micro',
             tag_impacts: matchedTagsList[originalIndex].map(t => ({ tag: t, score: 0, reasoning: '' })),
+            _llmErrorType: 'llm-error',
           } as UnifiedResult;
         }
         break;
       }
-      const chunk = needLLMWithIndex.slice(batchStart, batchStart + BATCH_SIZE);
+
+      const chunk = needLLMWithIndex.slice(batchStart, batchStart + CHUNK_SIZE);
       const batchStartTime = new Date().toISOString();
       let batchResults: UnifiedResult[] = [];
       try {
@@ -324,12 +387,14 @@ async function analyzeSentiment(
             title: (article as any).title_ru || article.title_original || '',
             summary: (article as any).summary_ru || article.summary_original || '',
             tags: matchedTagsList[originalIndex],
-          }))
+          })),
+          signal
         );
-        for (let j = 0; j < batchResults.length && j < chunk.length; j++) {
-          unifiedResults[chunk[j].originalIndex] = batchResults[j];
-        }
       } catch (err: any) {
+        if (isAbortError(err)) {
+          console.log('[NewsProcessor] Sentiment batch aborted (shutdown)');
+          throw err;
+        }
         console.error('[NewsProcessor] Sentiment batch error:', err.message);
         for (const { originalIndex } of chunk) {
           unifiedResults[originalIndex] = {
@@ -340,7 +405,26 @@ async function analyzeSentiment(
             _llmErrorMsg: err.message?.slice(0, 500),
           } as UnifiedResult;
         }
-        batchResults = chunk.map(({ originalIndex }) => unifiedResults[originalIndex]);
+      }
+
+      // Fill results and propagate tag impacts
+      for (let j = 0; j < batchResults.length && j < chunk.length; j++) {
+        unifiedResults[chunk[j].originalIndex] = batchResults[j];
+        (chunk[j].article as any)._tagImpacts = batchResults[j].tag_impacts || [];
+      }
+
+      // Task 8: short response fill
+      if (batchResults.length < chunk.length) {
+        console.warn(`[NewsProcessor] Sentiment batch short: ${batchResults.length}/${chunk.length}, neutral-fill для остатка`);
+        for (let j = batchResults.length; j < chunk.length; j++) {
+          const { originalIndex } = chunk[j];
+          unifiedResults[originalIndex] = {
+            sentiment: 'neutral', score: 0, reasoning: '',
+            is_political: false, article_type: 'micro',
+            tag_impacts: matchedTagsList[originalIndex].map(t => ({ tag: t, score: 0, reasoning: '' })),
+            _llmErrorType: 'llm-error',
+          } as UnifiedResult;
+        }
       }
 
       // Log batch to llm_batches for metrics dashboard
@@ -411,14 +495,23 @@ async function analyzeSentiment(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// UPDATE в БД (batch)
+// UPDATE в БД (bulk with per-article fallback)
 // ═══════════════════════════════════════════════════════════════════════════
+const ROW_COLS = [
+  ['title_ru', 'text'], ['summary_ru', 'text'], ['sentiment', 'text'],
+  ['sentiment_score', 'int'], ['sentiment_reasoning', 'text'], ['sentiment_source', 'text'],
+  ['is_political', 'boolean'], ['article_type', 'text'], ['matched_tags', 'text[]'],
+  ['tag_impact', 'jsonb'], ['llm_error', 'text'], ['llm_attempts', 'int'],
+  ['llm_raw_preview', 'text'], ['llm_batch_size', 'int'], ['llm_results_count', 'int'],
+  ['id', 'uuid'], ['needs_translation', 'boolean'], ['slug', 'text'],
+] as const;
+
 async function saveProcessedArticles(
   articles: RawArticle[],
   matchedTagsList: string[][],
   sentimentResults: UnifiedResult[]
 ): Promise<void> {
-  let updated = 0;
+  const rows: any[][] = [];
 
   for (let i = 0; i < articles.length; i++) {
     const a = articles[i];
@@ -435,7 +528,7 @@ async function saveProcessedArticles(
     const translateAttempts = (a as any)._llmAttempts || 0;
     const sentimentError = (s as any)._llmErrorMsg || null;
     const sentimentErrorType = (s as any)._llmErrorType || null;
-    
+
     // sentiment_source: llm при успехе, keyword при fallback/ошибке
     let sentimentSource: string;
     if (translateError && !sentimentError) {
@@ -448,7 +541,7 @@ async function saveProcessedArticles(
       // Успех
       sentimentSource = (s as any)._llmSource || 'llm';
     }
-    
+
     // LLM ошибка: translate или sentiment
     const llmError = translateError || sentimentError || null;
     const llmAttempts = translateAttempts + (sentimentErrorType ? 1 : 0);
@@ -458,6 +551,121 @@ async function saveProcessedArticles(
     const isTranslationSuccessful = a.lang_original !== 'en' || (!!titleRu && titleRu !== a.title_original);
 
     // Generate slug once and freeze it (do not overwrite existing slug)
+    const slug = slugify(a.title_original || (a as any).title_ru || 'news', a.id);
+
+    rows.push([
+      (a as any).title_ru ?? null,
+      (a as any).summary_ru ?? null,
+      s.sentiment,
+      s.score,
+      s.reasoning || null,
+      sentimentSource,
+      s.is_political,
+      s.article_type || 'micro',
+      matchedTagsList[i],
+      JSON.stringify(s.tag_impacts || []),
+      llmError,
+      llmAttempts || null,
+      (s as any)._llmRaw || null,
+      (s as any)._llmBatchSize || null,
+      (s as any)._llmResultsCount || null,
+      a.id,
+      !isTranslationSuccessful,
+      slug,
+    ]);
+  }
+
+  if (rows.length === 0) return;
+
+  try {
+    const placeholders = rows.map((_, r) => {
+      const base = r * ROW_COLS.length;
+      return `(${ROW_COLS.map(([, t], i) => `$${base + i + 1}${t ? '::' + t : ''}`).join(', ')})`;
+    }).join(', ');
+
+    const params = rows.flat();
+
+    await query(`
+      UPDATE news AS n SET
+        needs_translation = v.needs_translation,
+        title_ru = COALESCE(v.title_ru, n.title_ru, n.title_original),
+        summary_ru = COALESCE(v.summary_ru, n.summary_ru, n.summary_original),
+        sentiment = v.sentiment,
+        sentiment_score = v.sentiment_score,
+        sentiment_reasoning = v.sentiment_reasoning,
+        sentiment_source = v.sentiment_source,
+        is_political = v.is_political,
+        article_type = v.article_type,
+        matched_tags = v.matched_tags,
+        tag_impact = v.tag_impact,
+        llm_error = v.llm_error,
+        llm_attempts = v.llm_attempts,
+        llm_raw_preview = v.llm_raw_preview,
+        llm_batch_size = v.llm_batch_size,
+        llm_results_count = v.llm_results_count,
+        slug = COALESCE(n.slug, v.slug)
+      FROM (VALUES ${placeholders}) AS v(
+        title_ru, summary_ru, sentiment, sentiment_score, sentiment_reasoning,
+        sentiment_source, is_political, article_type, matched_tags, tag_impact,
+        llm_error, llm_attempts, llm_raw_preview, llm_batch_size, llm_results_count,
+        id, needs_translation, slug
+      )
+      WHERE n.id = v.id
+    `, params);
+
+    console.log(`[NewsProcessor] Bulk updated: ${rows.length}/${articles.length}`);
+
+    // Immediate push for users subscribed to matched tags
+    for (let i = 0; i < articles.length; i++) {
+      const a = articles[i];
+      if (matchedTagsList[i].length > 0) {
+        const pushTitle = (a as any).title_ru || a.title_original || 'PULSE — новая новость';
+        sendNewArticlePush(a.id, pushTitle, a.source, matchedTagsList[i]).catch(err => {
+          console.error(`[NewsProcessor] sendNewArticlePush failed for ${a.id}:`, err.message);
+        });
+      }
+    }
+  } catch (err: any) {
+    console.error('[NewsProcessor] bulk update failed, falling back to per-article:', err.message);
+    await saveProcessedArticlesPerArticle(articles, matchedTagsList, sentimentResults);
+  }
+}
+
+async function saveProcessedArticlesPerArticle(
+  articles: RawArticle[],
+  matchedTagsList: string[][],
+  sentimentResults: UnifiedResult[]
+): Promise<void> {
+  let updated = 0;
+
+  for (let i = 0; i < articles.length; i++) {
+    const a = articles[i];
+    const s = sentimentResults[i];
+
+    if (!s) {
+      console.error(`[NewsProcessor] Missing sentiment for ${a.id}, skipping UPDATE`);
+      continue;
+    }
+
+    const translateError = (a as any)._llmError || null;
+    const translateAttempts = (a as any)._llmAttempts || 0;
+    const sentimentError = (s as any)._llmErrorMsg || null;
+    const sentimentErrorType = (s as any)._llmErrorType || null;
+
+    let sentimentSource: string;
+    if (translateError && !sentimentError) {
+      sentimentSource = 'keyword';
+    } else if (sentimentErrorType) {
+      sentimentSource = sentimentErrorType;
+    } else {
+      sentimentSource = (s as any)._llmSource || 'llm';
+    }
+
+    const llmError = translateError || sentimentError || null;
+    const llmAttempts = translateAttempts + (sentimentErrorType ? 1 : 0);
+
+    const titleRu = (a as any).title_ru;
+    const isTranslationSuccessful = a.lang_original !== 'en' || (!!titleRu && titleRu !== a.title_original);
     const slug = slugify(a.title_original || (a as any).title_ru || 'news', a.id);
 
     try {
@@ -503,7 +711,6 @@ async function saveProcessedArticles(
       ]);
       updated++;
 
-      // Immediate push for users subscribed to matched tags
       if (matchedTagsList[i].length > 0) {
         const pushTitle = (a as any).title_ru || a.title_original || 'PULSE — новая новость';
         sendNewArticlePush(a.id, pushTitle, a.source, matchedTagsList[i]).catch(err => {
@@ -514,7 +721,7 @@ async function saveProcessedArticles(
       console.error(`[NewsProcessor] UPDATE failed for ${a.id}:`, err.message);
     }
   }
-  console.log(`[NewsProcessor] Updated: ${updated}/${articles.length}`);
+  console.log(`[NewsProcessor] Per-article updated: ${updated}/${articles.length}`);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

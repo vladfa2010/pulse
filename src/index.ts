@@ -25,6 +25,7 @@ import authRoutes from './routes/auth';
 import newsRoutes from './routes/news';
 import factCheckRoutes from './routes/factCheck';
 import { startFactCheckCron } from './services/factCheck';
+import { markProcessorShutdown } from './services/newsProcessor';
 import paymentRoutes from './routes/payment';
 import plansRoutes from './routes/plans';
 import promoRoutes from './routes/promo';
@@ -5011,6 +5012,7 @@ async function start() {
   process.on('SIGTERM', () => {
     if (shuttingDown) return;
     shuttingDown = true;
+    markProcessorShutdown();
     console.log('[Shutdown] SIGTERM received, draining…');
     closeAllSSE();
     server.close(() => process.exit(0));

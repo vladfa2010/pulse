@@ -71,7 +71,7 @@ export async function populateNewsTagLinksBatch(
       await client.query(
         `INSERT INTO news_tag_links (news_id, tag_id, link_source)
          SELECT news_id, tag_id, 'keyword'
-         FROM unnest($1::text[], $2::text[])
+         FROM unnest($1::uuid[], $2::text[])
            AS t(news_id, tag_id)
          ON CONFLICT (news_id, tag_id, link_source) DO NOTHING`,
         [keywordNewsIds, keywordTags]
@@ -102,7 +102,7 @@ export async function populateNewsTagLinksBatch(
         `INSERT INTO news_tag_links 
            (news_id, tag_id, impact_score, impact_reasoning, link_source)
          SELECT news_id, tag, score, reasoning, 'llm_impact'
-         FROM unnest($1::text[], $2::text[], $3::int[], $4::text[])
+         FROM unnest($1::uuid[], $2::text[], $3::int[], $4::text[])
            AS t(news_id, tag, score, reasoning)
          ON CONFLICT (news_id, tag_id, link_source) DO UPDATE SET
            impact_score = EXCLUDED.impact_score,
@@ -117,7 +117,7 @@ export async function populateNewsTagLinksBatch(
     await client.query(
       `UPDATE news 
        SET enrichment_version = 2 
-       WHERE id = ANY($1::text[])`,
+       WHERE id = ANY($1::uuid[])`,
       [allNewsIds]
     );
 

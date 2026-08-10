@@ -42,8 +42,12 @@ let userTagsCache: Record<string, string[]> = {};
 let userTagsCacheTime = 0;
 const USER_TAGS_CACHE_TTL = 60 * 1000;
 
+// Cache compiled regexes for keyword matching (invalidated with userTagsCache)
+const compiledKw = new Map<string, RegExp>();
+
 export function invalidateUserTagsCache(): void {
   userTagsCacheTime = 0;
+  compiledKw.clear();
 }
 
 async function getCachedUserTags(): Promise<Record<string, string[]>> {
@@ -51,6 +55,7 @@ async function getCachedUserTags(): Promise<Record<string, string[]>> {
   if (now - userTagsCacheTime > USER_TAGS_CACHE_TTL) {
     userTagsCache = await getAllUserDefinedTags();
     userTagsCacheTime = now;
+    compiledKw.clear();
   }
   return userTagsCache;
 }
@@ -62,13 +67,18 @@ function escapeRegex(str: string): string {
 function keywordMatches(text: string, keyword: string): boolean {
   // Word-boundary match: keyword must not be preceded/followed by a letter or digit.
   // Supports both Latin and Cyrillic via Unicode properties.
-  try {
-    const re = new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegex(keyword)}(?![\\p{L}\\p{N}])`, 'iu');
-    return re.test(text);
-  } catch {
-    // Fallback for environments without lookbehind/unicode support
-    return text.includes(keyword);
+  const pattern = escapeRegex(keyword);
+  let re = compiledKw.get(pattern);
+  if (!re) {
+    try {
+      re = new RegExp(`(?<![\\p{L}\\p{N}])${pattern}(?![\\p{L}\\p{N}])`, 'iu');
+      compiledKw.set(pattern, re);
+    } catch {
+      // Fallback for environments without lookbehind/unicode support
+      return text.includes(keyword);
+    }
   }
+  return re.test(text);
 }
 
 export async function matchTagsByKeywords(text: string): Promise<string[]> {
@@ -120,6 +130,58 @@ async function saveLLMCache(textHash: string, tags: string[]): Promise<void> {
       [textHash, tags]
     );
   } catch { /* ignore */ }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Batch cache access + shared LLM JSON parser
+// ═══════════════════════════════════════════════════════════════════════════
+
+function parseJsonFromLLM(content: string): any {
+  let raw = content.trim();
+  // Strip markdown code fences if present
+  raw = raw.replace(/^```json\s*/, '').replace(/\s*```$/, '');
+  try {
+    return JSON.parse(raw);
+  } catch (e1) {
+    let fixed = raw.replace(/\\\\/g, '__ESC__');
+    fixed = fixed.replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
+    fixed = fixed.replace(/__ESC__/g, '\\\\');
+    return JSON.parse(fixed);
+  }
+}
+
+async function getLLMCacheBatch(textHashes: string[]): Promise<Map<string, string[]>> {
+  const result = new Map<string, string[]>();
+  if (textHashes.length === 0) return result;
+  try {
+    const res = await query(
+      `SELECT text_hash, tags FROM smart_tag_cache WHERE text_hash = ANY($1::text[]) AND created_at > NOW() - INTERVAL '7 days'`,
+      [textHashes]
+    );
+    for (const row of res.rows) {
+      result.set(row.text_hash, row.tags || []);
+    }
+  } catch { /* ignore */ }
+  return result;
+}
+
+async function saveLLMCacheBatch(rows: { textHash: string; tags: string[] }[]): Promise<void> {
+  if (rows.length === 0) return;
+  try {
+    const placeholders: string[] = [];
+    const params: any[] = [];
+    rows.forEach((r, i) => {
+      placeholders.push(`($${i * 2 + 1}, $${i * 2 + 2})`);
+      params.push(r.textHash, r.tags);
+    });
+    await query(
+      `INSERT INTO smart_tag_cache (text_hash, tags) VALUES ${placeholders.join(', ')}
+       ON CONFLICT (text_hash) DO UPDATE SET tags = EXCLUDED.tags, created_at = NOW()`,
+      params
+    );
+  } catch (e: any) {
+    console.error('[SmartTags] saveLLMCacheBatch error:', e.message?.slice(0, 100));
+  }
 }
 
 // Build LLM prompt for tag matching
@@ -204,6 +266,172 @@ async function callLLMForTags(title: string, summary: string, availableTags: str
   }
 
   return [];
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Layer 2 BATCH: 1 LLM call for up to 5 articles
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface TagMatchBatchItem {
+  title: string;
+  summary: string;
+  keywordTags?: string[];
+}
+
+function buildTagPromptBatch(items: TagMatchBatchItem[], availableTags: string[]): string {
+  const tagList = availableTags.map(id => `- ${id}`).join('\n');
+  const articlesText = items.map((it, i) => {
+    return `[${i + 1}] Title: ${it.title.slice(0, 200)}\nSummary: ${it.summary.slice(0, 400)}`;
+  }).join('\n\n');
+
+  return `Analyze ${items.length} news articles and determine which tags apply to each.
+
+Available tags:
+${tagList}
+
+Articles:
+${articlesText}
+
+Instructions:
+1. Return ONLY a JSON object with a "results" key
+2. "results" must be an array of ${items.length} arrays — one per article, in the SAME order as above
+3. Each inner array contains only tag IDs that clearly apply to that article
+4. Return empty array [] for an article if no tags match
+5. Be strict — only include tags that are clearly relevant
+
+Response format:
+{"results": [["tag1"], ["tag2", "tag3"], ...]}`;
+}
+
+function parseTagBatchResponse(content: string, expectedLength: number): string[][] {
+  const parsed = parseJsonFromLLM(content);
+  if (!Array.isArray(parsed?.results)) {
+    throw new Error('TagBatch: results not array');
+  }
+  if (parsed.results.length !== expectedLength) {
+    throw new Error(`TagBatch: expected ${expectedLength}, got ${parsed.results.length}`);
+  }
+  return parsed.results;
+}
+
+async function callLLMForTagsBatch(
+  items: TagMatchBatchItem[],
+  availableTags: string[],
+  signal?: AbortSignal
+): Promise<string[][]> {
+  if (!KIMI_API_KEY) {
+    console.log('[SmartTags] No KIMI_API_KEY, skipping LLM batch matching');
+    return items.map(() => []);
+  }
+
+  if (availableTags.length === 0) {
+    console.log('[SmartTags] No tags in DB, skipping LLM batch matching');
+    return items.map(() => []);
+  }
+
+  const prompt = buildTagPromptBatch(items, availableTags);
+
+  const response = await llmRequestWithRetry(
+    () => axios.post(
+      'https://api.moonshot.ai/v1/chat/completions',
+      {
+        model: KIMI_MODEL,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: KIMI_MODEL.startsWith('kimi-k') ? 0.6 : 0.1,
+        max_tokens: 200 * items.length,
+        response_format: { type: 'json_object' },
+        thinking: KIMI_MODEL.startsWith('kimi-k') ? { type: 'disabled' } : undefined,
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${KIMI_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: KIMI_MODEL.startsWith('kimi-k') ? 30000 : 15000,
+        signal,
+      }
+    ),
+    'SmartTagsBatch'
+  );
+
+  const content = response.data?.choices?.[0]?.message?.content || '';
+  const parsedResults = parseTagBatchResponse(content, items.length);
+  return parsedResults.map((r: any) => {
+    if (!Array.isArray(r)) return [];
+    return r.filter((t: string) => typeof t === 'string' && availableTags.includes(t));
+  });
+}
+
+export async function smartMatchTagsBatch(
+  items: TagMatchBatchItem[],
+  options: { availableTags: string[]; signal?: AbortSignal }
+): Promise<string[][]> {
+  if (items.length === 0) return [];
+
+  const availableTags = options.availableTags;
+
+  // Layer 1: keyword matching per article (fast, local)
+  const keywordTagsPerItem: string[][] = [];
+  for (const item of items) {
+    const keywordTags = item.keywordTags ?? await matchTagsByKeywords(`${item.title} ${item.summary}`);
+    keywordTagsPerItem.push([...new Set(keywordTags)]);
+  }
+
+  // Compute text hashes and batch cache lookup
+  const textHashes = items.map(item => Buffer.from(item.title + item.summary).toString('base64').slice(0, 64));
+  const cacheMap = await getLLMCacheBatch(textHashes);
+
+  // Determine uncached items
+  const uncachedItems: { item: TagMatchBatchItem; index: number; textHash: string }[] = [];
+  for (let i = 0; i < items.length; i++) {
+    if (!cacheMap.has(textHashes[i])) {
+      uncachedItems.push({ item: items[i], index: i, textHash: textHashes[i] });
+    }
+  }
+
+  let llmResultsPerIndex = new Map<number, string[]>();
+
+  if (uncachedItems.length > 0) {
+    try {
+      const batchResults = await callLLMForTagsBatch(
+        uncachedItems.map(u => u.item),
+        availableTags,
+        options.signal
+      );
+      for (let i = 0; i < uncachedItems.length; i++) {
+        llmResultsPerIndex.set(uncachedItems[i].index, batchResults[i] || []);
+      }
+    } catch (err: any) {
+      if (err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED' || err?.message?.includes('aborted')) {
+        throw err;
+      }
+      console.error(`[SmartTags] LLM batch error: ${err.message?.slice(0, 200)}`);
+      // Fallback: keyword-only for uncached articles
+      for (const u of uncachedItems) {
+        llmResultsPerIndex.set(u.index, []);
+      }
+    }
+  }
+
+  // Combine keyword + LLM tags and save cache for newly resolved items
+  const cacheRows: { textHash: string; tags: string[] }[] = [];
+  const result: string[][] = [];
+  for (let i = 0; i < items.length; i++) {
+    const cached = cacheMap.get(textHashes[i]);
+    let llmTags: string[];
+    if (cached !== undefined) {
+      llmTags = cached;
+    } else {
+      llmTags = llmResultsPerIndex.get(i) || [];
+      // Cache only non-empty LLM results (or empty on success) to avoid caching errors
+      cacheRows.push({ textHash: textHashes[i], tags: llmTags });
+    }
+    result.push([...new Set([...keywordTagsPerItem[i], ...llmTags])]);
+  }
+
+  await saveLLMCacheBatch(cacheRows);
+
+  return result;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -723,7 +951,7 @@ interface UnifiedBatchItem {
   tags: string[];
 }
 
-export async function analyzeUnifiedBatch(items: UnifiedBatchItem[]): Promise<UnifiedResult[]> {
+export async function analyzeUnifiedBatch(items: UnifiedBatchItem[], signal?: AbortSignal): Promise<UnifiedResult[]> {
   if (!KIMI_API_KEY || items.length === 0) {
     return items.map(() => ({
       sentiment: 'neutral' as const, score: 0, reasoning: '', is_political: false, article_type: 'micro' as const, tag_impacts: [],
@@ -735,13 +963,13 @@ export async function analyzeUnifiedBatch(items: UnifiedBatchItem[]): Promise<Un
     const batch = items.slice(i, i + BATCH_SIZE);
     // FIX: пробрасываем ошибку наверх — пусть catch в cron.ts обрабатывает
     // и пишет в llm_batches. Не поглощаем ошибку здесь.
-    const batchResults = await analyzeUnifiedBatchChunk(batch);
+    const batchResults = await analyzeUnifiedBatchChunk(batch, signal);
     results.push(...batchResults);
   }
   return results;
 }
 
-async function analyzeUnifiedBatchChunk(batch: UnifiedBatchItem[]): Promise<UnifiedResult[]> {
+async function analyzeUnifiedBatchChunk(batch: UnifiedBatchItem[], signal?: AbortSignal): Promise<UnifiedResult[]> {
   let articlesText = '';
   batch.forEach((it, idx) => {
     articlesText += `\n[${idx + 1}] Title: ${it.title.slice(0, 120)}\nSummary: ${it.summary.slice(0, 200)}\nTags: ${it.tags.join(', ')}\n`;
@@ -813,6 +1041,7 @@ MANDATORY:
       {
         headers: { 'Authorization': `Bearer ${KIMI_API_KEY}`, 'Content-Type': 'application/json' },
         timeout: 30000,
+        signal,
       }
     ),
     'UnifiedBatchChunk'

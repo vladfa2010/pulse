@@ -60,7 +60,7 @@ EXAMPLES:
 
 Return ONLY a JSON array of translated strings in the SAME ORDER as input. No commentary, no markdown, just JSON array.`;
 
-export async function translateWithKimi(texts: string[]): Promise<string[]> {
+export async function translateWithKimi(texts: string[], signal?: AbortSignal): Promise<string[]> {
   if (!KIMI_API_KEY) {
     console.log('[Translate] No KIMI_API_KEY, skipping translation');
     return texts;
@@ -111,6 +111,7 @@ export async function translateWithKimi(texts: string[]): Promise<string[]> {
               'Content-Type': 'application/json',
             },
             timeout: isK2 ? 60000 : 30000,
+            signal,
           }
         ),
         `TranslateBatch${Math.floor(i / BATCH) + 1}`
@@ -208,7 +209,7 @@ export async function translateWithKimi(texts: string[]): Promise<string[]> {
 // translateBatch — main entry point
 // ═══════════════════════════════════════════════════════════════════════════
 
-export async function translateBatch(texts: string[]): Promise<string[]> {
+export async function translateBatch(texts: string[], signal?: AbortSignal): Promise<string[]> {
   // Skip if no Kimi key
   if (!KIMI_API_KEY) {
     return texts;
@@ -238,7 +239,7 @@ export async function translateBatch(texts: string[]): Promise<string[]> {
 
   // Translate via Kimi
   const textsToTranslate = toTranslate.map(t => t.text);
-  const translated = await translateWithKimi(textsToTranslate);
+  const translated = await translateWithKimi(textsToTranslate, signal);
 
   // Map back
   for (let i = 0; i < toTranslate.length; i++) {
