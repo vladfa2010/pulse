@@ -144,7 +144,10 @@ npm run build   # выход в dist/
 | **Type** | Web Service |
 | **Runtime** | Docker |
 | **Branch** | `main` |
-| **Health Check Path** | `/health` |
+| **Health Check Path** | `/api/health` | Лёгкий endpoint без запросов к БД, используется Render для проверки живости сервиса |
+| **Health Check Path (legacy)** | `/health` | Подробный endpoint с проверкой cron, SSE, ENCRYPTION_KEY — для мониторинга, но не для Render health check |
+
+> **Важно:** Render health check настроен на `/api/health`, а не на `/health`. `/health` делает запрос к PostgreSQL (cron-лог), и при всплесках нагрузки на БД может отвечать медленно — это провоцировало автоматические рестарты инстанса Render. `/api/health` лёгкий `{ ok: true, uptime }` и не зависит от базы.
 
 ### Environment Variables (Render Dashboard)
 | Variable | Value | Описание |
