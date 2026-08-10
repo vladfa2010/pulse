@@ -297,7 +297,7 @@ Response format: ["tag1", "tag2"] or []`;
 export async function smartMatchTags(
   title: string,
   summary: string,
-  options: { useLLM?: boolean; forceLLM?: boolean } = {}
+  options: { useLLM?: boolean; forceLLM?: boolean; availableTags?: string[] } = {}
 ): Promise<string[]> {
   const fullText = `${title} ${summary}`;
 
@@ -310,7 +310,7 @@ export async function smartMatchTags(
   const shouldUseLLM = options.useLLM !== false && KIMI_API_KEY;
   const needLLM = keywordTags.length === 0 || options.forceLLM === true;
   if (needLLM && shouldUseLLM) {
-    const availableTags = await getAllTagNames();
+    const availableTags = options.availableTags ?? await getAllTagNames();
     llmTags = await callLLMForTags(title, summary, availableTags);
   }
 

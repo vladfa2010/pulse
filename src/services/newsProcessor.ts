@@ -16,6 +16,7 @@
 import { query } from '../config/db';
 import { translateBatch } from './translate';
 import { smartMatchTags, analyzeUnifiedBatch, UnifiedResult, matchTagsByKeywords } from './smartTagMatcher';
+import { getAllTagNames } from './tagManager';
 import { sendNewArticlePush } from './push';
 import { slugify } from '../utils/slugify';
 
@@ -51,66 +52,85 @@ export async function processRawArticles(): Promise<void> {
   }
 }
 
+const PROCESSOR_MAX_RUNTIME_MS = 8 * 60 * 1000; // 8 minutes — ниже интервала 10 мин
+const PROCESSOR_BATCH_SIZE = 15;                // было 50: слишком долго при sequential LLM
+const TAG_MATCH_CONCURRENCY = 5;              // parallelism для smartMatchTags
+
 async function processRawArticlesLocked(): Promise<void> {
-  const BATCH_SIZE = 50;
+  const startAt = Date.now();
+  const deadline = startAt + PROCESSOR_MAX_RUNTIME_MS;
 
-  const rawArticles = await selectRawArticles(BATCH_SIZE);
-  if (rawArticles.length === 0) {
-    console.log('[NewsProcessor] No raw articles to process');
-    return;
-  }
-  const enCount = rawArticles.filter(a => a.lang_original === 'en').length;
-  const ruCount = rawArticles.filter(a => a.lang_original === 'ru').length;
-  console.log(`[NewsProcessor] Processing ${rawArticles.length} articles (EN:${enCount}, RU:${ruCount})`);
+  // Hard timeout: один прогон не может занимать больше 8 минут.
+  // Это предотвращает фриз/перегрузку инстанса, если LLM залипает.
+  const runtimeGuard = setTimeout(() => {
+    console.error(`[NewsProcessor] HARD TIMEOUT after ${PROCESSOR_MAX_RUNTIME_MS}ms, aborting current run to protect instance`);
+  }, PROCESSOR_MAX_RUNTIME_MS);
 
-  // 1. Fast keyword pre-filter on ORIGINAL text — 0 tokens.
-  //    Only articles with at least one user-defined tag go through LLM.
-  const withTags: RawArticle[] = [];
-  const withoutTags: RawArticle[] = [];
+  try {
+    const rawArticles = await selectRawArticles(PROCESSOR_BATCH_SIZE);
+    if (rawArticles.length === 0) {
+      console.log('[NewsProcessor] No raw articles to process');
+      return;
+    }
+    const enCount = rawArticles.filter(a => a.lang_original === 'en').length;
+    const ruCount = rawArticles.filter(a => a.lang_original === 'ru').length;
+    console.log(`[NewsProcessor] Processing ${rawArticles.length} articles (EN:${enCount}, RU:${ruCount})`);
 
-  for (const article of rawArticles) {
-    const hasPreMatched = (article.matched_tags || []).length > 0;
-    let keywordTags: string[] = [];
-    if (!hasPreMatched) {
-      const text = `${article.title_original || ''} ${article.summary_original || ''}`;
-      keywordTags = await matchTagsByKeywords(text);
+    // 1. Fast keyword pre-filter on ORIGINAL text — 0 tokens.
+    //    Only articles with at least one user-defined tag go through LLM.
+    const withTags: RawArticle[] = [];
+    const withoutTags: RawArticle[] = [];
+
+    for (const article of rawArticles) {
+      const hasPreMatched = (article.matched_tags || []).length > 0;
+      let keywordTags: string[] = [];
+      if (!hasPreMatched) {
+        const text = `${article.title_original || ''} ${article.summary_original || ''}`;
+        keywordTags = await matchTagsByKeywords(text);
+      }
+
+      if (hasPreMatched || keywordTags.length > 0) {
+        (article as any)._keywordTags = [...new Set([...(article.matched_tags || []), ...keywordTags])];
+        withTags.push(article);
+      } else {
+        withoutTags.push(article);
+      }
     }
 
-    if (hasPreMatched || keywordTags.length > 0) {
-      (article as any)._keywordTags = [...new Set([...(article.matched_tags || []), ...keywordTags])];
-      withTags.push(article);
-    } else {
-      withoutTags.push(article);
+    console.log(`[NewsProcessor] Tag pre-filter: withTags=${withTags.length}, withoutTags=${withoutTags.length}`);
+
+    // 2. Articles WITH tags: translate -> Layer 1/2 smart tags -> Layer 3 sentiment
+    if (withTags.length > 0) {
+      // Translate — best effort, не блокирует sentiment
+      try {
+        await translateArticles(withTags, deadline);
+      } catch (err: any) {
+        console.log('[NewsProcessor] Translate skipped (API unavailable), continuing with sentiment');
+      }
+
+      // Tag matching — Layer 1 + Layer 2 (force LLM even when Layer 1 found tags)
+      const matchedTagsList = await matchTagsWithLLM(withTags, deadline);
+
+      // Sentiment analysis — для статей с тегами
+      const sentimentResults = await analyzeSentiment(withTags, matchedTagsList, deadline);
+
+      // UPDATE — needs_translation = FALSE
+      await saveProcessedArticles(withTags, matchedTagsList, sentimentResults);
     }
-  }
 
-  console.log(`[NewsProcessor] Tag pre-filter: withTags=${withTags.length}, withoutTags=${withoutTags.length}`);
-
-  // 2. Articles WITH tags: translate -> Layer 1/2 smart tags -> Layer 3 sentiment
-  if (withTags.length > 0) {
-    // Translate — best effort, не блокирует sentiment
-    try {
-      await translateArticles(withTags);
-    } catch (err: any) {
-      console.log('[NewsProcessor] Translate skipped (API unavailable), continuing with sentiment');
+    // 3. Articles WITHOUT tags: save raw, skip all LLM. Rechecked when new tags are added.
+    if (withoutTags.length > 0) {
+      await markNoTags(withoutTags);
     }
 
-    // Tag matching — Layer 1 + Layer 2 (force LLM even when Layer 1 found tags)
-    const matchedTagsList = await matchTagsWithLLM(withTags);
-
-    // Sentiment analysis — для статей с тегами
-    const sentimentResults = await analyzeSentiment(withTags, matchedTagsList);
-
-    // UPDATE — needs_translation = FALSE
-    await saveProcessedArticles(withTags, matchedTagsList, sentimentResults);
+    const duration = Date.now() - startAt;
+    console.log(`[NewsProcessor] Done: ${rawArticles.length} articles processed in ${duration}ms`);
+  } catch (err: any) {
+    console.error('[NewsProcessor] Fatal error in processRawArticlesLocked:', err.message?.slice(0, 200));
+    throw err;
+  } finally {
+    clearTimeout(runtimeGuard);
   }
-
-  // 3. Articles WITHOUT tags: save raw, skip all LLM. Rechecked when new tags are added.
-  if (withoutTags.length > 0) {
-    await markNoTags(withoutTags);
-  }
-
-  console.log(`[NewsProcessor] Done: ${rawArticles.length} articles processed`);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -150,12 +170,17 @@ async function selectRawArticles(limit: number): Promise<RawArticle[]> {
 // ═══════════════════════════════════════════════════════════════════════════
 // Translate (best effort — НЕ throw, НЕ блокирует sentiment)
 // ═══════════════════════════════════════════════════════════════════════════
-async function translateArticles(articles: RawArticle[]): Promise<void> {
+async function translateArticles(articles: RawArticle[], deadline: number): Promise<void> {
   const toTranslate = articles.filter(
     a => a.lang_original === 'en' &&
          (!((a as any).title_ru) || (a as any).title_ru === a.title_original)
   );
   if (toTranslate.length === 0) return;
+
+  if (Date.now() >= deadline) {
+    console.warn('[NewsProcessor] translateArticles: deadline reached, skipping translation');
+    return;
+  }
 
   try {
     const titles = toTranslate.map(a => a.title_original);
@@ -198,14 +223,33 @@ async function translateArticles(articles: RawArticle[]): Promise<void> {
 // ═══════════════════════════════════════════════════════════════════════════
 // Tag Matching (Layer 1 + Layer 2 LLM, forced even if Layer 1 found tags)
 // ═══════════════════════════════════════════════════════════════════════════
-async function matchTagsWithLLM(articles: RawArticle[]): Promise<string[][]> {
-  const results: string[][] = [];
-  for (const article of articles) {
-    const title = (article as any).title_ru || article.title_original || '';
-    const summary = (article as any).summary_ru || article.summary_original || '';
-    const tags = await smartMatchTags(title, summary, { forceLLM: true });
-    const merged = [...new Set([...((article as any)._keywordTags || []), ...tags])];
-    results.push(merged);
+async function matchTagsWithLLM(articles: RawArticle[], deadline: number): Promise<string[][]> {
+  const availableTags = await getAllTagNames();
+  const results = new Array<string[]>(articles.length);
+
+  // Process with limited concurrency to avoid serial 50×LLM calls,
+  // but also avoid overwhelming the event loop / Kimi API.
+  for (let i = 0; i < articles.length; i += TAG_MATCH_CONCURRENCY) {
+    if (Date.now() >= deadline) {
+      console.warn(`[NewsProcessor] matchTagsWithLLM: deadline reached at article ${i}/${articles.length}, filling remaining with keyword tags`);
+      for (let j = i; j < articles.length; j++) {
+        const a = articles[j];
+        results[j] = [...new Set([...((a as any)._keywordTags || []), ...((a as any).matched_tags || [])])];
+      }
+      break;
+    }
+    const chunk = articles.slice(i, i + TAG_MATCH_CONCURRENCY);
+    const chunkResults = await Promise.all(
+      chunk.map(async (article, idx) => {
+        const title = (article as any).title_ru || article.title_original || '';
+        const summary = (article as any).summary_ru || article.summary_original || '';
+        const tags = await smartMatchTags(title, summary, { forceLLM: true, availableTags });
+        return [...new Set([...((article as any)._keywordTags || []), ...tags])];
+      })
+    );
+    for (let k = 0; k < chunkResults.length; k++) {
+      results[i + k] = chunkResults[k];
+    }
   }
   return results;
 }
@@ -215,7 +259,8 @@ async function matchTagsWithLLM(articles: RawArticle[]): Promise<string[][]> {
 // ═══════════════════════════════════════════════════════════════════════════
 async function analyzeSentiment(
   articles: RawArticle[],
-  matchedTagsList: string[][]
+  matchedTagsList: string[][],
+  deadline: number
 ): Promise<UnifiedResult[]> {
 
   const llmAvailable = !!process.env.KIMI_API_KEY;
@@ -259,6 +304,17 @@ async function analyzeSentiment(
   if (llmAvailable && needLLMWithIndex.length > 0) {
     const BATCH_SIZE = 5;
     for (let batchStart = 0; batchStart < needLLMWithIndex.length; batchStart += BATCH_SIZE) {
+      if (Date.now() >= deadline) {
+        console.warn(`[NewsProcessor] analyzeSentiment: deadline reached at batch ${batchStart}/${needLLMWithIndex.length}, falling back to keyword sentiment`);
+        for (const { originalIndex } of needLLMWithIndex.slice(batchStart)) {
+          unifiedResults[originalIndex] = {
+            sentiment: 'neutral', score: 0, reasoning: '',
+            is_political: false, article_type: 'micro',
+            tag_impacts: matchedTagsList[originalIndex].map(t => ({ tag: t, score: 0, reasoning: '' })),
+          } as UnifiedResult;
+        }
+        break;
+      }
       const chunk = needLLMWithIndex.slice(batchStart, batchStart + BATCH_SIZE);
       const batchStartTime = new Date().toISOString();
       let batchResults: UnifiedResult[] = [];
