@@ -390,6 +390,7 @@ export async function smartMatchTagsBatch(
   }
 
   let llmResultsPerIndex = new Map<number, string[]>();
+  let llmCallSucceeded = false;
 
   if (uncachedItems.length > 0) {
     try {
@@ -398,6 +399,7 @@ export async function smartMatchTagsBatch(
         availableTags,
         options.signal
       );
+      llmCallSucceeded = true;
       for (let i = 0; i < uncachedItems.length; i++) {
         llmResultsPerIndex.set(uncachedItems[i].index, batchResults[i] || []);
       }
@@ -406,7 +408,7 @@ export async function smartMatchTagsBatch(
         throw err;
       }
       console.error(`[SmartTags] LLM batch error: ${err.message?.slice(0, 200)}`);
-      // Fallback: keyword-only for uncached articles
+      // Fallback: keyword-only for uncached articles; НЕ кэшируем, чтобы при следующем прогоне снова попробовать LLM
       for (const u of uncachedItems) {
         llmResultsPerIndex.set(u.index, []);
       }
@@ -423,8 +425,11 @@ export async function smartMatchTagsBatch(
       llmTags = cached;
     } else {
       llmTags = llmResultsPerIndex.get(i) || [];
-      // Cache only non-empty LLM results (or empty on success) to avoid caching errors
-      cacheRows.push({ textHash: textHashes[i], tags: llmTags });
+      // Кэшируем только если LLM-вызов реально отработал (включая валидный пустой ответ).
+      // При ошибке LLM не кэшируем — иначе temporary-фейл превратится в 7 дней пустых тегов.
+      if (llmCallSucceeded) {
+        cacheRows.push({ textHash: textHashes[i], tags: llmTags });
+      }
     }
     result.push([...new Set([...keywordTagsPerItem[i], ...llmTags])]);
   }
@@ -1145,11 +1150,19 @@ MANDATORY:
       is_political: false, article_type: 'micro',
       tag_impacts: batch[idx].tags.map(t => ({ tag: t, score: 0, reasoning: '' })),
     };
-    // If we got some results but not enough — mark as partial
     if (resultsCount > 0) {
+      // Some results parsed, but not enough for all articles
       fallbackResult._llmSource = 'llm-partial';
       fallbackResult._llmBatchSize = batchSize;
       fallbackResult._llmResultsCount = resultsCount;
+      fallbackResult._llmRaw = content.slice(0, 500);
+    } else {
+      // Parse failure or totally empty (empty case is handled above, so this is parse failure)
+      fallbackResult._llmSource = 'llm-parse-error';
+      fallbackResult._llmErrorType = 'llm-error';
+      fallbackResult._llmErrorMsg = lastLlmParseError || 'parse failed';
+      fallbackResult._llmBatchSize = batchSize;
+      fallbackResult._llmResultsCount = 0;
       fallbackResult._llmRaw = content.slice(0, 500);
     }
     results.push(fallbackResult);
