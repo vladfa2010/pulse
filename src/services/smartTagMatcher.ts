@@ -356,6 +356,8 @@ async function callLLMForTagsBatch(
 
   const content = response.data?.choices?.[0]?.message?.content || '';
   const parsedResults = parseTagBatchResponse(content, items.length);
+  const tagCounts = parsedResults.map(r => Array.isArray(r) ? r.length : 0);
+  console.log(`[SmartTags] LLM batch returned tags for ${items.length} articles: ${tagCounts.join(', ')}`);
   return parsedResults.map((r: any) => {
     if (!Array.isArray(r)) return [];
     return r.filter((t: string) => typeof t === 'string' && availableTags.includes(t));
