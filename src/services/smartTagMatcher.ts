@@ -1041,13 +1041,13 @@ MANDATORY:
         model: KIMI_MODEL,
         messages: [{ role: 'user', content: prompt }],
         temperature: KIMI_MODEL.startsWith('kimi-k') ? 0.6 : 0.1,
-        max_tokens: 500 * batch.length, // 3 paragraphs reasoning + detailed tag_impacts
+        max_tokens: 800 * batch.length, // 3 paragraphs reasoning + detailed tag_impacts — 500×n не хватает на длинные статьи
         response_format: { type: 'json_object' },
         thinking: KIMI_MODEL.startsWith('kimi-k') ? { type: 'disabled' } : undefined,
       },
       {
         headers: { 'Authorization': `Bearer ${KIMI_API_KEY}`, 'Content-Type': 'application/json' },
-        timeout: 30000,
+        timeout: 60000, // эмпирика: 30–35 с на коротких, в проде с длинным Bridgewater-промптом 35–45 с
         signal,
       }
     ),
