@@ -20,6 +20,7 @@ import crypto from 'crypto';
 import axios from 'axios';
 import { query, pool } from './config/db';  // ← query + pool (for transactions)
 import { setCachedPopularTags } from './utils/tagCache';
+import { adminCached, adminCacheInvalidate } from './utils/adminCache';
 import { slugify } from './utils/slugify';
 import authRoutes from './routes/auth';
 import newsRoutes from './routes/news';
@@ -1009,94 +1010,100 @@ async function requireAdmin(req: any, res: any, next: any) {
 // GET /admin/llm-dashboard — сводка по LLM метрикам (admin only)
 app.get('/admin/llm-dashboard', requireAdmin, async (req, res) => {
   try {
-    // Today stats
-    const todayBatches = await query(`
-      SELECT
-        COUNT(*) as total,
-        COUNT(*) FILTER (WHERE status = 'success') as success,
-        COUNT(*) FILTER (WHERE status = 'partial') as partial,
-        COUNT(*) FILTER (WHERE status = 'error') as failed
-      FROM llm_batches
-      WHERE started_at > CURRENT_DATE
-    `);
+    const payload = await adminCached('llm-dashboard', 90_000, async () => {
+      // Today stats
+      const todayBatches = await query(`
+        SELECT
+          COUNT(*) as total,
+          COUNT(*) FILTER (WHERE status = 'success') as success,
+          COUNT(*) FILTER (WHERE status = 'partial') as partial,
+          COUNT(*) FILTER (WHERE status = 'error') as failed
+        FROM llm_batches
+        WHERE started_at > CURRENT_DATE
+      `);
 
-    const todayArticles = await query(`
-      SELECT
-        COUNT(*) FILTER (WHERE sentiment_source = 'llm' OR sentiment_source = 'llm-partial') as processed,
-        COUNT(*) FILTER (WHERE sentiment_source LIKE 'llm-%' AND sentiment_source != 'llm-partial') as failed,
-        COUNT(*) FILTER (WHERE sentiment_source = 'keyword') as keyword_fallback
-      FROM news
-      WHERE created_at > CURRENT_DATE
-    `);
+      const todayArticles = await query(`
+        SELECT
+          COUNT(*) FILTER (WHERE sentiment_source = 'llm' OR sentiment_source = 'llm-partial') as processed,
+          COUNT(*) FILTER (WHERE sentiment_source LIKE 'llm-%' AND sentiment_source != 'llm-partial') as failed,
+          COUNT(*) FILTER (WHERE sentiment_source = 'keyword') as keyword_fallback
+        FROM news
+        WHERE created_at > CURRENT_DATE
+      `);
 
-    const errorsByType = await query(`
-      SELECT sentiment_source, COUNT(*) as count
-      FROM news
-      WHERE sentiment_source LIKE 'llm-%' AND sentiment_source != 'llm-partial'
-        AND created_at > CURRENT_DATE
-      GROUP BY sentiment_source
-      ORDER BY count DESC
-    `);
+      const errorsByType = await query(`
+        SELECT sentiment_source, COUNT(*) as count
+        FROM news
+        WHERE sentiment_source LIKE 'llm-%' AND sentiment_source != 'llm-partial'
+          AND created_at > CURRENT_DATE
+        GROUP BY sentiment_source
+        ORDER BY count DESC
+      `);
 
-    // Hourly trend
-    const hourly = await query(`
-      SELECT
-        date_trunc('hour', started_at) as hour,
-        COUNT(*) FILTER (WHERE status = 'success') as success,
-        COUNT(*) FILTER (WHERE status = 'error') as failed,
-        COUNT(*) FILTER (WHERE status = 'partial') as partial
-      FROM llm_batches
-      WHERE started_at > NOW() - INTERVAL '12 hours'
-      GROUP BY date_trunc('hour', started_at)
-      ORDER BY hour DESC
-      LIMIT 12
-    `);
+      // Hourly trend
+      const hourly = await query(`
+        SELECT
+          date_trunc('hour', started_at) as hour,
+          COUNT(*) FILTER (WHERE status = 'success') as success,
+          COUNT(*) FILTER (WHERE status = 'error') as failed,
+          COUNT(*) FILTER (WHERE status = 'partial') as partial
+        FROM llm_batches
+        WHERE started_at > NOW() - INTERVAL '12 hours'
+        GROUP BY date_trunc('hour', started_at)
+        ORDER BY hour DESC
+        LIMIT 12
+      `);
 
-    // Per-tag stats
-    const perTag = await query(`
-      SELECT
-        unnest(matched_tags) as tag,
-        COUNT(*) as articles,
-        COUNT(*) FILTER (WHERE sentiment_source NOT LIKE 'llm-%') as success
-      FROM news
-      WHERE created_at > CURRENT_DATE
-        AND matched_tags IS NOT NULL
-      GROUP BY unnest(matched_tags)
-      ORDER BY articles DESC
-      LIMIT 20
-    `);
+      // Per-tag stats
+      const perTag = await query(`
+        SELECT
+          unnest(matched_tags) as tag,
+          COUNT(*) as articles,
+          COUNT(*) FILTER (WHERE sentiment_source NOT LIKE 'llm-%') as success
+        FROM news
+        WHERE created_at > CURRENT_DATE
+          AND matched_tags IS NOT NULL
+        GROUP BY unnest(matched_tags)
+        ORDER BY articles DESC
+        LIMIT 20
+      `);
 
-    // Manual queue (3+ attempts)
-    const manualQueue = await query(`
-      SELECT COUNT(*) as count
-      FROM news
-      WHERE llm_attempts >= 3
-        AND llm_attempts IS NOT NULL
-        AND llm_error IS NOT NULL
-    `);
+      // Manual queue (3+ attempts, 7-day window)
+      const manualQueue = await query(`
+        SELECT COUNT(*) as count
+        FROM news
+        WHERE llm_attempts >= 3
+          AND llm_attempts IS NOT NULL
+          AND llm_error IS NOT NULL
+          AND created_at > NOW() - INTERVAL '7 days'
+      `);
 
-    const t = todayBatches.rows[0];
-    const total = parseInt(t?.total || '0');
-    const success = parseInt(t?.success || '0');
-    const partial = parseInt(t?.partial || '0');
-    const failed = parseInt(t?.failed || '0');
+      const t = todayBatches.rows[0];
+      const total = parseInt(t?.total || '0');
+      const success = parseInt(t?.success || '0');
+      const partial = parseInt(t?.partial || '0');
+      const failed = parseInt(t?.failed || '0');
 
-    res.json({
-      today: {
-        batches_total: total,
-        batches_success: success,
-        batches_partial: partial,
-        batches_failed: failed,
-        success_rate: total > 0 ? Math.round((success + partial) / total * 100 * 10) / 10 : 0,
-        articles_processed: parseInt(todayArticles.rows[0]?.processed || '0'),
-        articles_failed: parseInt(todayArticles.rows[0]?.failed || '0'),
-        keyword_fallback: parseInt(todayArticles.rows[0]?.keyword_fallback || '0'),
-        manual_queue: parseInt(manualQueue.rows[0]?.count || '0'),
-      },
-      errors_by_type: errorsByType.rows,
-      hourly_trend: hourly.rows,
-      per_tag: perTag.rows,
+      return {
+        today: {
+          batches_total: total,
+          batches_success: success,
+          batches_partial: partial,
+          batches_failed: failed,
+          success_rate: total > 0 ? Math.round((success + partial) / total * 100 * 10) / 10 : 0,
+          articles_processed: parseInt(todayArticles.rows[0]?.processed || '0'),
+          articles_failed: parseInt(todayArticles.rows[0]?.failed || '0'),
+          keyword_fallback: parseInt(todayArticles.rows[0]?.keyword_fallback || '0'),
+          manual_queue: parseInt(manualQueue.rows[0]?.count || '0'),
+        },
+        errors_by_type: errorsByType.rows,
+        hourly_trend: hourly.rows,
+        per_tag: perTag.rows,
+      };
     });
+
+    res.set('Cache-Control', 'private, max-age=60');
+    res.json(payload);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -1108,39 +1115,46 @@ app.get('/admin/llm-errors', requireAdmin, async (req, res) => {
     const limit = parseInt(req.query.limit as string) || 50;
     const hours = parseInt(req.query.hours as string) || 24;
 
-    const byType = await query(`
-      SELECT sentiment_source, COUNT(*) as count
-      FROM news
-      WHERE sentiment_source LIKE 'llm-%' AND sentiment_source != 'llm-partial'
-        AND created_at > NOW() - INTERVAL '${hours} hours'
-      GROUP BY sentiment_source
-      ORDER BY count DESC
-    `);
+    const payload = await adminCached(`llm-errors:${hours}:${limit}`, 60_000, async () => {
+      const byType = await query(`
+        SELECT sentiment_source, COUNT(*) as count
+        FROM news
+        WHERE sentiment_source LIKE 'llm-%' AND sentiment_source != 'llm-partial'
+          AND created_at > NOW() - INTERVAL '${hours} hours'
+        GROUP BY sentiment_source
+        ORDER BY count DESC
+      `);
 
-    const recent = await query(`
-      SELECT id, title_ru, published_at, sentiment_source, llm_error, llm_attempts, llm_raw_preview, matched_tags
-      FROM news
-      WHERE llm_error IS NOT NULL
-        AND llm_attempts IS NOT NULL
-        AND created_at > NOW() - INTERVAL '${hours} hours'
-      ORDER BY published_at DESC
-      LIMIT $1
-    `, [limit]);
+      const recent = await query(`
+        SELECT id, title_ru, published_at, sentiment_source, llm_error, llm_attempts, llm_raw_preview, matched_tags
+        FROM news
+        WHERE llm_error IS NOT NULL
+          AND llm_attempts IS NOT NULL
+          AND created_at > NOW() - INTERVAL '${hours} hours'
+        ORDER BY published_at DESC
+        LIMIT $1
+      `, [limit]);
 
-    const manualQueue = await query(`
-      SELECT COUNT(*) as count
-      FROM news
-      WHERE llm_attempts >= 3
-        AND llm_attempts IS NOT NULL
-        AND llm_error IS NOT NULL
-    `);
+      // Manual queue (3+ attempts, 7-day window)
+      const manualQueue = await query(`
+        SELECT COUNT(*) as count
+        FROM news
+        WHERE llm_attempts >= 3
+          AND llm_attempts IS NOT NULL
+          AND llm_error IS NOT NULL
+          AND created_at > NOW() - INTERVAL '7 days'
+      `);
 
-    res.json({
-      total_failed: byType.rows.reduce((sum: number, r: any) => sum + parseInt(r.count), 0),
-      by_type: byType.rows,
-      manual_queue_count: parseInt(manualQueue.rows[0]?.count || '0'),
-      recent: recent.rows,
+      return {
+        total_failed: byType.rows.reduce((sum: number, r: any) => sum + parseInt(r.count), 0),
+        by_type: byType.rows,
+        manual_queue_count: parseInt(manualQueue.rows[0]?.count || '0'),
+        recent: recent.rows,
+      };
     });
+
+    res.set('Cache-Control', 'private, max-age=60');
+    res.json(payload);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -1219,6 +1233,7 @@ app.post('/admin/backfill', requireAdmin, async (req, res) => {
     }
 
     res.json({ processed: articles.length, succeeded, failed });
+    adminCacheInvalidate('llm-');
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -1229,72 +1244,77 @@ app.get('/admin/source-stats', requireAdmin, async (req, res) => {
   try {
     const hours = parseInt(req.query.hours as string) || 24;
 
-    // Статистика по источникам за N часов
-    const sourceStats = await query(`
-      SELECT
-        source,
-        COUNT(*) as total_articles,
-        COUNT(*) FILTER (WHERE matched_tags IS NOT NULL AND array_length(matched_tags, 1) > 0) as tagged_articles,
-        COUNT(*) FILTER (WHERE matched_tags IS NULL OR array_length(matched_tags, 1) = 0) as untagged_articles,
-        COUNT(*) FILTER (WHERE sentiment_source = 'llm' OR sentiment_source = 'llm-partial') as llm_success,
-        COUNT(*) FILTER (WHERE sentiment_source LIKE 'llm-%' AND sentiment_source != 'llm-partial') as llm_failed,
-        COUNT(*) FILTER (WHERE sentiment_source = 'llm-timeout') as llm_timeout,
-        ROUND(AVG(sentiment_score) FILTER (WHERE sentiment_score IS NOT NULL), 1) as avg_sentiment,
-        MAX(published_at) as last_article_at,
-        CASE
-          WHEN source LIKE '% bloomberg %' OR source LIKE '%reuters%' OR source LIKE '%wsj%'
-               OR source LIKE '%ft.com%' OR source LIKE '%cnbc%' OR source LIKE '%marketwatch%'
-               OR source LIKE '%seekingalpha%' OR source LIKE '%morningstar%'
-               OR source LIKE '%hackernews%' OR source LIKE '%techcrunch%'
-               OR source LIKE '%ars technica%' OR source LIKE '%wired%'
-               OR source LIKE '%apnews%' OR source LIKE '%washingtonpost%'
-          THEN 'en'
-          ELSE 'ru'
-        END as language
-      FROM news
-      WHERE published_at > NOW() - INTERVAL '${hours} hours'
-      GROUP BY source
-      ORDER BY total_articles DESC
-    `);
+    const payload = await adminCached(`source-stats:${hours}`, 90_000, async () => {
+      // Статистика по источникам за N часов
+      const sourceStats = await query(`
+        SELECT
+          source,
+          COUNT(*) as total_articles,
+          COUNT(*) FILTER (WHERE matched_tags IS NOT NULL AND array_length(matched_tags, 1) > 0) as tagged_articles,
+          COUNT(*) FILTER (WHERE matched_tags IS NULL OR array_length(matched_tags, 1) = 0) as untagged_articles,
+          COUNT(*) FILTER (WHERE sentiment_source = 'llm' OR sentiment_source = 'llm-partial') as llm_success,
+          COUNT(*) FILTER (WHERE sentiment_source LIKE 'llm-%' AND sentiment_source != 'llm-partial') as llm_failed,
+          COUNT(*) FILTER (WHERE sentiment_source = 'llm-timeout') as llm_timeout,
+          ROUND(AVG(sentiment_score) FILTER (WHERE sentiment_score IS NOT NULL), 1) as avg_sentiment,
+          MAX(published_at) as last_article_at,
+          CASE
+            WHEN source LIKE '% bloomberg %' OR source LIKE '%reuters%' OR source LIKE '%wsj%'
+                 OR source LIKE '%ft.com%' OR source LIKE '%cnbc%' OR source LIKE '%marketwatch%'
+                 OR source LIKE '%seekingalpha%' OR source LIKE '%morningstar%'
+                 OR source LIKE '%hackernews%' OR source LIKE '%techcrunch%'
+                 OR source LIKE '%ars technica%' OR source LIKE '%wired%'
+                 OR source LIKE '%apnews%' OR source LIKE '%washingtonpost%'
+            THEN 'en'
+            ELSE 'ru'
+          END as language
+        FROM news
+        WHERE published_at > NOW() - INTERVAL '${hours} hours'
+        GROUP BY source
+        ORDER BY total_articles DESC
+      `);
 
-    // Топ-5 тегов по каждому источнику
-    const sourceTags = await query(`
-      SELECT
-        source,
-        unnest(matched_tags) as tag,
-        COUNT(*) as tag_count
-      FROM news
-      WHERE published_at > NOW() - INTERVAL '${hours} hours'
-        AND matched_tags IS NOT NULL
-        AND array_length(matched_tags, 1) > 0
-      GROUP BY source, unnest(matched_tags)
-      ORDER BY source, tag_count DESC
-    `);
+      // Топ-5 тегов по каждому источнику
+      const sourceTags = await query(`
+        SELECT
+          source,
+          unnest(matched_tags) as tag,
+          COUNT(*) as tag_count
+        FROM news
+        WHERE published_at > NOW() - INTERVAL '${hours} hours'
+          AND matched_tags IS NOT NULL
+          AND array_length(matched_tags, 1) > 0
+        GROUP BY source, unnest(matched_tags)
+        ORDER BY source, tag_count DESC
+      `);
 
-    // Группируем теги по источнику
-    const tagsBySource: Record<string, { tag: string; count: number }[]> = {};
-    for (const row of sourceTags.rows) {
-      if (!tagsBySource[row.source]) tagsBySource[row.source] = [];
-      if (tagsBySource[row.source].length < 5) {
-        tagsBySource[row.source].push({ tag: row.tag, count: parseInt(row.tag_count) });
+      // Группируем теги по источнику
+      const tagsBySource: Record<string, { tag: string; count: number }[]> = {};
+      for (const row of sourceTags.rows) {
+        if (!tagsBySource[row.source]) tagsBySource[row.source] = [];
+        if (tagsBySource[row.source].length < 5) {
+          tagsBySource[row.source].push({ tag: row.tag, count: parseInt(row.tag_count) });
+        }
       }
-    }
 
-    const sources = sourceStats.rows.map((row: any) => ({
-      source: row.source,
-      total_articles: parseInt(row.total_articles),
-      tagged_articles: parseInt(row.tagged_articles),
-      untagged_articles: parseInt(row.untagged_articles),
-      llm_success: parseInt(row.llm_success),
-      llm_failed: parseInt(row.llm_failed),
-      llm_timeout: parseInt(row.llm_timeout),
-      avg_sentiment: parseFloat(row.avg_sentiment) || 0,
-      last_article_at: row.last_article_at,
-      language: row.language,
-      top_tags: tagsBySource[row.source] || [],
-    }));
+      const sources = sourceStats.rows.map((row: any) => ({
+        source: row.source,
+        total_articles: parseInt(row.total_articles),
+        tagged_articles: parseInt(row.tagged_articles),
+        untagged_articles: parseInt(row.untagged_articles),
+        llm_success: parseInt(row.llm_success),
+        llm_failed: parseInt(row.llm_failed),
+        llm_timeout: parseInt(row.llm_timeout),
+        avg_sentiment: parseFloat(row.avg_sentiment) || 0,
+        last_article_at: row.last_article_at,
+        language: row.language,
+        top_tags: tagsBySource[row.source] || [],
+      }));
 
-    res.json({ hours, sources });
+      return { hours, sources };
+    });
+
+    res.set('Cache-Control', 'private, max-age=60');
+    res.json(payload);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -1387,53 +1407,58 @@ app.get('/admin/events', requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'Invalid event type' });
     }
 
-    const conditions: string[] = [];
-    const params: any[] = [];
+    const payload = await adminCached(`events:${hours}:${eventType || 'all'}:${limit}`, 60_000, async () => {
+      const conditions: string[] = [];
+      const params: any[] = [];
 
-    if (USE_SQLITE) {
-      conditions.push(`e.created_at > datetime('now', '-${hours} hours')`);
-    } else {
-      conditions.push(`e.created_at > NOW() - INTERVAL '${hours} hours'`);
-    }
+      if (USE_SQLITE) {
+        conditions.push(`e.created_at > datetime('now', '-${hours} hours')`);
+      } else {
+        conditions.push(`e.created_at > NOW() - INTERVAL '${hours} hours'`);
+      }
 
-    if (eventType) {
-      conditions.push(`e.event_type = $1`);
-      params.push(eventType);
-    }
-    params.push(limit);
+      if (eventType) {
+        conditions.push(`e.event_type = $1`);
+        params.push(eventType);
+      }
+      params.push(limit);
 
-    const result = await query(
-      `SELECT
-         e.id, e.user_id, e.event_type, e.event_data, e.created_at,
-         u.username, u.email
-       FROM user_events e
-       JOIN users u ON u.id = e.user_id
-       WHERE ${conditions.join(' AND ')}
-       ORDER BY e.created_at DESC
-       LIMIT $${params.length}`,
-      params
-    );
+      const result = await query(
+        `SELECT
+           e.id, e.user_id, e.event_type, e.event_data, e.created_at,
+           u.username, u.email
+         FROM user_events e
+         JOIN users u ON u.id = e.user_id
+         WHERE ${conditions.join(' AND ')}
+         ORDER BY e.created_at DESC
+         LIMIT $${params.length}`,
+        params
+      );
 
-    res.json({
-      events: result.rows.map((row: any) => {
-        let eventData = row.event_data;
-        if (typeof eventData === 'string') {
-          try { eventData = JSON.parse(eventData); } catch { eventData = {}; }
-        }
-        return {
-          id: row.id,
-          user_id: row.user_id,
-          username: row.username,
-          email: row.email,
-          event_type: row.event_type,
-          event_data: eventData || {},
-          created_at: row.created_at,
-        };
-      }),
-      total: result.rows.length,
-      hours,
-      filter: eventType || null,
+      return {
+        events: result.rows.map((row: any) => {
+          let eventData = row.event_data;
+          if (typeof eventData === 'string') {
+            try { eventData = JSON.parse(eventData); } catch { eventData = {}; }
+          }
+          return {
+            id: row.id,
+            user_id: row.user_id,
+            username: row.username,
+            email: row.email,
+            event_type: row.event_type,
+            event_data: eventData || {},
+            created_at: row.created_at,
+          };
+        }),
+        total: result.rows.length,
+        hours,
+        filter: eventType || null,
+      };
     });
+
+    res.set('Cache-Control', 'private, max-age=60');
+    res.json(payload);
   } catch (err: any) {
     console.error('[Admin] Failed to fetch events:', err);
     res.status(500).json({ error: err.message });
@@ -1444,43 +1469,49 @@ app.get('/admin/events', requireAdmin, async (req, res) => {
 app.get('/admin/events/stats', requireAdmin, async (req, res) => {
   try {
     const hours = Math.min(Math.max(parseInt(req.query.hours as string) || 24, 1), 720);
-    const timeFilter = USE_SQLITE
-      ? `e.created_at > datetime('now', '-${hours} hours')`
-      : `e.created_at > NOW() - INTERVAL '${hours} hours'`;
 
-    const byTypeResult = await query(
-      `SELECT e.event_type, COUNT(*) as count
-       FROM user_events e
-       WHERE ${timeFilter}
-       GROUP BY e.event_type
-       ORDER BY count DESC`,
-      []
-    );
+    const payload = await adminCached(`events-stats:${hours}`, 60_000, async () => {
+      const timeFilter = USE_SQLITE
+        ? `e.created_at > datetime('now', '-${hours} hours')`
+        : `e.created_at > NOW() - INTERVAL '${hours} hours'`;
 
-    const hourExpr = USE_SQLITE
-      ? "strftime('%Y-%m-%d %H:00', e.created_at)"
-      : "date_trunc('hour', e.created_at)::text";
+      const byTypeResult = await query(
+        `SELECT e.event_type, COUNT(*) as count
+         FROM user_events e
+         WHERE ${timeFilter}
+         GROUP BY e.event_type
+         ORDER BY count DESC`,
+        []
+      );
 
-    const hourlyResult = await query(
-      `SELECT ${hourExpr} as hour, COUNT(*) as count
-       FROM user_events e
-       WHERE ${timeFilter}
-       GROUP BY hour
-       ORDER BY hour ASC`,
-      []
-    );
+      const hourExpr = USE_SQLITE
+        ? "strftime('%Y-%m-%d %H:00', e.created_at)"
+        : "date_trunc('hour', e.created_at)::text";
 
-    res.json({
-      hours,
-      by_type: byTypeResult.rows.map((row: any) => ({
-        event_type: row.event_type,
-        count: parseInt(row.count) || 0,
-      })),
-      hourly: hourlyResult.rows.map((row: any) => ({
-        hour: row.hour,
-        count: parseInt(row.count) || 0,
-      })),
+      const hourlyResult = await query(
+        `SELECT ${hourExpr} as hour, COUNT(*) as count
+         FROM user_events e
+         WHERE ${timeFilter}
+         GROUP BY hour
+         ORDER BY hour ASC`,
+        []
+      );
+
+      return {
+        hours,
+        by_type: byTypeResult.rows.map((row: any) => ({
+          event_type: row.event_type,
+          count: parseInt(row.count) || 0,
+        })),
+        hourly: hourlyResult.rows.map((row: any) => ({
+          hour: row.hour,
+          count: parseInt(row.count) || 0,
+        })),
+      };
     });
+
+    res.set('Cache-Control', 'private, max-age=60');
+    res.json(payload);
   } catch (err: any) {
     console.error('[Admin] Failed to fetch event stats:', err);
     res.status(500).json({ error: err.message });
@@ -1907,31 +1938,68 @@ app.get('/admin/tags', requireAdmin, async (req, res) => {
   try {
     const hours = parseInt(req.query.hours as string) || 24;
 
-    const tagsResult = await query(`
-      SELECT
-        t.tag_id,
-        t.tag_name,
-        t.tag_type,
-        t.keywords,
-        t.is_verified,
-        t.created_at,
-        ${USE_SQLITE ? "JSON_EXTRACT(t.enriched_data, '$._backfill')" : "t.enriched_data->'_backfill'"} as backfill,
-        COUNT(DISTINCT p.user_id) as subscriber_count,
-        COUNT(DISTINCT n.id) FILTER (WHERE n.published_at > NOW() - INTERVAL '${hours} hours') as articles_24h,
-        COUNT(DISTINCT n.id) FILTER (WHERE n.published_at > NOW() - INTERVAL '7 days') as articles_7d,
-        COUNT(DISTINCT n.id) FILTER (WHERE n.published_at > NOW() - INTERVAL '30 days') as articles_30d,
-        ROUND(AVG(n.sentiment_score) FILTER (WHERE n.sentiment_score IS NOT NULL AND n.published_at > NOW() - INTERVAL '${hours} hours'), 1) as avg_sentiment,
-        COUNT(*) FILTER (WHERE n.sentiment_source = 'llm' OR n.sentiment_source = 'llm-partial') as llm_success,
-        COUNT(*) FILTER (WHERE n.sentiment_source LIKE 'llm-%' AND n.sentiment_source != 'llm-partial') as llm_failed,
-        MAX(n.published_at) as last_article_at
-      FROM user_defined_tags t
-      LEFT JOIN portfolios p ON p.tag_id = t.tag_id
-      LEFT JOIN news n ON t.tag_id = ANY(n.matched_tags) AND n.published_at > NOW() - INTERVAL '30 days'
-      GROUP BY t.tag_id, t.tag_name, t.tag_type, t.keywords, t.is_verified, t.created_at, t.enriched_data
-      ORDER BY articles_24h DESC, subscriber_count DESC
-    `);
+    const payload = await adminCached(`admin-tags:${hours}`, 120_000, async () => {
+      const tagsResult = USE_SQLITE
+        ? await query(`
+            SELECT
+              t.tag_id,
+              t.tag_name,
+              t.tag_type,
+              t.keywords,
+              t.is_verified,
+              t.created_at,
+              JSON_EXTRACT(t.enriched_data, '$._backfill') as backfill,
+              COUNT(DISTINCT p.user_id) as subscriber_count,
+              COUNT(DISTINCT n.id) FILTER (WHERE n.published_at > datetime('now', '-${hours} hours')) as articles_24h,
+              COUNT(DISTINCT n.id) FILTER (WHERE n.published_at > datetime('now', '-7 days')) as articles_7d,
+              COUNT(DISTINCT n.id) FILTER (WHERE n.published_at > datetime('now', '-30 days')) as articles_30d,
+              ROUND(AVG(n.sentiment_score) FILTER (WHERE n.sentiment_score IS NOT NULL AND n.published_at > datetime('now', '-${hours} hours')), 1) as avg_sentiment,
+              COUNT(*) FILTER (WHERE n.sentiment_source = 'llm' OR n.sentiment_source = 'llm-partial') as llm_success,
+              COUNT(*) FILTER (WHERE n.sentiment_source LIKE 'llm-%' AND n.sentiment_source != 'llm-partial') as llm_failed,
+              MAX(n.published_at) as last_article_at
+            FROM user_defined_tags t
+            LEFT JOIN portfolios p ON p.tag_id = t.tag_id
+            LEFT JOIN news n ON t.tag_id = ANY(n.matched_tags) AND n.published_at > datetime('now', '-30 days')
+            GROUP BY t.tag_id, t.tag_name, t.tag_type, t.keywords, t.is_verified, t.created_at, t.enriched_data
+            ORDER BY articles_24h DESC, subscriber_count DESC
+          `)
+        : await query(`
+            SELECT
+              t.tag_id, t.tag_name, t.tag_type, t.keywords, t.is_verified, t.created_at,
+              t.enriched_data->'_backfill' as backfill,
+              COALESCE(sub.subscriber_count, 0) as subscriber_count,
+              COALESCE(n.articles_24h, 0) as articles_24h,
+              COALESCE(n.articles_7d, 0) as articles_7d,
+              COALESCE(n.articles_30d, 0) as articles_30d,
+              n.avg_sentiment,
+              COALESCE(n.llm_success, 0) as llm_success,
+              COALESCE(n.llm_failed, 0) as llm_failed,
+              n.last_article_at
+            FROM user_defined_tags t
+            LEFT JOIN LATERAL (
+              SELECT COUNT(DISTINCT p.user_id) as subscriber_count
+              FROM portfolios p
+              WHERE p.tag_id = t.tag_id
+            ) sub ON TRUE
+            LEFT JOIN LATERAL (
+              SELECT
+                COUNT(*) FILTER (WHERE n.published_at > NOW() - INTERVAL '${hours} hours') as articles_24h,
+                COUNT(*) FILTER (WHERE n.published_at > NOW() - INTERVAL '7 days') as articles_7d,
+                COUNT(*) FILTER (WHERE n.published_at > NOW() - INTERVAL '30 days') as articles_30d,
+                ROUND(AVG(n.sentiment_score) FILTER (
+                  WHERE n.sentiment_score IS NOT NULL
+                    AND n.published_at > NOW() - INTERVAL '${hours} hours'), 1) as avg_sentiment,
+                COUNT(*) FILTER (WHERE n.sentiment_source = 'llm' OR n.sentiment_source = 'llm-partial') as llm_success,
+                COUNT(*) FILTER (WHERE n.sentiment_source LIKE 'llm-%' AND n.sentiment_source != 'llm-partial') as llm_failed,
+                MAX(n.published_at) as last_article_at
+              FROM news n
+              WHERE t.tag_id = ANY(n.matched_tags)
+                AND n.published_at > NOW() - INTERVAL '30 days'
+            ) n ON TRUE
+            ORDER BY articles_24h DESC, subscriber_count DESC
+          `);
 
-    const tags = tagsResult.rows.map((row: any) => ({
+      const tags = tagsResult.rows.map((row: any) => ({
       tag_id: row.tag_id,
       tag_name: row.tag_name,
       tag_type: row.tag_type,
@@ -1972,11 +2040,15 @@ app.get('/admin/tags', requireAdmin, async (req, res) => {
         .sort((a: any, b: any) => b[orderField] - a[orderField])
         .slice(0, 15);
 
-    setCachedPopularTags('24h', 15, buildPopularTags('articles_24h'));
-    setCachedPopularTags('7d', 15, buildPopularTags('articles_7d'));
-    setCachedPopularTags('30d', 15, buildPopularTags('articles_30d'));
+      setCachedPopularTags('24h', 15, buildPopularTags('articles_24h'));
+      setCachedPopularTags('7d', 15, buildPopularTags('articles_7d'));
+      setCachedPopularTags('30d', 15, buildPopularTags('articles_30d'));
 
-    res.json({ hours, total: tags.length, tags });
+      return { hours, total: tags.length, tags };
+    });
+
+    res.set('Cache-Control', 'private, max-age=60');
+    res.json(payload);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -2567,6 +2639,8 @@ app.put('/admin/tags/:tagId', requireAdmin, async (req, res) => {
     const { wakeUpNoTagsArticles } = await import('./services/tagManager');
     const { invalidateUserTagsCache } = await import('./services/smartTagMatcher');
     invalidateUserTagsCache();
+    adminCacheInvalidate('admin-tags');
+    adminCacheInvalidate('llm-');
     wakeUpNoTagsArticles().catch((err: any) => {
       console.error('[AdminTags] wakeUpNoTagsArticles error:', err.message);
     });
@@ -2624,6 +2698,8 @@ app.post('/admin/tags/:tagId/enrich', requireAdmin, async (req, res) => {
     );
 
     invalidateUserTagsCache();
+    adminCacheInvalidate('admin-tags');
+    adminCacheInvalidate('llm-');
     wakeUpNoTagsArticles().catch((err: any) => {
       console.error('[AdminEnrich] wakeUpNoTagsArticles error:', err.message);
     });
@@ -3837,6 +3913,7 @@ app.get('/trigger/wake-no-tags', async (req, res) => {
     // Run processor in background to pick up woken articles
     processRawArticles().catch(e => console.error('[WakeNoTags] processor error:', e.message));
     res.json({ started: true, woken });
+    adminCacheInvalidate('llm-');
   } catch (err: any) {
     console.error('[WakeNoTags] error:', err.message);
     res.status(500).json({ error: err.message });
@@ -3901,6 +3978,8 @@ app.get('/trigger/reprocess-tag/:tagId', async (req, res) => {
     const count = result.rows.length;
     processRawArticles().catch(e => console.error('[ReprocessTag] processor error:', e.message));
     res.json({ started: true, tagId, count });
+    adminCacheInvalidate('llm-');
+    adminCacheInvalidate('admin-tags');
   } catch (err: any) {
     console.error('[ReprocessTag] error:', err.message);
     res.status(500).json({ error: err.message });
