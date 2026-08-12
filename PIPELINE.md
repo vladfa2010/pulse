@@ -32,11 +32,13 @@ Use when: cron speed is critical, budget secondary.
 | Parameter | Value | Code |
 |-----------|-------|------|
 | **temperature** | 0.1 (sentiment/tag), 0.3 (translate/summary) | `0.1` / `0.3` |
-| **timeout API** | 15 sec (sentiment), 30 sec (translate) | `15000` / `30000` |
+| **timeout API** | 60 sec (unified sentiment batch), 30 sec (translate) | `60000` / `30000` |
 | **batch size** (translate) | 5 | `5` |
 | **max_tokens** (translate) | 3000 | `3000` |
 | **retry delay** | 500 ms | `500` |
 | **thinking** | NOT needed (n/a for this model) | — |
+
+> **2026-08-11:** unified sentiment batch поднят 30→60 sec (коммит `44c1713`) — эмпирика: 30–35 sec на коротких входах, 35–45 sec в проде с длинным Bridgewater-промптом. Legacy chunk-вызовы (`SentimentBatchChunk`, `TagImpactBatchChunk`) остаются на 30 sec.
 
 ---
 
@@ -335,13 +337,14 @@ ON CONFLICT (content_hash) DO UPDATE
 2. Внутри `smartMatchTags()` как часть полного pipeline для статей с тегами.
 
 ```typescript
-const userTags = tagManager.getEnrichedKeywords();
-for (const [tagId, keywords] of userTags) {
-  if (keywords.some(kw => (title + summary).toLowerCase().includes(kw))) {
-    matched.push(tagId);
-  }
-}
+// smartTagMatcher.ts → matchTagsByKeywords() — word-boundary regex, НЕ substring!
+const re = new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegex(keyword)}(?![\\p{L}\\p{N}])`, 'iu');
+re.test(text.toLowerCase());
 ```
+
+**⚠️ Семантика — word boundaries (с 2026-06-21, коммит `ed34392`).** Ключ не должен прилегать к букве/цифре с обеих сторон (Unicode-классы `\p{L}\p{N}`, флаги `iu`). Введено ради коротких тикеров: `'si'` (фьючерс доллар_рубль) матчился внутри `'Asian'`, `'financial'`. Ранняя версия этого раздела описывала substring `.includes()` — он прожил в проде ~2 дня (19–21.06), описание устарело.
+
+**Осознанный trade-off:** словоформы и множественные числа **не** матчатся — «путин» ≠ «Путина», «рубль» ≠ «рубля», «stock» ≠ «stocks». Матчатся только точные формы из `keywords` + enriched-синонимов/тикеров (см. TAGS.md). Покрытие держится на полноте словаря, а не на морфологии.
 
 ### Layer 2: LLM Smart Matching (expensive)
 - **По умолчанию:** срабатывает только если Layer 1 не нашёл теги (fallback).
@@ -379,7 +382,7 @@ const matchedTags = mapHashtagsToTags(hashtags);  // ["сбер", "россия"
 | Output цена | $3.00 / 1M tokens | **$2.50** (−17%) |
 | Context window | 32K | **262K** (×8) |
 | Temperature | 0.1 | **1.0** (требование модели) |
-| Timeout | 15 сек | **30 сек** |
+| Timeout (unified batch) | 60 сек (с 2026-08-11) | **60 сек** |
 
 Переключение: env var `KIMI_MODEL` или дефолт в коде (`smartTagMatcher.ts`, `translate.ts`, `tagManager.ts`, `user.ts`).
 
@@ -581,14 +584,13 @@ LIMIT 50;
 | Значение | Когда | enrichment_version | LLM вызовы |
 |----------|-------|-------------------|------------|
 | `'llm'` | Успех, полный batch | 2 (если populate сработал) | ✅ translate + L2 + L3 |
-| `'llm-partial'` | Успех, неполный batch | 2 (если populate сработал) | ✅ translate + L2 + L3 |
-| `'llm-timeout'` | ETIMEDOUT | 1 или NULL | ✅ (упал) |
-| `'llm-rate-limit'` | 429 | 1 или NULL | ✅ (упал) |
-| `'llm-parse'` | JSON.parse упал | 1 или NULL | ✅ (упал) |
-| `'llm-empty'` | Пустой results[] | 1 или NULL | ✅ (упал) |
-| `'llm-error'` | Другая ошибка | 1 или NULL | ✅ (упал) |
+| `'llm-partial'` | Успех, неполный batch (`resultsCount < batchSize`) или частичный parse-fill | 2 (если populate сработал) | ✅ translate + L2 + L3 |
+| `'llm-empty'` | LLM вернула пустой `results[]` | 1 или NULL | ✅ (упал) |
+| `'llm-error'` | **Любая** ошибка LLM: timeout, network, 429/5xx, parse failure | 1 или NULL | ✅ (упал) |
 | `'keyword'` | Translate упал, sentiment fallback | 1 или NULL | ❌ translate |
 | `'no-tags'` | **v10.0:** keyword pre-filter не нашёл тегов | 1 или NULL | ❌ **ни одного** |
+
+> **Актуально с 2026-08 (TZ-31):** гранулярные маркеры `'llm-timeout'` / `'llm-rate-limit'` / `'llm-parse'` больше не пишутся — все ошибки сворачиваются в `'llm-error'`, а тип и текст исключения живут в колонках `llm_error` и `llm_raw_preview`. В исторических строках БД старые маркеры остались; админка фильтрует `sentiment_source LIKE 'llm-%'` и покрывает обе схемы.
 
 ### `no-tags` — специальное состояние
 
@@ -833,3 +835,4 @@ const hasRealSentiment = article.sentiment_source === 'llm' || article.sentiment
 | 9.2 | 2026-06-05 | SQL Best Practices (COALESCE rule) |
 | **10.0** | **2026-06-19** | **Keyword-First Pipeline: pre-filter, no-tags skip, force LLM для статей с тегами, no-tags wake-up** |
 | **10.1** | **2026-06-20** | **Fix translate JSON-object parsing + retry EN articles with title_ru = title_original (Баг 11)** |
+| **10.2** | **2026-08-12** | **Doc-sync с кодом (код не менялся): Layer 1 = word-boundary regex (`ed34392`), timeout unified batch 60s (`44c1713`), маркеры `llm-error` вместо гранулярных (TZ-31)** |
