@@ -1965,37 +1965,25 @@ app.get('/admin/tags', requireAdmin, async (req, res) => {
           `)
         : await query(`
             SELECT
-              t.tag_id, t.tag_name, t.tag_type, t.keywords, t.is_verified, t.created_at,
+              t.tag_id,
+              t.tag_name,
+              t.tag_type,
+              t.keywords,
+              t.is_verified,
+              t.created_at,
               t.enriched_data->'_backfill' as backfill,
-              COALESCE(sub.subscriber_count, 0) as subscriber_count,
-              COALESCE(n.articles_24h, 0) as articles_24h,
-              COALESCE(n.articles_7d, 0) as articles_7d,
-              COALESCE(n.articles_30d, 0) as articles_30d,
-              n.avg_sentiment,
-              COALESCE(n.llm_success, 0) as llm_success,
-              COALESCE(n.llm_failed, 0) as llm_failed,
-              n.last_article_at
+              COUNT(DISTINCT p.user_id) as subscriber_count,
+              COUNT(DISTINCT n.id) FILTER (WHERE n.published_at > NOW() - INTERVAL '${hours} hours') as articles_24h,
+              COUNT(DISTINCT n.id) FILTER (WHERE n.published_at > NOW() - INTERVAL '7 days') as articles_7d,
+              COUNT(DISTINCT n.id) FILTER (WHERE n.published_at > NOW() - INTERVAL '30 days') as articles_30d,
+              ROUND(AVG(n.sentiment_score) FILTER (WHERE n.sentiment_score IS NOT NULL AND n.published_at > NOW() - INTERVAL '${hours} hours'), 1) as avg_sentiment,
+              COUNT(*) FILTER (WHERE n.sentiment_source = 'llm' OR n.sentiment_source = 'llm-partial') as llm_success,
+              COUNT(*) FILTER (WHERE n.sentiment_source LIKE 'llm-%' AND n.sentiment_source != 'llm-partial') as llm_failed,
+              MAX(n.published_at) as last_article_at
             FROM user_defined_tags t
-            LEFT JOIN LATERAL (
-              SELECT COUNT(DISTINCT p.user_id) as subscriber_count
-              FROM portfolios p
-              WHERE p.tag_id = t.tag_id
-            ) sub ON TRUE
-            LEFT JOIN LATERAL (
-              SELECT
-                COUNT(*) FILTER (WHERE n.published_at > NOW() - INTERVAL '${hours} hours') as articles_24h,
-                COUNT(*) FILTER (WHERE n.published_at > NOW() - INTERVAL '7 days') as articles_7d,
-                COUNT(*) FILTER (WHERE n.published_at > NOW() - INTERVAL '30 days') as articles_30d,
-                ROUND(AVG(n.sentiment_score) FILTER (
-                  WHERE n.sentiment_score IS NOT NULL
-                    AND n.published_at > NOW() - INTERVAL '${hours} hours'), 1) as avg_sentiment,
-                COUNT(*) FILTER (WHERE n.sentiment_source = 'llm' OR n.sentiment_source = 'llm-partial') as llm_success,
-                COUNT(*) FILTER (WHERE n.sentiment_source LIKE 'llm-%' AND n.sentiment_source != 'llm-partial') as llm_failed,
-                MAX(n.published_at) as last_article_at
-              FROM news n
-              WHERE t.tag_id = ANY(n.matched_tags)
-                AND n.published_at > NOW() - INTERVAL '30 days'
-            ) n ON TRUE
+            LEFT JOIN portfolios p ON p.tag_id = t.tag_id
+            LEFT JOIN news n ON t.tag_id = ANY(n.matched_tags) AND n.published_at > NOW() - INTERVAL '30 days'
+            GROUP BY t.tag_id, t.tag_name, t.tag_type, t.keywords, t.is_verified, t.created_at, t.enriched_data
             ORDER BY articles_24h DESC, subscriber_count DESC
           `);
 
