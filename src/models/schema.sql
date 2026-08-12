@@ -499,8 +499,6 @@ CREATE TABLE IF NOT EXISTS translation_cache (
 CREATE INDEX IF NOT EXISTS idx_news_matched_tags ON news USING GIN (matched_tags);
 CREATE INDEX IF NOT EXISTS idx_news_published_at ON news (published_at);
 CREATE INDEX IF NOT EXISTS idx_news_source_id ON news (source_id);
-CREATE INDEX IF NOT EXISTS idx_news_fact_check_status ON news(fact_check_status);
-CREATE INDEX IF NOT EXISTS idx_news_slug ON news(slug);
 CREATE INDEX IF NOT EXISTS idx_news_created_at ON news (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_news_llm_errors_recent ON news (created_at DESC) WHERE llm_error IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_llm_batches_started_at ON llm_batches (started_at DESC);

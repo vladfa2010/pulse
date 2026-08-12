@@ -6,8 +6,6 @@ ALTER TABLE news
     CHECK(fact_check_status IN ('not_checked', 'in_progress', 'checked')),
   ADD COLUMN IF NOT EXISTS fact_check_result JSONB DEFAULT NULL;
 
-CREATE INDEX IF NOT EXISTS idx_news_fact_check_status ON news(fact_check_status);
-
 CREATE TABLE IF NOT EXISTS fact_check_jobs (
   id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   news_id       UUID NOT NULL REFERENCES news(id) ON DELETE CASCADE,

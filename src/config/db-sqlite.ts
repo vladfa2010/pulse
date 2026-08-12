@@ -405,8 +405,6 @@ export async function initSQLiteSchema(): Promise<void> {
       created_at TEXT DEFAULT (datetime('now'))
     );
 
-    CREATE INDEX IF NOT EXISTS idx_news_fact_check_status ON news(fact_check_status);
-
     CREATE TABLE IF NOT EXISTS fact_check_jobs (
       id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
       news_id TEXT NOT NULL REFERENCES news(id) ON DELETE CASCADE,

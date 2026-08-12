@@ -3019,5 +3019,48 @@ Backend API: отвечает 403 "Tag limit reached (10)"
 
 ---
 
+## 17. Индексы PostgreSQL
+
+### 17.1. Индексы таблицы `news` (актуальное состояние)
+
+> **Дата:** 2026-08-13  
+> **TZ:** ТЗ-34  
+> **Коммит:** (текущий)
+
+После чистки избыточных индексов на таблице `news` остаются только функционально необходимые:
+
+| Индекс | Тип | Назначение | Источник |
+|--------|-----|------------|----------|
+| `news_pkey` | PK, B-tree | первичный ключ | `schema.sql` |
+| `news_url_unique` | UNIQUE, B-tree | дедупликация по URL | `schema.sql:239` |
+| `news_content_hash_key` | UNIQUE, B-tree | дедупликация по контенту | `schema.sql:242` |
+| `news_slug_key` | UNIQUE, B-tree | deeplinks, `WHERE slug = $1` | `schema.sql:237` |
+| `idx_news_matched_tags` | GIN | тег-матчинг, `/tags/popular` | `schema.sql` |
+| `idx_news_published_at` | B-tree | лента, окна 24h/7d/30d | `schema.sql` |
+| `idx_news_created_at` | B-tree DESC | админ-панель, сортировка | ТЗ-32 |
+| `idx_news_llm_errors_recent` | B-tree DESC partial | `llm_error IS NOT NULL` | ТЗ-32 |
+| `idx_news_fetched_at` | B-tree | дайджесты/отчёты, `fetched_at > $x` | TZ_TG_DIGEST_V3 |
+| `idx_news_source_id` | B-tree | админка `WHERE source_id = ANY($1)` | `schema.sql` |
+| `idx_news_sentiment_source` | B-tree | LLM-dashboard агрегаты | migrate-v3 |
+| `idx_news_llm_attempts` | B-tree | retry-логика `llm_attempts >= 3` | migrate-v3 |
+| `idx_news_enrichment_version` | B-tree | enrichment pipeline | migrate-v3 |
+| `idx_news_llm_error` | B-tree | LLM error tracking | migrate-v3 |
+| `idx_news_needs_processing` | B-tree partial | флаг обработки | migrate-v3 |
+| `idx_news_tag_impact_gin` | GIN | поиск по `tag_impact` | migrate-v3 |
+
+**Удалены в ТЗ-34:**
+
+- `idx_news_slug` — точный дубль `news_slug_key` (UNIQUE constraint автоматически создаёт индекс).
+- `idx_news_fact_check_status` — в коде нет запросов `WHERE fact_check_status = '...'` по всей таблице; все обращения идут с `WHERE id = $1`.
+
+**Правило при изменениях:**
+
+1. `schema.sql` — единая правда для новых инсталляций.
+2. Boot-миграции в `index.ts` — только для обратной совместимости (не для новых объектов).
+3. Перед удалением любого индекса на проде проверять `pg_stat_user_indexes.idx_scan` и `EXPLAIN` типовых запросов.
+4. `DROP INDEX CONCURRENTLY` — всегда, чтобы не блокировать запись.
+
+---
+
 *Document: ARCHITECTURE.md v9.7.0 — PULSE Platform*  
 *Format: Markdown — living document, updated with each release*
