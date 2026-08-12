@@ -1314,6 +1314,30 @@ const tagId = req.params.tagId.toLowerCase();
 
 > **Защита от API-вызовов:** если кто-то вызовет `GET /admin/tags/СБЕР` — отработает корректно (→ `"сбер"`).
 
+#### Производительность `GET /admin/tags`
+
+Список тегов в админке агрегирует подписчиков (`portfolios`) и статьи (`news`) за 30 дней. На проде эволюция запроса:
+
+| Этап | Форма | Результат на проде |
+|------|-------|--------------------|
+| До ТЗ-32 | Tag-driven `LEFT JOIN portfolios × news` + `COUNT(DISTINCT)` | 1–3 с, но росло с ростом данных |
+| ТЗ-32 (первоначально) | LATERAL: проход по `news` на каждый тег | > 30 с, `statement_timeout`, обвал пула |
+| ТЗ-33 | News-driven CTE: один проход по `news` + `unnest(matched_tags)` + агрегация | ~3 с холодного, ~1–1.5 с тёплого |
+
+**Текущая форма (ТЗ-33):**
+- `WITH agg AS (...)` — считает статьи, sentiment, LLM-метрики за 30 дней за один проход по `news`.
+- `WITH subs AS (...)` — считает подписчиков отдельно.
+- `LEFT JOIN` к `user_defined_tags` без декартова произведения.
+
+**Кэш:** запрос обёрнут в `adminCached('admin-tags:${hours}', 120_000, ...)` (`src/utils/adminCache.ts`) с `Cache-Control: private, max-age=60`. Повторный запрос в пределах 120 с идёт из памяти (< 100 мс).
+
+**Инвалидация кэша** вызывается из мутаций:
+- `POST /admin/tags/:tagId/enrich`
+- `PUT /admin/tags/:tagId`
+- `GET /trigger/reprocess-tag/:tagId`
+
+> **Примечание:** `llm_success` / `llm_failed` в ТЗ-33 стали считать честное число новостей. В старой tag-driven форме из-за fan-out от `portfolios` они были завышены в `subscriber_count` раз для тегов с подписчиками.
+
 #### Frontend — case-insensitive safety input
 
 `DeleteConfirmModal.tsx` — safety input для удаления тега тоже case-insensitive:
