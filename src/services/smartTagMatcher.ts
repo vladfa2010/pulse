@@ -19,6 +19,7 @@
  */
 
 import axios from 'axios';
+import crypto from 'crypto';
 import { query } from '../config/db';
 import { getAllUserDefinedTags, getAllTagNames } from './tagManager';
 
@@ -31,6 +32,13 @@ let lastLlmParseError = '';
 let lastLlmTimestamp = '';
 export function getLastLlmDebug() {
   return { raw: lastLlmRawContent, error: lastLlmParseError, timestamp: lastLlmTimestamp };
+}
+
+// Full SHA-256 hash of title+summary. Previously we used base64(title+summary).slice(0,64),
+// which only covers the first 48 bytes — causing collisions when Telegram sources prefix
+// every article with the same emoji+hashtag block (e.g. 🇷🇺🇨🇳#ии #россия #китай).
+function textHashFor(title: string, summary: string): string {
+  return crypto.createHash('sha256').update(title + summary).digest('hex');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -218,7 +226,7 @@ async function callLLMForTags(title: string, summary: string, availableTags: str
   }
 
   const prompt = buildTagPrompt(title, summary, availableTags);
-  const textHash = Buffer.from(title + summary).toString('base64').slice(0, 64);
+  const textHash = textHashFor(title, summary);
 
   // Check cache first
   const cached = await getLLMCache(textHash);
@@ -380,7 +388,7 @@ export async function smartMatchTagsBatch(
   }
 
   // Compute text hashes and batch cache lookup
-  const textHashes = items.map(item => Buffer.from(item.title + item.summary).toString('base64').slice(0, 64));
+  const textHashes = items.map(item => textHashFor(item.title, item.summary));
   const cacheMap = await getLLMCacheBatch(textHashes);
 
   // Determine uncached items
