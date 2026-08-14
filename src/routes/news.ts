@@ -380,14 +380,15 @@ router.get('/tags/popular', async (req, res) => {
          ),
          full_counts AS (
            SELECT tt.tag_id,
-                  MAX(tt.window_count) AS window_count,
+                  wt.window_count,
                   COUNT(*) FILTER (WHERE n.published_at > NOW() - INTERVAL '24 hours') AS articles_24h,
                   COUNT(*) FILTER (WHERE n.published_at > NOW() - INTERVAL '7 days')   AS articles_7d,
                   COUNT(*)                                                                          AS articles_30d
            FROM top_tags tt
+           JOIN window_tags wt ON wt.tag_id = tt.tag_id
            JOIN news n ON n.published_at > NOW() - INTERVAL '30 days'
                        AND tt.tag_id = ANY(n.matched_tags)
-           GROUP BY tt.tag_id
+           GROUP BY tt.tag_id, wt.window_count
          )
          SELECT t.tag_id, t.tag_name, t.tag_type,
                 fc.articles_24h, fc.articles_7d, fc.articles_30d
