@@ -26,7 +26,7 @@
 import { Router } from 'express';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { query } from '../config/db';
-import { getCachedPopularTags, setCachedPopularTags } from '../utils/tagCache';
+import { popularTagsCached } from '../utils/tagCache';
 import { nowSql } from '../utils/nowSql';
 
 const router = Router();
@@ -348,11 +348,6 @@ router.get('/tags/popular', async (req, res) => {
     const period = ['24h', '7d', '30d'].includes(rawPeriod) ? rawPeriod : '24h';
     const limit = Math.min(parseInt(req.query.limit as string) || 15, 30);
 
-    const cached = getCachedPopularTags(period, limit);
-    if (cached) {
-      return res.json({ tags: cached });
-    }
-
     const periodCfg: Record<string, { orderCol: string }> = {
       '24h': { orderCol: 'articles_24h' },
       '7d': { orderCol: 'articles_7d' },
@@ -360,36 +355,40 @@ router.get('/tags/popular', async (req, res) => {
     };
     const { orderCol } = periodCfg[period];
 
-    const result = await query(
-      `
-      SELECT
-        t.tag_id,
-        t.tag_name,
-        t.tag_type,
-        COUNT(DISTINCT n.id) FILTER (WHERE n.published_at > NOW() - INTERVAL '24 hours') as articles_24h,
-        COUNT(DISTINCT n.id) FILTER (WHERE n.published_at > NOW() - INTERVAL '7 days')  as articles_7d,
-        COUNT(DISTINCT n.id) FILTER (WHERE n.published_at > NOW() - INTERVAL '30 days') as articles_30d
-      FROM user_defined_tags t
-      LEFT JOIN news n ON t.tag_id = ANY(n.matched_tags) AND n.published_at > NOW() - INTERVAL '30 days'
-      GROUP BY t.tag_id, t.tag_name, t.tag_type
-      HAVING COUNT(DISTINCT n.id) FILTER (WHERE n.published_at > NOW() - INTERVAL '24 hours') > 0
-      ORDER BY ${orderCol} DESC
-      LIMIT $1
-      `,
-      [limit]
-    );
+    const tags = await popularTagsCached(period, limit, async () => {
+      const result = await query(
+        `WITH agg AS (
+           SELECT m.tag AS tag_id,
+                  COUNT(*) FILTER (WHERE n.published_at > NOW() - INTERVAL '24 hours') AS articles_24h,
+                  COUNT(*) FILTER (WHERE n.published_at > NOW() - INTERVAL '7 days')  AS articles_7d,
+                  COUNT(*) AS articles_30d
+           FROM news n
+           CROSS JOIN LATERAL unnest(n.matched_tags) AS m(tag)
+           WHERE n.published_at > NOW() - INTERVAL '30 days'
+           GROUP BY m.tag
+         )
+         SELECT t.tag_id, t.tag_name, t.tag_type,
+                a.articles_24h, a.articles_7d, a.articles_30d
+         FROM agg a
+         JOIN user_defined_tags t ON t.tag_id = a.tag_id
+         WHERE a.${orderCol} > 0
+         ORDER BY a.${orderCol} DESC
+         LIMIT $1`,
+        [limit]
+      );
 
-    const tags = result.rows.map((row: any) => ({
-      tag_id: row.tag_id,
-      tag_name: row.tag_name,
-      tag_type: row.tag_type,
-      news_count: parseInt(row[orderCol]) || 0,
-      articles_24h: parseInt(row.articles_24h) || 0,
-      articles_7d: parseInt(row.articles_7d) || 0,
-      articles_30d: parseInt(row.articles_30d) || 0,
-    }));
+      return result.rows.map((row: any) => ({
+        tag_id: row.tag_id,
+        tag_name: row.tag_name,
+        tag_type: row.tag_type,
+        news_count: parseInt(row[orderCol]) || 0,
+        articles_24h: parseInt(row.articles_24h) || 0,
+        articles_7d: parseInt(row.articles_7d) || 0,
+        articles_30d: parseInt(row.articles_30d) || 0,
+      }));
+    });
 
-    setCachedPopularTags(period, limit, tags);
+    res.set('Cache-Control', 'public, max-age=60');
     res.json({ tags });
   } catch (err: any) {
     console.error('[News] Popular tags error:', err.message);
