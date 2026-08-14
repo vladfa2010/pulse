@@ -397,7 +397,7 @@ router.get('/tags/popular', async (req, res) => {
           fullCols: `
             COUNT(*) FILTER (WHERE n.published_at > NOW() - INTERVAL '24 hours') AS articles_24h,
             COUNT(*)                                                             AS articles_7d,
-            wt.articles_30d                                                      AS articles_30d
+            MAX(wt.articles_30d)                                                 AS articles_30d
           `,
         },
       };
@@ -418,7 +418,6 @@ router.get('/tags/popular', async (req, res) => {
         ),
         full_counts AS (
           SELECT tt.tag_id,
-                 wt.${windowCol},
                  ${fullCols}
           FROM top_tags tt
           JOIN window_tags wt ON wt.tag_id = tt.tag_id
