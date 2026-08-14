@@ -343,6 +343,7 @@ router.post('/:id/read', authMiddleware, async (req: AuthRequest, res) => {
 // GET /api/news/tags/popular — ПУБЛИЧНЫЕ популярные теги с агрегатами
 // ═══════════════════════════════════════════════════════════════════════════
 router.get('/tags/popular', async (req, res) => {
+  const routeStart = Date.now();
   try {
     const rawPeriod = (req.query.period as string) || '24h';
     const period = ['24h', '7d', '30d'].includes(rawPeriod) ? rawPeriod : '24h';
@@ -390,6 +391,7 @@ router.get('/tags/popular', async (req, res) => {
 
     res.set('Cache-Control', 'public, max-age=60');
     res.json({ tags });
+    console.log(`[PopularTagsRoute] total=${Date.now() - routeStart}ms key=${period}:${limit}`);
   } catch (err: any) {
     console.error('[News] Popular tags error:', err.message);
     res.status(500).json({ error: 'Failed to fetch popular tags' });

@@ -60,18 +60,22 @@ export async function popularTagsCached(
 ): Promise<any[]> {
   const key = getCacheKey(period, limit)
   const entry = cache.get(key)
+  const now = Date.now()
 
   // Fresh — instant.
-  if (entry && Date.now() - entry.ts <= CACHE_TTL) {
+  if (entry && now - entry.ts <= CACHE_TTL) {
+    console.log(`[PopularTagsCache] HIT key=${key} age=${now - entry.ts}ms`)
     return entry.tags
   }
 
   // Stale — return immediately and refresh in background (one compute for all callers).
-  if (entry && Date.now() - entry.ts <= STALE_TTL) {
+  if (entry && now - entry.ts <= STALE_TTL) {
+    console.log(`[PopularTagsCache] STALE key=${key} age=${now - entry.ts}ms`)
     if (!inflight.has(key)) {
       const p = compute()
         .then((tags) => {
           cache.set(key, { tags, ts: Date.now() })
+          console.log(`[PopularTagsCache] REFRESHED key=${key} tags=${tags.length}`)
           return tags
         })
         .catch((err) => {
@@ -87,10 +91,12 @@ export async function popularTagsCached(
   }
 
   // Missing or very stale — synchronous compute, deduplicated across concurrent callers.
+  console.log(`[PopularTagsCache] MISS key=${key}`)
   if (!inflight.has(key)) {
     const p = compute()
       .then((tags) => {
         cache.set(key, { tags, ts: Date.now() })
+        console.log(`[PopularTagsCache] SET key=${key} tags=${tags.length}`)
         return tags
       })
       .finally(() => {
