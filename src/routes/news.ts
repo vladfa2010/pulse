@@ -369,7 +369,6 @@ router.get('/tags/popular', async (req, res) => {
         windowCol: string;
         fullFilter: string;
         fullCols: string;
-        selectCols: string;
       }> = {
         '24h': {
           windowFilter: "n.published_at > NOW() - INTERVAL '24 hours'",
@@ -380,7 +379,6 @@ router.get('/tags/popular', async (req, res) => {
             COUNT(*) FILTER (WHERE n.published_at > NOW() - INTERVAL '7 days')   AS articles_7d,
             COUNT(*)                                                                          AS articles_30d
           `,
-          selectCols: 'w.articles_24h, fc.articles_7d, fc.articles_30d',
         },
         '7d': {
           windowFilter: "n.published_at > NOW() - INTERVAL '7 days'",
@@ -391,7 +389,6 @@ router.get('/tags/popular', async (req, res) => {
             COUNT(*) FILTER (WHERE n.published_at > NOW() - INTERVAL '7 days')   AS articles_7d,
             COUNT(*)                                                                          AS articles_30d
           `,
-          selectCols: 'fc.articles_24h, w.articles_7d, fc.articles_30d',
         },
         '30d': {
           windowFilter: "n.published_at > NOW() - INTERVAL '30 days'",
@@ -399,12 +396,12 @@ router.get('/tags/popular', async (req, res) => {
           fullFilter: "n.published_at > NOW() - INTERVAL '7 days'",
           fullCols: `
             COUNT(*) FILTER (WHERE n.published_at > NOW() - INTERVAL '24 hours') AS articles_24h,
-            COUNT(*)                                                             AS articles_7d
+            COUNT(*)                                                             AS articles_7d,
+            wt.articles_30d                                                      AS articles_30d
           `,
-          selectCols: 'fc.articles_24h, fc.articles_7d, w.articles_30d',
         },
       };
-      const { windowFilter, windowCol, fullFilter, fullCols, selectCols } = cfg[period];
+      const { windowFilter, windowCol, fullFilter, fullCols } = cfg[period];
 
       return `
         WITH window_tags AS (
@@ -430,7 +427,7 @@ router.get('/tags/popular', async (req, res) => {
           GROUP BY tt.tag_id, wt.${windowCol}
         )
         SELECT t.tag_id, t.tag_name, t.tag_type,
-               ${selectCols}
+               fc.articles_24h, fc.articles_7d, fc.articles_30d
         FROM full_counts fc
         JOIN user_defined_tags t ON t.tag_id = fc.tag_id
         ORDER BY fc.${windowCol} DESC
