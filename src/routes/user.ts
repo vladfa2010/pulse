@@ -662,9 +662,21 @@ router.post('/email-settings', authMiddleware, async (req: AuthRequest, res) => 
 const KIMI_API_KEY_SUMMARY = process.env.KIMI_API_KEY;
 const KIMI_MODEL_SUMMARY = process.env.KIMI_MODEL || 'kimi-k2.5';
 
-// In-memory cache: userId -> { text, timestamp }
-const summaryCache: Map<string, { text: string; time: number; generatedAt: string }> = new Map();
+interface SummaryCacheEntry {
+  text: string;
+  time: number;
+  generatedAt: string;
+  articlesCount: number;
+}
+
+// In-memory cache: userId:hours -> summary payload
+const summaryCache = new Map<string, SummaryCacheEntry>();
+const summaryInflight = new Map<string, Promise<{ summary: string; generatedAt: string | null; articlesCount: number }>>();
 const SUMMARY_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+
+function summaryKey(userId: string, hours: number): string {
+  return `${userId}:${hours}`;
+}
 
 // Build prompt for daily summary
 function buildSummaryPrompt(
@@ -700,109 +712,143 @@ ${articlesText}
 Саммари:`;
 }
 
-// GET /api/user/summary — AI summary of recent news for user's tags
+// GET /api/user/summary — AI summary of recent news for user's active tags
 router.get('/summary', authMiddleware, async (req: AuthRequest, res) => {
   try {
     const userId = req.user!.userId;
     const hours = parseInt(req.query.hours as string) || 12;
     const skipCache = req.query.refresh === '1';
+    const key = summaryKey(userId, hours);
 
     // 1. Check cache (unless refresh requested)
     if (!skipCache) {
-      const cached = summaryCache.get(userId);
+      const cached = summaryCache.get(key);
       if (cached && Date.now() - cached.time < SUMMARY_CACHE_TTL) {
-        console.log(`[Summary] Cache hit for user ${userId.slice(0, 8)}`);
+        console.log(`[Summary] Cache hit for user ${userId.slice(0, 8)}, hours=${hours}`);
         return res.json({
           summary: cached.text,
           cached: true,
           generated_at: cached.generatedAt,
-          articles_count: 0,
+          articles_count: cached.articlesCount,
         });
       }
     }
 
-    // 2. Get user's tags
-    const tagsResult = await query(
-      `SELECT tag_id, tag_name FROM portfolios WHERE user_id = $1`,
-      [userId]
-    );
-    const userTags = tagsResult.rows;
-    if (userTags.length === 0) {
+    // 2. In-flight deduplication: attach to running compute instead of spawning another LLM call.
+    // ?refresh=1 intentionally joins the current generation rather than creating a duplicate one.
+    if (summaryInflight.has(key)) {
+      console.log(`[Summary] In-flight attach for user ${userId.slice(0, 8)}, hours=${hours}`);
+      const result = await summaryInflight.get(key)!;
       return res.json({
-        summary: 'У вас пока нет отслеживаемых активов. Добавьте тег в профиле, чтобы получать персональное саммари.',
-        cached: false,
-        articles_count: 0,
+        summary: result.summary,
+        cached: result.generatedAt === null,
+        generated_at: result.generatedAt || undefined,
+        articles_count: result.articlesCount,
       });
     }
 
-    const tagIds = userTags.map((t: any) => t.tag_id);
-    const tagNames = userTags.map((t: any) => t.tag_name);
-
-    // 3. Fetch recent news matching user's tags
-    const newsResult = await query(
-      `SELECT title_ru, summary_ru, matched_tags, sentiment
-       FROM news
-       WHERE published_at > NOW() - INTERVAL '${hours} hours'
-         AND matched_tags && $1
-       ORDER BY published_at DESC
-       LIMIT 30`,
-      [tagIds]
-    );
-
-    const articles = newsResult.rows.map((row: any) => ({
-      title: row.title_ru || '',
-      summary: row.summary_ru || '',
-      tags: row.matched_tags || [],
-      sentiment: row.sentiment || 'neutral',
-    }));
-
-    // 4. If no LLM key — return fallback
-    if (!KIMI_API_KEY_SUMMARY) {
-      return res.json({
-        summary: `Новостей по вашим активам (${tagNames.join(', ')}) за последние ${hours} часов: ${articles.length}. LLM недоступен для генерации саммари.`,
-        cached: false,
-        articles_count: articles.length,
-      });
-    }
-
-    // 5. Call LLM for summary
-    const prompt = buildSummaryPrompt(tagNames, articles);
-
-    console.log(`[Summary] Generating for user ${userId.slice(0, 8)}, tags: ${tagNames.join(', ')}, articles: ${articles.length}`);
-
-    const llmResponse = await axios.post(
-      'https://api.moonshot.ai/v1/chat/completions',
-      {
-        model: KIMI_MODEL_SUMMARY,
-        messages: [{ role: 'user', content: prompt }],
-        temperature: KIMI_MODEL_SUMMARY.startsWith('kimi-k') ? 0.6 : 0.3,
-        max_tokens: 600,
-        thinking: KIMI_MODEL_SUMMARY.startsWith('kimi-k') ? { type: 'disabled' } : undefined,
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${KIMI_API_KEY_SUMMARY}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: 30000,
+    // 3. Compute summary
+    const computePromise = (async (): Promise<{ summary: string; generatedAt: string | null; articlesCount: number }> => {
+      // Get user's active (non-frozen) tags
+      const tagsResult = await query(
+        `SELECT tag_id, tag_name FROM portfolios WHERE user_id = $1 AND is_frozen = FALSE`,
+        [userId]
+      );
+      const userTags = tagsResult.rows;
+      if (userTags.length === 0) {
+        return {
+          summary: 'У вас пока нет активных отслеживаемых активов. Добавьте или разморозьте тег в профиле, чтобы получать персональное саммари.',
+          generatedAt: null,
+          articlesCount: 0,
+        };
       }
-    );
 
-    const summaryText = llmResponse.data?.choices?.[0]?.message?.content?.trim()
-      || 'Не удалось сгенерировать саммари. Попробуйте обновить позже.';
+      const tagIds = userTags.map((t: any) => t.tag_id);
+      const tagNames = userTags.map((t: any) => t.tag_name);
 
-    // 6. Save to cache
-    const now = new Date().toISOString();
-    summaryCache.set(userId, { text: summaryText, time: Date.now(), generatedAt: now });
+      // Fetch recent news matching user's active tags
+      const newsResult = await query(
+        `SELECT title_ru, summary_ru, matched_tags, sentiment
+         FROM news
+         WHERE published_at > NOW() - INTERVAL '${hours} hours'
+           AND matched_tags && $1
+         ORDER BY published_at DESC
+         LIMIT 30`,
+        [tagIds]
+      );
 
-    console.log(`[Summary] Generated ${summaryText.length} chars for user ${userId.slice(0, 8)}`);
+      const articles = newsResult.rows.map((row: any) => ({
+        title: row.title_ru || '',
+        summary: row.summary_ru || '',
+        tags: row.matched_tags || [],
+        sentiment: row.sentiment || 'neutral',
+      }));
 
-    res.json({
-      summary: summaryText,
-      cached: false,
-      generated_at: now,
-      articles_count: articles.length,
-    });
+      // If no LLM key — return fallback (not cached)
+      if (!KIMI_API_KEY_SUMMARY) {
+        return {
+          summary: `Новостей по вашим активам (${tagNames.join(', ')}) за последние ${hours} часов: ${articles.length}. LLM недоступен для генерации саммари.`,
+          generatedAt: null,
+          articlesCount: articles.length,
+        };
+      }
+
+      // Call LLM for summary
+      const prompt = buildSummaryPrompt(tagNames, articles);
+
+      console.log(`[Summary] Generating for user ${userId.slice(0, 8)}, hours=${hours}, tags: ${tagNames.join(', ')}, articles: ${articles.length}`);
+
+      const llmResponse = await axios.post(
+        'https://api.moonshot.ai/v1/chat/completions',
+        {
+          model: KIMI_MODEL_SUMMARY,
+          messages: [{ role: 'user', content: prompt }],
+          temperature: KIMI_MODEL_SUMMARY.startsWith('kimi-k') ? 0.6 : 0.3,
+          max_tokens: 600,
+          thinking: KIMI_MODEL_SUMMARY.startsWith('kimi-k') ? { type: 'disabled' } : undefined,
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${KIMI_API_KEY_SUMMARY}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 30000,
+        }
+      );
+
+      const summaryText = llmResponse.data?.choices?.[0]?.message?.content?.trim()
+        || 'Не удалось сгенерировать саммари. Попробуйте обновить позже.';
+
+      // Save to cache
+      const now = new Date().toISOString();
+      summaryCache.set(key, { text: summaryText, time: Date.now(), generatedAt: now, articlesCount: articles.length });
+
+      console.log(`[Summary] Generated ${summaryText.length} chars for user ${userId.slice(0, 8)}`);
+
+      return { summary: summaryText, generatedAt: now, articlesCount: articles.length };
+    })();
+
+    summaryInflight.set(key, computePromise);
+    try {
+      const result = await computePromise;
+
+      // Early exits (no active tags / no LLM key) are not cached and not marked as cached
+      const response: any = {
+        summary: result.summary,
+        cached: result.generatedAt !== null,
+        articles_count: result.articlesCount,
+      };
+      if (result.generatedAt) {
+        response.generated_at = result.generatedAt;
+      }
+
+      res.json(response);
+    } catch (err: any) {
+      console.error('[Summary] Error:', err.message);
+      res.status(500).json({ error: 'Failed to generate summary' });
+    } finally {
+      summaryInflight.delete(key);
+    }
   } catch (err: any) {
     console.error('[Summary] Error:', err.message);
     res.status(500).json({ error: 'Failed to generate summary' });
@@ -830,7 +876,7 @@ router.get('/stats', authMiddleware, async (req: AuthRequest, res) => {
 
     // 3. Теги пользователя (from portfolios) — matched_tags stores tag_id!
     const tagsResult = await query(
-      `SELECT tag_id FROM portfolios WHERE user_id = $1`,
+      `SELECT tag_id FROM portfolios WHERE user_id = $1 AND is_frozen = FALSE`,
       [userId]
     );
     const userTags = tagsResult.rows.map((r: any) => r.tag_id);

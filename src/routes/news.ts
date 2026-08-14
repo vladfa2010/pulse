@@ -120,9 +120,9 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
       return;
     }
 
-    // ─── Шаг 1: Теги пользователя ──────────────────────────────────────
+    // ─── Шаг 1: Теги пользователя (только активные, не замороженные) ───
     const portfolioResult = await query(
-      'SELECT tag_id FROM portfolios WHERE user_id = $1',
+      `SELECT tag_id FROM portfolios WHERE user_id = $1 AND is_frozen = ${USE_SQLITE ? '0' : 'FALSE'}`,
       [userId]
     );
     const tagIds = portfolioResult.rows.map(r => r.tag_id);
@@ -260,7 +260,7 @@ router.post('/read-all', authMiddleware, async (req: AuthRequest, res) => {
     const userId = req.user!.userId;
 
     const portfolioResult = await query(
-      'SELECT tag_id FROM portfolios WHERE user_id = $1',
+      `SELECT tag_id FROM portfolios WHERE user_id = $1 AND is_frozen = ${USE_SQLITE ? '0' : 'FALSE'}`,
       [userId]
     );
     const tagIds = portfolioResult.rows.map(r => r.tag_id);
