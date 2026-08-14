@@ -387,7 +387,7 @@ router.get('/tags/popular', async (req, res) => {
            FROM top_tags tt
            JOIN window_tags wt ON wt.tag_id = tt.tag_id
            JOIN news n ON n.published_at > NOW() - INTERVAL '30 days'
-                       AND tt.tag_id = ANY(n.matched_tags)
+                       AND n.matched_tags && ARRAY[tt.tag_id]
            GROUP BY tt.tag_id, wt.window_count
          )
          SELECT t.tag_id, t.tag_name, t.tag_type,
