@@ -78,11 +78,9 @@ export async function popularTagsCached(
 
 Финальный код в `src/routes/news.ts:348` строит SQL период-специфично через `buildPopularTagsSql(period, limit)`.
 
-**Шаг 1 — `window_tags`.** Сканируется **только запрошенное окно** (`24h`/`7d`/`30d`), считаются топ-N×3 тегов. Для `24h` и `7d` это дешёвый scan малого окна.
+**Шаг 1 — `window_tags`.** Сканируется **только запрошенное окно** (`24h`/`7d`/`30d`), считаются ровно топ-N тегов. Для `24h` и `7d` это дешёвый scan малого окна.
 
-**Шаг 2 — `top_tags`.** Из топ-N×3 оставляем ровно `LIMIT $1` тегов.
-
-**Шаг 3 — `full_counts`.** Для каждого топ-тега отдельный GIN-lookup по `idx_news_matched_tags`:
+**Шаг 2 — `full_counts`.** Для каждого топ-тега отдельный GIN-lookup по `idx_news_matched_tags`:
 
 ```sql
 JOIN news n ON n.published_at > NOW() - INTERVAL '...'
@@ -94,7 +92,7 @@ JOIN news n ON n.published_at > NOW() - INTERVAL '...'
 - Для `24h`/`7d` `full_counts` сканирует 30 дней (нужен `articles_30d`).
 - Для `30d` `full_counts` сканирует только 7 дней (нужны только `24h`/`7d`; `30d` берётся из `window_tags`).
 
-**Шаг 4 — фильтр и сортировка.** `WHERE fc.${orderCol} > 0` (фикс захардкоженного `articles_24h > 0`) и `ORDER BY` по колонке периода.
+**Шаг 3 — фильтр и сортировка.** `WHERE fc.${orderCol} > 0` (фикс захардкоженного `articles_24h > 0`) и `ORDER BY` по колонке периода.
 
 Ключевые точки:
 - **Co-occurring tag pollution устранён:** каждый топ-тег считается через собственный GIN-lookup, а не через общий `unnest` всех тегов отобранных новостей.
