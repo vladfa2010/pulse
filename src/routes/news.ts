@@ -373,7 +373,10 @@ router.get('/tags/popular', async (req, res) => {
            WHERE n.published_at > NOW() - INTERVAL '${interval}'
            GROUP BY m.tag
            ORDER BY window_count DESC
-           LIMIT $1
+           LIMIT $1 * 3
+         ),
+         top_tags AS (
+           SELECT tag_id FROM window_tags ORDER BY window_count DESC LIMIT $1
          ),
          full_counts AS (
            SELECT m.tag AS tag_id,
@@ -383,8 +386,8 @@ router.get('/tags/popular', async (req, res) => {
            FROM news n
            CROSS JOIN LATERAL unnest(n.matched_tags) AS m(tag)
            WHERE n.published_at > NOW() - INTERVAL '30 days'
-             AND n.matched_tags && (SELECT array_agg(tag_id) FROM window_tags)
-             AND m.tag IN (SELECT tag_id FROM window_tags)
+             AND n.matched_tags && (SELECT array_agg(tag_id) FROM top_tags)
+             AND m.tag IN (SELECT tag_id FROM top_tags)
            GROUP BY m.tag
          )
          SELECT t.tag_id, t.tag_name, t.tag_type,
