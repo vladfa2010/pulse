@@ -672,10 +672,48 @@ interface SummaryCacheEntry {
 // In-memory cache: userId:hours -> summary payload
 const summaryCache = new Map<string, SummaryCacheEntry>();
 const summaryInflight = new Map<string, Promise<{ summary: string; generatedAt: string | null; articlesCount: number }>>();
-const SUMMARY_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+const SUMMARY_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
+
+// Cap on cache size: ~2-10 KB per entry, 500 keys ≈ 5 MB worst case.
+// Eviction policy: sweep expired entries first, then FIFO by write recency.
+const SUMMARY_CACHE_MAX_KEYS = 500;
 
 function summaryKey(userId: string, hours: number): string {
   return `${userId}:${hours}`;
+}
+
+/**
+ * Write to summary cache with bounded size.
+ * Re-inserts the key at the tail (eviction order = write recency),
+ * then, if over capacity: sweeps expired entries, then evicts oldest FIFO.
+ */
+function summaryCacheSet(key: string, entry: SummaryCacheEntry): void {
+  summaryCache.delete(key); // moves existing key to tail on re-set
+
+  if (summaryCache.size >= SUMMARY_CACHE_MAX_KEYS) {
+    const now = Date.now();
+    let swept = 0;
+    for (const [k, v] of summaryCache) {
+      if (now - v.time >= SUMMARY_CACHE_TTL) {
+        summaryCache.delete(k);
+        swept++;
+      }
+    }
+
+    let evicted = 0;
+    while (summaryCache.size >= SUMMARY_CACHE_MAX_KEYS) {
+      const first = summaryCache.keys().next().value;
+      if (first === undefined) break;
+      summaryCache.delete(first);
+      evicted++;
+    }
+
+    if (swept + evicted > 0) {
+      console.log(`[Summary] Cache cleanup: swept ${swept} expired, evicted ${evicted} oldest, size=${summaryCache.size}`);
+    }
+  }
+
+  summaryCache.set(key, entry);
 }
 
 // Build prompt for daily summary
@@ -821,7 +859,7 @@ router.get('/summary', authMiddleware, async (req: AuthRequest, res) => {
 
       // Save to cache
       const now = new Date().toISOString();
-      summaryCache.set(key, { text: summaryText, time: Date.now(), generatedAt: now, articlesCount: articles.length });
+      summaryCacheSet(key, { text: summaryText, time: Date.now(), generatedAt: now, articlesCount: articles.length });
 
       console.log(`[Summary] Generated ${summaryText.length} chars for user ${userId.slice(0, 8)}`);
 
