@@ -352,53 +352,100 @@ router.get('/tags/popular', async (req, res) => {
     const period = ['24h', '7d', '30d'].includes(rawPeriod) ? rawPeriod : '24h';
     const limit = Math.min(parseInt(req.query.limit as string) || 15, 30);
 
-    const periodCfg: Record<string, { orderCol: string; interval: string }> = {
-      '24h': { orderCol: 'articles_24h', interval: '24 hours' },
-      '7d': { orderCol: 'articles_7d', interval: '7 days' },
-      '30d': { orderCol: 'articles_30d', interval: '30 days' },
-    };
-    const { orderCol, interval } = periodCfg[period];
+    /**
+     * Build period-specific SQL for popular tags.
+     *
+     * Strategy:
+     * 1. window_tags — scan ONLY the requested period window and count tags there.
+     *    This gives the ordering-period count for top-N directly.
+     * 2. full_counts — for top tags, use per-tag GIN lookups to compute the other
+     *    two counts. Each tag is counted independently, so co-occurring tags
+     *    never pollute each other's counts. For 30d the full_counts scan is
+     *    narrowed to 7 days because we only need 24h/7d (30d already known).
+     */
+    function buildPopularTagsSql(period: string, limit: number): string {
+      const cfg: Record<string, {
+        windowFilter: string;
+        windowCol: string;
+        fullFilter: string;
+        fullCols: string;
+        selectCols: string;
+      }> = {
+        '24h': {
+          windowFilter: "n.published_at > NOW() - INTERVAL '24 hours'",
+          windowCol: 'articles_24h',
+          fullFilter: "n.published_at > NOW() - INTERVAL '30 days'",
+          fullCols: `
+            COUNT(*) FILTER (WHERE n.published_at > NOW() - INTERVAL '24 hours') AS articles_24h,
+            COUNT(*) FILTER (WHERE n.published_at > NOW() - INTERVAL '7 days')   AS articles_7d,
+            COUNT(*)                                                                          AS articles_30d
+          `,
+          selectCols: 'w.articles_24h, fc.articles_7d, fc.articles_30d',
+        },
+        '7d': {
+          windowFilter: "n.published_at > NOW() - INTERVAL '7 days'",
+          windowCol: 'articles_7d',
+          fullFilter: "n.published_at > NOW() - INTERVAL '30 days'",
+          fullCols: `
+            COUNT(*) FILTER (WHERE n.published_at > NOW() - INTERVAL '24 hours') AS articles_24h,
+            COUNT(*) FILTER (WHERE n.published_at > NOW() - INTERVAL '7 days')   AS articles_7d,
+            COUNT(*)                                                                          AS articles_30d
+          `,
+          selectCols: 'fc.articles_24h, w.articles_7d, fc.articles_30d',
+        },
+        '30d': {
+          windowFilter: "n.published_at > NOW() - INTERVAL '30 days'",
+          windowCol: 'articles_30d',
+          fullFilter: "n.published_at > NOW() - INTERVAL '7 days'",
+          fullCols: `
+            COUNT(*) FILTER (WHERE n.published_at > NOW() - INTERVAL '24 hours') AS articles_24h,
+            COUNT(*)                                                             AS articles_7d
+          `,
+          selectCols: 'fc.articles_24h, fc.articles_7d, w.articles_30d',
+        },
+      };
+      const { windowFilter, windowCol, fullFilter, fullCols, selectCols } = cfg[period];
+
+      return `
+        WITH window_tags AS (
+          SELECT m.tag AS tag_id, COUNT(*) AS ${windowCol}
+          FROM news n
+          CROSS JOIN LATERAL unnest(n.matched_tags) AS m(tag)
+          WHERE ${windowFilter}
+          GROUP BY m.tag
+          ORDER BY ${windowCol} DESC
+          LIMIT $1 * 3
+        ),
+        top_tags AS (
+          SELECT tag_id FROM window_tags ORDER BY ${windowCol} DESC LIMIT $1
+        ),
+        full_counts AS (
+          SELECT tt.tag_id,
+                 wt.${windowCol},
+                 ${fullCols}
+          FROM top_tags tt
+          JOIN window_tags wt ON wt.tag_id = tt.tag_id
+          JOIN news n ON ${fullFilter}
+                      AND n.matched_tags && ARRAY[tt.tag_id]
+          GROUP BY tt.tag_id, wt.${windowCol}
+        )
+        SELECT t.tag_id, t.tag_name, t.tag_type,
+               ${selectCols}
+        FROM full_counts fc
+        JOIN user_defined_tags t ON t.tag_id = fc.tag_id
+        ORDER BY fc.${windowCol} DESC
+        LIMIT $1
+      `;
+    }
+
+    const orderCol = {
+      '24h': 'articles_24h',
+      '7d': 'articles_7d',
+      '30d': 'articles_30d',
+    }[period] as string;
 
     const tags = await popularTagsCached(period, limit, async () => {
-      // Two-step aggregation:
-      // 1. Find top tags in the requested window (cheap for 24h/7d: scans only that window).
-      // 2. Compute all three period counts ONLY for those top tags, using GIN index
-      //    AND filtering expanded tags to the top list (m.tag IN ...) — this prevents
-      //    co-occurring tag pollution and keeps counts accurate.
-      const result = await query(
-        `WITH window_tags AS (
-           SELECT m.tag AS tag_id, COUNT(*) AS window_count
-           FROM news n
-           CROSS JOIN LATERAL unnest(n.matched_tags) AS m(tag)
-           WHERE n.published_at > NOW() - INTERVAL '${interval}'
-           GROUP BY m.tag
-           ORDER BY window_count DESC
-           LIMIT $1 * 3
-         ),
-         top_tags AS (
-           SELECT tag_id FROM window_tags ORDER BY window_count DESC LIMIT $1
-         ),
-         full_counts AS (
-           SELECT tt.tag_id,
-                  wt.window_count,
-                  COUNT(*) FILTER (WHERE n.published_at > NOW() - INTERVAL '24 hours') AS articles_24h,
-                  COUNT(*) FILTER (WHERE n.published_at > NOW() - INTERVAL '7 days')   AS articles_7d,
-                  COUNT(*)                                                                          AS articles_30d
-           FROM top_tags tt
-           JOIN window_tags wt ON wt.tag_id = tt.tag_id
-           JOIN news n ON n.published_at > NOW() - INTERVAL '30 days'
-                       AND n.matched_tags && ARRAY[tt.tag_id]
-           GROUP BY tt.tag_id, wt.window_count
-         )
-         SELECT t.tag_id, t.tag_name, t.tag_type,
-                fc.articles_24h, fc.articles_7d, fc.articles_30d
-         FROM full_counts fc
-         JOIN user_defined_tags t ON t.tag_id = fc.tag_id
-         WHERE fc.${orderCol} > 0
-         ORDER BY fc.${orderCol} DESC
-         LIMIT $1`,
-        [limit]
-      );
+      const result = await query(buildPopularTagsSql(period, limit), [limit]);
 
       return result.rows.map((row: any) => ({
         tag_id: row.tag_id,
