@@ -60,6 +60,9 @@ docker-compose up
 | GET | `/api/news` | Лента новостей |
 | GET | `/api/news/:id` | Детальная новость |
 | GET | `/api/news/by-tag/:tag` | Новости по тегу |
+| GET | `/api/news/tags/popular` | Популярные теги сообщества (24h/7d/30d) |
+
+Подробнее: [`docs/news/popular-tags.md`](./docs/news/popular-tags.md)
 
 ### User
 | Method | Endpoint | Описание |
