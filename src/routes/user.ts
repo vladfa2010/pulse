@@ -741,7 +741,7 @@ router.get('/summary', authMiddleware, async (req: AuthRequest, res) => {
       const result = await summaryInflight.get(key)!;
       return res.json({
         summary: result.summary,
-        cached: result.generatedAt === null,
+        cached: result.generatedAt !== null,
         generated_at: result.generatedAt || undefined,
         articles_count: result.articlesCount,
       });
