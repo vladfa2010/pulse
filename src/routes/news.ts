@@ -50,6 +50,8 @@ router.get('/global', async (req, res) => {
     const offset = (page - 1) * limit;
     const timeFilter = timeFilterSql();
 
+    // TZ-37: запрашиваем limit+1 строк — наличие лишней строки = hasMore.
+    // COUNT(*) убран: фронт не использует total, а COUNT по 90 дням — дорогой index-only scan.
     const result = await query(
       `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags,
               tag_impact, source_count, all_sources, fact_check_status, fact_check_result, slug
@@ -57,12 +59,13 @@ router.get('/global', async (req, res) => {
        WHERE ${timeFilter}
        ORDER BY published_at DESC
        LIMIT $1 OFFSET $2`,
-      [limit, offset]
+      [limit + 1, offset]
     );
-    const countResult = await query(`SELECT COUNT(*) as c FROM news WHERE ${timeFilter}`, []);
-    const total = parseInt(countResult.rows[0]?.c || '0');
 
-    res.json({ articles: result.rows, total, page, hasMore: offset + result.rows.length < total });
+    const hasMore = result.rows.length > limit;
+    const articles = hasMore ? result.rows.slice(0, limit) : result.rows;
+
+    res.json({ articles, total: null, page, hasMore });
   } catch (err: any) {
     console.error('[News] Global error:', err.message);
     res.status(500).json({ error: 'Failed to fetch global news' });
@@ -100,6 +103,7 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
     // ─── GLOBAL MODE: все новости (включая без тегов) — Общая лента карусели 3
     // Показываем ВСЕ новости за 90 дней, без фильтра по тегам
     if (global) {
+      // TZ-37: limit+1 вместо COUNT(*), total не используется фронтом.
       const result = await query(
         `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags,
                 tag_impact, source_count, all_sources, fact_check_status, fact_check_result, slug
@@ -107,13 +111,12 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
          WHERE ${timeFilter}
          ORDER BY published_at DESC
          LIMIT $1 OFFSET $2`,
-        [limit, offset]
+        [limit + 1, offset]
       );
-      articles = result.rows;
-      const countResult = await query(`SELECT COUNT(*) as c FROM news WHERE ${timeFilter}`, []);
-      total = parseInt(countResult.rows[0]?.c || '0');
+      const hasMore = result.rows.length > limit;
+      articles = hasMore ? result.rows.slice(0, limit) : result.rows;
 
-      res.json({ articles, total, page, hasMore: offset + articles.length < total });
+      res.json({ articles, total: null, page, hasMore });
       return;
     }
 

@@ -291,20 +291,21 @@ const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
 const page = parseInt(req.query.page as string) || 1;
 const offset = (page - 1) * limit;
 
+// TZ-37: limit+1 вместо COUNT(*). total никто не читает,
+// а COUNT по 90 дням — дорогой index-only scan (~112k строк).
 const result = await query(`
-  SELECT id, title_ru, summary_ru, source, published_at, sentiment, sentiment_score,
-         matched_tags, tag_impact, is_political
+  SELECT id, title_ru, title_original, summary_ru, summary_original, source, url,
+         published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source,
+         is_political, article_type, matched_tags, tag_impact, source_count, all_sources,
+         fact_check_status, fact_check_result, slug
   FROM news
   WHERE published_at > NOW() - INTERVAL '90 days'
   ORDER BY published_at DESC
   LIMIT $1 OFFSET $2
-`, [limit, offset]);
+`, [limit + 1, offset]);
 
-const countResult = await query(`
-  SELECT COUNT(*) as c FROM news WHERE published_at > NOW() - INTERVAL '90 days'
-`);
-const total = parseInt(countResult.rows[0]?.c || '0');
-const hasMore = offset + result.rows.length < total;
+const hasMore = result.rows.length > limit;
+const articles = hasMore ? result.rows.slice(0, limit) : result.rows;
 ```
 
 > **Важно:** В отличие от каруселей 1 и 2, endpoint `/api/news/global` **не фильтрует** по `matched_tags` и **не требует авторизации**. Это было изменено намеренно — чтобы пользователь (включая незалогиненного) видел больше контента.
@@ -321,11 +322,13 @@ GET /api/news/global?limit=50&page=N
 ```json
 {
   "articles": [...],
-  "total": 1234,
+  "total": null,
   "page": 1,
   "hasMore": true
 }
 ```
+
+> **Примечание:** `total` — `null`, потому что фронт его не использует. Счётчик «(N)» в шапке карусели равен числу уже загруженных карточек. Поле оставлено в ответе для совместимости контракта.
 
 ### Бесконечный скролл
 Фронтенд подгружает общую ленту порциями по 50 через `useInfiniteQuery`:
@@ -568,15 +571,18 @@ Query: ?hours=12 (default) | ?refresh=1 (принудительно)
 | 2. "Вся лента" | `GET /api/news?history=true&page=N` | теги + прочитанные | `limit=50`, `page=N` | DESC |
 | 3. "Общая" | `GET /api/news/global?page=N` | все новости за 90 дней, без auth | `limit=50`, `page=N` | DESC |
 
-Все ответы возвращают:
+Контракт ответа:
 ```json
 {
   "articles": [...],
-  "total": number,
+  "total": number | null,
   "page": number,
   "hasMore": boolean
 }
 ```
+
+- Карусели 1 и 2: `total` — число (оставлено для совместимости; фронт использует `hasMore`).
+- Карусель 3 (`/api/news/global`): `total` — `null` (см. TZ-37). Пагинация определяется через `LIMIT + 1` + `hasMore`.
 
 ---
 
