@@ -421,9 +421,13 @@ router.get('/tags/popular', async (req, res) => {
           GROUP BY m.tag
         )
         SELECT t.tag_id, t.tag_name, t.tag_type,
-               COALESCE(fc.articles_24h, 0) AS articles_24h,
-               COALESCE(fc.articles_7d, 0)   AS articles_7d,
-               COALESCE(fc.articles_30d, 0)  AS articles_30d
+               ${
+                 period === '24h'
+                   ? 'w.articles_24h, COALESCE(fc.articles_7d, 0) AS articles_7d, COALESCE(fc.articles_30d, 0) AS articles_30d'
+                   : period === '7d'
+                   ? 'COALESCE(fc.articles_24h, 0) AS articles_24h, w.articles_7d, COALESCE(fc.articles_30d, 0) AS articles_30d'
+                   : 'COALESCE(fc.articles_24h, 0) AS articles_24h, COALESCE(fc.articles_7d, 0) AS articles_7d, w.articles_30d'
+               }
         FROM window_tags w
         JOIN user_defined_tags t ON t.tag_id = w.tag_id
         LEFT JOIN full_counts fc ON fc.tag_id = w.tag_id
