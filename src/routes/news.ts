@@ -349,31 +349,49 @@ router.get('/tags/popular', async (req, res) => {
     const period = ['24h', '7d', '30d'].includes(rawPeriod) ? rawPeriod : '24h';
     const limit = Math.min(parseInt(req.query.limit as string) || 15, 30);
 
-    const periodCfg: Record<string, { orderCol: string }> = {
-      '24h': { orderCol: 'articles_24h' },
-      '7d': { orderCol: 'articles_7d' },
-      '30d': { orderCol: 'articles_30d' },
+    const periodCfg: Record<string, { orderCol: string; interval: string }> = {
+      '24h': { orderCol: 'articles_24h', interval: '24 hours' },
+      '7d': { orderCol: 'articles_7d', interval: '7 days' },
+      '30d': { orderCol: 'articles_30d', interval: '30 days' },
     };
-    const { orderCol } = periodCfg[period];
+    const { orderCol, interval } = periodCfg[period];
 
     const tags = await popularTagsCached(period, limit, async () => {
+      // Two-step aggregation:
+      // 1. Find top tags in the requested window (cheap: scans only that window).
+      // 2. Compute all three period counts ONLY for those top tags using GIN index.
+      // This avoids scanning 30 days × all tags, which was ~8s in production.
       const result = await query(
-        `WITH agg AS (
+        `WITH window_tags AS (
+           SELECT m.tag AS tag_id, COUNT(*) AS window_count
+           FROM news n
+           CROSS JOIN LATERAL unnest(n.matched_tags) AS m(tag)
+           WHERE n.published_at > NOW() - INTERVAL '${interval}'
+           GROUP BY m.tag
+           ORDER BY window_count DESC
+           LIMIT $1 * 3
+         ),
+         top_tags AS (
+           SELECT tag_id FROM window_tags ORDER BY window_count DESC LIMIT $1
+         ),
+         full_counts AS (
            SELECT m.tag AS tag_id,
                   COUNT(*) FILTER (WHERE n.published_at > NOW() - INTERVAL '24 hours') AS articles_24h,
-                  COUNT(*) FILTER (WHERE n.published_at > NOW() - INTERVAL '7 days')  AS articles_7d,
-                  COUNT(*) AS articles_30d
+                  COUNT(*) FILTER (WHERE n.published_at > NOW() - INTERVAL '7 days')   AS articles_7d,
+                  COUNT(*)                                                                          AS articles_30d
            FROM news n
            CROSS JOIN LATERAL unnest(n.matched_tags) AS m(tag)
            WHERE n.published_at > NOW() - INTERVAL '30 days'
+             AND n.matched_tags && (SELECT array_agg(tag_id) FROM top_tags)
            GROUP BY m.tag
          )
          SELECT t.tag_id, t.tag_name, t.tag_type,
-                a.articles_24h, a.articles_7d, a.articles_30d
-         FROM agg a
-         JOIN user_defined_tags t ON t.tag_id = a.tag_id
-         WHERE a.${orderCol} > 0
-         ORDER BY a.${orderCol} DESC
+                COALESCE(fc.articles_24h, 0) AS articles_24h,
+                COALESCE(fc.articles_7d, 0)   AS articles_7d,
+                COALESCE(fc.articles_30d, 0)  AS articles_30d
+         FROM full_counts fc
+         JOIN user_defined_tags t ON t.tag_id = fc.tag_id
+         ORDER BY fc.${orderCol} DESC
          LIMIT $1`,
         [limit]
       );
