@@ -396,8 +396,8 @@ async function getAdoption() {
 async function getOnline(_period: number) {
   const onlineNow = await safeCount(
     USE_SQLITE
-      ? `SELECT COUNT(DISTINCT user_id) as c FROM user_sessions WHERE last_connected_at > datetime('now', '-5 minutes')`
-      : `SELECT COUNT(DISTINCT user_id) as c FROM user_sessions WHERE last_connected_at > NOW() - INTERVAL '5 minutes'`,
+      ? `SELECT COUNT(DISTINCT user_id) as c FROM user_sessions WHERE last_connected_at > datetime('now', '-15 minutes')`
+      : `SELECT COUNT(DISTINCT user_id) as c FROM user_sessions WHERE last_connected_at > NOW() - INTERVAL '15 minutes'`,
     'onlineNow'
   );
 

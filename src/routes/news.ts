@@ -39,12 +39,6 @@ function timeFilterSql(): string {
     : "published_at > NOW() - INTERVAL '90 days'";
 }
 
-// TZ-40: presence нужна админ-метрикам с гранулярностью 5 минут.
-// Вместо upsert на каждой странице ленты пишем не чаще раза в минуту на юзера.
-const lastPresenceWrite = new Map<string, number>();
-const PRESENCE_THROTTLE_MS = 60 * 1000;
-
-
 // ═══════════════════════════════════════════════════════════════════════════
 // GET /api/news/global — ПУБЛИЧНАЯ общая лента (все новости, без auth)
 // Используется третьей каруселью GlobalNewsCarousel.
@@ -187,26 +181,6 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
       );
       hasMore = result.rows.length > limit;
       articles = hasMore ? result.rows.slice(0, limit) : result.rows;
-    }
-
-    // ─── Обновляем last_connected_at (throttle: раз в минуту) ─────────────
-    const lastW = lastPresenceWrite.get(userId) || 0;
-    if (Date.now() - lastW >= PRESENCE_THROTTLE_MS) {
-      lastPresenceWrite.set(userId, Date.now()); // до await: при ошибке upsert просто пропустим минуту — для presence приемлемо
-      if (USE_SQLITE) {
-        await query(
-          `INSERT OR REPLACE INTO user_sessions (id, user_id, last_connected_at)
-           VALUES ((SELECT id FROM user_sessions WHERE user_id = $1), $1, ${nowSql()})`,
-          [userId, userId]
-        );
-      } else {
-        await query(
-          `INSERT INTO user_sessions (user_id, last_connected_at)
-           VALUES ($1, ${nowSql()})
-           ON CONFLICT (user_id) DO UPDATE SET last_connected_at = ${nowSql()}`,
-          [userId]
-        );
-      }
     }
 
     res.json({

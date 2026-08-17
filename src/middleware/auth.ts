@@ -19,8 +19,40 @@
 
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import { query } from '../config/db';
+import { nowSql } from '../utils/nowSql';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
+
+// TZ-41: presence для админ-метрики «Сейчас онлайн». Любой авторизованный
+// запрос обновляет last_connected_at, не чаще раза в минуту на юзера.
+const USE_SQLITE = process.env.USE_SQLITE === 'true';
+const lastPresenceWrite = new Map<string, number>();
+const PRESENCE_THROTTLE_MS = 60 * 1000;
+
+/**
+ * Обновить presence юзера (fire-and-forget).
+ * НИКОГДА не блокирует и не роняет основной запрос.
+ */
+function touchPresence(userId: string): void {
+  const last = lastPresenceWrite.get(userId) || 0;
+  if (Date.now() - last < PRESENCE_THROTTLE_MS) return;
+  lastPresenceWrite.set(userId, Date.now());
+
+  const p = USE_SQLITE
+    ? query(
+        `INSERT OR REPLACE INTO user_sessions (id, user_id, last_connected_at)
+         VALUES ((SELECT id FROM user_sessions WHERE user_id = $1), $1, ${nowSql()})`,
+        [userId, userId]
+      )
+    : query(
+        `INSERT INTO user_sessions (user_id, last_connected_at)
+         VALUES ($1, ${nowSql()})
+         ON CONFLICT (user_id) DO UPDATE SET last_connected_at = ${nowSql()}`,
+        [userId]
+      );
+  Promise.resolve(p).catch((e: any) => console.warn('[Presence] write failed:', e.message));
+}
 
 // ─── Расширяем Request — добавляем поле user ──────────────────────────────
 // После проверки токена req.user содержит { userId, email }
@@ -56,6 +88,9 @@ export function authMiddleware(req: AuthRequest, res: Response, next: NextFuncti
 
     // Сохраняем данные пользователя в req — роутер сможет использовать
     req.user = decoded;
+
+    // TZ-41: presence (throttled, fire-and-forget)
+    touchPresence(decoded.userId);
 
     // Пропускаем запрос дальше (к эндпоинту)
     next();
