@@ -39,6 +39,12 @@ function timeFilterSql(): string {
     : "published_at > NOW() - INTERVAL '90 days'";
 }
 
+// TZ-40: presence нужна админ-метрикам с гранулярностью 5 минут.
+// Вместо upsert на каждой странице ленты пишем не чаще раза в минуту на юзера.
+const lastPresenceWrite = new Map<string, number>();
+const PRESENCE_THROTTLE_MS = 60 * 1000;
+
+
 // ═══════════════════════════════════════════════════════════════════════════
 // GET /api/news/global — ПУБЛИЧНАЯ общая лента (все новости, без auth)
 // Используется третьей каруселью GlobalNewsCarousel.
@@ -98,7 +104,7 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
 
     const timeFilter = timeFilterSql();
     let articles: any[];
-    let total: number;
+    let hasMore = false;
 
     // ─── GLOBAL MODE: все новости (включая без тегов) — Общая лента карусели 3
     // Показываем ВСЕ новости за 90 дней, без фильтра по тегам
@@ -128,7 +134,7 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
     const tagIds = portfolioResult.rows.map(r => r.tag_id);
 
     if (tagIds.length === 0) {
-      return res.json({ articles: [], total: 0, page, hasMore: false });
+      return res.json({ articles: [], total: null, page, hasMore: false });
     }
 
     if (USE_SQLITE) {
@@ -153,16 +159,8 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
         readParams = [userId];
       }
 
-      // Count
-      const countResult = await query(
-        `SELECT COUNT(*) as count FROM news
-         WHERE (${conditions})${readFilter}
-         AND ${timeFilter}`,
-        [...likeParams, ...readParams]
-      );
-      total = parseInt(countResult.rows[0]?.count || '0');
-
-      // Get (with source_count and all_sources)
+      // TZ-40: limit+1 вместо COUNT(*) — total никто не читает (проверено по фронту),
+      // COUNT по 90 дням с LIKE-фильтром и подзапросом user_news_reads — лишняя работа на каждой странице.
       const orderDir = 'DESC'; // всегда новые сверху
       const result = await query(
         `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags,
@@ -172,9 +170,10 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
          AND ${timeFilter}
          ORDER BY published_at ${orderDir}
          LIMIT ? OFFSET ?`,
-        [...likeParams, ...readParams, limit, offset]
+        [...likeParams, ...readParams, limit + 1, offset]
       );
-      articles = result.rows;
+      hasMore = result.rows.length > limit;
+      articles = hasMore ? result.rows.slice(0, limit) : result.rows;
     } else {
       // ─── PostgreSQL версия ──────────────────────────────────────────
       // history=true → ТОЛЬКО прочитанные
@@ -194,16 +193,8 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
       }
       let pgIdx = pgParams.length + 1;
 
-      // Count
-      const countResult = await query(
-        `SELECT COUNT(*) as count FROM news
-         WHERE matched_tags && $1::text[]${pgReadFilter}
-         AND ${timeFilter}`,
-        pgParams
-      );
-      total = parseInt(countResult.rows[0]?.count || '0');
-
-      // Get (with source_count and all_sources)
+      // TZ-40: limit+1 вместо COUNT(*) — total никто не читает (проверено по фронту),
+      // COUNT по 90 дням с GIN-фильтром и подзапросом user_news_reads — лишняя работа на каждой странице.
       const pgOrder = 'DESC'; // всегда новые сверху
       const result = await query(
         `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags,
@@ -213,32 +204,37 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
          AND ${timeFilter}
          ORDER BY published_at ${pgOrder}
          LIMIT $${pgIdx} OFFSET $${pgIdx + 1}`,
-        [...pgParams, limit, offset]
+        [...pgParams, limit + 1, offset]
       );
-      articles = result.rows;
+      hasMore = result.rows.length > limit;
+      articles = hasMore ? result.rows.slice(0, limit) : result.rows;
     }
 
-    // ─── Обновляем last_connected_at ────────────────────────────────────
-    if (USE_SQLITE) {
-      await query(
-        `INSERT OR REPLACE INTO user_sessions (id, user_id, last_connected_at)
-         VALUES ((SELECT id FROM user_sessions WHERE user_id = $1), $1, ${nowSql()})`,
-        [userId, userId]
-      );
-    } else {
-      await query(
-        `INSERT INTO user_sessions (user_id, last_connected_at)
-         VALUES ($1, ${nowSql()})
-         ON CONFLICT (user_id) DO UPDATE SET last_connected_at = ${nowSql()}`,
-        [userId]
-      );
+    // ─── Обновляем last_connected_at (throttle: раз в минуту) ─────────────
+    const lastW = lastPresenceWrite.get(userId) || 0;
+    if (Date.now() - lastW >= PRESENCE_THROTTLE_MS) {
+      lastPresenceWrite.set(userId, Date.now()); // до await: при ошибке upsert просто пропустим минуту — для presence приемлемо
+      if (USE_SQLITE) {
+        await query(
+          `INSERT OR REPLACE INTO user_sessions (id, user_id, last_connected_at)
+           VALUES ((SELECT id FROM user_sessions WHERE user_id = $1), $1, ${nowSql()})`,
+          [userId, userId]
+        );
+      } else {
+        await query(
+          `INSERT INTO user_sessions (user_id, last_connected_at)
+           VALUES ($1, ${nowSql()})
+           ON CONFLICT (user_id) DO UPDATE SET last_connected_at = ${nowSql()}`,
+          [userId]
+        );
+      }
     }
 
     res.json({
       articles,
-      total,
+      total: null,
       page,
-      hasMore: offset + articles.length < total,
+      hasMore,
     });
   } catch (err: any) {
     console.error('[News] Feed error:', err.message, err.stack?.substring(0, 200));
