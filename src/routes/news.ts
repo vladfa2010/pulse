@@ -97,7 +97,6 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
     const userId = req.user!.userId;
     const showAll = req.query.all === 'true';     // ← true = ВСЕ по тегам (read + unread)
     const history = req.query.history === 'true';  // ← true = только ПРОЧИТАННЫЕ по тегам
-    const global = req.query.global === 'true';    // ← true = ВСЕ новости без фильтра тегов
     const page = parseInt(req.query.page as string) || 1;
     const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
     const offset = (page - 1) * limit;
@@ -105,26 +104,6 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
     const timeFilter = timeFilterSql();
     let articles: any[];
     let hasMore = false;
-
-    // ─── GLOBAL MODE: все новости (включая без тегов) — Общая лента карусели 3
-    // Показываем ВСЕ новости за 90 дней, без фильтра по тегам
-    if (global) {
-      // TZ-37: limit+1 вместо COUNT(*), total не используется фронтом.
-      const result = await query(
-        `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags,
-                tag_impact, source_count, all_sources, fact_check_status, fact_check_result, slug
-         FROM news
-         WHERE ${timeFilter}
-         ORDER BY published_at DESC
-         LIMIT $1 OFFSET $2`,
-        [limit + 1, offset]
-      );
-      const hasMore = result.rows.length > limit;
-      articles = hasMore ? result.rows.slice(0, limit) : result.rows;
-
-      res.json({ articles, total: null, page, hasMore });
-      return;
-    }
 
     // ─── Шаг 1: Теги пользователя (только активные, не замороженные) ───
     const portfolioResult = await query(
