@@ -1089,7 +1089,7 @@ export async function applyDowngradeNow(
   );
 
   if (updateResult.rows.length === 0) {
-    console.log(`[DowngradeNow] User ${userId} subscription was renewed, skipping downgrade to ${targetPlanId}`);
+    console.log(`[DowngradeNow] User ${userId}: downgrade to ${targetPlanId} skipped (expires_at missing or renewed)`);
     return;
   }
 
@@ -1145,7 +1145,6 @@ export async function processScheduledDowngrades(): Promise<number> {
     `UPDATE users
      SET subscription_plan = 'free',
          subscription_active = FALSE,
-         subscription_expires_at = NULL,
          subscription_auto_renew = FALSE,
          scheduled_plan_downgrade = NULL
      WHERE subscription_plan != 'free'
