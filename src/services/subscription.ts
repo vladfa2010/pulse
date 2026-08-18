@@ -278,6 +278,20 @@ export async function getUserSubscription(userId: string): Promise<{
 
 export function buildSubscriptionStatus(sub: ReturnType<typeof getUserSubscription> extends Promise<infer T> ? T : never): SubscriptionStatus {
   const access = computeAccessState(sub.expiresAt);
+
+  // DEFSUB-16: канарейка — платный план + active=TRUE, но expires_at=NULL.
+  // Это всегда баг: код выставил план без expires_at. Легитимный drift
+  // (истёкший платный до тика крона) сюда не попадает — там expiresAt в прошлом.
+  if (process.env.NODE_ENV !== 'production'
+      && sub.active
+      && sub.plan !== 'free'
+      && sub.expiresAt === null
+      && !access.active) {
+    console.warn('[subscription] INCONSISTENT: paid plan + active=TRUE + expiresAt=NULL', {
+      plan: sub.plan,
+    });
+  }
+
   const plan = access.active ? sub.plan : 'free';
 
   return {
@@ -1060,11 +1074,13 @@ export async function applyDowngradeNow(
 
   // TZ_DOWNGRADE_RACE: atomic UPDATE with expires_at check so a just-renewed
   // subscription is not overwritten by the downgrade.
+  // DEFSUB-16: при уходе на free обнуляем subscription_expires_at (гигиена данных).
   const updateResult = await query(
     `UPDATE users
      SET subscription_plan = $1,
          scheduled_plan_downgrade = NULL,
          subscription_active = $2,
+         subscription_expires_at = CASE WHEN $2 = TRUE THEN subscription_expires_at ELSE NULL END,
          subscription_auto_renew = FALSE
      WHERE id = $3
        AND subscription_expires_at < ${now}
@@ -1129,6 +1145,7 @@ export async function processScheduledDowngrades(): Promise<number> {
     `UPDATE users
      SET subscription_plan = 'free',
          subscription_active = FALSE,
+         subscription_expires_at = NULL,
          subscription_auto_renew = FALSE,
          scheduled_plan_downgrade = NULL
      WHERE subscription_plan != 'free'

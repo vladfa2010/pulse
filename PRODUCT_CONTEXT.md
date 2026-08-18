@@ -83,6 +83,10 @@
 - **Immediate downgrade:** `POST /api/user/downgrade` применяет downgrade сразу, если подписка неактивна или в грейсе; иначе планирует на конец оплаченного периода.
 - **Server-gated фичи:** `hasFeature`, `requirePremium`, `getEntitlement`, `/user/channel-status` используют `computeAccessState` — единую grace-aware формулу доступа.
 - **Лимит тегов:** `GET /user/tariff-status` и `GET /user/tag-status` берут лимит по вычисленному effective-плану (free после грейса).
+- **Правило №8 — единственный источник истины `subscription_expires_at`:**
+  - `subscription_expires_at` — единственный источник истины для доступа. Любой код, выставляющий платный `subscription_plan`, обязан в том же UPDATE выставить `subscription_expires_at` (продление от текущего, если он в будущем, иначе от `NOW()`). Длительность берётся из `PLAN_BILLING_DAYS` (консистентно с `activateSubscription`).
+  - Смена на `free` обязана обнулить `subscription_expires_at` и `subscription_active = FALSE`.
+  - Нарушение правила приводит к полному отказу платных фич на сервере (фактчек 403, frozen теги, недоступен telegram/push) и отображению `-1 days left` в админке.
 
 ## Источники новостей (20+)
 - RU + EN (см. DESIGN_SPEC.md)

@@ -19,6 +19,7 @@ import {
   freezeExcessTags,
   unfreezeTagsUpToLimit,
   invalidatePlansCache,
+  PLAN_BILLING_DAYS,
 } from '../services/subscription';
 import { listAllFeatures, createFeature, updateFeature } from './features';
 import { getPromoByCode } from '../services/promo';
@@ -321,15 +322,28 @@ router.post('/users/:id/change-plan', adminMiddleware, async (req: AuthRequest, 
     const sub = await getUserSubscription(targetUserId);
     const previousPlan = sub.plan;
 
+    // DEFSUB-16: любой платной план обязан выставить expires_at —
+    // это единственный источник истины для доступа (computeAccessState).
+    // Продлеваем от текущего expires_at, если он в будущем, иначе от NOW().
+    // Длительность берём из PLAN_BILLING_DAYS, как в activateSubscription.
+    const isFree = planId === 'free';
+    let newExpiresAt: Date | null = null;
+    if (!isFree) {
+      const days = PLAN_BILLING_DAYS[plan.billing_frequency] || 30;
+      const base = sub.expiresAt && sub.expiresAt > new Date() ? sub.expiresAt : new Date();
+      newExpiresAt = new Date(base.getTime() + days * 24 * 60 * 60 * 1000);
+    }
+
     await query(
       `UPDATE users
        SET subscription_plan = $1,
            subscription_billing_cycle = $2,
-           subscription_active = TRUE,
+           subscription_active = $3,
+           subscription_expires_at = $4,
            subscription_auto_renew = FALSE,
            scheduled_plan_downgrade = NULL
-       WHERE id = $3`,
-      [planId, plan.billing_frequency, targetUserId]
+       WHERE id = $5`,
+      [planId, plan.billing_frequency, !isFree, newExpiresAt, targetUserId]
     );
 
     await freezeExcessTags(targetUserId, planId);
@@ -350,6 +364,7 @@ router.post('/users/:id/change-plan', adminMiddleware, async (req: AuthRequest, 
       success: true,
       previousPlan,
       newPlan: planId,
+      expiresAt: newExpiresAt ? newExpiresAt.toISOString() : null,
       activeTags,
       frozenTags,
     });
