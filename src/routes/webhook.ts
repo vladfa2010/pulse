@@ -379,7 +379,6 @@ router.post('/telegram', async (req, res) => {
             [{ text: '📰 Получить дайджест', callback_data: 'digest_now' }],
             [{ text: '🏷 Мои теги', callback_data: 'my_tags' }],
             [{ text: '⚙️ Настройки', callback_data: 'settings' }],
-            [{ text: '🔕 Отключить рассылку', callback_data: 'stop_digest' }],
           ]);
         } else {
           await sendMessage(chatId, '👋 PULSE — инвестиционные новости\n\nДля подключения:\n1. Войдите на сайт\n2. Профиль → Уведомления → Подключить Telegram');
