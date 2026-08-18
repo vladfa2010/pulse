@@ -83,6 +83,8 @@
 - **Immediate downgrade:** `POST /api/user/downgrade` применяет downgrade сразу, если подписка неактивна или в грейсе; иначе планирует на конец оплаченного периода.
 - **Server-gated фичи:** `hasFeature`, `requirePremium`, `getEntitlement`, `/user/channel-status` используют `computeAccessState` — единую grace-aware формулу доступа.
 - **Лимит тегов:** `GET /user/tariff-status` и `GET /user/tag-status` берут лимит по вычисленному effective-плану (free после грейса).
+- **ADM-K: boot-миграции без учёта.** Раннер `runMigration` исполняет весь массив при каждом старте (таблицы `schema_migrations` нет). Поэтому в массив **запрещено** добавлять data-UPDATE/DELETE без самогасящего `WHERE` (вида `WHERE price = 0`), иначе миграция становится вечной и перезаписывает ручные изменения после каждого ребута. Разовые правки данных — только SQL-скриптом вручную или с guard-условием. Системное решение (таблица учёта миграций) — отдельный тикет бэклога.
+
 - **Правило №8 — единственный источник истины `subscription_expires_at`:**
   - `subscription_expires_at` — единственный источник истины для доступа. Любой код, выставляющий платный `subscription_plan`, обязан в том же UPDATE выставить `subscription_expires_at` (продление от текущего, если он в будущем, иначе от `NOW()`).
   - Период подписки всегда считается в днях через `PLAN_BILLING_DAYS` / `addBillingPeriod`: weekly = 7, monthly = 30, quarterly = 90, yearly = 365. Календарные месяцы (`setMonth`) в подписочной логике не используются.

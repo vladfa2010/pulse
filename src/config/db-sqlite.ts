@@ -686,7 +686,7 @@ export async function initSQLiteSchema(): Promise<void> {
       ('club', 'Club', 2500, 'monthly', 20, -1, '{"telegram":true,"push":true,"ai_summary":true,"alerts":true,"priority":"max","early_delivery":true,"custom_thresholds":true,"club_access":true}', 4, 1, 0, 'Скоро', 3),
       ('pro', 'Pro', 2500, 'monthly', 20, -1, '{"telegram":true,"push":true,"ai_summary":true,"alerts":true,"priority":"max","early_delivery":true,"custom_thresholds":true,"api_access":true}', 5, 1, 0, 'Скоро', 4)`);
     console.log('[SQLite] Migration: subscription_plans seeded');
-    db.run(`UPDATE subscription_plans SET coming_soon_label = NULL WHERE id IN ('club', 'pro')`);
+    // ADM-K: removed boot-time UPDATE that nulled coming_soon_label on every restart.
   } catch {
     // ignore
   }
