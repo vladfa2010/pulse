@@ -13,9 +13,10 @@
  *   DB → Schema → Server → Cron
  */
 
+import 'dotenv/config';
+
 import express from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
 import crypto from 'crypto';
 import axios from 'axios';
 import { query, pool } from './config/db';  // ← query + pool (for transactions)
@@ -61,8 +62,6 @@ import { logNewsDataCheck } from './services/newsDataCheck';
 import { setupYookassaWebhook } from './routes/payment'; // ← Auto-setup YuKassa webhook
 import { addSubscriber, getSubscriberCount, addSentimentSubscriber, closeAllSSE } from './services/sse'; // ← Real-time news stream
 import { getUserSubscriptionActive } from './utils/users';
-
-dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -972,28 +971,8 @@ app.post('/migrate-payments', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ADMIN MIDDLEWARE & ENDPOINTS
+// ADMIN ENDPOINTS
 // ═══════════════════════════════════════════════════════════════════════════
-
-// Middleware: verify admin from JWT
-async function requireAdmin(req: any, res: any, next: any) {
-  try {
-    const token = req.headers.authorization?.replace('Bearer ', '') || req.cookies?.token;
-    if (!token) return res.status(401).json({ error: 'Unauthorized' });
-
-    const jwt = require('jsonwebtoken');
-    const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
-    const decoded = jwt.verify(token, JWT_SECRET);
-
-    if (!decoded.is_admin) {
-      return res.status(403).json({ error: 'Admin access required' });
-    }
-    req.user = decoded;
-    next();
-  } catch (err: any) {
-    res.status(401).json({ error: 'Invalid token' });
-  }
-}
 
 // GET /admin/llm-dashboard — сводка по LLM метрикам (admin only)
 app.get('/admin/llm-dashboard', adminMiddleware, async (req, res) => {

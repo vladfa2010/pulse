@@ -22,7 +22,10 @@ import jwt from 'jsonwebtoken';
 import { query } from '../config/db';
 import { nowSql } from '../utils/nowSql';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
+const JWT_SECRET: string = process.env.JWT_SECRET!;
+if (!JWT_SECRET) {
+  throw new Error('JWT_SECRET environment variable is required');
+}
 
 // TZ-41: presence для админ-метрики «Сейчас онлайн». Любой авторизованный
 // запрос обновляет last_connected_at, не чаще раза в минуту на юзера.
