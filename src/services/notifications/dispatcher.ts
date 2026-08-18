@@ -32,7 +32,7 @@ export type NotificationContent = DigestContent | WeeklyReportContent;
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 const READ_ALL_KEYBOARD = {
-  inline_keyboard: [[{ text: '✅ Прочитал всё', callback_data: 'digest_read_all' }]],
+  inline_keyboard: [[{ text: '✅ Прочитано', callback_data: 'digest_read_all' }]],
 };
 
 // ── Отправка одного продукта в один канал ───────────────────────────────────
