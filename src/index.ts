@@ -3286,8 +3286,8 @@ async function start() {
     { sql: `CREATE TABLE IF NOT EXISTS subscription_plans (id VARCHAR(20) PRIMARY KEY, name VARCHAR(50) NOT NULL, price_monthly DECIMAL(10,2) DEFAULT NULL, price_yearly DECIMAL(10,2) DEFAULT NULL, yearly_discount INTEGER DEFAULT 20, tag_limit INTEGER NOT NULL, features JSONB NOT NULL DEFAULT '{}', display_order INTEGER NOT NULL DEFAULT 0, is_active BOOLEAN DEFAULT TRUE, coming_soon_label VARCHAR(50) DEFAULT NULL, created_at TIMESTAMP DEFAULT ${_SQL_NOW})`, name: 'subscription_plans' },
     { sql: `ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_plan VARCHAR(20) DEFAULT 'free'`, name: 'users_subscription_plan' },
     { sql: `ALTER TABLE users ADD COLUMN IF NOT EXISTS scheduled_plan_downgrade VARCHAR(20)`, name: 'users_scheduled_downgrade' },
-    { sql: `ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_billing_cycle VARCHAR(20) DEFAULT 'monthly'`, name: 'users_subscription_billing_cycle' },
-    { sql: `UPDATE users u SET subscription_billing_cycle = COALESCE((SELECT billing_cycle FROM payments WHERE user_id = u.id AND status = 'completed' ORDER BY paid_at DESC LIMIT 1), 'monthly') WHERE subscription_billing_cycle IS NULL`, name: 'users_billing_cycle_backfill' },
+    // ADM-G: users.subscription_billing_cycle was a ghost column — written but never read.
+    { sql: `ALTER TABLE users DROP COLUMN IF EXISTS subscription_billing_cycle`, name: 'users_drop_subscription_billing_cycle' },
     { sql: `ALTER TABLE payments ADD COLUMN IF NOT EXISTS plan_id VARCHAR(20)`, name: 'payments_plan_id' },
     { sql: `ALTER TABLE payments ADD COLUMN IF NOT EXISTS billing_cycle VARCHAR(10) DEFAULT 'monthly'`, name: 'payments_billing_cycle' },
     { sql: `ALTER TABLE payments ADD COLUMN IF NOT EXISTS duration_days INTEGER DEFAULT 30`, name: 'payments_duration_days' },

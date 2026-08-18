@@ -2836,7 +2836,7 @@ GET /api/admin/plans  ← список активных неархивирова
   ↓
 (смена тарифа)
 POST /api/admin/users/:id/change-plan { planId }
-  → UPDATE users (subscription_plan, billing_cycle, active, auto_renew, downgrade)
+  → UPDATE users (subscription_plan, active, auto_renew, downgrade)
   → freezeExcessTags() + unfreezeTagsUpToLimit()
   → logAdminChangedPlan() → user_events
   ↓
@@ -2866,7 +2866,6 @@ GET /api/admin/activity-log?userId=...&limit=20
 - Проверка: тариф существует, активен, не архивирован.
 - Обновляются поля:
   - `subscription_plan = planId`
-  - `subscription_billing_cycle = plan.billing_frequency`
   - `subscription_active = TRUE`
   - `subscription_auto_renew = FALSE`
   - `scheduled_plan_downgrade = NULL`

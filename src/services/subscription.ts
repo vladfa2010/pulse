@@ -405,11 +405,10 @@ export async function activateSubscription(
      SET subscription_active = TRUE,
          subscription_plan = $1,
          subscription_expires_at = $2,
-         subscription_billing_cycle = $5,
          expiry_notified = '{}',
          scheduled_plan_downgrade = CASE WHEN $4 = TRUE THEN NULL ELSE scheduled_plan_downgrade END
      WHERE id = $3`,
-    [planId, newExpires.toISOString(), userId, isUpgrade || false, billingCycle]
+    [planId, newExpires.toISOString(), userId, isUpgrade || false]
   );
 
   logSubscriptionActivated(userId, planId, newExpires.toISOString()).catch(() => {});

@@ -349,13 +349,12 @@ router.post('/users/:id/change-plan', adminMiddleware, async (req: AuthRequest, 
     await query(
       `UPDATE users
        SET subscription_plan = $1,
-           subscription_billing_cycle = $2,
-           subscription_active = $3,
-           subscription_expires_at = $4,
+           subscription_active = $2,
+           subscription_expires_at = $3,
            subscription_auto_renew = FALSE,
            scheduled_plan_downgrade = NULL
-       WHERE id = $5`,
-      [planId, plan.billing_frequency, !isFree, newExpiresAt, targetUserId]
+       WHERE id = $4`,
+      [planId, !isFree, newExpiresAt, targetUserId]
     );
 
     await freezeExcessTags(targetUserId, planId);
