@@ -34,7 +34,7 @@ import featuresRoutes from './routes/features';
 import userRoutes from './routes/user';
 import translateRoutes from './routes/translate';
 import webhookRoutes from './routes/webhook';
-import adminRoutes from './routes/admin';
+import adminRoutes, { adminMiddleware } from './routes/admin';
 import adminMetricsRoutes from './routes/adminMetrics';
 import marketRoutes from './routes/market';
 import tagMarketRoutes from './routes/tagMarket';
@@ -479,28 +479,16 @@ app.get('/test-model', async (req, res) => {
 // Use when deferred processor queue is too large or after LLM downtime
 // Auth: x-trigger-secret (cron) OR admin JWT (dashboard)
 // ═══════════════════════════════════════════════════════════════════════════
-app.post('/cleanup-failed-articles', async (req, res) => {
+// Auth for cleanup-failed-articles: cron secret OR live admin check via DB.
+function cleanupAuth(req: AuthRequest, res: any, next: any) {
   const secret = req.headers['x-trigger-secret'];
-  let isAdmin = false;
-
-  if (secret !== process.env.CRON_SECRET_KEY) {
-    // Fallback to admin JWT auth
-    const token = req.headers.authorization?.replace('Bearer ', '') || req.cookies?.token;
-    if (token) {
-      try {
-        const jwt = require('jsonwebtoken');
-        const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
-        const decoded = jwt.verify(token, JWT_SECRET);
-        isAdmin = !!decoded.is_admin;
-      } catch {
-        isAdmin = false;
-      }
-    }
-    if (!isAdmin) {
-      return res.status(403).json({ error: 'Forbidden' });
-    }
+  if (secret === process.env.CRON_SECRET_KEY) {
+    return next();
   }
+  adminMiddleware(req, res, next);
+}
 
+app.post('/cleanup-failed-articles', cleanupAuth, async (req, res) => {
   try {
     const before = await query(`SELECT COUNT(*) as count FROM news WHERE llm_error IS NOT NULL`);
     const count = parseInt(before.rows[0]?.count || '0');
@@ -1008,7 +996,7 @@ async function requireAdmin(req: any, res: any, next: any) {
 }
 
 // GET /admin/llm-dashboard — сводка по LLM метрикам (admin only)
-app.get('/admin/llm-dashboard', requireAdmin, async (req, res) => {
+app.get('/admin/llm-dashboard', adminMiddleware, async (req, res) => {
   try {
     const payload = await adminCached('llm-dashboard', 90_000, async () => {
       // Today stats
@@ -1110,7 +1098,7 @@ app.get('/admin/llm-dashboard', requireAdmin, async (req, res) => {
 });
 
 // GET /admin/llm-errors — список ошибок
-app.get('/admin/llm-errors', requireAdmin, async (req, res) => {
+app.get('/admin/llm-errors', adminMiddleware, async (req, res) => {
   try {
     const limit = parseInt(req.query.limit as string) || 50;
     const hours = parseInt(req.query.hours as string) || 24;
@@ -1161,7 +1149,7 @@ app.get('/admin/llm-errors', requireAdmin, async (req, res) => {
 });
 
 // POST /admin/backfill
-app.post('/admin/backfill', requireAdmin, async (req, res) => {
+app.post('/admin/backfill', adminMiddleware, async (req, res) => {
   try {
     const { newsIds, tag, since } = req.body;
     let articles: any[] = [];
@@ -1240,7 +1228,7 @@ app.post('/admin/backfill', requireAdmin, async (req, res) => {
 });
 
 // GET /admin/source-stats — статистика по RSS источникам (admin only)
-app.get('/admin/source-stats', requireAdmin, async (req, res) => {
+app.get('/admin/source-stats', adminMiddleware, async (req, res) => {
   try {
     const hours = parseInt(req.query.hours as string) || 24;
 
@@ -1332,7 +1320,7 @@ query(`SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND c
 }).catch(() => {});
 
 // GET /admin/users — список всех пользователей
-app.get('/admin/users', requireAdmin, async (req, res) => {
+app.get('/admin/users', adminMiddleware, async (req, res) => {
   try {
     const usersResult = await query(`
       SELECT
@@ -1397,7 +1385,7 @@ app.get('/admin/users', requireAdmin, async (req, res) => {
 });
 
 // GET /admin/events — лента событий пользователей (Activities List)
-app.get('/admin/events', requireAdmin, async (req, res) => {
+app.get('/admin/events', adminMiddleware, async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
     const eventType = req.query.type as string;
@@ -1466,7 +1454,7 @@ app.get('/admin/events', requireAdmin, async (req, res) => {
 });
 
 // GET /admin/events/stats — статистика событий для дашборда
-app.get('/admin/events/stats', requireAdmin, async (req, res) => {
+app.get('/admin/events/stats', adminMiddleware, async (req, res) => {
   try {
     const hours = Math.min(Math.max(parseInt(req.query.hours as string) || 24, 1), 720);
 
@@ -1519,7 +1507,7 @@ app.get('/admin/events/stats', requireAdmin, async (req, res) => {
 });
 
 // GET /admin/users/:id — детали пользователя
-app.get('/admin/users/:id', requireAdmin, async (req, res) => {
+app.get('/admin/users/:id', adminMiddleware, async (req, res) => {
   try {
     const userId = req.params.id;
 
@@ -1627,7 +1615,7 @@ app.get('/admin/users/:id', requireAdmin, async (req, res) => {
 });
 
 // POST /admin/users/:id/reset-password
-app.post('/admin/users/:id/reset-password', requireAdmin, async (req, res) => {
+app.post('/admin/users/:id/reset-password', adminMiddleware, async (req, res) => {
   try {
     const userId = req.params.id;
     const { password } = req.body;
@@ -1648,7 +1636,7 @@ app.post('/admin/users/:id/reset-password', requireAdmin, async (req, res) => {
 });
 
 // POST /admin/users/:id/toggle-admin
-app.post('/admin/users/:id/toggle-admin', requireAdmin, async (req, res) => {
+app.post('/admin/users/:id/toggle-admin', adminMiddleware, async (req, res) => {
   try {
     const userId = req.params.id;
 
@@ -1670,7 +1658,7 @@ app.post('/admin/users/:id/toggle-admin', requireAdmin, async (req, res) => {
 });
 
 // POST /admin/users/:id/toggle-block
-app.post('/admin/users/:id/toggle-block', requireAdmin, async (req, res) => {
+app.post('/admin/users/:id/toggle-block', adminMiddleware, async (req, res) => {
   try {
     const userId = req.params.id;
 
@@ -1692,7 +1680,7 @@ app.post('/admin/users/:id/toggle-block', requireAdmin, async (req, res) => {
 });
 
 // POST /admin/users/:id/auto-renew — включить/выключить автопродление пользователя
-app.post('/admin/users/:id/auto-renew', requireAdmin, async (req, res) => {
+app.post('/admin/users/:id/auto-renew', adminMiddleware, async (req, res) => {
   try {
     const userId = req.params.id;
     const { enabled } = req.body;
@@ -1766,7 +1754,7 @@ app.post('/admin/users/:id/auto-renew', requireAdmin, async (req, res) => {
 //   3. shared_portfolio_tags — чужие теги в портфеле (зелёные → остаются)
 //   4. summary — has_owned_tags, has_shared_tags, has_auto_renew
 // ═══════════════════════════════════════════════════════════════════════════
-app.get('/admin/users/:id/delete-preview', requireAdmin, async (req, res) => {
+app.get('/admin/users/:id/delete-preview', adminMiddleware, async (req, res) => {
   try {
     const userId = req.params.id;
 
@@ -1863,7 +1851,7 @@ app.get('/admin/users/:id/delete-preview', requireAdmin, async (req, res) => {
 //
 // Возвращает: { success: true } или { error: string }
 // ═══════════════════════════════════════════════════════════════════════════
-app.delete('/admin/users/:id', requireAdmin, async (req, res) => {
+app.delete('/admin/users/:id', adminMiddleware, async (req, res) => {
   try {
     const userId = req.params.id;
     const adminUser = (req as any).user;
@@ -1934,7 +1922,7 @@ app.delete('/admin/users/:id', requireAdmin, async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 // GET /admin/tags — все теги с агрегатами
-app.get('/admin/tags', requireAdmin, async (req, res) => {
+app.get('/admin/tags', adminMiddleware, async (req, res) => {
   try {
     const hours = parseInt(req.query.hours as string) || 24;
 
@@ -2157,7 +2145,7 @@ app.use('/admin/market', marketRoutes);
 app.use('/admin/tags/:tagId', tagMarketRoutes);
 
 // GET /admin/tags/:tagId — детали тега
-app.get('/admin/tags/:tagId', requireAdmin, async (req, res) => {
+app.get('/admin/tags/:tagId', adminMiddleware, async (req, res) => {
   try {
     const tagId = req.params.tagId.toLowerCase();
 
@@ -2428,7 +2416,7 @@ async function checkCircularReference(tagId: string, relatedTags: string[]): Pro
   return result.rows.length === 0;
 }
 
-app.put('/admin/tags/:tagId', requireAdmin, async (req, res) => {
+app.put('/admin/tags/:tagId', adminMiddleware, async (req, res) => {
   try {
     const tagId = req.params.tagId.toLowerCase();
     const allowed = Object.keys(TAG_UPDATE_RULES);
@@ -2665,7 +2653,7 @@ app.put('/admin/tags/:tagId', requireAdmin, async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 // POST /admin/tags/:tagId/enrich — run LLM enrichment manually from admin UI
 // ═══════════════════════════════════════════════════════════════════════════
-app.post('/admin/tags/:tagId/enrich', requireAdmin, async (req, res) => {
+app.post('/admin/tags/:tagId/enrich', adminMiddleware, async (req, res) => {
   const tagId = req.params.tagId.toLowerCase();
 
   try {
@@ -2748,7 +2736,7 @@ app.post('/admin/tags/:tagId/enrich', requireAdmin, async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 // POST /admin/tags/:tagId/backfill-matches — dry-run preview or apply retro scan
 // ═══════════════════════════════════════════════════════════════════════════
-app.post('/admin/tags/:tagId/backfill-matches', requireAdmin, async (req, res) => {
+app.post('/admin/tags/:tagId/backfill-matches', adminMiddleware, async (req, res) => {
   const tagId = req.params.tagId.toLowerCase();
   const dryRun = req.body?.dryRun !== false; // default dry-run for safety (защита на экзотические конфигурации)
   console.log(`[AdminBackfillMatches] tag=${tagId} dryRun=${dryRun}`);
@@ -2786,7 +2774,7 @@ app.post('/admin/tags/:tagId/backfill-matches', requireAdmin, async (req, res) =
 // ═══════════════════════════════════════════════════════════════════════════
 // POST /admin/backfill-matches-all — one-shot retro scan for all tags
 // ═══════════════════════════════════════════════════════════════════════════
-app.post('/admin/backfill-matches-all', requireAdmin, async (req, res) => {
+app.post('/admin/backfill-matches-all', adminMiddleware, async (req, res) => {
   try {
     const { backfillAllTags } = await import('./services/tagBackfill');
     const adminUserId = (req as any).user?.userId;
@@ -2804,7 +2792,7 @@ app.post('/admin/backfill-matches-all', requireAdmin, async (req, res) => {
 });
 
 // DELETE /admin/tags/:tagId — atomic cascade delete (PostgreSQL ONLY)
-app.delete('/admin/tags/:tagId', requireAdmin, async (req, res) => {
+app.delete('/admin/tags/:tagId', adminMiddleware, async (req, res) => {
   // SQLite mode — transactions not supported via pool.connect()
   if (!pool) {
     return res.status(500).json({
@@ -2936,7 +2924,7 @@ app.delete('/admin/tags/:tagId', requireAdmin, async (req, res) => {
 });
 
 // GET /admin/tags/:tagId/delete-preview — statistics for delete confirmation modal
-app.get('/admin/tags/:tagId/delete-preview', requireAdmin, async (req, res) => {
+app.get('/admin/tags/:tagId/delete-preview', adminMiddleware, async (req, res) => {
   try {
     const tagId = req.params.tagId.toLowerCase();
 
@@ -3003,7 +2991,7 @@ app.get('/admin/tags/:tagId/delete-preview', requireAdmin, async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 // GET /admin/news-sources — список всех источников
-app.get('/admin/news-sources', requireAdmin, async (req, res) => {
+app.get('/admin/news-sources', adminMiddleware, async (req, res) => {
   try {
     const result = await query(`
       SELECT id, name, display_name, type, enabled, last_fetch_at, created_at
@@ -3017,7 +3005,7 @@ app.get('/admin/news-sources', requireAdmin, async (req, res) => {
 });
 
 // PUT /admin/news-sources/:id/toggle — вкл/выкл
-app.put('/admin/news-sources/:id/toggle', requireAdmin, async (req, res) => {
+app.put('/admin/news-sources/:id/toggle', adminMiddleware, async (req, res) => {
   try {
     const result = await query(`
       UPDATE news_sources SET enabled = NOT enabled WHERE id = $1
@@ -3037,7 +3025,7 @@ app.put('/admin/news-sources/:id/toggle', requireAdmin, async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 // GET /admin/tg-alerts/settings — получить свои настройки
-app.get('/admin/tg-alerts/settings', requireAdmin, async (req: any, res) => {
+app.get('/admin/tg-alerts/settings', adminMiddleware, async (req: any, res) => {
   try {
     const adminUserId = req.user?.userId;
     if (!adminUserId) {
@@ -3054,7 +3042,7 @@ app.get('/admin/tg-alerts/settings', requireAdmin, async (req: any, res) => {
 });
 
 // PUT /admin/tg-alerts/settings — сохранить настройки
-app.put('/admin/tg-alerts/settings', requireAdmin, async (req: any, res) => {
+app.put('/admin/tg-alerts/settings', adminMiddleware, async (req: any, res) => {
   try {
     const adminUserId = req.user?.userId;
     if (!adminUserId) {
@@ -3079,7 +3067,7 @@ app.put('/admin/tg-alerts/settings', requireAdmin, async (req: any, res) => {
 });
 
 // POST /admin/tg-alerts/test — отправить тестовое сообщение
-app.post('/admin/tg-alerts/test', requireAdmin, async (req: any, res) => {
+app.post('/admin/tg-alerts/test', adminMiddleware, async (req: any, res) => {
   try {
     const adminUserId = req.user?.userId;
     if (!adminUserId) {

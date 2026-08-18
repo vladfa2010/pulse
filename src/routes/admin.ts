@@ -130,7 +130,10 @@ router.get('/users', adminMiddleware, async (_req, res) => {
          ) r ON r.user_id = u.id
          ORDER BY u.created_at DESC LIMIT 500`;
 
-    const result = await query(sql);
+    const [result, totalResult] = await Promise.all([
+      query(sql),
+      query('SELECT COUNT(*) as total FROM users'),
+    ]);
 
     const users = result.rows.map((row: any) => ({
       ...row,
@@ -143,7 +146,9 @@ router.get('/users', adminMiddleware, async (_req, res) => {
       articles_read: Number(row.articles_read ?? 0),
     }));
 
-    res.json({ users });
+    const total = parseInt(totalResult.rows[0]?.total || '0', 10);
+
+    res.json({ users, total });
   } catch (err) {
     console.error('[Admin] Failed to fetch users:', err);
     res.status(500).json({ error: 'Failed to fetch users' });
