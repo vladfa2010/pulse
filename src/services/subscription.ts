@@ -41,6 +41,16 @@ export const PLAN_BILLING_DAYS: Record<string, number> = {
 
 export type BillingCycle = 'weekly' | 'monthly' | 'quarterly' | 'yearly';
 
+// ADM-H: единственная арифметика периода подписки. Эталон — дни
+// (PLAN_BILLING_DAYS), как в платёжном пути. Календарные месяцы
+// (setMonth) в подписках не используются: баг переполнения
+// (31 янв + 1 мес = 3 мар) и разная цена дня в разных месяцах.
+// base вычисляет вызывающий код: max(текущий expires_at, NOW()).
+export function addBillingPeriod(base: Date, billingFrequency: string): Date {
+  const days = PLAN_BILLING_DAYS[billingFrequency] || 30;
+  return new Date(base.getTime() + days * 24 * 60 * 60 * 1000);
+}
+
 export interface Plan {
   id: string;
   name: string;

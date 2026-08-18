@@ -84,7 +84,8 @@
 - **Server-gated фичи:** `hasFeature`, `requirePremium`, `getEntitlement`, `/user/channel-status` используют `computeAccessState` — единую grace-aware формулу доступа.
 - **Лимит тегов:** `GET /user/tariff-status` и `GET /user/tag-status` берут лимит по вычисленному effective-плану (free после грейса).
 - **Правило №8 — единственный источник истины `subscription_expires_at`:**
-  - `subscription_expires_at` — единственный источник истины для доступа. Любой код, выставляющий платный `subscription_plan`, обязан в том же UPDATE выставить `subscription_expires_at` (продление от текущего, если он в будущем, иначе от `NOW()`). Длительность берётся из `PLAN_BILLING_DAYS` (консистентно с `activateSubscription`).
+  - `subscription_expires_at` — единственный источник истины для доступа. Любой код, выставляющий платный `subscription_plan`, обязан в том же UPDATE выставить `subscription_expires_at` (продление от текущего, если он в будущем, иначе от `NOW()`).
+  - Период подписки всегда считается в днях через `PLAN_BILLING_DAYS` / `addBillingPeriod`: weekly = 7, monthly = 30, quarterly = 90, yearly = 365. Календарные месяцы (`setMonth`) в подписочной логике не используются.
   - Смена на `free` обязана обнулить `subscription_expires_at` и `subscription_active = FALSE`.
   - Нарушение правила приводит к полному отказу платных фич на сервере (фактчек 403, frozen теги, недоступен telegram/push) и отображению `-1 days left` в админке.
 

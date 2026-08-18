@@ -20,6 +20,7 @@ import {
   unfreezeTagsUpToLimit,
   invalidatePlansCache,
   PLAN_BILLING_DAYS,
+  addBillingPeriod,
 } from '../services/subscription';
 import { listAllFeatures, createFeature, updateFeature } from './features';
 import { getPromoByCode } from '../services/promo';
@@ -341,9 +342,8 @@ router.post('/users/:id/change-plan', adminMiddleware, async (req: AuthRequest, 
     const isFree = planId === 'free';
     let newExpiresAt: Date | null = null;
     if (!isFree) {
-      const days = PLAN_BILLING_DAYS[plan.billing_frequency] || 30;
       const base = sub.expiresAt && sub.expiresAt > new Date() ? sub.expiresAt : new Date();
-      newExpiresAt = new Date(base.getTime() + days * 24 * 60 * 60 * 1000);
+      newExpiresAt = addBillingPeriod(base, plan.billing_frequency);
     }
 
     await query(
@@ -412,8 +412,9 @@ router.post('/users/:id/extend-subscription', adminMiddleware, async (req: AuthR
       const base = previousExpiresAt && new Date(previousExpiresAt) > new Date()
         ? new Date(previousExpiresAt)
         : new Date();
-      newExpiresAt = new Date(base);
-      newExpiresAt.setMonth(newExpiresAt.getMonth() + addMonths);
+      // ADM-H: «месяц» = 30 дней, как в платёжном пути (без setMonth).
+      // Публичный контракт кнопки (addMonths) не меняем: N мес = N × 30 дней.
+      newExpiresAt = new Date(base.getTime() + addMonths * 30 * 24 * 60 * 60 * 1000);
     } else {
       return res.status(400).json({ error: 'expiresAt or addMonths required' });
     }
