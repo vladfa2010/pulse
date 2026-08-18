@@ -68,6 +68,12 @@ const PORT = process.env.PORT || 3001;
 // USE_SQLITE=true → SQLite (локально), иначе → PostgreSQL (на Render)
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
+// Required secrets — fail-fast on startup so we never run with public fallbacks.
+const CRON_SECRET_KEY: string = process.env.CRON_SECRET_KEY!;
+if (!CRON_SECRET_KEY) {
+  throw new Error('CRON_SECRET_KEY environment variable is required');
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // PostgreSQL vs SQLite datetime helpers for migrations
 // ═══════════════════════════════════════════════════════════════════════════
@@ -192,7 +198,7 @@ app.get('/debug/version', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 app.get('/debug-admins', async (req, res) => {
   const secret = req.headers['x-trigger-secret'];
-  if (secret !== process.env.CRON_SECRET_KEY) {
+  if (secret !== CRON_SECRET_KEY) {
     return res.status(403).json({ error: 'Forbidden' });
   }
 
@@ -213,31 +219,9 @@ app.get('/debug-admins', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Debug tag detail — show full tag data (admin via JWT or secret via URL)
+// Debug tag detail — show full tag data (admin only)
 // ═══════════════════════════════════════════════════════════════════════════
-app.get('/debug-tag/:tagId', async (req, res) => {
-  // Auth: either admin JWT OR secret query param
-  const token = req.headers.authorization?.replace('Bearer ', '');
-  const secret = req.query.secret as string;
-  
-  let isAdmin = false;
-  
-  if (secret && secret === (process.env.CRON_SECRET_KEY || 'pulse-dev-key')) {
-    isAdmin = true;
-  } else if (token) {
-    try {
-      const jwt = await import('jsonwebtoken');
-      const decoded = jwt.default.verify(token, process.env.JWT_SECRET!) as any;
-      isAdmin = !!decoded.is_admin;
-    } catch {
-      isAdmin = false;
-    }
-  }
-  
-  if (!isAdmin) {
-    return res.status(403).json({ error: 'Forbidden' });
-  }
-
+app.get('/debug-tag/:tagId', adminMiddleware, async (req, res) => {
   try {
     const tagId = req.params.tagId.toLowerCase();
 
@@ -337,7 +321,7 @@ app.get('/debug-tag/:tagId', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 app.get('/debug-tag', async (req, res) => {
   const secret = req.headers['x-trigger-secret'] || req.query.secret;
-  if (secret !== process.env.CRON_SECRET_KEY) {
+  if (secret !== CRON_SECRET_KEY) {
     return res.status(403).json({ error: 'Forbidden' });
   }
 
@@ -370,7 +354,7 @@ app.get('/debug-tag', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 app.get('/debug/verify-delete/:userId', async (req, res) => {
   const secret = req.headers['x-trigger-secret'] || req.query.secret;
-  if (secret !== process.env.CRON_SECRET_KEY) {
+  if (secret !== CRON_SECRET_KEY) {
     return res.status(403).json({ error: 'Forbidden' });
   }
 
@@ -481,7 +465,7 @@ app.get('/test-model', async (req, res) => {
 // Auth for cleanup-failed-articles: cron secret OR live admin check via DB.
 function cleanupAuth(req: AuthRequest, res: any, next: any) {
   const secret = req.headers['x-trigger-secret'];
-  if (secret === process.env.CRON_SECRET_KEY) {
+  if (secret === CRON_SECRET_KEY) {
     return next();
   }
   adminMiddleware(req, res, next);
@@ -514,7 +498,7 @@ app.post('/cleanup-failed-articles', cleanupAuth, async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 app.post('/admin/news-count', async (req, res) => {
   const secret = req.headers['x-trigger-secret'];
-  if (secret !== process.env.CRON_SECRET_KEY) {
+  if (secret !== CRON_SECRET_KEY) {
     return res.status(403).json({ error: 'Forbidden' });
   }
 
@@ -568,7 +552,7 @@ app.post('/admin/news-count', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 app.post('/admin/news-delete', async (req, res) => {
   const secret = req.headers['x-trigger-secret'];
-  if (secret !== process.env.CRON_SECRET_KEY) {
+  if (secret !== CRON_SECRET_KEY) {
     return res.status(403).json({ error: 'Forbidden' });
   }
 
@@ -632,7 +616,7 @@ app.post('/admin/news-delete', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 app.get('/admin/news-list', async (req, res) => {
   const secret = req.headers['x-trigger-secret'] || req.query.secret;
-  if (secret !== process.env.CRON_SECRET_KEY) {
+  if (secret !== CRON_SECRET_KEY) {
     return res.status(403).json({ error: 'Forbidden' });
   }
 
@@ -685,7 +669,7 @@ app.get('/admin/news-list', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 app.get('/admin/weekly-report', async (req, res) => {
   const secret = req.headers['x-trigger-secret'] || req.query.secret;
-  if (secret !== process.env.CRON_SECRET_KEY) {
+  if (secret !== CRON_SECRET_KEY) {
     return res.status(403).json({ error: 'Forbidden' });
   }
 
@@ -723,7 +707,7 @@ app.get('/admin/weekly-report', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 app.get('/admin/news-count-query', async (req, res) => {
   const secret = req.headers['x-trigger-secret'] || req.query.secret;
-  if (secret !== process.env.CRON_SECRET_KEY) {
+  if (secret !== CRON_SECRET_KEY) {
     return res.status(403).json({ error: 'Forbidden' });
   }
 
@@ -765,7 +749,7 @@ app.get('/admin/news-count-query', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 app.get('/debug/check-fk', async (req, res) => {
   const secret = req.headers['x-trigger-secret'] || req.query.secret;
-  if (secret !== process.env.CRON_SECRET_KEY) {
+  if (secret !== CRON_SECRET_KEY) {
     return res.status(403).json({ error: 'Forbidden' });
   }
 
@@ -819,7 +803,7 @@ app.get('/debug/check-fk', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 app.post('/migrate-set-null', async (req, res) => {
   const secret = req.headers['x-trigger-secret'] || req.query.secret;
-  if (secret !== process.env.CRON_SECRET_KEY) {
+  if (secret !== CRON_SECRET_KEY) {
     return res.status(403).json({ error: 'Forbidden' });
   }
 
@@ -2670,7 +2654,7 @@ app.post('/migrate-v3', async (req, res) => {
 // Migration endpoint — Article Enrichment v3.0 schema
 app.post('/migrate-v3-enrichment', async (req, res) => {
   const secret = req.headers['x-trigger-secret'] || req.query.secret;
-  if (secret !== (process.env.CRON_SECRET_KEY || 'pulse-dev-key')) {
+  if (secret !== (CRON_SECRET_KEY)) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
@@ -2844,7 +2828,7 @@ app.get('/news/search', async (req, res) => {
 // TEMP: Backfill: translate existing EN titles to RU via Kimi
 app.get('/backfill-translate', async (req, res) => {
   const secret = req.headers['x-trigger-secret'] || req.query.secret;
-  if (secret !== (process.env.CRON_SECRET_KEY || 'pulse-dev-key')) {
+  if (secret !== (CRON_SECRET_KEY)) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
@@ -2893,7 +2877,7 @@ app.get('/backfill-translate', async (req, res) => {
 // TEMP: Backfill: translate existing EN summaries to RU via Kimi
 app.get('/backfill-summary', async (req, res) => {
   const secret = req.headers['x-trigger-secret'] || req.query.secret;
-  if (secret !== (process.env.CRON_SECRET_KEY || 'pulse-dev-key')) {
+  if (secret !== (CRON_SECRET_KEY)) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
@@ -3013,7 +2997,7 @@ app.get('/debug-env', async (req, res) => {
     kimi_key_length: process.env.KIMI_API_KEY ? process.env.KIMI_API_KEY.length : 0,
     kimi_key_prefix: process.env.KIMI_API_KEY ? process.env.KIMI_API_KEY.slice(0, 12) + '...' : null,
     kimi_model: process.env.KIMI_MODEL || 'moonshot-v1-32k (default)',
-    cron_secret_set: !!process.env.CRON_SECRET_KEY,
+    cron_secret_set: !!CRON_SECRET_KEY,
     telegram_bot_set: !!process.env.TELEGRAM_BOT_TOKEN,
     telegram_bot_prefix: process.env.TELEGRAM_BOT_TOKEN ? process.env.TELEGRAM_BOT_TOKEN.split(':')[0] + ':...' : null,
     yookassa_shop_id_set: !!process.env.YOOKASSA_SHOP_ID,
@@ -3326,7 +3310,7 @@ app.get('/cleanup-content-dups', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 app.post('/cron-cleanup', async (req, res) => {
   const secret = req.headers['x-trigger-secret'] || req.query.secret;
-  const expected = process.env.CRON_SECRET_KEY || 'pulse-dev-key';
+  const expected = CRON_SECRET_KEY;
   if (secret !== expected) return res.status(401).json({ error: 'Unauthorized' });
   try {
     const { query } = await import('./config/db');
@@ -3342,7 +3326,7 @@ app.post('/cron-cleanup', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 app.post('/trigger-rss', async (req, res) => {
   const secret = req.headers['x-trigger-secret'] || req.query.secret;
-  const expected = process.env.CRON_SECRET_KEY || 'pulse-dev-key';
+  const expected = CRON_SECRET_KEY;
   if (secret !== expected) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
@@ -3358,7 +3342,7 @@ app.post('/trigger-rss', async (req, res) => {
 const nsm = getNewsSourceManager();
 app.get('/trigger/nsm', async (req, res) => {
   const secret = req.headers['x-trigger-secret'] || req.query.secret;
-  if (secret !== (process.env.CRON_SECRET_KEY || 'pulse-dev-key')) {
+  if (secret !== (CRON_SECRET_KEY)) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   nsm.run().catch((e: any) => console.error('[NSM] trigger error:', e.message));
@@ -3370,7 +3354,7 @@ app.get('/trigger/nsm', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 app.get('/trigger/process', async (req, res) => {
   const secret = req.headers['x-trigger-secret'] || req.query.secret;
-  if (secret !== (process.env.CRON_SECRET_KEY || 'pulse-dev-key')) {
+  if (secret !== (CRON_SECRET_KEY)) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   import('./services/newsProcessor').then(({ processRawArticles }) => {
@@ -3384,7 +3368,7 @@ app.get('/trigger/process', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 app.get('/trigger/auto-renew', async (req, res) => {
   const secret = req.headers['x-trigger-secret'] || req.query.secret;
-  if (secret !== (process.env.CRON_SECRET_KEY || 'pulse-dev-key')) {
+  if (secret !== (CRON_SECRET_KEY)) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   try {
@@ -3401,7 +3385,7 @@ app.get('/trigger/auto-renew', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 app.get('/trigger/wake-no-tags', async (req, res) => {
   const secret = req.headers['x-trigger-secret'] || req.query.secret;
-  if (secret !== (process.env.CRON_SECRET_KEY || 'pulse-dev-key')) {
+  if (secret !== (CRON_SECRET_KEY)) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   try {
@@ -3423,7 +3407,7 @@ app.get('/trigger/wake-no-tags', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 app.get('/trigger/recalculate-keywords', async (req, res) => {
   const secret = req.headers['x-trigger-secret'] || req.query.secret;
-  if (secret !== (process.env.CRON_SECRET_KEY || 'pulse-dev-key')) {
+  if (secret !== (CRON_SECRET_KEY)) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   try {
@@ -3457,7 +3441,7 @@ app.get('/trigger/recalculate-keywords', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 app.get('/trigger/reprocess-tag/:tagId', async (req, res) => {
   const secret = req.headers['x-trigger-secret'] || req.query.secret;
-  if (secret !== (process.env.CRON_SECRET_KEY || 'pulse-dev-key')) {
+  if (secret !== (CRON_SECRET_KEY)) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   try {
@@ -4193,7 +4177,7 @@ app.get('/api/debug/telegram-channel/:chatId', authMiddleware, async (req: AuthR
 // TEMP: Backfill matched_tags for existing articles without tags
 app.get('/backfill-tags', async (req, res) => {
   const secret = req.headers['x-trigger-secret'] || req.query.secret;
-  if (secret !== (process.env.CRON_SECRET_KEY || 'pulse-dev-key')) {
+  if (secret !== (CRON_SECRET_KEY)) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
@@ -4245,7 +4229,7 @@ app.get('/quick-tags', async (req, res) => {
 // TEMP: Cleanup news — keep only 50 latest
 app.get('/cleanup-news', async (req, res) => {
   const secret = req.headers['x-trigger-secret'] || req.query.secret;
-  if (secret !== (process.env.CRON_SECRET_KEY || 'pulse-dev-key')) {
+  if (secret !== (CRON_SECRET_KEY)) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
@@ -4524,7 +4508,7 @@ async function cancelYookassaAutoRenew(paymentId: string): Promise<void> {
 // ═══════════════════════════════════════════════════════════════════════════
 app.get('/trigger-digest', async (req, res) => {
   const secret = req.headers['x-trigger-secret'] || req.query.secret;
-  if (secret !== (process.env.CRON_SECRET_KEY || 'pulse-dev-key')) {
+  if (secret !== (CRON_SECRET_KEY)) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
