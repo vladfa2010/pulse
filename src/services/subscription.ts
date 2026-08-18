@@ -1106,11 +1106,13 @@ export async function applyDowngradeNow(
   console.log(`[DowngradeNow] User ${userId} → ${targetPlanId}, auto_renew=FALSE, tags frozen`);
 
   // DEFSUB-14: уведомляем пользователя о фактическом понижении тарифа
-  await notifySubscriptionEvent(
-    userId,
-    'downgrade_done',
-    `Тариф PULSE снижен до ${targetPlanId}. Лишние теги заморожены. Чтобы восстановить функции, продлите подписку.`
-  ).catch(() => {});
+  // ADM-I: разные тексты для free и платной цели.
+  // Платная цель живёт на остатке грейса — явно называем дедлайн оплаты.
+  const message = targetPlanId === 'free'
+    ? 'Подписка завершена. Тариф переведён на Free, лишние теги заморожены. Чтобы восстановить функции, оформите подписку.'
+    : `Тариф PULSE изменён на ${targetPlanId}. Для продолжения работы оплатите новый тариф в течение ${GRACE_DAYS} дней — иначе аккаунт перейдёт на Free.`;
+
+  await notifySubscriptionEvent(userId, 'downgrade_done', message).catch(() => {});
 }
 
 export async function scheduleDowngrade(
@@ -1316,10 +1318,12 @@ export async function sendSubscriptionReminders(): Promise<{
     const graceDays = Math.floor((Date.now() - expiresAt.getTime()) / msPerDay) + 1;
     if (graceDays === 1 || graceDays === 3) {
       const type = graceDays === 1 ? 'grace_1d' : 'grace_3d';
+      // ADM-I: нейтральная формулировка — честна и для истёкшей подписки,
+      // и для scheduled-даунгрейда на платный план (юзер его ещё не оплачивал).
       await notifySubscriptionEvent(
         userId,
         type,
-        `🚨 Подписка PULSE ${row.subscription_plan} истекла. Grace-период: день ${graceDays}/3. Оплатите тариф, чтобы избежать заморозки тегов.`
+        `🚨 Тариф PULSE ${row.subscription_plan} не оплачен. Доступ работает в grace-режиме: день ${graceDays}/${GRACE_DAYS}. Оплатите тариф — иначе по концу grace аккаунт перейдёт на Free, а теги сверх лимита Free будут заморожены.`
       );
       grace++;
     }

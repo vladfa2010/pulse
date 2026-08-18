@@ -153,7 +153,7 @@ router.post('/tags', authMiddleware, validate(AddTagSchema), async (req: AuthReq
     }
     const maxTags = plan.tag_limit;
 
-    // DEFSUB-17: если есть слоты, разморозить замороженные теги перед добавлением
+    // Если есть слоты, разморозить замороженные теги перед добавлением
     if (maxTags >= 0) {
       await unfreezeTagsUpToLimit(userId, planId);
     }
