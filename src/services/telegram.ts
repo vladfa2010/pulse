@@ -11,11 +11,16 @@ function isConfigured(): boolean {
   return !!BOT_TOKEN && BOT_TOKEN.length > 10;
 }
 
+export interface InlineKeyboard {
+  inline_keyboard: Array<Array<{ text: string; callback_data: string }>>;
+}
+
 // Send message via Telegram Bot API
 export async function sendTelegramMessage(
   chatId: string,
   text: string,
-  parseMode: 'HTML' | 'MarkdownV2' = 'HTML'
+  parseMode: 'HTML' | 'MarkdownV2' = 'HTML',
+  replyMarkup?: InlineKeyboard
 ): Promise<boolean> {
   if (!isConfigured()) {
     console.warn('[Telegram] Bot token not configured');
@@ -28,6 +33,7 @@ export async function sendTelegramMessage(
       text,
       parse_mode: parseMode,
       disable_web_page_preview: false,
+      ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
     });
     return true;
   } catch (err: any) {

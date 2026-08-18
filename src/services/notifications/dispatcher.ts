@@ -31,6 +31,10 @@ export type NotificationContent = DigestContent | WeeklyReportContent;
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
+const READ_ALL_KEYBOARD = {
+  inline_keyboard: [[{ text: '✅ Прочитал всё', callback_data: 'digest_read_all' }]],
+};
+
 // ── Отправка одного продукта в один канал ───────────────────────────────────
 
 async function deliver(
@@ -48,9 +52,15 @@ async function deliver(
         if (!target) return false;
         const messages = formatDigestTelegram(c, frequency);
         for (let i = 0; i < messages.length; i++) {
-          const ok = await sendTelegramMessage(target.target, messages[i]);
+          const isLast = i === messages.length - 1;
+          const ok = await sendTelegramMessage(
+            target.target,
+            messages[i],
+            'HTML',
+            isLast ? READ_ALL_KEYBOARD : undefined
+          );
           if (!ok) return false;
-          if (i < messages.length - 1) await sleep(200);
+          if (!isLast) await sleep(200);
         }
         return true;
       }

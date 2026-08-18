@@ -431,10 +431,13 @@ async function handleCallbackQuery(req: any, res: any): Promise<void> {
 
     console.log(`[TG Bot] Button clicked: ${data} by ${chatId}`);
 
-    // Answer callback (removes loading state from button)
-    await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
-      callback_query_id: callbackId,
-    });
+    // Answer callback (removes loading state from button).
+    // Для digest_read_all тост отправит сам кейс — с числом отмеченных.
+    if (data !== 'digest_read_all') {
+      await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
+        callback_query_id: callbackId,
+      });
+    }
 
     switch (data) {
       case 'digest_now': {
@@ -474,6 +477,41 @@ async function handleCallbackQuery(req: any, res: any): Promise<void> {
       }
       case 'add_tag': {
         await promptAddTag(chatId);
+        break;
+      }
+      case 'digest_read_all': {
+        const userId = await getUserIdByChatId(chatId);
+        if (!userId) {
+          await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
+            callback_query_id: callbackId,
+            text: '⚠️ Аккаунт не подключен',
+          });
+          break;
+        }
+
+        const { markAllNewsAsRead } = await import('../services/newsReads');
+        const marked = await markAllNewsAsRead(userId);
+
+        // Тост с результатом (лимит текста answerCallbackQuery — 200 символов)
+        await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
+          callback_query_id: callbackId,
+          text: marked > 0
+            ? `✅ Отмечено прочитанными: ${marked}. Дальше — только новые новости.`
+            : '✅ Все новости уже прочитаны.',
+        });
+
+        // Снять кнопку с сообщения (редактирование клавиатуры, текст не трогаем)
+        await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageReplyMarkup`, {
+          chat_id: chatId,
+          message_id: callback.message.message_id,
+          reply_markup: { inline_keyboard: [] },
+        }).catch((err: any) => {
+          const description = err?.response?.data?.description || err?.message || '';
+          if (description.includes('MESSAGE_NOT_MODIFIED')) return;
+          console.warn('[TG Bot] read-all remove keyboard failed:', description);
+        });
+
+        console.log(`[TG Bot] read-all: user=${userId} chat=${chatId} marked=${marked}`);
         break;
       }
     }
