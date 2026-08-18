@@ -348,7 +348,7 @@ if (source.type === 'rss') {
 
 | Шаг | Команда/Действие | Результат |
 |-----|-----------------|-----------|
-| 1 | `POST /migrate-v3-enrichment?secret=pulse-dev-key` | Таблица `news_sources` + 33 RSS + Finnhub |
+| 1 | `POST /migrate-v3-enrichment?secret=<CRON_SECRET_KEY>` | Таблица `news_sources` + 33 RSS + Finnhub |
 | 2 | Добавить `FINNHUB_API_KEY` в Render env (опционально) | API key из env вместо hardcoded |
 | 3 | Manual Deploy на Render | Код с NSM |
 | 4 | Проверить `GET /admin/news-sources` | 34 sources (33 RSS + Finnhub) |

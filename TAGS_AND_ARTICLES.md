@@ -776,7 +776,7 @@ GROUP BY link_source;
 **⚠️ Шаг 0: Запустить миграцию (ОБЯЗАТЕЛЬНО после деплоя кода)**
 ```bash
 curl -X POST https://pulse-api-bsov.onrender.com/migrate-v3-enrichment \
-  -H "x-trigger-secret: pulse-dev-key"
+  -H "x-trigger-secret: <CRON_SECRET_KEY>"
 ```
 **Без этого таблица `news_tag_links` не создастся и enrichment v3.0 не будет работать!**
 

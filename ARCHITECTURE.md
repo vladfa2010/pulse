@@ -488,10 +488,10 @@ Result: needs_translation = TRUE, matched_tags = ['nvidia', ...]
 
 ```bash
 # NewsSourceManager (Fetch — RSS + Finnhub)
-curl "https://pulse-api-bsov.onrender.com/trigger/nsm?secret=pulse-dev-key"
+curl "https://pulse-api-bsov.onrender.com/trigger/nsm?secret=<CRON_SECRET_KEY>"
 
 # News Processor (Process — translate + sentiment + tags)
-curl "https://pulse-api-bsov.onrender.com/trigger/process?secret=pulse-dev-key"
+curl "https://pulse-api-bsov.onrender.com/trigger/process?secret=<CRON_SECRET_KEY>"
 ```
 
 Fallback: всегда `setInterval(RSS: 5 мин / Finnhub: 60 мин / News Processor: 10 мин)`. `CRON_SECRET_KEY` защищает только endpoints, не влияет на фоновые процессы.
@@ -502,17 +502,17 @@ Fallback: всегда `setInterval(RSS: 5 мин / Finnhub: 60 мин / News Pr
 # Count articles by filters
 curl -X POST https://pulse-api-bsov.onrender.com/admin/news-count \
   -H "Content-Type: application/json" \
-  -H "x-trigger-secret: pulse-dev-key" \
+  -H "x-trigger-secret: <CRON_SECRET_KEY>" \
   -d '{"matched_tags": ["nvda"], "source_id": "finnhub"}'
 
 # Delete articles by filters (dry_run first!)
 curl -X POST https://pulse-api-bsov.onrender.com/admin/news-delete \
   -H "Content-Type: application/json" \
-  -H "x-trigger-secret: pulse-dev-key" \
+  -H "x-trigger-secret: <CRON_SECRET_KEY>" \
   -d '{"matched_tags": ["nvda"], "source_id": "finnhub", "dry_run": true}'
 
 # List articles with matched_tags (view in browser)
-curl "https://pulse-api-bsov.onrender.com/admin/news-list?source_id=finnhub&secret=pulse-dev-key"
+curl "https://pulse-api-bsov.onrender.com/admin/news-list?source_id=finnhub&secret=<CRON_SECRET_KEY>"
 
 # Filters: matched_tags[], source_id, lang_original, date_from, date_to, title_contains
 ```
@@ -2443,10 +2443,10 @@ GET /tag-stats
 ### Backfill Routes
 
 ```
-GET /backfill-translate?secret=pulse-dev-key
+GET /backfill-translate?secret=<CRON_SECRET_KEY>
 |---> Перевод существующих EN заголовков (batch через Kimi API)
 
-GET /backfill-tags?secret=pulse-dev-key
+GET /backfill-tags?secret=<CRON_SECRET_KEY>
 |---> Ретегирование статей без matched_tags (3-layer matching)
 ```
 

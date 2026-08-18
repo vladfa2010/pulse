@@ -522,7 +522,7 @@ export async function processRawArticles(): Promise<void> {
 // index.ts
 app.get('/trigger/process', async (req, res) => {
   const secret = req.headers['x-trigger-secret'] || req.query.secret;
-  if (secret !== (process.env.CRON_SECRET_KEY || 'pulse-dev-key')) {
+  if (secret !== process.env.CRON_SECRET_KEY) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   
@@ -605,7 +605,7 @@ WHERE title_ru IS NULL
 
 ```bash
 # 1. Триггер
-$ curl "https://pulse-api-bsov.onrender.com/trigger/process?secret=pulse-dev-key"
+$ curl "https://pulse-api-bsov.onrender.com/trigger/process?secret=<CRON_SECRET_KEY>"
 # → {"started":true}
 
 # 2. Логи (через 30 сек)

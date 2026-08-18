@@ -461,7 +461,7 @@ async function processArticlesLocked() {
 // index.ts
 app.get('/trigger/process', async (req, res) => {
   const secret = req.headers['x-trigger-secret'] || req.query.secret;
-  if (secret !== (process.env.CRON_SECRET_KEY || 'pulse-dev-key')) {
+  if (secret !== process.env.CRON_SECRET_KEY) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   

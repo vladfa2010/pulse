@@ -436,7 +436,7 @@ if (parseInt(enabledResult.rows[0].count) === 0) {
 | Переменная | Значение | Описание |
 |------------|----------|----------|
 | `FINNHUB_API_KEY` | `d8jc4r9r01qh6g3pfkn0` | API ключ Finnhub |
-| `CRON_SECRET_KEY` | `pulse-dev-key` (опционально) | Для /trigger/nsm |
+| `CRON_SECRET_KEY` | обязательно | Для /trigger/* и admin trigger endpoints |
 
 ### 8.2. База данных
 

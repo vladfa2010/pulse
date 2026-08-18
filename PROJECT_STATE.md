@@ -328,7 +328,7 @@ Flow создания:
 | `GET /backfill-tags?secret=` | Ретегирование статей без тегов |
 | `GET /backfill-translate?secret=` | Перевод EN заголовков (limit 50) |
 
-**Secret:** `pulse-dev-key` (или `CRON_SECRET_KEY` из env)
+**Secret:** значение переменной `CRON_SECRET_KEY` из Render Environment.
 
 ---
 

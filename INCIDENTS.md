@@ -329,7 +329,7 @@ GROUP BY llm_error;
 ```bash
 # Разовый вызов (auth: x-trigger-secret)
 curl -X POST https://pulse-api-bsov.onrender.com/cleanup-failed-articles \
-  -H "x-trigger-secret: pulse-dev-key"
+  -H "x-trigger-secret: <CRON_SECRET_KEY>"
 
 # Ответ:
 {"deleted": 9276, "message": "Removed 9276 articles with llm_error"}
@@ -555,9 +555,12 @@ app.get('/debug/...', requireAdmin, async (req, res) => { ... })
 // ❌ НЕПРАВИЛЬНО — если CRON_SECRET_KEY не установлен:
 if (secret === process.env.CRON_SECRET_KEY)  // null === undefined = false
 
-// ✅ ПРАВИЛЬНО — fallback на дефолтное значение:
-if (secret === (process.env.CRON_SECRET_KEY || 'pulse-dev-key'))
+// ✅ ПРАВИЛЬНО — приложение не стартует без CRON_SECRET_KEY (fail-fast):
+if (secret !== process.env.CRON_SECRET_KEY) {
+  return res.status(401).json({ error: 'Unauthorized' });
+}
 ```
+> **Обновление:** fallback на публичный дефолт запрещён. `CRON_SECRET_KEY` — обязательная переменная окружения, приложение не стартует без неё.
 
 #### ❌ Баг 3: SQL string concat с JSON
 ```sql
@@ -603,7 +606,7 @@ try {
 ```markdown
 ## Чеклист: Создание debug endpoint
 
-- [ ] Auth: использовать requireAdmin (JWT) ИЛИ secret с fallback
+- [ ] Auth: использовать requireAdmin (JWT) ИЛИ secret (равный `process.env.CRON_SECRET_KEY`)
 - [ ] SQL: jsonb_build_array/object вместо string concat
 - [ ] SQL: ::text cast для всех параметров в jsonb_build_object
 - [ ] SQL: try/catch для таблиц которые могут не существовать
@@ -620,7 +623,7 @@ app.get('/debug-tag/:tagId', async (req, res) => {
   const secret = req.query.secret as string;
   let isAdmin = false;
   
-  if (secret && secret === (process.env.CRON_SECRET_KEY || 'pulse-dev-key')) {
+  if (secret && secret === process.env.CRON_SECRET_KEY) {
     isAdmin = true;
   } else if (token) {
     try {
