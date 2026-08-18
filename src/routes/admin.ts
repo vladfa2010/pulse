@@ -327,6 +327,13 @@ router.post('/users/:id/change-plan', adminMiddleware, async (req: AuthRequest, 
     const sub = await getUserSubscription(targetUserId);
     const previousPlan = sub.plan;
 
+    // ADM-F: юзер обязан существовать — иначе UPDATE обновит 0 строк,
+    // а API соврёт success: true.
+    const exists = await query(`SELECT id FROM users WHERE id = $1`, [targetUserId]);
+    if (exists.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
     // DEFSUB-16: любой платной план обязан выставить expires_at —
     // это единственный источник истины для доступа (computeAccessState).
     // Продлеваем от текущего expires_at, если он в будущем, иначе от NOW().
@@ -389,6 +396,10 @@ router.post('/users/:id/extend-subscription', adminMiddleware, async (req: AuthR
       `SELECT subscription_expires_at FROM users WHERE id = $1`,
       [targetUserId]
     );
+    // ADM-F
+    if (previousResult.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
     const previousExpiresAt = previousResult.rows[0]?.subscription_expires_at || null;
 
     let newExpiresAt: Date;
