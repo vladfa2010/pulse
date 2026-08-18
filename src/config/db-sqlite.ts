@@ -244,6 +244,13 @@ export async function initSQLiteSchema(): Promise<void> {
     );
 
     CREATE INDEX IF NOT EXISTS idx_payments_promo ON payments(promo_code);
+    -- ADM-J: per-user платёжные lookup'ы и агрегаты (SQLite: без INCLUDE)
+    CREATE INDEX IF NOT EXISTS idx_payments_status_user_paid ON payments(status, user_id, paid_at DESC);
+    -- ADM-J: partial indexes для подписочных кронов
+    CREATE INDEX IF NOT EXISTS idx_users_scheduled_downgrade ON users(subscription_expires_at) WHERE scheduled_plan_downgrade IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_users_expires_at ON users(subscription_expires_at) WHERE subscription_expires_at IS NOT NULL;
+    -- ADM-J: сортировка admin users по created_at
+    CREATE INDEX IF NOT EXISTS idx_users_created_at ON users(created_at DESC);
 
     CREATE TABLE IF NOT EXISTS promo_codes (
       id TEXT PRIMARY KEY,

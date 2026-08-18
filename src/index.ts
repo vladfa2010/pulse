@@ -3389,6 +3389,16 @@ async function start() {
     { sql: `CREATE INDEX IF NOT EXISTS idx_securities_ticker_exchange ON securities(ticker, exchange)`, name: 'idx_securities_ticker_exchange' },
     // TZ-04 v4: functional index for case-insensitive email lookups (login / register / forgot-password / verify-code)
     { sql: `CREATE INDEX IF NOT EXISTS idx_users_lower_email ON users (LOWER(email))`, name: 'idx_users_lower_email' },
+    // ADM-J: per-user платёжные lookup'ы (автопродление: lastPayment) и агрегат платежей в /api/admin/users.
+    // (status, user_id, paid_at DESC): равенство status+user_id → порядок по paid_at для LIMIT 1;
+    // для GROUP BY user_id по status='completed' даёт сортированный index-only scan (amount в INCLUDE).
+    { sql: `CREATE INDEX IF NOT EXISTS idx_payments_status_user_paid ON payments(status, user_id, paid_at DESC) INCLUDE (amount)`, name: 'idx_payments_status_user_paid' },
+    // ADM-J: крон processScheduledDowngrades (каждые 5 мин) — частичный индекс, держит только строки с scheduled-даунгрейдом
+    { sql: `CREATE INDEX IF NOT EXISTS idx_users_scheduled_downgrade ON users(subscription_expires_at) WHERE scheduled_plan_downgrade IS NOT NULL`, name: 'idx_users_scheduled_downgrade' },
+    // ADM-J: grace/expiry-запросы sendSubscriptionReminders и pass-1 даунгрейдов (диапазоны по expires_at)
+    { sql: `CREATE INDEX IF NOT EXISTS idx_users_expires_at ON users(subscription_expires_at) WHERE subscription_expires_at IS NOT NULL`, name: 'idx_users_expires_at' },
+    // ADM-J: ORDER BY created_at DESC LIMIT 500 в GET /api/admin/users
+    { sql: `CREATE INDEX IF NOT EXISTS idx_users_created_at ON users(created_at DESC)`, name: 'idx_users_created_at' },
     // TZ-07 v2: composite index for tag-news lookups in getUserTagsFull
     { sql: `CREATE INDEX IF NOT EXISTS idx_news_tag_links_tag_news ON news_tag_links(tag_id, news_id)`, name: 'idx_news_tag_links_tag_news' },
   ];
