@@ -25,6 +25,7 @@ function sendMarketError(res: Response, err: any): void {
     finam_auth_failed: { status: 503, text: 'Ошибка авторизации в источнике данных' },
     finam_rate_limited: { status: 503, text: 'Превышен лимит запросов к источнику, попробуйте позже' },
     finam_maintenance: { status: 503, text: 'Источник данных на техобслуживании (05:00–06:15 МСК)' },
+    finam_not_found: { status: 404, text: err?.message || 'Инструмент не найден' },
     finam_bad_exchange: { status: 400, text: err?.message || 'Биржа не поддерживается' },
   };
   if (err?.message?.includes('not found')) {

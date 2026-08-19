@@ -69,19 +69,27 @@ function mapBar(bar: any): MarketCandle {
 }
 
 async function fetchBars(symbol: string, timeframe: string, startIso: string, endIso: string): Promise<MarketCandle[]> {
-  const res = await withFinamAuth((jwt) =>
-    axios.get(`${FINAM_BASE_URL}/v1/instruments/${encodeURIComponent(symbol)}/bars`, {
-      headers: { Authorization: jwt },
-      params: {
-        timeframe,
-        'interval.start_time': startIso,
-        'interval.end_time': endIso,
-      },
-      timeout: 15000,
-    })
-  );
-  const bars = res.data?.bars ?? [];
-  return bars.map(mapBar);
+  try {
+    const res = await withFinamAuth((jwt) =>
+      axios.get(`${FINAM_BASE_URL}/v1/instruments/${encodeURIComponent(symbol)}/bars`, {
+        headers: { Authorization: jwt },
+        params: {
+          timeframe,
+          'interval.start_time': startIso,
+          'interval.end_time': endIso,
+        },
+        timeout: 15000,
+      })
+    );
+    const bars = res.data?.bars ?? [];
+    return bars.map(mapBar);
+  } catch (err: any) {
+    // Finam signals unknown tickers as HTTP 404 {code:5} — normalize so routes map it to 404
+    if (err?.response?.status === 404) {
+      throw Object.assign(new Error(`Security not found: ${symbol}`), { code: 'finam_not_found' });
+    }
+    throw err;
+  }
 }
 
 function assertReady(): string {
@@ -163,9 +171,22 @@ const ASSETS_TTL_MS = 24 * 3600 * 1000;
 
 export async function getAssets(): Promise<any[]> {
   if (assetsCache && Date.now() - assetsCache.at < ASSETS_TTL_MS) return assetsCache.assets;
-  const res = await withFinamAuth((jwt) =>
-    axios.get(`${FINAM_BASE_URL}/v1/assets`, { headers: { Authorization: jwt }, timeout: 30000 })
-  );
+  const doFetch = () =>
+    withFinamAuth((jwt) =>
+      axios.get(`${FINAM_BASE_URL}/v1/assets`, { headers: { Authorization: jwt }, timeout: 30000 })
+    );
+  let res;
+  try {
+    res = await doFetch();
+  } catch (err: any) {
+    // Finam occasionally 500s on this large response ("transcoder's internal buffer...") — transient, retry once
+    if (err?.response?.status >= 500) {
+      await new Promise((r) => setTimeout(r, 2000));
+      res = await doFetch();
+    } else {
+      throw err;
+    }
+  }
   const assets = res.data?.assets ?? [];
   assetsCache = { at: Date.now(), assets };
   return assets;
