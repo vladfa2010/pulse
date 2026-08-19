@@ -17,6 +17,7 @@ import {
   getIntraday5min,
   getProvidersInfo,
   getExchanges,
+  getAssets,
   invalidateAssetsCache,
 } from '../services/market/marketRouter';
 import * as finamMarketAdapter from '../services/market/finamMarketAdapter';
@@ -242,6 +243,39 @@ router.get('/resolve', adminMiddleware, async (req, res) => {
   try {
     const matches = await finamMarketAdapter.resolveTicker(ticker);
     res.json({ ticker, count: matches.length, matches });
+  } catch (err: any) {
+    sendMarketError(res, err);
+  }
+});
+
+router.get('/search', adminMiddleware, async (req, res) => {
+  const q = String(req.query.q || '').trim();
+  const qUpper = q.toUpperCase();
+  if (qUpper.length < 2) return res.json({ q: qUpper, count: 0, matches: [] });
+
+  try {
+    const assets = await getAssets();
+    const qRu = q.toLowerCase();
+
+    const starts: any[] = [];
+    const contains: any[] = [];
+    const nameMatch: any[] = [];
+
+    for (const a of assets) {
+      if (a.is_archived) continue;
+      const t = String(a.ticker || '').toUpperCase();
+      const nm = String(a.name || '').toLowerCase();
+      if (t.startsWith(qUpper)) starts.push(a);
+      else if (t.includes(qUpper)) contains.push(a);
+      else if (qRu.length >= 3 && nm.includes(qRu)) nameMatch.push(a);
+      if (starts.length >= 15) break;
+    }
+
+    const matches = [...starts, ...contains, ...nameMatch]
+      .slice(0, 15)
+      .map((a: any) => ({ symbol: a.symbol, mic: a.mic, ticker: a.ticker, name: a.name, type: a.type }));
+
+    res.json({ q: qUpper, count: matches.length, matches });
   } catch (err: any) {
     sendMarketError(res, err);
   }
