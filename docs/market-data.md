@@ -3,13 +3,18 @@
 ## Активные провайдеры
 
 Единственный активный провайдер маркет-данных — **Finam Trade API** (`https://api.finam.ru`).
-Он обслуживает все биржи, которые сейчас используются в тегах:
+
+В тегах и портфеле используются алиасы:
 
 | Наша биржа | Finam MIC | Пример символа |
 |------------|-----------|----------------|
 | MOEX       | MISX      | `SBER@MISX`    |
 | NASDAQ     | XNGS      | `MDLN@XNGS`    |
 | NYSE       | XNYS      | `SECZ@XNYS`    |
+
+Роутер также принимает **любой валидный MIC из справочника Finam** (`GET /v1/exchanges`)
+напрямую, без предварительной регистрации алиаса. Например, `IMOEX@MISX` (индексы) или
+`7203@XTKS` (Tokyo Stock Exchange) работают через тот же Finam-адаптер.
 
 Адаптер MOEX ISS (`src/services/market/moexIssAdapter.ts`) сохранён в репозитории, но
 **вынесен из реестра провайдеров** на период отладки Finam. Чтобы вернуть его как резерв,
@@ -69,6 +74,11 @@ const req = client.request({ ':path': '/v1/assets', ':method': 'GET', authorizat
 
 ## Добавление новой биржи
 
+Если биржа нужна только в админ-табе / ручных проверках — ничего делать не надо,
+любой MIC из `GET /v1/exchanges` уже работает через `resolveMic()`.
+
+Если биржа должна получить человекочитаемый алиас в тегах и портфеле:
+
 1. Найти MIC через `GET /v1/exchanges` (или документацию Finam).
 2. Добавить строку в `EXCHANGE_TO_MIC` в `src/services/market/finamMarketAdapter.ts`.
 3. Добавить биржу в `SUPPORTED_EXCHANGES` и `PROVIDERS` в `src/services/market/marketRouter.ts`.
@@ -89,13 +99,23 @@ const req = client.request({ ':path': '/v1/assets', ':method': 'GET', authorizat
 
 ## Контракт API
 
-Админские эндпоинты:
+Админские эндпоинты (все под `adminMiddleware`, требуют авторизации администратора):
 
-- `GET /admin/market/candles_daily?ticker=SBER&exchange=MOEX&days=90`
-- `GET /admin/market/candles_intraday?ticker=SBER&exchange=MOEX&date=2026-08-18`
+| Метод | Путь | Назначение |
+|-------|------|------------|
+| GET | `/admin/market/candles_daily?ticker=SBER&exchange=MOEX&days=90` | Дневные свечи |
+| GET | `/admin/market/candles_intraday?ticker=SBER&exchange=MOEX&date=2026-08-18` | 5-минутные свечи |
+| GET | `/admin/market/providers` | Реестр провайдеров и их роли |
+| GET | `/admin/market/providers/status` | Живой health-check Finam |
+| GET | `/admin/market/test?ticker=SBER&exchange=MOEX&tf=daily` | Тест-запрос через роутер |
+| GET | `/admin/market/resolve?ticker=MDLN` | Точный резолвер по тикеру |
+| GET | `/admin/market/exchanges` | Список бирж Finam `{mic, name}` |
+| GET | `/admin/market/search?q=SB` | Автокомплит по тикерам/названиям |
+| POST | `/admin/market/cache/invalidate` | Сбросить кэш `/v1/assets` |
 
-Ответ содержит поле `provider: "finam"`. Исторический параметр `?provider=MOEX` в URL
-воспринимается как алиас для `exchange`; реальный источник данных всегда в поле `provider`.
+Параметр `exchange` понимает алиасы (`MOEX`, `NASDAQ`, `NYSE`) и любой валидный MIC
+из справочника Finam. Исторический параметр `?provider=MOEX` в URL воспринимается как
+алиас для `exchange`; реальный источник данных всегда в поле `provider` ответа.
 
 ### Маппинг ошибок Finam → HTTP
 
@@ -116,6 +136,31 @@ const req = client.request({ ':path': '/v1/assets', ':method': 'GET', authorizat
 
 - Маркет-дата — сервисный ключ, публичные котировки, кэширование, другие сценарии отказа.
 - Брокерский адаптер — per-user ключ, приватный портфель, обогащение названий бумаг, свои retry-политики.
+
+## Админ-таба Market Data
+
+Файл фронта: `src/pages/admin/MarketDataTab.tsx`.
+
+Вкладка содержит:
+1. **Реестр провайдеров** — Finam (primary) и MOEX ISS (disabled, код сохранён).
+2. **Health-check** — живой запрос `quotes/latest SBER@MISX` с latency; в maintenance-окно
+   отображается как жёлтое «ожидаемо».
+3. **Тест-запрос свечей** — выбор тикера, биржи (алиасы + 38 MIC из Finam) и таймфрейма
+   (`daily` / `m5`), результат с `provider: "finam"`.
+4. **Автокомплит тикеров** — локальный поиск по кэшированному `/v1/assets`, debounce 300 мс,
+   `< 2` символов не ищет. Выбор варианта подставляет тикер и биржу в тест-форму.
+5. **Обновить справочник** — ручной сброс кэша `/v1/assets`.
+
+### Resolve-first + MIC passthrough
+
+Flow табы построен на resolve-first:
+- админ вводит тикер в автокомплите;
+- система находит бумагу и её MIC;
+- клик автозаполняет форму тест-запроса;
+- если MIC покрыт алиасом (MISX/XNGS/XNYS) — используется алиас, иначе — сам MIC.
+
+Роутер (`marketRouter.ts`) пропускает любой валидный MIC к Finam-адаптеру через
+`resolveProvider()` / `resolveMic()`, поэтому ручной ввод MIC тоже работает.
 
 ## Smoke-тест
 
