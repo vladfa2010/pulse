@@ -4,7 +4,8 @@
  */
 
 import axios from 'axios';
-import { FINAM_BASE_URL, withFinamAuth, hasFinamKey, isInMaintenanceWindow } from './finamAuth';
+import http2 from 'http2';
+import { FINAM_BASE_URL, withFinamAuth, getJwt, dropJwt, hasFinamKey, isInMaintenanceWindow } from './finamAuth';
 import type { MarketCandle } from './utils';
 
 /** Our exchange codes -> Finam MIC (ISO 10383). Extend as new exchanges appear in tags. */
@@ -169,30 +170,70 @@ export async function getCurrentPrice(ticker: string, exchange: string): Promise
 let assetsCache: { at: number; assets: any[] } | null = null;
 const ASSETS_TTL_MS = 24 * 3600 * 1000;
 
+/**
+ * GET /v1/assets returns ~3.5MB; Finam's transcoder deterministically 500s on it
+ * over HTTP/1.1 (all axios/fetch/node-https clients). Over HTTP/2 it works.
+ * Node's built-in http2 client is used for this endpoint only.
+ */
+function http2GetJson(path: string, jwt: string, timeoutMs = 30000): Promise<{ status: number; data: any }> {
+  return new Promise((resolve, reject) => {
+    const client = http2.connect(FINAM_BASE_URL);
+    let status = 0;
+    let body = '';
+
+    const done = (err?: Error, statusCode = 0, payload = '') => {
+      client.close();
+      if (err) return reject(err);
+      try {
+        resolve({ status: statusCode, data: JSON.parse(payload) });
+      } catch (e: any) {
+        reject(new Error(`Finam http2: invalid JSON (status ${statusCode})`));
+      }
+    };
+
+    client.on('error', (e) => done(e));
+    const req = client.request({ ':path': path, ':method': 'GET', authorization: jwt });
+    req.setTimeout(timeoutMs, () => done(new Error('Finam http2: timeout')));
+    req.on('response', (headers) => { status = Number(headers[':status']) || 0; });
+    req.setEncoding('utf8');
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', () => done(undefined, status, body));
+    req.on('error', (e) => done(e));
+    req.end();
+  });
+}
+
 export async function getAssets(): Promise<any[]> {
   if (assetsCache && Date.now() - assetsCache.at < ASSETS_TTL_MS) return assetsCache.assets;
 
-  // /v1/assets is broken over HTTP/1.1: the ~3.5MB single response deterministically
-  // fails with 500 "transcoder's internal buffer size exceeds the configured limit".
-  // Node clients speak HTTP/1.1 — so we use the paginated /v1/assets/all instead:
-  // 3000 items per page, stable over HTTP/1.1. Includes archived/inactive instruments,
-  // so callers MUST keep filtering is_archived (resolveTicker already does).
-  const all: any[] = [];
-  let cursor: string | undefined;
-  for (let page = 0; page < 30; page++) { // safety cap; ~10-20 pages in practice
-    const res = await withFinamAuth((jwt) =>
-      axios.get(`${FINAM_BASE_URL}/v1/assets/all`, {
-        headers: { Authorization: jwt },
-        params: cursor ? { cursor } : {},
-        timeout: 30000,
-      })
-    );
-    all.push(...(res.data?.assets ?? []));
-    cursor = res.data?.next_cursor;
-    if (!cursor) break;
-  }
-  assetsCache = { at: Date.now(), assets: all };
-  return all;
+  // auth: reuse the same JWT lifecycle as the rest of the adapter
+  const call = async () => {
+    const jwt = await getJwt();
+    const { status, data } = await http2GetJson('/v1/assets', jwt);
+    if (status === 401 || (status === 500 && data?.code === 2)) {
+      dropJwt();
+      const jwt2 = await getJwt();
+      const retry = await http2GetJson('/v1/assets', jwt2);
+      if (retry.status !== 200) throw new Error(`Finam /v1/assets HTTP ${retry.status}`);
+      return retry.data;
+    }
+    if (status === 429) {
+      await new Promise((r) => setTimeout(r, 1000));
+      const jwt2 = await getJwt();
+      const retry = await http2GetJson('/v1/assets', jwt2);
+      if (retry.status !== 200) {
+        throw Object.assign(new Error('Finam rate limit exceeded (200 req/min)'), { code: 'finam_rate_limited' });
+      }
+      return retry.data;
+    }
+    if (status !== 200) throw new Error(`Finam /v1/assets HTTP ${status}`);
+    return data;
+  };
+
+  const data = await call();
+  const assets = data?.assets ?? [];
+  assetsCache = { at: Date.now(), assets };
+  return assets;
 }
 
 /** Manual invalidation for the admin tab (TZ-2): fresh IPOs/delistings appear without waiting 24h. */
