@@ -268,6 +268,10 @@ router.get('/search', adminMiddleware, async (req, res) => {
     const assets = await getAssets();
     const qRu = q.toLowerCase();
 
+    // ISIN is the most precise identifier; detect short ISIN prefixes like RU0009.
+    const isIsinQuery = /^[A-Z]{2}[A-Z0-9]{0,10}$/.test(qUpper) && /[0-9]/.test(qUpper);
+
+    const isinMatch: any[] = [];
     const starts: any[] = [];
     const contains: any[] = [];
     const nameMatch: any[] = [];
@@ -276,15 +280,19 @@ router.get('/search', adminMiddleware, async (req, res) => {
       if (a.is_archived) continue;
       const t = String(a.ticker || '').toUpperCase();
       const nm = String(a.name || '').toLowerCase();
+      if (isIsinQuery && String(a.isin || '').toUpperCase().startsWith(qUpper)) {
+        isinMatch.push(a);
+        continue;
+      }
       if (t.startsWith(qUpper)) starts.push(a);
       else if (t.includes(qUpper)) contains.push(a);
       else if (qRu.length >= 3 && nm.includes(qRu)) nameMatch.push(a);
       if (starts.length >= 15) break;
     }
 
-    const matches = [...starts, ...contains, ...nameMatch]
+    const matches = [...isinMatch, ...starts, ...contains, ...nameMatch]
       .slice(0, 15)
-      .map((a: any) => ({ symbol: a.symbol, mic: a.mic, ticker: a.ticker, name: a.name, type: a.type }));
+      .map((a: any) => ({ symbol: a.symbol, mic: a.mic, ticker: a.ticker, name: a.name, type: a.type, isin: a.isin }));
 
     res.json({ q: qUpper, count: matches.length, matches });
   } catch (err: any) {
