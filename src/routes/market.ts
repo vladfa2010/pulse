@@ -216,6 +216,11 @@ router.get('/test', adminMiddleware, async (req, res) => {
         candles: r.candles.length,
         first: r.candles[0] ?? null,
         last: r.candles[r.candles.length - 1] ?? null,
+        chart: {
+          times: r.candles.map((c) => c.time),
+          ohlc: r.candles.map((c) => [c.open, c.close, c.low, c.high]),
+          volumes: r.candles.map((c) => c.volume ?? 0),
+        },
       });
     }
     const r = await getDailyCandles(exchange, ticker, 30);
@@ -232,6 +237,11 @@ router.get('/test', adminMiddleware, async (req, res) => {
         r.candles.length === 0
           ? 'Пусто — тикер валиден, но в интервале нет торгов (выходные/приостановка). Несуществующий тикер Finam вернул бы 404.'
           : undefined,
+      chart: {
+        times: r.candles.map((c) => c.time),
+        ohlc: r.candles.map((c) => [c.open, c.close, c.low, c.high]),
+        volumes: r.candles.map((c) => c.volume ?? 0),
+      },
     });
   } catch (err: any) {
     sendMarketError(res, err);
