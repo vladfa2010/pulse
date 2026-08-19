@@ -30,13 +30,13 @@ const PROVIDERS: Record<string, MarketProvider> = {
   NYSE: finamMarketAdapter,
 };
 
-function getProvider(exchange: string): MarketProvider {
+async function resolveProvider(exchange: string): Promise<MarketProvider> {
   const key = exchange.toUpperCase();
   const provider = PROVIDERS[key];
-  if (!provider) {
-    throw new Error(`Exchange not supported: ${exchange}. Supported: ${SUPPORTED_EXCHANGES.join(', ')}`);
-  }
-  return provider;
+  if (provider) return provider;
+  // MIC passthrough: any valid Finam MIC is served by the Finam adapter
+  if (await finamMarketAdapter.isKnownMic(key)) return finamMarketAdapter;
+  throw new Error(`Exchange not supported: ${exchange}. Supported aliases: ${SUPPORTED_EXCHANGES.join(', ')} + any Finam MIC`);
 }
 
 export async function getDailyCandles(
@@ -44,7 +44,8 @@ export async function getDailyCandles(
   ticker: string,
   days?: number
 ): Promise<{ candles: MarketCandle[]; provider: ServedBy }> {
-  const candles = await getProvider(exchange).getDailyCandles(ticker.toUpperCase(), exchange.toUpperCase(), days);
+  const provider = await resolveProvider(exchange);
+  const candles = await provider.getDailyCandles(ticker.toUpperCase(), exchange.toUpperCase(), days);
   return { candles, provider: 'finam' };
 }
 
@@ -53,7 +54,8 @@ export async function getIntraday5min(
   ticker: string,
   date: string
 ): Promise<{ candles: MarketCandle[]; provider: ServedBy }> {
-  const candles = await getProvider(exchange).getIntraday5min(ticker.toUpperCase(), exchange.toUpperCase(), date);
+  const provider = await resolveProvider(exchange);
+  const candles = await provider.getIntraday5min(ticker.toUpperCase(), exchange.toUpperCase(), date);
   return { candles, provider: 'finam' };
 }
 
@@ -61,13 +63,12 @@ export async function getCurrentPrice(
   exchange: string,
   ticker: string
 ): Promise<{ price: number | null; provider: ServedBy }> {
-  const key = exchange.toUpperCase();
-  if (!SUPPORTED_EXCHANGES.includes(key)) return { price: null, provider: 'finam' };
   try {
-    const price = await getProvider(key).getCurrentPrice(ticker.toUpperCase(), key);
+    const provider = await resolveProvider(exchange);
+    const price = await provider.getCurrentPrice(ticker.toUpperCase(), exchange.toUpperCase());
     return { price, provider: 'finam' };
   } catch (err: any) {
-    console.error(`[MarketRouter] getCurrentPrice failed for ${ticker}@${key}:`, err.message);
+    console.error(`[MarketRouter] getCurrentPrice failed for ${ticker}@${exchange}:`, err.message);
     return { price: null, provider: 'finam' }; // batch price fetches must not throw (existing contract)
   }
 }

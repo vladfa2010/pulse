@@ -16,6 +16,7 @@ import {
   getDailyCandles,
   getIntraday5min,
   getProvidersInfo,
+  getExchanges,
   invalidateAssetsCache,
 } from '../services/market/marketRouter';
 import * as finamMarketAdapter from '../services/market/finamMarketAdapter';
@@ -117,6 +118,15 @@ router.get('/candles_intraday', adminMiddleware, async (req, res) => {
     });
   } catch (err: any) {
     console.error('[Market] candles_intraday error:', err.message);
+    sendMarketError(res, err);
+  }
+});
+
+router.get('/exchanges', adminMiddleware, async (_req, res) => {
+  try {
+    const exchanges = await getExchanges();
+    res.json({ exchanges });
+  } catch (err: any) {
     sendMarketError(res, err);
   }
 });

@@ -8,15 +8,42 @@ import http2 from 'http2';
 import { FINAM_BASE_URL, withFinamAuth, getJwt, dropJwt, hasFinamKey, isInMaintenanceWindow } from './finamAuth';
 import type { MarketCandle } from './utils';
 
-/** Our exchange codes -> Finam MIC (ISO 10383). Extend as new exchanges appear in tags. */
+/** Our exchange aliases -> Finam MIC (ISO 10383). */
 export const EXCHANGE_TO_MIC: Record<string, string> = {
   MOEX: 'MISX',
   NASDAQ: 'XNGS',
   NYSE: 'XNYS',
 };
 
-export function exchangeToMic(exchange: string): string | null {
-  return EXCHANGE_TO_MIC[exchange.toUpperCase()] ?? null;
+let exchangesCache: { at: number; list: { mic: string; name: string }[] } | null = null;
+const EXCHANGES_TTL_MS = 24 * 3600 * 1000;
+
+export async function getExchanges(): Promise<{ mic: string; name: string }[]> {
+  if (exchangesCache && Date.now() - exchangesCache.at < EXCHANGES_TTL_MS) return exchangesCache.list;
+  const res = await withFinamAuth((jwt) =>
+    axios.get(`${FINAM_BASE_URL}/v1/exchanges`, { headers: { Authorization: jwt }, timeout: 10000 })
+  );
+  const list = res.data?.exchanges ?? [];
+  exchangesCache = { at: Date.now(), list };
+  return list;
+}
+
+export async function isKnownMic(code: string): Promise<boolean> {
+  const c = code.toUpperCase();
+  const list = await getExchanges();
+  return list.some((e) => e.mic.toUpperCase() === c);
+}
+
+/**
+ * Resolve our exchange value to a Finam MIC:
+ *  1) alias from EXCHANGE_TO_MIC (MOEX -> MISX)
+ *  2) the value itself, if it is a valid MIC from the Finam exchange list (XHKG, XTSE, ...)
+ * Returns null for unknown values.
+ */
+export async function resolveMic(exchange: string): Promise<string | null> {
+  const key = exchange.toUpperCase();
+  if (EXCHANGE_TO_MIC[key]) return EXCHANGE_TO_MIC[key];
+  return (await isKnownMic(key)) ? key : null;
 }
 
 // --- TTL caches (pattern from moexIssAdapter; mandatory — Finam limit is 200 req/min) ---
@@ -107,7 +134,7 @@ function assertReady(): string {
 
 export async function getDailyCandles(ticker: string, exchange: string, days = 90): Promise<MarketCandle[]> {
   assertReady();
-  const mic = exchangeToMic(exchange);
+  const mic = await resolveMic(exchange);
   if (!mic) {
     throw Object.assign(new Error(`Exchange not supported by Finam: ${exchange}`), { code: 'finam_bad_exchange' });
   }
@@ -125,7 +152,7 @@ export async function getDailyCandles(ticker: string, exchange: string, days = 9
 
 export async function getIntraday5min(ticker: string, exchange: string, date: string): Promise<MarketCandle[]> {
   assertReady();
-  const mic = exchangeToMic(exchange);
+  const mic = await resolveMic(exchange);
   if (!mic) {
     throw Object.assign(new Error(`Exchange not supported by Finam: ${exchange}`), { code: 'finam_bad_exchange' });
   }
@@ -146,7 +173,7 @@ export async function getIntraday5min(ticker: string, exchange: string, date: st
 
 export async function getCurrentPrice(ticker: string, exchange: string): Promise<number | null> {
   assertReady();
-  const mic = exchangeToMic(exchange);
+  const mic = await resolveMic(exchange);
   if (!mic) return null;
   const symbol = `${ticker}@${mic}`;
   const key = cacheKey(ticker, exchange, 'px');
@@ -247,11 +274,4 @@ export async function resolveTicker(ticker: string): Promise<{ symbol: string; m
   return assets
     .filter((a: any) => a.ticker === t && !a.is_archived)
     .map((a: any) => ({ symbol: a.symbol, mic: a.mic, name: a.name, type: a.type }));
-}
-
-export async function getExchanges(): Promise<{ mic: string; name: string }[]> {
-  const res = await withFinamAuth((jwt) =>
-    axios.get(`${FINAM_BASE_URL}/v1/exchanges`, { headers: { Authorization: jwt }, timeout: 10000 })
-  );
-  return res.data?.exchanges ?? [];
 }
