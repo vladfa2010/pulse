@@ -35,17 +35,37 @@ FINAM_MARKET_SECRET=tapi_sk_...
   - `timeframe` — `TIME_FRAME_D` (дневки), `TIME_FRAME_M5` (5 минут).
   - `interval.start_time` / `interval.end_time` — ISO UTC.
 - Последняя цена: `GET /v1/instruments/{symbol}/quotes/latest`.
-- Справочники: `GET /v1/assets`, `GET /v1/exchanges`.
+- Справочник торговых инструментов: `GET /v1/assets` (**только по HTTP/2** — см. раздел ниже).
+- Справочник бирж: `GET /v1/exchanges`.
 
 ## Проверенные ловушки
 
 - Числа приходят в объектах `{ value: "276.54" }`.
 - Объём может быть в экспоненциальной записи (`"2.7871357E7"`) — используем `parseFloat`, не `parseInt`.
-- Несуществующий тикер с валидным MIC возвращает **HTTP 200 с пустым `bars: []`** — это валидный ответ.
+- Несуществующий тикер с валидным MIC возвращает **HTTP 404** `{ code: 5 }` — нормализуем в `finam_not_found`.
+- Пустой `bars: []` при HTTP 200 означает «тикер валиден, в интервале нет торгов» (выходные, приостановка) — это валидный ответ.
 - Символ без `@MIC` → HTTP 400.
 - Индексы (`IMOEX@MISX`) работают через тот же `/bars`.
 - Ежедневное техобслуживание Finam: **05:00–06:15 МСК**. В это окно роуты отдают 503 с кодом `finam_maintenance`.
 - Rate limit: ~200 запросов в минуту на метод.
+- `GET /v1/assets` возвращает ~3.5 МБ (~16 800 инструментов) одним ответом. По HTTP/1.1 Finam отдаёт **детерминированный 500** `"Response not transcoded because the transcoder's internal buffer size exceeds the configured limit"`. Node.js клиенты (axios, fetch, https) говорят по HTTP/1.1, поэтому этот эндпоинт ходит через встроенный модуль `http2` Node.js. Остальные эндпоинты мелкие и остаются на axios/HTTP/1.1.
+
+## Транспорт для `/v1/assets`
+
+Функция `getAssets()` в `src/services/market/finamMarketAdapter.ts` использует **HTTP/2**:
+
+```ts
+import http2 from 'http2';
+// ...
+const client = http2.connect(FINAM_BASE_URL);
+const req = client.request({ ':path': '/v1/assets', ':method': 'GET', authorization: jwt });
+```
+
+Причина: `GET /v1/assets` — единственный эндпоинт с большим ответом (~3.5 МБ). Finam по HTTP/1.1 отдаёт для него детерминированный 500, retry не помогает. HTTP/2 сжимает/фрагментирует ответ и Finam отдаёт 200 стабильно.
+
+Пробовавшиеся и отвергнутые варианты:
+- Retry на 500 — бесполезен (ошибка детерминированная).
+- `/v1/assets/all` (пагинация) — работает по HTTP/1.1, но возвращает 135 000+ инструментов включая архивные/OTC; полный обход не завершается за разумное время и `MDLN` находился только на ~43-й странице.
 
 ## Добавление новой биржи
 
@@ -85,8 +105,8 @@ FINAM_MARKET_SECRET=tapi_sk_...
 | `finam_auth_failed` | 503 | Ошибка авторизации в источнике данных |
 | `finam_rate_limited` | 503 | Превышен лимит запросов |
 | `finam_maintenance` | 503 | Техобслуживание 05:00–06:15 МСК |
+| `finam_not_found` | 404 | Инструмент не найден |
 | `finam_bad_exchange` | 400 | Биржа не поддерживается |
-| `not found` | 404 | Тикер не найден |
 | остальные | 502 | Сообщение из ошибки |
 
 ## Отделение от brokerApi/finamAdapter.ts
