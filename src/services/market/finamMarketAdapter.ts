@@ -268,6 +268,24 @@ export function invalidateAssetsCache(): void {
   assetsCache = null;
 }
 
+/** Состояние кеша справочника для админки (TZ-2.3). Не дёргает Finam. */
+export function getAssetsStatus(): {
+  loaded: boolean;
+  loadedAt: string | null;
+  expiresAt: string | null;
+  count: number;
+} {
+  if (!assetsCache || Date.now() - assetsCache.at >= ASSETS_TTL_MS) {
+    return { loaded: false, loadedAt: null, expiresAt: null, count: 0 };
+  }
+  return {
+    loaded: true,
+    loadedAt: new Date(assetsCache.at).toISOString(),
+    expiresAt: new Date(assetsCache.at + ASSETS_TTL_MS).toISOString(),
+    count: assetsCache.assets.length,
+  };
+}
+
 export async function resolveTicker(ticker: string): Promise<{ symbol: string; mic: string; name: string; type: string }[]> {
   const t = ticker.toUpperCase();
   const assets = await getAssets();

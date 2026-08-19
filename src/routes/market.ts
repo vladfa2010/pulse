@@ -19,6 +19,7 @@ import {
   getExchanges,
   getAssets,
   invalidateAssetsCache,
+  getAssetsStatus,
 } from '../services/market/marketRouter';
 import * as finamMarketAdapter from '../services/market/finamMarketAdapter';
 import { hasFinamKey, isInMaintenanceWindow } from '../services/market/finamAuth';
@@ -281,9 +282,13 @@ router.get('/search', adminMiddleware, async (req, res) => {
   }
 });
 
+router.get('/assets/status', adminMiddleware, (_req, res) => {
+  res.json(getAssetsStatus());
+});
+
 router.post('/cache/invalidate', adminMiddleware, async (_req, res) => {
   invalidateAssetsCache();
-  res.json({ ok: true });
+  res.json({ ok: true, status: getAssetsStatus() });
 });
 
 export default router;

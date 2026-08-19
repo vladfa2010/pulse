@@ -124,3 +124,4 @@ export const getAssets = () => finamMarketAdapter.getAssets();
 export const resolveTicker = (t: string) => finamMarketAdapter.resolveTicker(t);
 export const getExchanges = () => finamMarketAdapter.getExchanges();
 export const invalidateAssetsCache = () => finamMarketAdapter.invalidateAssetsCache();
+export const getAssetsStatus = () => finamMarketAdapter.getAssetsStatus();
