@@ -6,25 +6,31 @@
  * Selects data provider by exchange. Front-end passes exchange and ticker;
  * this module returns a unified response shape regardless of provider.
  *
- * v1: MOEX only. Future providers (Finnhub for NASDAQ/NYSE) register below.
+ * v2: Finam Trade API is the single active provider for MOEX, NASDAQ, NYSE.
+ * MOEX ISS adapter is kept in the repo but not registered; it can be restored
+ * by adding it back to PROVIDERS.
  */
 
-import * as moexIssAdapter from './moexIssAdapter';
+import * as finamMarketAdapter from './finamMarketAdapter';
 import type { MarketCandle } from './utils';
 
-export const SUPPORTED_EXCHANGES = ['MOEX'];
+export const SUPPORTED_EXCHANGES = ['MOEX', 'NASDAQ', 'NYSE'];
 
 export interface MarketProvider {
-  getDailyCandles(ticker: string, days?: number): Promise<MarketCandle[]>;
-  getIntraday5min(ticker: string, date: string): Promise<MarketCandle[]>;
-  getCurrentPrice(ticker: string): Promise<number | null>;
+  getDailyCandles(ticker: string, exchange: string, days?: number): Promise<MarketCandle[]>;
+  getIntraday5min(ticker: string, exchange: string, date: string): Promise<MarketCandle[]>;
+  getCurrentPrice(ticker: string, exchange: string): Promise<number | null>;
 }
 
+export type ServedBy = 'finam';
+
 const PROVIDERS: Record<string, MarketProvider> = {
-  MOEX: moexIssAdapter,
+  MOEX: finamMarketAdapter,
+  NASDAQ: finamMarketAdapter,
+  NYSE: finamMarketAdapter,
 };
 
-export function getProvider(exchange: string): MarketProvider {
+function getProvider(exchange: string): MarketProvider {
   const key = exchange.toUpperCase();
   const provider = PROVIDERS[key];
   if (!provider) {
@@ -33,20 +39,37 @@ export function getProvider(exchange: string): MarketProvider {
   return provider;
 }
 
-export async function getDailyCandles(exchange: string, ticker: string, days?: number): Promise<MarketCandle[]> {
-  return getProvider(exchange).getDailyCandles(ticker.toUpperCase(), days);
+export async function getDailyCandles(
+  exchange: string,
+  ticker: string,
+  days?: number
+): Promise<{ candles: MarketCandle[]; provider: ServedBy }> {
+  const candles = await getProvider(exchange).getDailyCandles(ticker.toUpperCase(), exchange.toUpperCase(), days);
+  return { candles, provider: 'finam' };
 }
 
-export async function getIntraday5min(exchange: string, ticker: string, date: string): Promise<MarketCandle[]> {
-  return getProvider(exchange).getIntraday5min(ticker.toUpperCase(), date);
+export async function getIntraday5min(
+  exchange: string,
+  ticker: string,
+  date: string
+): Promise<{ candles: MarketCandle[]; provider: ServedBy }> {
+  const candles = await getProvider(exchange).getIntraday5min(ticker.toUpperCase(), exchange.toUpperCase(), date);
+  return { candles, provider: 'finam' };
 }
 
-export async function getCurrentPrice(exchange: string, ticker: string): Promise<number | null> {
+export async function getCurrentPrice(
+  exchange: string,
+  ticker: string
+): Promise<{ price: number | null; provider: ServedBy }> {
   const key = exchange.toUpperCase();
-  if (!SUPPORTED_EXCHANGES.includes(key)) {
-    return null;
+  if (!SUPPORTED_EXCHANGES.includes(key)) return { price: null, provider: 'finam' };
+  try {
+    const price = await getProvider(key).getCurrentPrice(ticker.toUpperCase(), key);
+    return { price, provider: 'finam' };
+  } catch (err: any) {
+    console.error(`[MarketRouter] getCurrentPrice failed for ${ticker}@${key}:`, err.message);
+    return { price: null, provider: 'finam' }; // batch price fetches must not throw (existing contract)
   }
-  return getProvider(key).getCurrentPrice(ticker.toUpperCase());
 }
 
 export async function getCurrentPricesBatch(
@@ -69,7 +92,7 @@ export async function getCurrentPricesBatch(
     for (const item of chunk) {
       const key = `${item.ticker}@${item.exchange}`;
       try {
-        const price = await getCurrentPrice(item.exchange, item.ticker);
+        const { price } = await getCurrentPrice(item.exchange, item.ticker);
         result.set(key, price);
       } catch (err: any) {
         console.error(`[MarketRouter] getCurrentPrice failed for ${key}:`, err.message);
@@ -86,3 +109,17 @@ export async function getCurrentPricesBatch(
 
   return result;
 }
+
+export function getProvidersInfo() {
+  return {
+    primary: Object.keys(PROVIDERS).map((exchange) => ({ exchange, provider: 'finam' as const })),
+    fallback: [] as { exchange: string; provider: string }[], // ISS отключён на период отладки
+    supportedExchanges: SUPPORTED_EXCHANGES,
+  };
+}
+
+// Discovery helpers — exposed through the router so the admin tab does not import the adapter directly.
+export const getAssets = () => finamMarketAdapter.getAssets();
+export const resolveTicker = (t: string) => finamMarketAdapter.resolveTicker(t);
+export const getExchanges = () => finamMarketAdapter.getExchanges();
+export const invalidateAssetsCache = () => finamMarketAdapter.invalidateAssetsCache();

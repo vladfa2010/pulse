@@ -10,7 +10,7 @@
  *   GET /admin/market/candles_intraday
  */
 
-import { Router } from 'express';
+import { Router, Response } from 'express';
 import { adminMiddleware } from './admin';
 import { getDailyCandles, getIntraday5min } from '../services/market/marketRouter';
 import { formatMskLocal } from '../services/market/utils';
@@ -18,6 +18,30 @@ import { formatMskLocal } from '../services/market/utils';
 const router = Router();
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function sendMarketError(res: Response, err: any): void {
+  const byCode: Record<string, { status: number; text: string }> = {
+    finam_no_key: { status: 503, text: 'Маркет-данные не настроены на сервере (нет ключа)' },
+    finam_auth_failed: { status: 503, text: 'Ошибка авторизации в источнике данных' },
+    finam_rate_limited: { status: 503, text: 'Превышен лимит запросов к источнику, попробуйте позже' },
+    finam_maintenance: { status: 503, text: 'Источник данных на техобслуживании (05:00–06:15 МСК)' },
+    finam_bad_exchange: { status: 400, text: err?.message || 'Биржа не поддерживается' },
+  };
+  if (err?.message?.includes('not found')) {
+    res.status(404).json({ error: err.message });
+    return;
+  }
+  if (err?.message?.includes('not supported')) {
+    res.status(400).json({ error: err.message });
+    return;
+  }
+  const m = err?.code ? byCode[err.code] : undefined;
+  if (m) {
+    res.status(m.status).json({ error: m.text, code: err.code });
+    return;
+  }
+  res.status(502).json({ error: err?.message || 'Failed to fetch market data' });
+}
 
 router.get('/candles_daily', adminMiddleware, async (req, res) => {
   try {
@@ -31,7 +55,7 @@ router.get('/candles_daily', adminMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'ticker is required' });
     }
 
-    const candles = await getDailyCandles(exchange, ticker, days);
+    const { candles, provider } = await getDailyCandles(exchange, ticker, days);
     console.log(`[Market] candles_daily response for ${ticker}: ${candles.length} candles`);
 
     const fullDates = candles.map((c) => formatMskLocal(new Date(c.time)).slice(0, 10));
@@ -42,7 +66,7 @@ router.get('/candles_daily', adminMiddleware, async (req, res) => {
     res.json({
       ticker,
       exchange,
-      provider: 'moex-iss',
+      provider,
       days,
       days_labels: dayLabels,
       full_dates: fullDates,
@@ -51,13 +75,7 @@ router.get('/candles_daily', adminMiddleware, async (req, res) => {
     });
   } catch (err: any) {
     console.error('[Market] candles_daily error:', err.message);
-    if (err.message?.includes('not found')) {
-      return res.status(404).json({ error: err.message });
-    }
-    if (err.message?.includes('not supported')) {
-      return res.status(400).json({ error: err.message });
-    }
-    res.status(502).json({ error: err.message || 'Failed to fetch market data' });
+    sendMarketError(res, err);
   }
 });
 
@@ -74,7 +92,7 @@ router.get('/candles_intraday', adminMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
     }
 
-    const candles = await getIntraday5min(exchange, ticker, date);
+    const { candles, provider } = await getIntraday5min(exchange, ticker, date);
 
     const times = candles.map((c) => formatMskLocal(new Date(c.time)).slice(11, 16));
     const ohlc = candles.map((c) => [c.open, c.close, c.low, c.high]);
@@ -83,7 +101,7 @@ router.get('/candles_intraday', adminMiddleware, async (req, res) => {
     res.json({
       ticker,
       exchange,
-      provider: 'moex-iss',
+      provider,
       date,
       times,
       ohlc,
@@ -91,13 +109,7 @@ router.get('/candles_intraday', adminMiddleware, async (req, res) => {
     });
   } catch (err: any) {
     console.error('[Market] candles_intraday error:', err.message);
-    if (err.message?.includes('not found')) {
-      return res.status(404).json({ error: err.message });
-    }
-    if (err.message?.includes('not supported')) {
-      return res.status(400).json({ error: err.message });
-    }
-    res.status(502).json({ error: err.message || 'Failed to fetch intraday data' });
+    sendMarketError(res, err);
   }
 });
 
