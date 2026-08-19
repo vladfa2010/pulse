@@ -171,25 +171,28 @@ const ASSETS_TTL_MS = 24 * 3600 * 1000;
 
 export async function getAssets(): Promise<any[]> {
   if (assetsCache && Date.now() - assetsCache.at < ASSETS_TTL_MS) return assetsCache.assets;
-  const doFetch = () =>
-    withFinamAuth((jwt) =>
-      axios.get(`${FINAM_BASE_URL}/v1/assets`, { headers: { Authorization: jwt }, timeout: 30000 })
+
+  // /v1/assets is broken over HTTP/1.1: the ~3.5MB single response deterministically
+  // fails with 500 "transcoder's internal buffer size exceeds the configured limit".
+  // Node clients speak HTTP/1.1 — so we use the paginated /v1/assets/all instead:
+  // 3000 items per page, stable over HTTP/1.1. Includes archived/inactive instruments,
+  // so callers MUST keep filtering is_archived (resolveTicker already does).
+  const all: any[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < 30; page++) { // safety cap; ~10-20 pages in practice
+    const res = await withFinamAuth((jwt) =>
+      axios.get(`${FINAM_BASE_URL}/v1/assets/all`, {
+        headers: { Authorization: jwt },
+        params: cursor ? { cursor } : {},
+        timeout: 30000,
+      })
     );
-  let res;
-  try {
-    res = await doFetch();
-  } catch (err: any) {
-    // Finam occasionally 500s on this large response ("transcoder's internal buffer...") — transient, retry once
-    if (err?.response?.status >= 500) {
-      await new Promise((r) => setTimeout(r, 2000));
-      res = await doFetch();
-    } else {
-      throw err;
-    }
+    all.push(...(res.data?.assets ?? []));
+    cursor = res.data?.next_cursor;
+    if (!cursor) break;
   }
-  const assets = res.data?.assets ?? [];
-  assetsCache = { at: Date.now(), assets };
-  return assets;
+  assetsCache = { at: Date.now(), assets: all };
+  return all;
 }
 
 /** Manual invalidation for the admin tab (TZ-2): fresh IPOs/delistings appear without waiting 24h. */
