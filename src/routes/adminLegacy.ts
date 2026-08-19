@@ -807,6 +807,7 @@ router.get('/tags/:tagId', adminMiddleware, async (req, res) => {
       })),
       subscribers: subscribersResult.rows,
       subscriber_count: subscribersResult.rows.length,
+      market,
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
