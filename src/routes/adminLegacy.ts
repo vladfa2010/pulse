@@ -6,6 +6,7 @@ import { adminCached, adminCacheInvalidate } from '../utils/adminCache';
 import { setCachedPopularTags } from '../utils/tagCache';
 import marketRoutes from './market';
 import tagMarketRoutes from './tagMarket';
+import * as marketRouter from '../services/market/marketRouter';
 import { isUserEventType } from '../types/events';
 import {
   getAdminTgSettings,
@@ -643,6 +644,7 @@ router.get('/tags/:tagId', adminMiddleware, async (req, res) => {
     let synonymsRu: string[] = [];
     let synonymsEn: string[] = [];
     let exchange = null;
+    let symbol = null;
     let trend = null;
     let sector = null;
     let sectors: string[] = [];
@@ -667,6 +669,7 @@ router.get('/tags/:tagId', adminMiddleware, async (req, res) => {
       synonymsRu  = ed.synonyms_ru   || [];
       synonymsEn  = ed.synonyms_en   || [];
       exchange    = ed.exchange      || null;
+      symbol      = ed.symbol        || null;
       trend       = ed.trend         || null;
       sector      = ed.sector        || null;
       sectors     = ed.sectors       || (ed.sector ? [ed.sector] : []);
@@ -732,6 +735,33 @@ router.get('/tags/:tagId', adminMiddleware, async (req, res) => {
       ORDER BY p.created_at DESC
     `, [tagId]);
 
+    // Market block: resolved instrument for chart/price widgets
+    let market: any = { symbol: null, mic: null, source: 'none', ambiguous: false, candidates: [] };
+    if (ticker) {
+      try {
+        if (symbol) {
+          market = { symbol, mic: symbol.split('@')[1] || null, source: 'saved', ambiguous: false, candidates: [] };
+        } else {
+          const matches = await marketRouter.resolveTicker(ticker);
+          if (matches.length === 0) {
+            market = { symbol: null, mic: null, source: 'none', ambiguous: false, candidates: [] };
+          } else {
+            const best = matches.find((m) => m.mic === 'MISX') ?? matches[0];
+            market = {
+              symbol: null,
+              mic: best.mic,
+              source: 'auto',
+              ambiguous: matches.length > 1,
+              candidates: matches.slice(0, 5),
+            };
+          }
+        }
+      } catch (err: any) {
+        console.error(`[admin/tags/:tagId] market resolve failed for ${tagId}:`, err.message);
+        market = null;
+      }
+    }
+
     res.json({
       tag: {
         tag_id: tag.tag_id,
@@ -747,6 +777,7 @@ router.get('/tags/:tagId', adminMiddleware, async (req, res) => {
         wikipedia_url: wikipediaUrl,
         country,
         isin,
+        symbol,
         description,
         description_ru: description,
         key_products: keyProducts,
@@ -790,6 +821,7 @@ router.get('/tags/:tagId', adminMiddleware, async (req, res) => {
 const TAG_UPDATE_RULES: Record<string, any> = {
   tag_type: { type: 'enum', values: ['company', 'ticker', 'sector', 'trend', 'country', 'commodity', 'index', 'person', 'currency'] },
   ticker: { type: 'string', min: 1, max: 20, pattern: /^[A-Z0-9\.\-]+$/, optional: true },
+  symbol: { type: 'string', max: 40, pattern: /^[A-Z0-9.\-]+@[A-Z0-9]+$/, optional: true },
   website: { type: 'url', max: 500, optional: true },
   websites: { type: 'array', maxItems: 10, items: { type: 'url', max: 500 }, optional: true },
   wikipedia_url: { type: 'url', max: 500, optional: true },
@@ -896,6 +928,11 @@ router.put('/tags/:tagId', adminMiddleware, async (req, res) => {
       }
     }
 
+    // TZ-2.7: ticker must be chosen from the instrument search (symbol required).
+    if (updates.ticker && !updates.symbol) {
+      errors.ticker = 'выберите инструмент из подсказок';
+    }
+
     if (Object.keys(errors).length > 0) {
       return res.status(400).json({ error: 'Validation failed', errors });
     }
@@ -951,7 +988,7 @@ router.put('/tags/:tagId', adminMiddleware, async (req, res) => {
     }
 
     // Build enriched_data patch in JS (SQLite + PostgreSQL compatible)
-    const jsonbFields = ['ticker', 'website', 'description_ru', 'key_products', 'related_tags', 'synonyms_ru', 'synonyms_en', 'exchange', 'trend', 'sector', 'websites', 'wikipedia_url', 'country', 'isin', 'sectors', 'trends', 'geo_countries', 'geo_regions', 'geo_cities'];
+    const jsonbFields = ['ticker', 'symbol', 'website', 'description_ru', 'key_products', 'related_tags', 'synonyms_ru', 'synonyms_en', 'exchange', 'trend', 'sector', 'websites', 'wikipedia_url', 'country', 'isin', 'sectors', 'trends', 'geo_countries', 'geo_regions', 'geo_cities'];
     // Normalize empty strings to null (INC-004: empty string !== null in JSONB)
     for (const f of jsonbFields) {
       if (updates[f] === '') updates[f] = null;
