@@ -645,6 +645,7 @@ router.get('/tags/:tagId', adminMiddleware, async (req, res) => {
     let synonymsEn: string[] = [];
     let exchange = null;
     let symbol = null;
+    let mic = null;
     let trend = null;
     let sector = null;
     let sectors: string[] = [];
@@ -670,6 +671,7 @@ router.get('/tags/:tagId', adminMiddleware, async (req, res) => {
       synonymsEn  = ed.synonyms_en   || [];
       exchange    = ed.exchange      || null;
       symbol      = ed.symbol        || null;
+      mic         = ed.mic           || null;
       trend       = ed.trend         || null;
       sector      = ed.sector        || null;
       sectors     = ed.sectors       || (ed.sector ? [ed.sector] : []);
@@ -740,7 +742,7 @@ router.get('/tags/:tagId', adminMiddleware, async (req, res) => {
     if (ticker) {
       try {
         if (symbol) {
-          market = { symbol, mic: symbol.split('@')[1] || null, source: 'saved', ambiguous: false, candidates: [] };
+          market = { symbol, mic: mic || symbol.split('@')[1] || null, source: 'saved', ambiguous: false, candidates: [] };
         } else {
           const matches = await marketRouter.resolveTicker(ticker);
           if (matches.length === 0) {
@@ -778,6 +780,7 @@ router.get('/tags/:tagId', adminMiddleware, async (req, res) => {
         country,
         isin,
         symbol,
+        mic,
         description,
         description_ru: description,
         key_products: keyProducts,
@@ -835,6 +838,7 @@ const TAG_UPDATE_RULES: Record<string, any> = {
   synonyms_en: { type: 'array', maxItems: 20, items: { type: 'string', max: 100 }, optional: true },
   keywords: { type: 'array', maxItems: 100, items: { type: 'string', max: 100 }, optional: true },
   exchange: { type: 'string', max: 50, pattern: /^[A-Z][A-Za-z\.\-]*$/, optional: true },
+  mic: { type: 'string', min: 4, max: 8, pattern: /^[A-Z0-9]+$/, optional: true },
   trend:    { type: 'string', max: 100, optional: true },
   sector:   { type: 'string', max: 100, optional: true },
   trends:   { type: 'array', maxItems: 10, items: { type: 'string', max: 100 }, optional: true },
@@ -953,6 +957,18 @@ router.put('/tags/:tagId', adminMiddleware, async (req, res) => {
       }
     }
 
+    // TZ-2.10: symbol is source of truth; derive or validate mic
+    if (updates.symbol && !updates.mic) {
+      updates.mic = updates.symbol.split('@')[1] || null;
+    }
+    if (updates.mic) updates.mic = String(updates.mic).toUpperCase();
+    if (updates.symbol && updates.mic && updates.symbol.split('@')[1] !== updates.mic) {
+      errors.mic = `mic не совпадает с symbol (${updates.symbol})`;
+    }
+    if (Object.keys(errors).length > 0) {
+      return res.status(400).json({ error: 'Validation failed', errors });
+    }
+
     // Auto-fix URL: add https:// if no protocol
     if (updates.website && !updates.website.match(/^https?:\/\//)) {
       updates.website = 'https://' + updates.website;
@@ -989,7 +1005,7 @@ router.put('/tags/:tagId', adminMiddleware, async (req, res) => {
     }
 
     // Build enriched_data patch in JS (SQLite + PostgreSQL compatible)
-    const jsonbFields = ['ticker', 'symbol', 'website', 'description_ru', 'key_products', 'related_tags', 'synonyms_ru', 'synonyms_en', 'exchange', 'trend', 'sector', 'websites', 'wikipedia_url', 'country', 'isin', 'sectors', 'trends', 'geo_countries', 'geo_regions', 'geo_cities'];
+    const jsonbFields = ['ticker', 'symbol', 'mic', 'website', 'description_ru', 'key_products', 'related_tags', 'synonyms_ru', 'synonyms_en', 'exchange', 'trend', 'sector', 'websites', 'wikipedia_url', 'country', 'isin', 'sectors', 'trends', 'geo_countries', 'geo_regions', 'geo_cities'];
     // Normalize empty strings to null (INC-004: empty string !== null in JSONB)
     for (const f of jsonbFields) {
       if (updates[f] === '') updates[f] = null;
