@@ -7,6 +7,7 @@ import axios from 'axios';
 import http2 from 'http2';
 import { FINAM_BASE_URL, withFinamAuth, getJwt, dropJwt, hasFinamKey, isInMaintenanceWindow } from './finamAuth';
 import type { MarketCandle } from './utils';
+import { zonedMidnightToUtc, micTimezone } from './exchangeTimezones';
 
 /** Our exchange aliases -> Finam MIC (ISO 10383). */
 export const EXCHANGE_TO_MIC: Record<string, string> = {
@@ -160,8 +161,9 @@ export async function getIntraday5min(ticker: string, exchange: string, date: st
   const hit = fromCache(intradayCache, key);
   if (hit) return hit;
 
-  // `date` is an MSK calendar day (YYYY-MM-DD) as used by the frontend.
-  const start = new Date(`${date}T00:00:00+03:00`);
+  // `date` is a calendar day (YYYY-MM-DD) in the exchange's own timezone.
+  const tz = micTimezone(mic);
+  const start = zonedMidnightToUtc(date, tz);
   const end = new Date(start.getTime() + 24 * 3600 * 1000);
   const candles = await fetchBars(`${ticker}@${mic}`, 'TIME_FRAME_M5', start.toISOString(), end.toISOString());
   const ttl = candles.length === 0

@@ -24,6 +24,7 @@ import {
 import * as finamMarketAdapter from '../services/market/finamMarketAdapter';
 import { hasFinamKey, isInMaintenanceWindow } from '../services/market/finamAuth';
 import { formatMskLocal } from '../services/market/utils';
+import { MIC_TIMEZONE, getTimezoneWarnings } from '../services/market/exchangeTimezones';
 
 const router = Router();
 
@@ -307,6 +308,25 @@ router.get('/assets/status', adminMiddleware, (_req, res) => {
 router.post('/cache/invalidate', adminMiddleware, async (_req, res) => {
   invalidateAssetsCache();
   res.json({ ok: true, status: getAssetsStatus() });
+});
+
+/**
+ * GET /admin/market/timezones
+ * All Finam exchanges with configured timezone + fallback warnings (TZ-3.1).
+ */
+router.get('/timezones', adminMiddleware, async (_req, res) => {
+  try {
+    const exchanges = await getExchanges();
+    const rows = exchanges.map((e) => ({
+      mic: e.mic,
+      name: e.name,
+      timezone: MIC_TIMEZONE[e.mic.toUpperCase()] ?? null,
+      covered: !!MIC_TIMEZONE[e.mic.toUpperCase()],
+    }));
+    res.json({ rows, warnings: getTimezoneWarnings() });
+  } catch (err: any) {
+    sendMarketError(res, err);
+  }
 });
 
 export default router;
