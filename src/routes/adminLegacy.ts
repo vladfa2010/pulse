@@ -1123,6 +1123,8 @@ router.put('/tags/:tagId', adminMiddleware, async (req, res) => {
       created_at: updated.created_at,
       is_verified: updated.is_verified === true || updated.is_verified === 1,
       ticker: ed.ticker || null,
+      symbol: ed.symbol || null,
+      mic: ed.mic || null,
       website: ed.website || null,
       websites: ed.websites || (ed.website ? [ed.website] : []),
       wikipedia_url: ed.wikipedia_url || null,
