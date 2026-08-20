@@ -6,6 +6,8 @@
 > Поиск инструмента: `pulse-frontend/src/components/admin/InstrumentSearchInput.tsx`
 > Бэкенд: `pulse-backend/src/routes/adminLegacy.ts` (`GET/PUT /admin/tags/:tagId`)
 > Статус: ✅ Finam-роутинг, поиск инструмента, свободный тикер и Market Timeline работают в проде.
+>
+> См. также: публичный график реакции цены в карточке новости описан в `docs/market-data.md` (TZ-3 / TZ-3.1).
 
 ---
 
@@ -113,6 +115,7 @@ GET /admin/tags/:tagId/articles-by-day?date=2026-08-20
 - Параметр `exchange` понимает алиасы (`MOEX`, `NASDAQ`, `NYSE`) и любой валидный MIC из справочника Finam.
 - Реальный источник данных — **Finam Trade API** (primary). Адаптер MOEX ISS сохранён в коде, но вынесен из реестра провайдеров.
 - Если `symbol` сохранён в теге — `mic` берётся из него. Если только `ticker` — система резолвит тикер через `marketRouter.resolveTicker()` и берёт лучший матч (приоритет `MISX`).
+- В админском таймлайне подписи оси и выбор дня по умолчанию используют `Europe/Moscow`. Публичный график реакции цены в карточке новости (TZ-3.1) использует таймзону конкретной биржи инструмента.
 
 ### 4.3 Управление тегом
 
@@ -210,8 +213,9 @@ useEffect(() => { chart.setOption(option, true) }, [candles, dailyStats, chartRe
 - `pulse-backend/src/routes/tagMarket.ts`
 - `pulse-backend/src/services/market/marketRouter.ts`
 - `pulse-backend/src/services/market/finamMarketAdapter.ts`
+- `pulse-backend/src/services/market/exchangeTimezones.ts`
 - `pulse-backend/graphify-out/tag-card-usage-flow.mmd`
 
 ---
 
-*Последние изменения: TZ-2.13 (free-text query wire), TZ-2.12 (free-text ticker), TZ-2.11 (symbol/mic in PUT response), TZ-2.10 (editable MIC), TZ-2.9 (exchange alias), TZ-2.7 (market block + instrument search), TZ-2.5 (provider→exchange).*
+*Последние изменения: TZ-3.1 (exchange timezones), TZ-3 (news reaction chart), TZ-2.13 (free-text query wire), TZ-2.12 (free-text ticker), TZ-2.11 (symbol/mic in PUT response), TZ-2.10 (editable MIC), TZ-2.9 (exchange alias), TZ-2.7 (market block + instrument search), TZ-2.5 (provider→exchange).*

@@ -1,16 +1,18 @@
 # Маркет-дата (свечи и котировки)
 
+> Последнее обновление: 2026-08-20 (TZ-3 / TZ-3.1 — публичный график реакции цены в карточке новости и таймзоны бирж).
+
 ## Активные провайдеры
 
 Единственный активный провайдер маркет-данных — **Finam Trade API** (`https://api.finam.ru`).
 
 В тегах и портфеле используются алиасы:
 
-| Наша биржа | Finam MIC | Пример символа |
-|------------|-----------|----------------|
-| MOEX       | MISX      | `SBER@MISX`    |
-| NASDAQ     | XNGS      | `MDLN@XNGS`    |
-| NYSE       | XNYS      | `SECZ@XNYS`    |
+| Наша биржа | Finam MIC | Пример символа | IANA таймзона (TZ-3.1) |
+|------------|-----------|----------------|------------------------|
+| MOEX       | MISX      | `SBER@MISX`    | `Europe/Moscow`        |
+| NASDAQ     | XNGS      | `MDLN@XNGS`    | `America/New_York`     |
+| NYSE       | XNYS      | `SECZ@XNYS`    | `America/New_York`     |
 
 Роутер также принимает **любой валидный MIC из справочника Finam** (`GET /v1/exchanges`)
 напрямую, без предварительной регистрации алиаса. Например, `IMOEX@MISX` (индексы) или
@@ -82,7 +84,30 @@ const req = client.request({ ':path': '/v1/assets', ':method': 'GET', authorizat
 1. Найти MIC через `GET /v1/exchanges` (или документацию Finam).
 2. Добавить строку в `EXCHANGE_TO_MIC` в `src/services/market/finamMarketAdapter.ts`.
 3. Добавить биржу в `SUPPORTED_EXCHANGES` и `PROVIDERS` в `src/services/market/marketRouter.ts`.
-4. Перезапустить деплой.
+4. Добавить таймзону в `MIC_TIMEZONE` в `src/services/market/exchangeTimezones.ts`.
+5. Перезапустить деплой.
+
+## Таймзоны бирж (TZ-3.1)
+
+Файл: `src/services/market/exchangeTimezones.ts`.
+
+Каждому MIC сопоставлена IANA таймзона:
+
+```ts
+export const MIC_TIMEZONE: Record<string, string> = {
+  MISX: 'Europe/Moscow', RUSX: 'Europe/Moscow', SPBX: 'Europe/Moscow',
+  XNGS: 'America/New_York', XNYS: 'America/New_York', ARCX: 'America/New_York',
+  // ...
+};
+```
+
+Публичный график реакции цены (`/api/market/news-chart`) использует эту мапу:
+
+- `dateInTz(iso, tz)` — дата публикации новости в таймзоне биржи инструмента.
+- `zonedMidnightToUtc(date, tz)` — переводит полночь биржевого дня в UTC, корректно обрабатывая DST.
+- Неизвестный MIC → `UTC` + `console.warn` + счётчик попаданий для `/admin/market/timezones`.
+
+Админ-таба Market Data показывает покрытие таймзон: `покрыто N из 38`, таблица `MIC | Биржа | Таймзона` и жёлтую плашку с MIC, для которых сработал fallback.
 
 ## Кэширование
 
@@ -96,10 +121,49 @@ const req = client.request({ ':path': '/v1/assets', ':method': 'GET', authorizat
 | Последняя цена | 1 мин |
 | Пустой результат (нет тикера) | 15 мин |
 | Справочник `/v1/assets` | 24 ч, прогрев при старте сервера (TZ-2.14), ручная инвалидация через админ-роут |
+| Справочник бирж `/v1/exchanges` | 24 ч |
 
 ## Контракт API
 
-Админские эндпоинты (все под `adminMiddleware`, требуют авторизации администратора):
+### Публичные эндпоинты (TZ-3)
+
+Монтируются под `/api/market`, не требуют авторизации, попадают под общий `apiLimiter`.
+
+| Метод | Путь | Назначение |
+|-------|------|------------|
+| GET | `/api/market/news-chart?news_id=<uuid>` | 5-минутные свечи для тегов новости с моментом публикации |
+
+**Ответ `/api/market/news-chart`:**
+
+```json
+{
+  "published_at": "2026-08-20T10:15:00Z",
+  "instruments": [
+    {
+      "tag_id": "sber",
+      "tag_name": "Сбербанк",
+      "symbol": "SBER@MISX",
+      "date": "2026-08-20",
+      "shifted": false,
+      "timezone": "Europe/Moscow",
+      "exchange_mic": "MISX",
+      "exchange_name": "Московская биржа",
+      "times": ["2026-08-20T07:00:00.000Z", "..."],
+      "ohlc": [[273.1, 273.5, 273.0, 273.6], "..."],
+      "volumes": [12345, "..."]
+    }
+  ]
+}
+```
+
+- Возвращает до 3 инструментов в порядке `matched_tags` новости.
+- `shifted: true` — новость вышла вне торговой сессии; `date` указывает на ближайший торговый день (сначала ищем назад, потом вперёд).
+- Если у новости нет тегов с инструментом → `{ instruments: [] }`.
+- Глобальные ошибки Finam (нет ключа, техобслуживание, rate limit) → 503 `{ error: 'market_unavailable' }`.
+
+### Админские эндпоинты
+
+Все под `adminMiddleware`, требуют авторизации администратора:
 
 | Метод | Путь | Назначение |
 |-------|------|------------|
@@ -111,6 +175,7 @@ const req = client.request({ ':path': '/v1/assets', ':method': 'GET', authorizat
 | GET | `/admin/market/resolve?ticker=MDLN` | Точный резолвер по тикеру |
 | GET | `/admin/market/exchanges` | Список бирж Finam `{mic, name}` |
 | GET | `/admin/market/search?q=SB` | Автокомплит по тикерам/названиям |
+| GET | `/admin/market/timezones` | Покрытие таймзон бирж (TZ-3.1) |
 | POST | `/admin/market/cache/invalidate` | Сбросить кэш `/v1/assets` |
 
 Параметр `exchange` понимает алиасы (`MOEX`, `NASDAQ`, `NYSE`) и любой валидный MIC
@@ -128,6 +193,21 @@ const req = client.request({ ':path': '/v1/assets', ':method': 'GET', authorizat
 | `finam_not_found` | 404 | Инструмент не найден |
 | `finam_bad_exchange` | 400 | Биржа не поддерживается |
 | остальные | 502 | Сообщение из ошибки |
+
+## График реакции цены в карточке новости (TZ-3 / TZ-3.1)
+
+Файлы:
+- Бэкенд: `src/routes/marketPublic.ts`.
+- Фронт: `src/components/NewsCard.tsx`, `src/components/NewsReactionChart.tsx`, `src/components/CandleChart.tsx`.
+
+Логика:
+
+1. `NewsCard` при монтировании запрашивает `/api/market/news-chart?news_id=<id>`.
+2. Если у новости есть теги с инструментом (`symbol` или `ticker`+`mic`) — рисуется свёрнутый 5-минутный график высотой 180px.
+3. `CandleChart` получает опциональный `markTime` (UTC ISO публикации) и рисует янтарную точку на свече, ближайшей к моменту публикации.
+4. Подписи оси и выбор торгового дня используют таймзону биржи инструмента (TZ-3.1).
+5. Если инструментов несколько — табы переключения по тикеру.
+6. Если новость вне сессии — пометка «вне сессии — показан ближайший день YYYY-MM-DD» и точка не рисуется.
 
 ## Отделение от brokerApi/finamAdapter.ts
 
@@ -162,11 +242,13 @@ if (process.env.FINAM_MARKET_SECRET) {
 1. **Реестр провайдеров** — Finam (primary) и MOEX ISS (disabled, код сохранён).
 2. **Health-check** — живой запрос `quotes/latest SBER@MISX` с latency; в maintenance-окно
    отображается как жёлтое «ожидаемо».
-3. **Тест-запрос свечей** — выбор тикера, биржи (алиасы + 38 MIC из Finam) и таймфрейма
+3. **Таймзоны бирж** (TZ-3.1) — сворачиваемый блок с таблицей `MIC | Биржа | Таймзона` и
+   жёлтой плашкой fallback-MIC из `warnings`.
+4. **Тест-запрос свечей** — выбор тикера, биржи (алиасы + 38 MIC из Finam) и таймфрейма
    (`daily` / `m5`), результат с `provider: "finam"`.
-4. **Автокомплит тикеров** — локальный поиск по кэшированному `/v1/assets`, debounce 300 мс,
+5. **Автокомплит тикеров** — локальный поиск по кэшированному `/v1/assets`, debounce 300 мс,
    `< 2` символов не ищет. Выбор варианта подставляет тикер и биржу в тест-форму.
-5. **Обновить справочник** — ручной сброс кэша `/v1/assets`.
+6. **Обновить справочник** — ручной сброс кэша `/v1/assets`.
 
 ### Resolve-first + MIC passthrough
 
@@ -178,6 +260,18 @@ Flow табы построен на resolve-first:
 
 Роутер (`marketRouter.ts`) пропускает любой валидный MIC к Finam-адаптеру через
 `resolveProvider()` / `resolveMic()`, поэтому ручной ввод MIC тоже работает.
+
+## Связанные файлы
+
+- `pulse-backend/src/routes/marketPublic.ts`
+- `pulse-backend/src/routes/market.ts`
+- `pulse-backend/src/services/market/marketRouter.ts`
+- `pulse-backend/src/services/market/finamMarketAdapter.ts`
+- `pulse-backend/src/services/market/exchangeTimezones.ts`
+- `pulse-frontend/src/components/NewsCard.tsx`
+- `pulse-frontend/src/components/NewsReactionChart.tsx`
+- `pulse-frontend/src/components/CandleChart.tsx`
+- `pulse-frontend/src/pages/admin/MarketDataTab.tsx`
 
 ## Smoke-тест
 
