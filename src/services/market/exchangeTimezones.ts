@@ -52,16 +52,24 @@ export function timeInTz(iso: string, tz: string): string {
 /**
  * Convert a calendar date (YYYY-MM-DD) in a specific timezone to a UTC Date
  * representing the midnight start of that day in the given timezone.
- * Handles DST transitions correctly because it parses the date in the target tz.
+ * Offset is resolved iteratively — correct across DST transitions.
  */
 export function zonedMidnightToUtc(dateStr: string, tz: string): Date {
-  // Build an ISO-like string without timezone and parse it as if it were in `tz`.
-  const asLocal = `${dateStr}T00:00:00`;
-  const utcMs = new Date(asLocal).getTime();
-  // Compute offset between local parsing (which is UTC here) and target timezone.
-  // toLocaleString with timeZone gives us the same wall-clock time in target tz.
-  const inTarget = new Date(utcMs).toLocaleString('sv-SE', { timeZone: tz }).replace(' ', 'T');
-  const targetMs = new Date(inTarget).getTime();
-  const offsetMs = targetMs - utcMs;
-  return new Date(utcMs - offsetMs);
+  const [y, m, d] = dateStr.split('-').map(Number);
+  // initial guess: treat as UTC
+  let guess = Date.UTC(y, m - 1, d, 0, 0, 0);
+  for (let i = 0; i < 3; i++) {
+    const fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz, hour12: false,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+    });
+    const parts = Object.fromEntries(fmt.formatToParts(new Date(guess)).map((p) => [p.type, p.value]));
+    const asIfUtc = Date.UTC(+parts.year, +parts.month - 1, +parts.day, +parts.hour === 24 ? 0 : +parts.hour, +parts.minute, +parts.second);
+    const offset = asIfUtc - guess; // how much tz adds to UTC
+    const target = Date.UTC(y, m - 1, d) - offset;
+    if (target === guess) break;
+    guess = target;
+  }
+  return new Date(guess);
 }
