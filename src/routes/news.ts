@@ -122,7 +122,7 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
         readFilter = '';
         readParams = [];
       } else {
-        readFilter = ' AND id NOT IN (SELECT news_id FROM user_news_reads WHERE user_id = ?)';
+        readFilter = ' AND NOT EXISTS (SELECT 1 FROM user_news_reads r WHERE r.user_id = ? AND r.news_id = news.id)';
         readParams = [userId];
       }
 
@@ -155,7 +155,7 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
         pgReadFilter = '';
         pgParams = [tagIds];
       } else {
-        pgReadFilter = ' AND id NOT IN (SELECT news_id FROM user_news_reads WHERE user_id = $2)';
+        pgReadFilter = ' AND NOT EXISTS (SELECT 1 FROM user_news_reads r WHERE r.user_id = $2 AND r.news_id = news.id)';
         pgParams = [tagIds, userId];
       }
       let pgIdx = pgParams.length + 1;
