@@ -933,9 +933,13 @@ router.put('/tags/:tagId', adminMiddleware, async (req, res) => {
       }
     }
 
-    // TZ-2.7: ticker must be chosen from the instrument search (symbol required).
-    if (updates.ticker && !updates.symbol) {
-      errors.ticker = 'выберите инструмент из подсказок';
+    // TZ-2.12: free-text ticker is allowed. If no symbol was picked, clear instrument
+    // fields so no stale symbol/mic/exchange/isin remain.
+    if (updates.ticker !== undefined && !updates.symbol) {
+      updates.symbol = null;
+      updates.mic = null;
+      updates.exchange = null;
+      updates.isin = null;
     }
 
     if (Object.keys(errors).length > 0) {
