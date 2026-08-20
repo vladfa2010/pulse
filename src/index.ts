@@ -39,6 +39,7 @@ import adminRoutes, { adminMiddleware } from './routes/admin';
 import adminMetricsRoutes from './routes/adminMetrics';
 import adminLegacyRoutes from './routes/adminLegacy';
 import marketRoutes from './routes/market';
+import marketPublicRoutes from './routes/marketPublic';
 import tagMarketRoutes from './routes/tagMarket';
 import sentimentRoutes from './routes/sentiment';
 import appRoutes from './routes/app';
@@ -2306,6 +2307,7 @@ app.use('/api/auth/reset-password', passwordResetFlowLimiter);
 app.use('/api/auth', authLimiter, authRoutes);  // Строгий лимит (15/15min) — защита от брутфорса
 app.use('/api/news', newsRoutes);       // GET /api/news, /api/news/:tag (должен быть первым, т.к. содержит публичные маршруты)
 app.use('/api/news', factCheckRoutes);  // POST/GET /api/news/:id/fact-check
+app.use('/api/market', marketPublicRoutes); // Public market data: /api/market/news-chart (TZ-3)
 app.use('/api/payment', paymentRoutes); // POST /api/payment/create, /confirm
 app.use('/api/plans', plansRoutes);     // GET /api/plans
 app.use('/api/promo/validate', promoValidateLimiter, promoRoutes); // GET /api/promo/validate
