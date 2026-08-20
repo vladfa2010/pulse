@@ -95,7 +95,7 @@ const req = client.request({ ':path': '/v1/assets', ':method': 'GET', authorizat
 | 5-минутные свечи прошлых дней | 1 год (неизменны) |
 | Последняя цена | 1 мин |
 | Пустой результат (нет тикера) | 15 мин |
-| Справочник `/v1/assets` | 24 ч, ручная инвалидация через админ-роут |
+| Справочник `/v1/assets` | 24 ч, прогрев при старте сервера (TZ-2.14), ручная инвалидация через админ-роут |
 
 ## Контракт API
 
@@ -136,6 +136,23 @@ const req = client.request({ ':path': '/v1/assets', ':method': 'GET', authorizat
 
 - Маркет-дата — сервисный ключ, публичные котировки, кэширование, другие сценарии отказа.
 - Брокерский адаптер — per-user ключ, приватный портфель, обогащение названий бумаг, свои retry-политики.
+
+### Прогрев при старте (TZ-2.14)
+
+В `src/index.ts`, внутри колбэка `app.listen`, сервер fire-and-forget прогревает кэш `/v1/assets`:
+
+```ts
+if (process.env.FINAM_MARKET_SECRET) {
+  import('./services/market/marketRouter').then((m) =>
+    m.getAssets().then((a) => console.log(`[market] assets cache warmed: ${a.length} instruments`))
+      .catch((e) => console.warn('[market] assets warmup failed (lazy load will retry):', e.message))
+  );
+}
+```
+
+- Старт сервера не блокируется.
+- Без `FINAM_MARKET_SECRET` прогрев пропускается.
+- При ошибке прогрева ленивая загрузка при первом запросе остаётся fallback.
 
 ## Админ-таба Market Data
 
