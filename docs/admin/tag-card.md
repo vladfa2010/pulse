@@ -218,4 +218,5 @@ useEffect(() => { chart.setOption(option, true) }, [candles, dailyStats, chartRe
 
 ---
 
-*Последние изменения: TZ-3.1 (exchange timezones), TZ-3 (news reaction chart), TZ-2.13 (free-text query wire), TZ-2.12 (free-text ticker), TZ-2.11 (symbol/mic in PUT response), TZ-2.10 (editable MIC), TZ-2.9 (exchange alias), TZ-2.7 (market block + instrument search), TZ-2.5 (provider→exchange).*
+*Последние изменения: TZ-3.1fix (iterative `zonedMidnightToUtc`), TZ-3.1 (exchange timezones), TZ-3 (news reaction chart), TZ-2.13 (free-text query wire), TZ-2.12 (free-text ticker), TZ-2.11 (symbol/mic in PUT response), TZ-2.10 (editable MIC), TZ-2.9 (exchange alias), TZ-2.7 (market block + instrument search), TZ-2.5 (provider→exchange).*
+
