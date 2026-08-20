@@ -3039,6 +3039,17 @@ async function start() {
     } else {
       console.log('[Security] ENCRYPTION_KEY is configured.');
     }
+
+    // TZ-2.14: warm Finam assets directory in background (~17k instruments, ~3.5MB, ~20s).
+    // Fire-and-forget: lazy load on first request remains as fallback.
+    if (process.env.FINAM_MARKET_SECRET) {
+      import('./services/market/marketRouter').then((m) =>
+        m.getAssets().then((a) => console.log(`[market] assets cache warmed: ${a.length} instruments`))
+          .catch((e) => console.warn('[market] assets warmup failed (lazy load will retry):', e.message))
+      );
+    } else {
+      console.log('[market] FINAM_MARKET_SECRET not set; assets warmup skipped.');
+    }
   });
 
   // Graceful shutdown: stop accepting new connections, close SSE streams, drain in-flight requests
