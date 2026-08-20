@@ -32,8 +32,10 @@ function evictNewsChartCache(): void {
 }
 
 function getNewsChartCacheTtl(payload: { instruments: InstrumentChart[] }): number {
-  const todayUtc = new Date().toISOString().slice(0, 10);
-  const hasTodayUnshifted = payload.instruments.some((ins) => ins.date === todayUtc && !ins.shifted);
+  const nowIso = new Date().toISOString();
+  const hasTodayUnshifted = payload.instruments.some(
+    (ins) => !ins.shifted && ins.date === dateInTz(nowIso, ins.timezone)
+  );
   if (hasTodayUnshifted) return NEWS_CHART_CACHE_TODAY_MS;
   if (payload.instruments.length === 0) return NEWS_CHART_CACHE_EMPTY_MS;
   return NEWS_CHART_CACHE_PAST_MS;
@@ -114,7 +116,11 @@ router.get('/news-chart', async (req, res) => {
 
     const instrumentByTagId = new Map<string, InstrumentChart>();
 
+    const order = new Map(matched_tags.map((id: string, i: number) => [id, i]));
+    tagRes.rows.sort((a: any, b: any) => ((order.get(a.tag_id) ?? 1e9) as number) - ((order.get(b.tag_id) ?? 1e9) as number));
+
     for (const tag of tagRes.rows) {
+      if (instrumentByTagId.size >= 3) break; // TZ-3.4: не ходим в Finam за тем, что выбросим
       let enrichedData = tag.enriched_data;
       if (typeof enrichedData === 'string') {
         try { enrichedData = JSON.parse(enrichedData); } catch { enrichedData = {}; }
@@ -210,14 +216,8 @@ router.get('/news-chart', async (req, res) => {
     }
 
     // Preserve matched_tags order and limit to 3.
-    const instruments: InstrumentChart[] = [];
-    for (const tagId of matched_tags) {
-      const ins = instrumentByTagId.get(tagId);
-      if (ins) {
-        instruments.push(ins);
-        if (instruments.length >= 3) break;
-      }
-    }
+    // Map preserves insertion order after the sort above; break already limited size to 3.
+    const instruments = [...instrumentByTagId.values()];
 
     return cacheAndSend(newsId, { published_at, instruments }, res);
   } catch (err: any) {
