@@ -188,7 +188,7 @@ Cron-воркер `services/portfolioSync/worker.ts` запускается ка
 
 `services/market/marketRouter.ts`:
 
-- `getCurrentPrice(ticker)` — MOEX ISS, сначала текущие 1-минутные свечи, fallback на последнюю дневную свечу.
+- `getCurrentPrice(exchange, ticker)` — Finam Trade API (`quotes/latest`). Поддерживает алиасы `MOEX`/`NASDAQ`/`NYSE` и любой валидный MIC из справочника Finam.
 - `getCurrentPricesBatch(items)` — пакетный запрос с кэшем 60 сек и конкурентностью 10.
 
 Сводка считает:
@@ -285,5 +285,5 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 - Ручное добавление позиций (`source = 'manual'`) — в backlog.
 - Импорт позиций из CSV/Excel (`source = 'import'`) — в backlog.
 - Адаптер **Инсайд брокер** — заглушка, ждёт REST API.
-- Цены только для **MOEX**. NASDAQ/NYSE — через Finnhub/другой адаптер в backlog.
+- Цены для **MOEX, NASDAQ, NYSE** через Finam Trade API. Другие биржи — через любой валидный MIC из справочника Finam.
 - Только рублёвые/основные валютные позиции; валютный риск не учитывается.
