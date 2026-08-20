@@ -3,7 +3,7 @@
  * Used by the news card price-reaction chart.
  */
 
-import { Router } from 'express';
+import { Router, type Response } from 'express';
 import { query } from '../config/db';
 import * as marketRouter from '../services/market/marketRouter';
 import type { MarketCandle } from '../services/market/utils';
@@ -14,6 +14,38 @@ import {
 } from '../services/market/exchangeTimezones';
 
 const router = Router();
+
+const NEWS_CHART_CACHE_TODAY_MS = 60 * 1000;
+const NEWS_CHART_CACHE_PAST_MS = 24 * 3600 * 1000;
+const NEWS_CHART_CACHE_EMPTY_MS = 15 * 60 * 1000;
+const NEWS_CHART_CACHE_MAX_SIZE = 5000;
+
+const newsChartCache = new Map<string, { at: number; ttl: number; payload: any }>();
+
+function evictNewsChartCache(): void {
+  if (newsChartCache.size <= NEWS_CHART_CACHE_MAX_SIZE) return;
+  const entries = [...newsChartCache.entries()].sort((a, b) => a[1].at - b[1].at);
+  const toRemove = entries.slice(0, Math.ceil(entries.length * 0.2));
+  for (const [key] of toRemove) {
+    newsChartCache.delete(key);
+  }
+}
+
+function getNewsChartCacheTtl(payload: { instruments: InstrumentChart[] }): number {
+  const todayUtc = new Date().toISOString().slice(0, 10);
+  const hasTodayUnshifted = payload.instruments.some((ins) => ins.date === todayUtc && !ins.shifted);
+  if (hasTodayUnshifted) return NEWS_CHART_CACHE_TODAY_MS;
+  if (payload.instruments.length === 0) return NEWS_CHART_CACHE_EMPTY_MS;
+  return NEWS_CHART_CACHE_PAST_MS;
+}
+
+function cacheAndSend(newsId: string, payload: { published_at: string; instruments: InstrumentChart[] }, res: Response) {
+  evictNewsChartCache();
+  const ttl = getNewsChartCacheTtl(payload);
+  newsChartCache.set(newsId, { at: Date.now(), ttl, payload });
+  res.setHeader('X-Cache', 'miss');
+  return res.json(payload);
+}
 
 interface InstrumentChart {
   tag_id: string;
@@ -46,6 +78,12 @@ router.get('/news-chart', async (req, res) => {
       return res.status(400).json({ error: 'news_id required' });
     }
 
+    const cached = newsChartCache.get(newsId);
+    if (cached && Date.now() - cached.at < cached.ttl) {
+      res.setHeader('X-Cache', 'hit');
+      return res.json(cached.payload);
+    }
+
     const newsRes = await query(
       'SELECT published_at, matched_tags FROM news WHERE id = $1',
       [newsId]
@@ -58,7 +96,7 @@ router.get('/news-chart', async (req, res) => {
     const { published_at, matched_tags } = newsRes.rows[0];
 
     if (!matched_tags || matched_tags.length === 0) {
-      return res.json({ published_at, instruments: [] });
+      return cacheAndSend(newsId, { published_at, instruments: [] }, res);
     }
 
     const [tagRes, exchangeList] = await Promise.all([
@@ -181,7 +219,7 @@ router.get('/news-chart', async (req, res) => {
       }
     }
 
-    return res.json({ published_at, instruments });
+    return cacheAndSend(newsId, { published_at, instruments }, res);
   } catch (err: any) {
     if (
       err.code === 'finam_no_key' ||
