@@ -61,7 +61,7 @@ export function zonedMidnightToUtc(dateStr: string, tz: string): Date {
   // Compute offset between local parsing (which is UTC here) and target timezone.
   // toLocaleString with timeZone gives us the same wall-clock time in target tz.
   const inTarget = new Date(utcMs).toLocaleString('sv-SE', { timeZone: tz }).replace(' ', 'T');
-  const targetMs = new Date(`${inTarget}:00`).getTime();
+  const targetMs = new Date(inTarget).getTime();
   const offsetMs = targetMs - utcMs;
   return new Date(utcMs - offsetMs);
 }
