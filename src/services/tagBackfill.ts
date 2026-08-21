@@ -674,3 +674,11 @@ export async function backfillAllTags(adminUserId?: string): Promise<{ processed
 export function getRunningScans(): string[] {
   return [...activeScans.keys()];
 }
+
+/**
+ * TZ-6.3: let heavy callers (wakeUp) wait until the backfill queue is idle
+ * so they don't compete for CPU/IO/WAL on the 256MB DB.
+ */
+export function isBackfillBusy(): boolean {
+  return backfillQueue.length > 0 || activeCount > 0;
+}

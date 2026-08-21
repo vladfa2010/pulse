@@ -1101,12 +1101,15 @@ export async function rebuildKeywordsFromEnrichment(tagId: string): Promise<stri
   return keywords;
 }
 
-const WAKEUP_BATCH_SIZE = 5000;
+const WAKEUP_BATCH_SIZE = 1000; // TZ-6.3: было 5000; пишем меньше за раз, чтобы влезать в statement_timeout даже под нагрузкой
 const WAKEUP_BATCH_DELAY_MS = 200;
 const WAKEUP_COALESCE_MS = 5000;
+const WAKEUP_DEFER_MS = 30000; // TZ-6.3: повторная проверка, если backfill занят
+const MAX_WAKE_DEFERS = 40; // TZ-6.3: страховка от залипшего флага (~20 мин максимум)
 
 let wakeUpPromise: Promise<number> | null = null;
 let wakeUpTimer: NodeJS.Timeout | null = null;
+let wakeUpDeferCount = 0;
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -1153,30 +1156,51 @@ export async function wakeUpNoTagsArticles(): Promise<number> {
   }
 }
 
+function runWakeUpOrDefer(resolve: (value: number) => void): void {
+  import('./tagBackfill').then(async ({ isBackfillBusy }) => {
+    if (isBackfillBusy() && wakeUpDeferCount < MAX_WAKE_DEFERS) {
+      wakeUpDeferCount++;
+      console.log(`[TagManager] wakeUp deferred (${wakeUpDeferCount}/${MAX_WAKE_DEFERS}): backfill busy`);
+      wakeUpTimer = setTimeout(() => runWakeUpOrDefer(resolve), WAKEUP_DEFER_MS);
+      return;
+    }
+    wakeUpDeferCount = 0;
+    try {
+      const count = await wakeUpNoTagsArticles();
+      resolve(count);
+    } catch (err: any) {
+      console.error('[TagManager] wakeUpNoTagsArticlesCoalesced error:', err.message);
+      resolve(0);
+    } finally {
+      wakeUpPromise = null;
+    }
+  }).catch((err: any) => {
+    console.error('[TagManager] failed to import tagBackfill for wakeUp defer:', err.message);
+    resolve(0);
+    wakeUpPromise = null;
+  });
+}
+
 /**
  * Coalesced wrapper: multiple rapid calls collapse into a single batched
  * wake-up after a short debounce window. Used from create/edit paths that
  * may fire several tag changes in quick succession.
+ *
+ * TZ-6.3: before running we wait until the backfill queue is idle, so the
+ * batched wakeUp UPDATE does not race with an ILIKE backfill scan over `news`.
  */
 export async function wakeUpNoTagsArticlesCoalesced(): Promise<number> {
   if (wakeUpPromise) {
     return wakeUpPromise;
   }
+  wakeUpDeferCount = 0;
   wakeUpPromise = new Promise<number>((resolve) => {
     if (wakeUpTimer) {
       clearTimeout(wakeUpTimer);
     }
-    wakeUpTimer = setTimeout(async () => {
+    wakeUpTimer = setTimeout(() => {
       wakeUpTimer = null;
-      try {
-        const count = await wakeUpNoTagsArticles();
-        resolve(count);
-      } catch (err: any) {
-        console.error('[TagManager] wakeUpNoTagsArticlesCoalesced error:', err.message);
-        resolve(0);
-      } finally {
-        wakeUpPromise = null;
-      }
+      runWakeUpOrDefer(resolve);
     }, WAKEUP_COALESCE_MS);
   });
   return wakeUpPromise;
