@@ -505,7 +505,7 @@ router.get('/tags', adminMiddleware, async (req, res) => {
           `)
         : await query(`
             WITH tag_ids AS (
-              SELECT array_agg(tag_id) AS ids FROM user_defined_tags
+              SELECT array_agg(tag_id)::text[] AS ids FROM user_defined_tags
             ),
             agg AS (
               SELECT

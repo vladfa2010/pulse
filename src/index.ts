@@ -3443,7 +3443,7 @@ async function start() {
       await query(`
         SELECT COUNT(*) AS cnt FROM news
         WHERE published_at > NOW() - INTERVAL '30 days'
-          AND matched_tags && (SELECT array_agg(tag_id) FROM user_defined_tags)
+          AND matched_tags && (SELECT array_agg(tag_id)::text[] FROM user_defined_tags)
       `);
       console.log(`[DeployCheck] matched_tags GIN scan: ${Date.now() - t0}ms`);
     }
