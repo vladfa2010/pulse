@@ -3424,6 +3424,11 @@ async function start() {
     // под параллельной нагрузкой NewsProcessor/RSS. Существует только в schema.sql (fresh installs),
     // на проде индекса никогда не было.
     { sql: `CREATE INDEX IF NOT EXISTS idx_news_matched_tags_gin ON news USING GIN (matched_tags)`, name: 'idx_news_matched_tags_gin' },
+    // TZ-7.2: статистика для планировщика после создания GIN-индекса (и в целом по news).
+    // Без свежего ANALYZE планировщик может игнорировать новый индекс: лента GET /api/news
+    // оставалась 16s при уже созданном idx_news_matched_tags_gin.
+    // ANALYZE — неблокирующая (читает выборку строк), идемпотентная, ~секунды на 50k строк.
+    { sql: `ANALYZE news`, name: 'analyze_news_tz7' },
   ];
   for (const m of migrations) {
     try {
