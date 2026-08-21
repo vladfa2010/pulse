@@ -597,6 +597,9 @@ export async function backfillTagMatches(
 
   return new Promise<BackfillResult>((resolve, reject) => {
     const item: QueueItem = { tagId: tagIdNorm, options, startTime: start, resolve, reject };
+    // NOTE: unshift O(n) is acceptable while the queue stays in the tens of tags.
+    // If heavy scenarios regularly queue hundreds of tags, replace with two queues
+    // (priority + bulk) instead of a single array with unshift.
     if (options.priority) {
       backfillQueue.unshift(item);
     } else {

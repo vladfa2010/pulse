@@ -60,7 +60,7 @@ if (USE_SQLITE) {
   poolInstance = new Pool({
     connectionString: DATABASE_URL,
     ssl: { rejectUnauthorized: false },
-    max: 20,
+    max: 40, // TZ-6: было 20; лимит тарифа 100, держим резерв 60 под Render/внешние подключения
     statement_timeout: 30000,
     idleTimeoutMillis: 60000,
     connectionTimeoutMillis: 10000,
@@ -89,7 +89,7 @@ if (USE_SQLITE) {
     database: process.env.DB_NAME || 'pulse',
     user: process.env.DB_USER || 'pulse_user',
     password: process.env.DB_PASSWORD || '',
-    max: 20,
+    max: 40, // TZ-6: было 20; лимит тарифа 100, держим резерв 60 под Render/внешние подключения
     statement_timeout: 30000,
     idleTimeoutMillis: 60000,
     connectionTimeoutMillis: 10000,
