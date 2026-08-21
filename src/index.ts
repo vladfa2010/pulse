@@ -3417,6 +3417,8 @@ async function start() {
     { sql: `CREATE INDEX IF NOT EXISTS idx_users_created_at ON users(created_at DESC)`, name: 'idx_users_created_at' },
     // TZ-07 v2: composite index for tag-news lookups in getUserTagsFull
     { sql: `CREATE INDEX IF NOT EXISTS idx_news_tag_links_tag_news ON news_tag_links(tag_id, news_id)`, name: 'idx_news_tag_links_tag_news' },
+    // TZ-6.2: partial index for batched wakeUp of no-tags articles (must run at boot; /migrate-v3 is not always called on prod)
+    { sql: `CREATE INDEX IF NOT EXISTS idx_news_no_tags_wakeup ON news(id) WHERE sentiment_source = 'no-tags' AND (matched_tags IS NULL OR matched_tags = '{}')`, name: 'idx_news_no_tags_wakeup' },
   ];
   for (const m of migrations) {
     try {
