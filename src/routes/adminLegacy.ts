@@ -504,7 +504,10 @@ router.get('/tags', adminMiddleware, async (req, res) => {
             ORDER BY articles_24h DESC, subscriber_count DESC
           `)
         : await query(`
-            WITH agg AS (
+            WITH tag_ids AS (
+              SELECT array_agg(tag_id) AS ids FROM user_defined_tags
+            ),
+            agg AS (
               SELECT
                 m.tag AS tag_id,
                 COUNT(*) FILTER (WHERE n.published_at > NOW() - INTERVAL '${hours} hours') as articles_24h,
@@ -517,6 +520,7 @@ router.get('/tags', adminMiddleware, async (req, res) => {
               FROM news n
               CROSS JOIN LATERAL unnest(n.matched_tags) AS m(tag)
               WHERE n.published_at > NOW() - INTERVAL '30 days'
+                AND n.matched_tags && (SELECT ids FROM tag_ids)
               GROUP BY m.tag
             ),
             subs AS (

@@ -3419,6 +3419,11 @@ async function start() {
     { sql: `CREATE INDEX IF NOT EXISTS idx_news_tag_links_tag_news ON news_tag_links(tag_id, news_id)`, name: 'idx_news_tag_links_tag_news' },
     // TZ-6.2: partial index for batched wakeUp of no-tags articles (must run at boot; /migrate-v3 is not always called on prod)
     { sql: `CREATE INDEX IF NOT EXISTS idx_news_no_tags_wakeup ON news(id) WHERE sentiment_source = 'no-tags' AND (matched_tags IS NULL OR matched_tags = '{}')`, name: 'idx_news_no_tags_wakeup' },
+    // TZ-7: GIN-индекс для matched_tags && $1 (лента /api/news) и агрегации /admin/tags.
+    // Без него оба запроса делают seq scan по всей таблице news и падают по statement_timeout (30s)
+    // под параллельной нагрузкой NewsProcessor/RSS. Существует только в schema.sql (fresh installs),
+    // на проде индекса никогда не было.
+    { sql: `CREATE INDEX IF NOT EXISTS idx_news_matched_tags_gin ON news USING GIN (matched_tags)`, name: 'idx_news_matched_tags_gin' },
   ];
   for (const m of migrations) {
     try {
@@ -3431,6 +3436,17 @@ async function start() {
   // ─── Деплой-проверка новостных данных ─────────────────────────────────
   try {
     await logNewsDataCheck();
+    // TZ-7: замер GIN-фильтра по matched_tags — после добавления idx_news_matched_tags_gin
+    // должен быть значительно ниже statement_timeout (30s); до индекса это был seq scan.
+    if (!USE_SQLITE) {
+      const t0 = Date.now();
+      await query(`
+        SELECT COUNT(*) AS cnt FROM news
+        WHERE published_at > NOW() - INTERVAL '30 days'
+          AND matched_tags && (SELECT array_agg(tag_id) FROM user_defined_tags)
+      `);
+      console.log(`[DeployCheck] matched_tags GIN scan: ${Date.now() - t0}ms`);
+    }
   } catch (e: any) {
     console.error('[DeployCheck] Startup check failed:', e.message);
   }
