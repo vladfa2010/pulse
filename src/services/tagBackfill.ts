@@ -21,7 +21,7 @@ import { sendTelegramMessage } from './telegram';
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
-const MAX_CONCURRENT_SCANS = 2;
+const MAX_CONCURRENT_SCANS = 1; // TZ-6.1: строго по одному — БД 256MB не выдерживает параллельных seq scan'ов
 const DEFAULT_CHUNK_SIZE = parseInt(process.env.TAG_BACKFILL_CHUNK_SIZE || '5000', 10);
 const DEFAULT_QUERY_TIMEOUT_MS = parseInt(process.env.TAG_BACKFILL_QUERY_TIMEOUT_MS || '120000', 10);
 const CHUNK_DELAY_MS = 2000; // pause between chunks to avoid DB storm
