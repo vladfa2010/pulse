@@ -1020,6 +1020,9 @@ app.post('/migrate-v3', async (req, res) => {
     await query(`CREATE INDEX IF NOT EXISTS idx_news_sentiment_source ON news(sentiment_source)`);
     results.push('Created index: idx_news_sentiment_source');
 
+    await query(`CREATE INDEX IF NOT EXISTS idx_news_no_tags_wakeup ON news(id) WHERE sentiment_source = 'no-tags' AND (matched_tags IS NULL OR matched_tags = '{}')`);
+    results.push('Created index: idx_news_no_tags_wakeup');
+
     await query(`CREATE INDEX IF NOT EXISTS idx_news_llm_attempts ON news(llm_attempts) WHERE llm_attempts > 0`);
     results.push('Created index: idx_news_llm_attempts');
 

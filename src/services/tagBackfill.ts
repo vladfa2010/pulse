@@ -24,12 +24,23 @@ const USE_SQLITE = process.env.USE_SQLITE === 'true';
 const MAX_CONCURRENT_SCANS = 2;
 const DEFAULT_CHUNK_SIZE = parseInt(process.env.TAG_BACKFILL_CHUNK_SIZE || '5000', 10);
 const DEFAULT_QUERY_TIMEOUT_MS = parseInt(process.env.TAG_BACKFILL_QUERY_TIMEOUT_MS || '120000', 10);
+const CHUNK_DELAY_MS = 2000; // pause between chunks to avoid DB storm
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 500;
 export const MAX_TOKENS = 500;
 
-const runningScans = new Map<string, Promise<BackfillResult>>();
-const pendingRerun = new Set<string>();
+interface QueueItem {
+  tagId: string;
+  options: BackfillOptions;
+  startTime: number;
+  resolve: (value: BackfillResult) => void;
+  reject: (reason?: any) => void;
+}
+
+const backfillQueue: QueueItem[] = [];
+const queuedTags = new Set<string>();
+const activeScans = new Set<string>();
+let activeCount = 0;
 
 export interface BackfillOptions {
   dryRun?: boolean;
@@ -37,6 +48,8 @@ export interface BackfillOptions {
   since?: Date; // optional: only scan articles published after
   adminUserId?: string;
   silent?: boolean; // when true, suppress per-tag success alerts (used by backfillAllTags)
+  sync?: boolean; // when true, await scan completion (admin manual trigger)
+  priority?: boolean; // when true, jump to front of the FIFO queue
 }
 
 export interface BackfillResult {
@@ -403,9 +416,163 @@ ${result.error ? `⚠️ Ошибка: ${result.error}` : ''}`;
   }
 }
 
+function processQueue(): void {
+  while (backfillQueue.length > 0 && activeCount < MAX_CONCURRENT_SCANS) {
+    const item = backfillQueue.shift()!;
+    queuedTags.delete(item.tagId);
+    activeCount++;
+    activeScans.add(item.tagId);
+    runBackfill(item.tagId, item.options, item.startTime)
+      .then(item.resolve, item.reject)
+      .finally(() => {
+        activeCount--;
+        activeScans.delete(item.tagId);
+        processQueue();
+      });
+  }
+}
+
+async function runBackfill(
+  tagIdNorm: string,
+  options: BackfillOptions,
+  start: number
+): Promise<BackfillResult> {
+  const startedAtIso = new Date(start).toISOString();
+  const dryRun = options.dryRun ?? false;
+  const chunkSize = options.chunkSize || DEFAULT_CHUNK_SIZE;
+  const since = options.since;
+
+  try {
+    const tag = await fetchTag(tagIdNorm);
+    if (!tag) {
+      return { tagId: tagIdNorm, matched: 0, scanned: 0, dryRun, durationMs: Date.now() - start, error: 'Tag not found' };
+    }
+
+    const keywords = await buildScanKeywords(tag);
+    if (keywords.length === 0) {
+      if (!dryRun) {
+        await updateBackfillMarker(tagIdNorm, {
+          version: '1',
+          started_at: startedAtIso,
+          completed_at: new Date().toISOString(),
+          matched_count: 0,
+          status: 'completed',
+        });
+      }
+      return { tagId: tagIdNorm, matched: 0, scanned: 0, dryRun, durationMs: Date.now() - start };
+    }
+    if (keywords.length > MAX_TOKENS) {
+      const errMsg = `Too many keywords (${keywords.length} > ${MAX_TOKENS})`;
+      console.error(`[TagBackfill] ${tagIdNorm}: ${errMsg}`);
+      await updateBackfillMarker(tagIdNorm, {
+        version: '1',
+        started_at: startedAtIso,
+        completed_at: new Date().toISOString(),
+        matched_count: 0,
+        status: 'failed',
+        error: errMsg,
+      }).catch(() => {});
+      return { tagId: tagIdNorm, matched: 0, scanned: 0, dryRun, durationMs: Date.now() - start, error: errMsg };
+    }
+
+    if (dryRun) {
+      const { matched } = await countMatches(tagIdNorm, keywords, since);
+      return { tagId: tagIdNorm, matched, scanned: 0, dryRun, durationMs: Date.now() - start };
+    }
+
+    await updateBackfillMarker(tagIdNorm, {
+      version: '1',
+      started_at: startedAtIso,
+      matched_count: 0,
+      status: 'running',
+    });
+
+    let totalMatched = 0;
+    let totalScanned = 0;
+    let lastId: string | null = null;
+    let finished = false;
+
+    if (USE_SQLITE) {
+      while (!finished) {
+        const rows = await scanChunkSqlite(tagIdNorm, keywords, lastId, chunkSize, since);
+        if (rows.length === 0) {
+          finished = true;
+          break;
+        }
+        const updated = await applyChunkSqlite(tagIdNorm, rows);
+        totalMatched += updated;
+        totalScanned += rows.length;
+        lastId = rows[rows.length - 1].id;
+        if (rows.length < chunkSize) finished = true;
+        await sleep(CHUNK_DELAY_MS);
+      }
+    } else {
+      const pattern = buildPostgresPattern(keywords);
+      if (!pattern) {
+        return { tagId: tagIdNorm, matched: 0, scanned: 0, dryRun, durationMs: Date.now() - start };
+      }
+      while (!finished) {
+        const ids = await scanChunkPostgres(tagIdNorm, pattern, lastId, chunkSize, since);
+        if (ids.length === 0) {
+          finished = true;
+          break;
+        }
+        const updated = await applyChunkPostgres(tagIdNorm, ids);
+        totalMatched += updated;
+        totalScanned += ids.length;
+        lastId = ids[ids.length - 1];
+        if (ids.length < chunkSize) finished = true;
+        await sleep(CHUNK_DELAY_MS);
+      }
+    }
+
+    const durationMs = Date.now() - start;
+    console.log(`[TagBackfill] DONE tag=${tagIdNorm} matched=${totalMatched} scanned=${totalScanned} in ${durationMs}ms`);
+    await updateBackfillMarker(tagIdNorm, {
+      version: '1',
+      started_at: startedAtIso,
+      completed_at: new Date().toISOString(),
+      matched_count: totalMatched,
+      status: 'completed',
+    });
+
+    const result: BackfillResult = {
+      tagId: tagIdNorm,
+      matched: totalMatched,
+      scanned: totalScanned,
+      dryRun,
+      durationMs,
+    };
+    if (!options.silent && result.matched > 0) sendAdminBackfillAlert(result).catch(() => {});
+    return result;
+  } catch (err: any) {
+    const durationMs = Date.now() - start;
+    const result: BackfillResult = {
+      tagId: tagIdNorm,
+      matched: 0,
+      scanned: 0,
+      dryRun,
+      durationMs,
+      error: err.message,
+    };
+    await updateBackfillMarker(tagIdNorm, {
+      version: '1',
+      started_at: startedAtIso,
+      completed_at: new Date().toISOString(),
+      matched_count: 0,
+      status: 'failed',
+      error: err.message,
+    }).catch(() => {});
+    if (!options.silent || result.error) sendAdminBackfillAlert(result).catch(() => {});
+    return result;
+  }
+}
+
 /**
  * Run the retro scan for a single tag.
- * Respects the global concurrency limit of MAX_CONCURRENT_SCANS.
+ * Uses a FIFO queue with bounded concurrency (MAX_CONCURRENT_SCANS).
+ * Priority items are added to the front of the queue; sync callers should
+ * pass { sync: true, priority: true }.
  */
 export async function backfillTagMatches(
   tagId: string,
@@ -413,18 +580,10 @@ export async function backfillTagMatches(
 ): Promise<BackfillResult> {
   const tagIdNorm = tagId.toLowerCase();
   const start = Date.now();
-  const startedAtIso = new Date().toISOString();
   const dryRun = options.dryRun ?? false;
-  const chunkSize = options.chunkSize || DEFAULT_CHUNK_SIZE;
-  const since = options.since;
 
-  if (runningScans.has(tagIdNorm)) {
-    console.warn(`[TagBackfill] queued for rerun (already running): ${tagIdNorm}`);
-    pendingRerun.add(tagIdNorm);
-    return { tagId: tagIdNorm, matched: 0, scanned: 0, dryRun, durationMs: 0, skipped: true, message: 'Сканирование уже выполняется, будет запущено повторно' };
-  }
-  if (runningScans.size >= MAX_CONCURRENT_SCANS) {
-    console.warn(`[TagBackfill] skipped (concurrency): ${tagIdNorm} — ${runningScans.size} running`);
+  if (activeScans.has(tagIdNorm) || queuedTags.has(tagIdNorm)) {
+    console.warn(`[TagBackfill] skipped (already queued or running): ${tagIdNorm}`);
     return {
       tagId: tagIdNorm,
       matched: 0,
@@ -432,148 +591,21 @@ export async function backfillTagMatches(
       dryRun,
       durationMs: 0,
       skipped: true,
-      error: `Too many concurrent scans (limit ${MAX_CONCURRENT_SCANS})`,
+      message: 'Сканирование уже выполняется или в очереди',
     };
   }
 
-  const runPromise = (async (): Promise<BackfillResult> => {
-    try {
-      const tag = await fetchTag(tagIdNorm);
-      if (!tag) {
-        return { tagId: tagIdNorm, matched: 0, scanned: 0, dryRun, durationMs: Date.now() - start, error: 'Tag not found' };
-      }
-
-      const keywords = await buildScanKeywords(tag);
-      if (keywords.length === 0) {
-        if (!dryRun) {
-          await updateBackfillMarker(tagIdNorm, {
-            version: '1',
-            started_at: startedAtIso,
-            completed_at: new Date().toISOString(),
-            matched_count: 0,
-            status: 'completed',
-          });
-        }
-        return { tagId: tagIdNorm, matched: 0, scanned: 0, dryRun, durationMs: Date.now() - start };
-      }
-      if (keywords.length > MAX_TOKENS) {
-        const errMsg = `Too many keywords (${keywords.length} > ${MAX_TOKENS})`;
-        console.error(`[TagBackfill] ${tagIdNorm}: ${errMsg}`);
-        await updateBackfillMarker(tagIdNorm, {
-          version: '1',
-          started_at: startedAtIso,
-          completed_at: new Date().toISOString(),
-          matched_count: 0,
-          status: 'failed',
-          error: errMsg,
-        }).catch(() => {});
-        return { tagId: tagIdNorm, matched: 0, scanned: 0, dryRun, durationMs: Date.now() - start, error: errMsg };
-      }
-
-      if (dryRun) {
-        const { matched } = await countMatches(tagIdNorm, keywords, since);
-        return { tagId: tagIdNorm, matched, scanned: 0, dryRun, durationMs: Date.now() - start };
-      }
-
-      await updateBackfillMarker(tagIdNorm, {
-        version: '1',
-        started_at: startedAtIso,
-        matched_count: 0,
-        status: 'running',
-      });
-
-      let totalMatched = 0;
-      let totalScanned = 0;
-      let lastId: string | null = null;
-      let finished = false;
-
-      if (USE_SQLITE) {
-        while (!finished) {
-          const rows = await scanChunkSqlite(tagIdNorm, keywords, lastId, chunkSize, since);
-          if (rows.length === 0) {
-            finished = true;
-            break;
-          }
-          const updated = await applyChunkSqlite(tagIdNorm, rows);
-          totalMatched += updated;
-          totalScanned += rows.length;
-          lastId = rows[rows.length - 1].id;
-          if (rows.length < chunkSize) finished = true;
-          await sleep(100);
-        }
-      } else {
-        const pattern = buildPostgresPattern(keywords);
-        if (!pattern) {
-          return { tagId: tagIdNorm, matched: 0, scanned: 0, dryRun, durationMs: Date.now() - start };
-        }
-        while (!finished) {
-          const ids = await scanChunkPostgres(tagIdNorm, pattern, lastId, chunkSize, since);
-          if (ids.length === 0) {
-            finished = true;
-            break;
-          }
-          const updated = await applyChunkPostgres(tagIdNorm, ids);
-          totalMatched += updated;
-          totalScanned += ids.length;
-          lastId = ids[ids.length - 1];
-          if (ids.length < chunkSize) finished = true;
-          await sleep(100);
-        }
-      }
-
-      const durationMs = Date.now() - start;
-      console.log(`[TagBackfill] DONE tag=${tagIdNorm} matched=${totalMatched} scanned=${totalScanned} in ${durationMs}ms`);
-      await updateBackfillMarker(tagIdNorm, {
-        version: '1',
-        started_at: startedAtIso,
-        completed_at: new Date().toISOString(),
-        matched_count: totalMatched,
-        status: 'completed',
-      });
-
-      const result: BackfillResult = {
-        tagId: tagIdNorm,
-        matched: totalMatched,
-        scanned: totalScanned,
-        dryRun,
-        durationMs,
-      };
-      if (!options.silent && result.matched > 0) sendAdminBackfillAlert(result).catch(() => {});
-      return result;
-    } catch (err: any) {
-      const durationMs = Date.now() - start;
-      const result: BackfillResult = {
-        tagId: tagIdNorm,
-        matched: 0,
-        scanned: 0,
-        dryRun,
-        durationMs,
-        error: err.message,
-      };
-      await updateBackfillMarker(tagIdNorm, {
-        version: '1',
-        started_at: startedAtIso,
-        completed_at: new Date().toISOString(),
-        matched_count: 0,
-        status: 'failed',
-        error: err.message,
-      }).catch(() => {});
-      if (!options.silent || result.error) sendAdminBackfillAlert(result).catch(() => {});
-      return result;
-    } finally {
-      runningScans.delete(tagIdNorm);
-      if (pendingRerun.has(tagIdNorm)) {
-        pendingRerun.delete(tagIdNorm);
-        console.log(`[TagBackfill] rerunning ${tagIdNorm} after previous completion`);
-        backfillTagMatches(tagIdNorm, options).catch((err: any) => {
-          console.error(`[TagBackfill] rerun error for ${tagIdNorm}:`, err.message);
-        });
-      }
+  return new Promise<BackfillResult>((resolve, reject) => {
+    const item: QueueItem = { tagId: tagIdNorm, options, startTime: start, resolve, reject };
+    if (options.priority) {
+      backfillQueue.unshift(item);
+    } else {
+      backfillQueue.push(item);
     }
-  })();
-
-  runningScans.set(tagIdNorm, runPromise);
-  return runPromise;
+    queuedTags.add(tagIdNorm);
+    console.log(`[TagBackfill] queued ${tagIdNorm} (queue=${backfillQueue.length}, active=${activeCount})`);
+    processQueue();
+  });
 }
 
 /**
@@ -637,5 +669,5 @@ export async function backfillAllTags(adminUserId?: string): Promise<{ processed
  * Expose the currently running scans (for health checks / admin).
  */
 export function getRunningScans(): string[] {
-  return [...runningScans.keys()];
+  return [...activeScans.keys()];
 }

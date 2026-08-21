@@ -1113,7 +1113,7 @@ router.put('/tags/:tagId', adminMiddleware, async (req, res) => {
     // If keywords changed, retro-scan existing articles for the updated tag
     if (JSON.stringify(oldKeywords) !== JSON.stringify(newKeywords)) {
       const { backfillTagMatches } = await import('../services/tagBackfill');
-      backfillTagMatches(tagId, { dryRun: false }).catch((err: any) => {
+      backfillTagMatches(tagId, { dryRun: false, priority: true }).catch((err: any) => {
         console.error('[AdminTags] backfillTagMatches error:', err.message);
       });
     }
@@ -1152,13 +1152,13 @@ router.put('/tags/:tagId', adminMiddleware, async (req, res) => {
 
     // Any successful tag update may affect matching keywords.
     // Invalidate cache and wake up no-tags articles for re-check.
-    const { wakeUpNoTagsArticles } = await import('../services/tagManager');
+    const { wakeUpNoTagsArticlesCoalesced } = await import('../services/tagManager');
     const { invalidateUserTagsCache } = await import('../services/smartTagMatcher');
     invalidateUserTagsCache();
     adminCacheInvalidate('admin-tags');
     adminCacheInvalidate('llm-');
-    wakeUpNoTagsArticles().catch((err: any) => {
-      console.error('[AdminTags] wakeUpNoTagsArticles error:', err.message);
+    wakeUpNoTagsArticlesCoalesced().catch((err: any) => {
+      console.error('[AdminTags] wakeUpNoTagsArticlesCoalesced error:', err.message);
     });
 
     res.json({
@@ -1189,7 +1189,7 @@ router.post('/tags/:tagId/enrich', adminMiddleware, async (req, res) => {
 
     console.log(`[AdminEnrich] Starting enrichment for "${tag.tag_name}" (${tagId})`);
 
-    const { enrichTagViaLLM, generateTagKeywords, buildEnrichedKeywords, wakeUpNoTagsArticles, TAG_TYPES } = await import('../services/tagManager');
+    const { enrichTagViaLLM, generateTagKeywords, buildEnrichedKeywords, wakeUpNoTagsArticlesCoalesced, TAG_TYPES } = await import('../services/tagManager');
     const { invalidateUserTagsCache } = await import('../services/smartTagMatcher');
 
     const enrichment = await enrichTagViaLLM(tag.tag_name);
@@ -1216,13 +1216,13 @@ router.post('/tags/:tagId/enrich', adminMiddleware, async (req, res) => {
     invalidateUserTagsCache();
     adminCacheInvalidate('admin-tags');
     adminCacheInvalidate('llm-');
-    wakeUpNoTagsArticles().catch((err: any) => {
-      console.error('[AdminEnrich] wakeUpNoTagsArticles error:', err.message);
+    wakeUpNoTagsArticlesCoalesced().catch((err: any) => {
+      console.error('[AdminEnrich] wakeUpNoTagsArticlesCoalesced error:', err.message);
     });
 
     // Ретро-скан существующих новостей по обновлённым keywords
     const { backfillTagMatches } = await import('../services/tagBackfill');
-    backfillTagMatches(tagId, { dryRun: false }).catch((err: any) => {
+    backfillTagMatches(tagId, { dryRun: false, priority: true }).catch((err: any) => {
       console.error('[AdminEnrich] backfillTagMatches error:', err.message);
     });
 
@@ -1278,7 +1278,7 @@ router.post('/tags/:tagId/backfill-matches', adminMiddleware, async (req, res) =
       }
       return res.json({ success: true, dryRun: true, tag_id: tagId, matched, tokens });
     }
-    const result = await backfillTagMatches(tagId, { dryRun: false });
+    const result = await backfillTagMatches(tagId, { dryRun: false, sync: true, priority: true });
     if (result.error) {
       return res.json({ success: false, ...result });
     }

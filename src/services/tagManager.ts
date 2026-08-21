@@ -901,8 +901,8 @@ export async function createUserTag(userId: string, tagId: string, tagName: stri
     // 7. Wake up no-tags articles только если тег был действительно создан сейчас
     if (isNewTag) {
       invalidateUserTagsCache();
-      wakeUpNoTagsArticles().catch((err: any) => {
-        console.error('[TagManager] wakeUpNoTagsArticles error:', err.message);
+      wakeUpNoTagsArticlesCoalesced().catch((err: any) => {
+        console.error('[TagManager] wakeUpNoTagsArticlesCoalesced error:', err.message);
       });
     }
 
@@ -952,8 +952,8 @@ export async function backgroundEnrichTag(tagId: string, tagName: string): Promi
 
     // Обновить кэш тегов и разбудить no-tags-новости для повторного матчинга с новыми keywords
     invalidateUserTagsCache();
-    wakeUpNoTagsArticles().catch((err: any) => {
-      console.error('[TagManager] wakeUpNoTagsArticles error:', err.message);
+    wakeUpNoTagsArticlesCoalesced().catch((err: any) => {
+      console.error('[TagManager] wakeUpNoTagsArticlesCoalesced error:', err.message);
     });
 
     // Запустить ретро-скан существующих новостей по новым keywords
@@ -1101,28 +1101,83 @@ export async function rebuildKeywordsFromEnrichment(tagId: string): Promise<stri
   return keywords;
 }
 
+const WAKEUP_BATCH_SIZE = 5000;
+const WAKEUP_BATCH_DELAY_MS = 200;
+const WAKEUP_COALESCE_MS = 5000;
+
+let wakeUpPromise: Promise<number> | null = null;
+let wakeUpTimer: NodeJS.Timeout | null = null;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 /**
  * Wake up articles previously marked as 'no-tags' so the news processor
  * can re-check them against newly created/updated tags.
+ * Batched UPDATE (5000 rows per batch, 200ms pause) to avoid a single
+ * long table lock / heavy I/O spike.
  */
 export async function wakeUpNoTagsArticles(): Promise<number> {
   invalidateUserTagsCache();
+  let total = 0;
+  let batch = -1;
   try {
-    const result = await query(
-      `UPDATE news
-       SET needs_translation = TRUE
-       WHERE sentiment_source = 'no-tags'
-         AND (matched_tags IS NULL OR matched_tags = '{}')
-       RETURNING id`,
-      []
-    );
-    const count = result.rows.length;
-    if (count > 0) {
-      console.log(`[TagManager] Woke up ${count} no-tags articles for re-check`);
+    while (batch !== 0) {
+      const result = await query(
+        `UPDATE news
+         SET needs_translation = TRUE
+         WHERE id IN (
+           SELECT id FROM news
+           WHERE sentiment_source = 'no-tags'
+             AND (matched_tags IS NULL OR matched_tags = '{}')
+           ORDER BY id
+           LIMIT $1
+         )
+         RETURNING id`,
+        [WAKEUP_BATCH_SIZE]
+      );
+      batch = result.rows.length;
+      total += batch;
+      if (batch === WAKEUP_BATCH_SIZE) {
+        await sleep(WAKEUP_BATCH_DELAY_MS);
+      }
     }
-    return count;
+    if (total > 0) {
+      console.log(`[TagManager] Woke up ${total} no-tags articles for re-check (batched)`);
+    }
+    return total;
   } catch (err: any) {
     console.error('[TagManager] wakeUpNoTagsArticles error:', err.message);
-    return 0;
+    return total;
   }
+}
+
+/**
+ * Coalesced wrapper: multiple rapid calls collapse into a single batched
+ * wake-up after a short debounce window. Used from create/edit paths that
+ * may fire several tag changes in quick succession.
+ */
+export async function wakeUpNoTagsArticlesCoalesced(): Promise<number> {
+  if (wakeUpPromise) {
+    return wakeUpPromise;
+  }
+  wakeUpPromise = new Promise<number>((resolve) => {
+    if (wakeUpTimer) {
+      clearTimeout(wakeUpTimer);
+    }
+    wakeUpTimer = setTimeout(async () => {
+      wakeUpTimer = null;
+      try {
+        const count = await wakeUpNoTagsArticles();
+        resolve(count);
+      } catch (err: any) {
+        console.error('[TagManager] wakeUpNoTagsArticlesCoalesced error:', err.message);
+        resolve(0);
+      } finally {
+        wakeUpPromise = null;
+      }
+    }, WAKEUP_COALESCE_MS);
+  });
+  return wakeUpPromise;
 }
