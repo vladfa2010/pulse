@@ -642,6 +642,43 @@ Query: ?hours=12 (default) | ?refresh=1 (принудительно)
 - Пагинация определяется через `LIMIT + 1` + `hasMore`: запрашивается на одну строку больше, чем `limit`; наличие лишней строки означает, что есть следующая страница.
 - Счётчик «(N)» в шапке каруселей 2 и 3 равен числу уже загруженных карточек (`articles.length`).
 
+### SQL-оптимизация личных лент (TZ-7.3 / TZ-7.4)
+
+Личные ленты (карусели 1 и 2) используют **двухстадийный запрос**, чтобы широкие колонки не участвовали в сортировке и фильтрации до момента отбора нужных id:
+
+```sql
+SELECT n.id, n.title_ru, n.title_original, n.summary_ru, n.summary_original,
+       n.source, n.url, n.published_at, n.sentiment, n.sentiment_score,
+       n.sentiment_reasoning, n.sentiment_source, n.is_political, n.article_type,
+       n.matched_tags, n.tag_impact, n.source_count, n.all_sources,
+       n.fact_check_status, n.fact_check_result, n.slug
+FROM news n
+JOIN (
+  SELECT id FROM news
+  WHERE matched_tags && $1::text[]
+    AND published_at > NOW() - INTERVAL '90 days'
+    AND NOT EXISTS (
+      SELECT 1 FROM user_news_reads r
+      WHERE r.user_id = $2 AND r.news_id = news.id
+    )
+  -- TZ-7.4: expression ORDER BY. Значение идентично published_at DESC,
+  -- но планировщик не может использовать idx_news_published_at для сортировки.
+  -- Иначе он выбирает Index Scan Backward по датам и фильтрует matched_tags
+  -- на 122k+ строках (на проде: 7.5 s вместо ~1 s).
+  ORDER BY (published_at + INTERVAL '0 seconds') DESC
+  LIMIT $3 OFFSET $4
+) t ON t.id = n.id
+ORDER BY n.published_at DESC;
+```
+
+Для карусели 2 (история) `NOT EXISTS` заменяется на `EXISTS` (или `id IN (...)`) по `user_news_reads`.
+
+**Результат на проде:**
+- До TZ-7.4: `Index Scan Backward using idx_news_published_at` → 7.5 s, 122k строк отфильтровано.
+- После TZ-7.4: `Bitmap Index Scan on idx_news_matched_tags_gin` + `BitmapAnd` с датой → **~0.97 s** (холодный кэш), warm — 100–200 ms.
+
+**Почему именно expression ORDER BY:** планировщик PostgreSQL не умеет применить `idx_news_published_at` к выражению `(published_at + INTERVAL '0 seconds')`, поэтому остаётся единственный разумный план — пойти через GIN-индекс `matched_tags`, отсортировать и обрезать `LIMIT`. Внешний `ORDER BY n.published_at DESC` сохраняет корректный порядок итоговых строк.
+
 ---
 
 ## Sentiment Analysis

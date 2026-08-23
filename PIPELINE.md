@@ -1,7 +1,7 @@
-# PULSE — Полный пайплайн обработки новости (v10.0)
+# PULSE — Полный пайплайн обработки новости (v10.3)
 
-> **Версия:** 10.0 (Keyword-First Pipeline)
-> **Дата:** 2026-06-19
+> **Версия:** 10.3 (Keyword-First Pipeline)
+> **Дата:** 2026-08-21
 > **Файлы:** `newsProcessor.ts`, `smartTagMatcher.ts`, `tagManager.ts`, `index.ts`, `GlobalNewsCarousel.tsx`
 > **LLM Model:** `moonshot-v1-32k` (default, env override)
 >
@@ -606,49 +606,75 @@ LIMIT 50;
 
 Когда пользователь создаёт или обновляет тег, статьи с `sentiment_source = 'no-tags'` автоматически возвращаются в очередь на обработку — они могут подходить под новый тег.
 
+### Пути вызова
+
+- `createUserTag()` — после INSERT нового тега.
+- `PUT /admin/tags/:tagId` — если изменились `keywords`, `ticker`, `synonyms_ru`, `synonyms_en` или `key_products`.
+- `POST /trigger/wake-no-tags` — ручной/ cron-триггер (вызывает прямой `wakeUpNoTagsArticles`).
+
+### Реализация (TZ-6.3)
+
 ```typescript
 // tagManager.ts
+const WAKEUP_BATCH_SIZE = 1000;        // строк за один UPDATE
+const WAKEUP_BATCH_DELAY_MS = 200;     // пауза между батчами
+const WAKEUP_COALESCE_MS = 5000;       // debounce окно для coalesced-обёртки
+const WAKEUP_DEFER_MS = 30000;         // повторная проверка, если backfill занят
+const MAX_WAKE_DEFERS = 40;            // страховка (~20 мин максимум)
+
 export async function wakeUpNoTagsArticles(): Promise<number> {
-  const result = await query(
-    `UPDATE news
-     SET needs_translation = TRUE
-     WHERE sentiment_source = 'no-tags'
-       AND (matched_tags IS NULL OR matched_tags = '{}')
-     RETURNING id`,
-    []
-  );
-  return result.rows.length;
+  invalidateUserTagsCache();
+  let total = 0;
+  let batch = -1;
+  while (batch !== 0) {
+    const result = await query(
+      `UPDATE news
+       SET needs_translation = TRUE
+       WHERE id IN (
+         SELECT id FROM news
+         WHERE sentiment_source = 'no-tags'
+           AND (matched_tags IS NULL OR matched_tags = '{}')
+         ORDER BY id
+         LIMIT $1
+       )
+       RETURNING id`,
+      [WAKEUP_BATCH_SIZE]
+    );
+    batch = result.rows.length;
+    total += batch;
+    if (batch === WAKEUP_BATCH_SIZE) await sleep(WAKEUP_BATCH_DELAY_MS);
+  }
+  return total;
+}
+
+export async function wakeUpNoTagsArticlesCoalesced(): Promise<number> {
+  // Все вызовы внутри 5-секундного окна схлопываются в один batched wakeUp.
+  // Перед запуском проверяется isBackfillBusy(): если backfill работает,
+  // wakeUp откладывается на 30 с, максимум 40 раз подряд.
 }
 ```
 
-Вызовы:
-- `createUserTag()` — после INSERT нового тега.
-- `PUT /admin/tags/:tagId` — если изменились `keywords`, `ticker`, `synonyms_ru`, `synonyms_en` или `key_products`.
+### Индекс (TZ-6.2)
 
-### ⚠️ Масштаб и окно свежести (важно)
+Чтобы подзапрос `SELECT id FROM news WHERE sentiment_source = 'no-tags' AND (matched_tags IS NULL OR matched_tags = '{}') ORDER BY id LIMIT 1000` не делал seq scan, в бут-миграциях создаётся частичный индекс:
 
-Текущая реализация `wakeUpNoTagsArticles()` воскрешает **все** no-tags статьи без ограничения по времени.
-
-Если таких статей накопится слишком много (десятки или сотни тысяч):
-- Один `UPDATE` может выполняться несколько секунд.
-- News processor будет разгребать очередь батчами по 50. 100 000 статей = 2000 запусков cron.
-- Это может занять дни и временно забить очередь.
-
-**Рекомендация на будущее:** если метрика `no-tags` растёт неконтролируемо, добавить окно свежести в `wakeUpNoTagsArticles()`:
-
-```typescript
-const result = await query(
-  `UPDATE news
-   SET needs_translation = TRUE
-   WHERE sentiment_source = 'no-tags'
-     AND (matched_tags IS NULL OR matched_tags = '{}')
-     AND published_at > NOW() - INTERVAL '90 days'
-   RETURNING id`,
-  []
-);
+```sql
+CREATE INDEX IF NOT EXISTS idx_news_no_tags_wakeup
+ON news(id)
+WHERE sentiment_source = 'no-tags'
+  AND (matched_tags IS NULL OR matched_tags = '{}');
 ```
 
-> **Статус:** пока отложено. Ждём роста объёма no-tags статей в проде.
+### Защита БД
+
+- **Батчевый UPDATE** по 1000 строк с паузой 200 мс между батчами — вместо одного огромного `UPDATE`.
+- **Coalesced wrapper** (`wakeUpNoTagsArticlesCoalesced`) — множественные вызовы от нескольких тегов схлопываются в один запуск через 5-секундный debounce.
+- **Откладывание при занятом backfill** — если в очереди backfill есть активный скан, wakeUp ждёт, чтобы не конкурировать за IO/WAL на 256 MB инстансе.
+- **Частичный индекс** исключает seq scan по всей `news`.
+
+### Окно свежести
+
+Пока `wakeUp` воскрешает **все** no-tags статьи без ограничения по времени. Если метрика `no-tags` вырастет неконтролируемо, рекомендуется добавить `AND published_at > NOW() - INTERVAL '90 days'` в подзапрос и пересоздать частичный индекс с тем же фильтром.
 
 ---
 
@@ -836,3 +862,4 @@ const hasRealSentiment = article.sentiment_source === 'llm' || article.sentiment
 | **10.0** | **2026-06-19** | **Keyword-First Pipeline: pre-filter, no-tags skip, force LLM для статей с тегами, no-tags wake-up** |
 | **10.1** | **2026-06-20** | **Fix translate JSON-object parsing + retry EN articles with title_ru = title_original (Баг 11)** |
 | **10.2** | **2026-08-12** | **Doc-sync с кодом (код не менялся): Layer 1 = word-boundary regex (`ed34392`), timeout unified batch 60s (`44c1713`), маркеры `llm-error` вместо гранулярных (TZ-31)** |
+| **10.3** | **2026-08-21** | **Doc/code sync: batched + coalesced wakeUp (`wakeUpNoTagsArticlesCoalesced`), частичный индекс `idx_news_no_tags_wakeup` (TZ-6.2/TZ-6.3)** |

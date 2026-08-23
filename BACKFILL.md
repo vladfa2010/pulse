@@ -1,8 +1,8 @@
 # PULSE — Tag Backfill (Retro Scan)
 
 > Ретро-сканирование существующих новостей по keywords тега.  
-> Статус: актуально для коммитов `7f75034` (A), `61d4e15` (B) и последующих (C) — см. `TZ_TICKER_BACKFILL_FIX5.md`.  
-> Файлы: `pulse-backend/src/services/tagBackfill.ts`, `pulse-backend/src/index.ts`, `pulse-frontend/src/pages/admin/TagsTab.tsx`, `pulse-frontend/src/pages/admin/TagDetailModal.tsx`.
+> Статус: актуально после TZ-6 / TZ-6.1 / TZ-6.2 / TZ-6.3 / TZ-7 / TZ-7.4.  
+> Файлы: `pulse-backend/src/services/tagBackfill.ts`, `pulse-backend/src/services/tagManager.ts`, `pulse-backend/src/index.ts`, `pulse-backend/src/routes/adminLegacy.ts`, `pulse-frontend/src/pages/admin/TagsTab.tsx`, `pulse-frontend/src/pages/admin/TagDetailModal.tsx`.
 
 ---
 
@@ -38,32 +38,42 @@
 ## 3. Архитектура
 
 ```
-┌─────────────────────────────────────┐
-│  user_defined_tags                  │
-│  ├── keywords (колонка)             │
-│  └── enriched_data (JSONB)          │
-│       ├── ticker, synonyms, ...     │
-│       └── _backfill (marker)        │
-└─────────────┬───────────────────────┘
-              │
-              ▼
-┌─────────────────────────────────────┐
-│  services/tagBackfill.ts            │
-│  ├── buildScanKeywords()            │
-│  ├── countTagMatches()  (dry-run)   │
-│  └── backfillTagMatches() (apply)   │
-│       ├── semaphore ≤ 2           │
-│       ├── chunks by id            │
-│       └── marker _backfill        │
-└─────────────┬───────────────────────┘
-              │
-              ▼
-┌─────────────────────────────────────┐
-│  news.matched_tags                  │
-│  тег добавляется только если его      │
-│  ещё нет в массиве                  │
-└─────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│  user_defined_tags                                                      │
+│  ├── keywords (колонка)                                                 │
+│  └── enriched_data (JSONB)                                              │
+│       ├── ticker, synonyms, ...                                         │
+│       └── _backfill (marker)                                            │
+└───────────────────────┬───────────────────────────────────────────────────┘
+                        │
+                        ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  services/tagBackfill.ts                                              │
+│  ├── buildScanKeywords()                                                │
+│  ├── countTagMatches()  (dry-run)                                       │
+│  └── backfillTagMatches() (apply)                                       │
+│       ├── FIFO queue (backfillQueue)                                    │
+│       ├── max 1 concurrent scan (TZ-6.1)                               │
+│       ├── priority jump for admin/manual triggers                        │
+│       ├── sync mode for manual backfill-matches endpoint                 │
+│       ├── chunks by id                                                   │
+│       ├── 2 s delay between chunks (TZ-6)                                │
+│       └── marker _backfill                                               │
+└───────────────────────┬───────────────────────────────────────────────────┘
+                        │
+                        ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│  news.matched_tags                                                       │
+│  тег добавляется только если его ещё нет в массиве                     │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
+
+### Защита БД от шторма (TZ-6)
+
+- **FIFO-очередь** вместо семафора: все запросы встают в очередь, admin-ручники — в голову (`priority: true`).
+- **Один параллельный скан** (`MAX_CONCURRENT_SCANS = 1`, TZ-6.1): на инстансе 256 MB/1 CPU два seq scan'а по `news` не укладывались в ресурсы.
+- **Пауза 2 сек между чанками** (`CHUNK_DELAY_MS = 2000`): даёт дышать пулу соединений и не перегружать WAL/IO.
+- **Дедупликация:** тег, уже в очереди или в работе, не добавляется повторно, возвращается `skipped: true`.
 
 ### Матч-поверхность — keywords-first
 
@@ -120,7 +130,7 @@ SQLite не поддерживает word-boundary regex, поэтому исп�
 
 - Размер чанка: `DEFAULT_CHUNK_SIZE` (env `TAG_BACKFILL_CHUNK_SIZE`, по умолчанию `5000`) статей.
 - Keyset-пагинация по `id` (не `OFFSET`).
-- Между чанками пауза `100 мс`.
+- Между чанками пауза `2 сек` (`CHUNK_DELAY_MS = 2000`, TZ-6). Раньше было 100 мс, но на 256 MB БД последовательные тяжёлые UPDATE'ы шли волной и мешали пользовательским запросам.
 - Каждый чанк обёрнут в retry: до 3 повторных попыток с паузой `500 * attempt` мс.
 - PostgreSQL: каждый scan-чанк выполняется в транзакции с `SET LOCAL statement_timeout = '120000ms'` (env `TAG_BACKFILL_QUERY_TIMEOUT_MS`, по умолчанию `120000` мс) через `queryWithTimeout`, чтобы не упереться в pool-wide `statement_timeout = 30s`.
 - SQLite: `queryWithTimeout` использует `Promise.race` с тем же таймаутом.
@@ -150,20 +160,35 @@ UPDATE news SET matched_tags = $json_array WHERE id = $id
 
 | Лимит | Значение | Почему |
 |-------|----------|--------|
-| `MAX_CONCURRENT_SCANS` | 2 | Не нагружать БД одновременными сканами. |
-| `DEFAULT_CHUNK_SIZE` | `5000` (env `BACKFILL_CHUNK_SIZE`) | Короткие транзакции, не блокируют таблицу. |
-| `DEFAULT_QUERY_TIMEOUT_MS` | `60000` (env `BACKFILL_QUERY_TIMEOUT_MS`) | Защита scan-запросов от pool-wide `statement_timeout`. |
+| `MAX_CONCURRENT_SCANS` | 1 | На 256 MB/1 CPU два параллельных seq scan'а по `news` не укладывались (TZ-6.1). |
+| `DEFAULT_CHUNK_SIZE` | `5000` (env `TAG_BACKFILL_CHUNK_SIZE`) | Короткие транзакции, не блокируют таблицу. |
+| `CHUNK_DELAY_MS` | `2000` | Пауза между чанками, чтобы не штормить БД (TZ-6). |
+| `DEFAULT_QUERY_TIMEOUT_MS` | `120000` (env `TAG_BACKFILL_QUERY_TIMEOUT_MS`) | Защита scan-запросов от pool-wide `statement_timeout`. |
 | `MAX_TOKENS` | `500` | Аномально длинный список keywords = что-то сломалось; не сканируем. |
 | `MAX_RETRIES` | 3 | Retry при транзиентных ошибках PG. |
+| `WAKEUP_BATCH_SIZE` | 1000 | Размер пакета `UPDATE news SET needs_translation = TRUE` для no-tags статей (TZ-6.3). |
+| `WAKEUP_COALESCE_MS` | 5000 | Дебаунс для множественных вызовов `wakeUpNoTagsArticlesCoalesced`. |
+| `WAKEUP_DEFER_MS` | 30000 | Если backfill занят, wakeUp откладывается и перепроверяется (TZ-6.3). |
 | dry-run timeout | 120 сек (`SET LOCAL`) | `COUNT(*)` по большой таблице может быть долгим; pool-wide `statement_timeout = 30s` его убьёт. |
 
-### Семафор + rerun queue
+### FIFO-очередь + rerun
 
-- `runningScans` — `Map<string, Promise<BackfillResult>>`.
-- `pendingRerun` — `Set<string>` тегов, для которых пришёл повторный запрос во время выполнения.
-- Если для тега уже идёт скан — запрос ставится в `pendingRerun`, а ответ возвращает `skipped: true` с `message: 'Сканирование уже выполняется, будет запущено повторно'`.
-- Когда текущий скан завершается, `finally` проверяет `pendingRerun`; если тег там есть — он удаляется из сета и запускается новый скан с теми же опциями (fire-and-forget).
-- Если уже 2 скана работают — возвращаем `error: 'Too many concurrent scans...'` без постановки в rerun-очередь.
+- `backfillQueue` — массив `QueueItem`.
+- `queuedTags` — `Set<string>` тегов, уже стоящих в очереди.
+- `activeScans` — `Set<string>` тегов, чей скан выполняется прямо сейчас.
+- `activeCount` — число активных сканов (0..1).
+- `processQueue()` — при появлении свободного слота берёт следующий элемент из головы очереди.
+- `backfillTagMatches(..., { priority: true })` вставляет в голову очереди; используется для admin/manual триггеров.
+- `backfillTagMatches(..., { sync: true, priority: true })` ждёт завершения; используется в `POST /admin/tags/:tagId/backfill-matches`.
+- Тег, уже в очереди или в работе, не добавляется повторно — возвращается `skipped: true`.
+- `unshift` для priority — O(n), приемлем при очереди в десятки тегов; если станет сотни регулярно — заменить на две очереди (priority + bulk).
+
+### Coalesced + batched wakeUp (TZ-6.3)
+
+- `wakeUpNoTagsArticles()` теперь батчевый UPDATE по `WAKEUP_BATCH_SIZE` строк с паузой 200 мс между батчами.
+- `wakeUpNoTagsArticlesCoalesced()` дебаунсит множественные вызовы и перед запуском проверяет `isBackfillBusy()`. Если backfill работает — wakeUp откладывается на 30 с, максимум 40 раз подряд (~20 мин страховка).
+- Прямой `wakeUpNoTagsArticles()` оставлен для cron `/trigger/wake-no-tags`.
+- Индекс `idx_news_no_tags_wakeup ON news(id) WHERE sentiment_source = 'no-tags' AND (matched_tags IS NULL OR matched_tags = '{}')` создан в бут-миграциях (TZ-6.2), чтобы `SELECT id FROM news WHERE ... LIMIT 1000` не делал seq scan.
 
 ### Маркер `_backfill`
 
@@ -224,7 +249,7 @@ POST /admin/tags/:tagId/backfill-matches
 }
 ```
 
-**Если скан уже выполняется:**
+**Если скан уже выполняется или стоит в очереди:**
 
 ```json
 200 OK
@@ -236,25 +261,12 @@ POST /admin/tags/:tagId/backfill-matches
   "dryRun": false,
   "durationMs": 0,
   "skipped": true,
-  "message": "Сканирование уже выполняется, будет запущено повторно"
+  "message": "Сканирование уже выполняется или в очереди"
 }
 ```
 
-**Если семафор заполнен:**
+Тег дедуплицируется на входе: повторный запрос не ставится в очередь дважды, а сразу возвращает `skipped: true`. После завершения текущего скана rerun автоматически не запускается — админ может нажать кнопку снова.
 
-```json
-200 OK
-{
-  "success": false,
-  "tagId": "sber",
-  "matched": 0,
-  "scanned": 0,
-  "dryRun": false,
-  "durationMs": 0,
-  "skipped": true,
-  "error": "Too many concurrent scans (limit 2)"
-}
-```
 
 **Ошибки:**
 - `404` — тег не найден.
@@ -294,9 +306,8 @@ POST /admin/backfill-matches-all
 
 1. **Tag Scan** — dry-run, показывает `matched` и `tokens`.
 2. **Apply Scan** — применяет скан.
-3. Если скан для этого тега уже идёт — показывает сообщение «Сканирование уже выполняется, будет запущено повторно»; rerun запускается автоматически после завершения текущего скана.
-4. Если уже 2 скана работают — показывает сообщение «Сейчас идут 2 других скана. Подождите и попробуйте снова.»
-5. После успешного apply вызывается `load()` — данные тега обновляются.
+3. Если скан для этого тега уже идёт или стоит в очереди — показывает сообщение «Сканирование уже выполняется или в очереди». Тег дедуплицируется: повторный запрос не ставится в очередь дважды.
+4. После успешного apply вызывается `load()` — данные тега обновляются.
 
 ---
 
@@ -313,11 +324,11 @@ POST /admin/backfill-matches-all
 
 1. Открыть `TagsTab` — у целевого тега должен появиться статус `running`, затем `N matched`.
 2. В логах Render искать строки:
-   - `[TagBackfill] queued for rerun (already running): ...` — запрос поставлен в rerun-очередь.
-   - `[TagBackfill] rerunning ... after previous completion` — автоматический rerun.
-   - `[TagBackfill] skipped (concurrency): ...` — отброшенные запросы.
-   - `[TagBackfill] DONE tag=... matched=... scanned=... in ...ms` — успешное завершение.
-   - `[TagBackfill] DONE all processed=... skipped=... matched=...` — массовый скан.
+   - `[TagBackfill] queued <tagId> (queue=N, active=M)` — тег добавлен в FIFO-очередь.
+   - `[TagBackfill] skipped (already queued or running): <tagId>` — повторный запрос отброшен дедупликацией.
+   - `[TagBackfill] DONE tag=<tagId> matched=... scanned=... in ...ms` — успешное завершение.
+   - `[TagBackfill] DONE all processed=... skipped=... matched=... errors=... in ...ms` — массовый скан.
+   - `[TagManager] wakeUp deferred (N/40): backfill busy` — wakeUp no-tags отложен из-за занятой очереди backfill.
 3. Для dry-run проверить, что `GET /admin/tags` возвращает корректный маркер в SQLite (путь `$._backfill`).
 
 ### Переменные окружения
@@ -348,7 +359,7 @@ POST /admin/backfill-matches-all
 | `ILIKE '%ticker%'` — без границ слова | `\m(...)\M` — точные границы слова |
 | Блокировал ingestion | Fire-and-forget, не блокирует HTTP |
 | Нет маркера | `_backfill` маркер с видимым статусом |
-| Нет лимитов | Семафор, чанки, retry, токен-лимит |
+| Нет лимитов | FIFO-очередь, 1 параллельный скан, чанки, retry, токен-лимит |
 
 ---
 
