@@ -20,7 +20,8 @@ import cors from 'cors';
 import crypto from 'crypto';
 import axios from 'axios';
 import { query, pool } from './config/db';  // ← query + pool (for transactions)
-import { setCachedPopularTags } from './utils/tagCache';
+import { setCachedPopularTags, popularTagsCached } from './utils/tagCache';
+import { computePopularTags } from './services/popularTags';
 import { adminCached, adminCacheInvalidate } from './utils/adminCache';
 import { slugify } from './utils/slugify';
 import authRoutes from './routes/auth';
@@ -3722,6 +3723,31 @@ async function start() {
   } catch (err: any) {
     console.error('[DB] Connection test FAILED:', err.message);
   }
+
+  // ─── Шаг 4: Фоновый прогрев кэша популярных тегов ─────────────────────
+  // TZ-7.7.1: обновляем кэш каждые 14 минут, чтобы первый запрос /tags/popular
+  // никогда не ждал SQL. Первый прогрев — через 2 минуты после старта,
+  // чтобы не мешать миграциям и RSS-циклам.
+  async function warmPopularTagsCache(): Promise<void> {
+    for (const period of ['24h', '7d', '30d'] as const) {
+      if (shuttingDown) return;
+      const limit = 15;
+      try {
+        await popularTagsCached(period, limit, () => computePopularTags(period, limit));
+        console.log(`[PopularTagsWarm] warmed ${period}:${limit}`);
+      } catch (err: any) {
+        console.error(`[PopularTagsWarm] failed ${period}:${limit}:`, err.message);
+      }
+    }
+  }
+
+  setTimeout(() => {
+    if (shuttingDown) return;
+    warmPopularTagsCache();
+    setInterval(() => {
+      if (!shuttingDown) warmPopularTagsCache();
+    }, 14 * 60 * 1000);
+  }, 120 * 1000);
 
 // ─── Шаг 5: Запуск фоновых задач ──────────────────────────────────
     // startCron() — ОТКЛЮЧЕН (TZ_REMOVE_DUPLICATE_RSS_CRON)

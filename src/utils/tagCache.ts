@@ -16,7 +16,7 @@ interface CachedTags {
 const cache = new Map<string, CachedTags>()
 const inflight = new Map<string, Promise<any[]>>()
 
-const CACHE_TTL = 5 * 60 * 1000        // 5 minutes — fresh data
+const CACHE_TTL = 15 * 60 * 1000       // 15 minutes — fresh data
 const STALE_TTL = 60 * 60 * 1000       // up to 1 hour stale accepted while refreshing in background
 
 function getCacheKey(period: string, limit: number): string {
