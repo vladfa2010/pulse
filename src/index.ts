@@ -3427,11 +3427,8 @@ async function start() {
     // под параллельной нагрузкой NewsProcessor/RSS. Существует только в schema.sql (fresh installs),
     // на проде индекса никогда не было.
     { sql: `CREATE INDEX IF NOT EXISTS idx_news_matched_tags_gin ON news USING GIN (matched_tags)`, name: 'idx_news_matched_tags_gin' },
-    // TZ-7.2: статистика для планировщика после создания GIN-индекса (и в целом по news).
-    // Без свежего ANALYZE планировщик может игнорировать новый индекс: лента GET /api/news
-    // оставалась 16s при уже созданном idx_news_matched_tags_gin.
-    // ANALYZE — неблокирующая (читает выборку строк), идемпотентная, ~секунды на 50k строк.
-    { sql: `ANALYZE news`, name: 'analyze_news_tz7' },
+    // TZ-7.2/7.6: ANALYZE news перенесён из бут-миграций в отложенный фоновый запуск,
+    // т.к. на проде полный ANALYZE ~126k строк не успевал за 30s в первые минуты старта.
   ];
   for (const m of migrations) {
     try {
@@ -3748,6 +3745,37 @@ async function start() {
       if (!shuttingDown) warmPopularTagsCache();
     }, 14 * 60 * 1000);
   }, 120 * 1000);
+
+  // ─── Шаг 4b: Отложенный ANALYZE news ────────────────────────────────
+  // TZ-7.6: в бут-миграциях `ANALYZE news` падал по statement_timeout 30s
+  // (инстанс занят schema-init + миграциями + RSS-старт). Запускаем через
+  // 180с, когда инстанс свободен. Анализируем только колонки, влияющие на
+  // планы ленты: matched_tags (GIN) и published_at (окна + ORDER BY).
+  async function deferredAnalyzeNews(attempt = 1): Promise<void> {
+    if (shuttingDown) return;
+    try {
+      const { rows: [s] } = await query(`
+        SELECT EXTRACT(EPOCH FROM (now() - GREATEST(last_analyze, last_autoanalyze))) AS age_s
+        FROM pg_stat_user_tables WHERE relname = 'news'
+      `);
+      if (s?.age_s != null && s.age_s < 3600) {
+        console.log(`[DB] Deferred ANALYZE news: skipped (last analyze ${Math.round(s.age_s)}s ago)`);
+        return;
+      }
+      const t0 = Date.now();
+      await query('ANALYZE news (matched_tags, published_at)');
+      console.log(`[DB] Deferred ANALYZE news: done in ${Date.now() - t0}ms (attempt ${attempt})`);
+    } catch (e: any) {
+      console.warn(`[DB] Deferred ANALYZE news failed (attempt ${attempt}): ${e?.message}`);
+      if (attempt < 3 && !shuttingDown) {
+        setTimeout(() => deferredAnalyzeNews(attempt + 1), 60 * 1000);
+      }
+    }
+  }
+
+  setTimeout(() => {
+    if (!shuttingDown) deferredAnalyzeNews();
+  }, 180 * 1000);
 
 // ─── Шаг 5: Запуск фоновых задач ──────────────────────────────────
     // startCron() — ОТКЛЮЧЕН (TZ_REMOVE_DUPLICATE_RSS_CRON)
