@@ -176,7 +176,12 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
            SELECT id FROM news
            WHERE matched_tags && $1::text[]${pgReadFilter}
            AND ${timeFilter}
-           ORDER BY published_at ${pgOrder}
+           -- TZ-7.4: (published_at + INTERVAL '0 seconds') вместо published_at.
+           -- Значение идентично, но планировщик не может использовать idx_news_published_at
+           -- для сортировки — иначе он выбирает Index Scan Backward по датам с фильтром
+           -- matched_tags на каждой строке (на проде: 122k строк отфильтровано, 7.5s)
+           -- вместо GIN BitmapAnd (0.97s). Измерено EXPLAIN ANALYZE на проде.
+           ORDER BY (published_at + INTERVAL '0 seconds') ${pgOrder}
            LIMIT $${pgIdx} OFFSET $${pgIdx + 1}
          ) t ON t.id = n.id
          ORDER BY n.published_at ${pgOrder}`,
