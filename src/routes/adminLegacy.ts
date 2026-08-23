@@ -190,12 +190,13 @@ router.post('/backfill', adminMiddleware, async (req, res) => {
       `, [newsIds]);
       articles = result.rows;
     } else if (tag) {
-      // ТЗ-7.5: выражение в ORDER BY — иначе LIMIT 100 по idx_news_published_at
-      // с построчным фильтром ANY(matched_tags) (та же ловушка, что в recent-20 карточки).
+      // ТЗ-7.5 / ТЗ-7.5.1: @> ARRAY[$1]::text[] + выражение в ORDER BY.
+      // '= ANY' не даёт GIN-план — планировщик выбирал Seq Scan (126k строк, 6s).
+      // С '@>' — idx_news_matched_tags_gin. Выражение в ORDER BY отключает idx_news_published_at.
       const result = await query(`
         SELECT id, title_ru, summary_ru, matched_tags
         FROM news
-        WHERE $1 = ANY(matched_tags)
+        WHERE matched_tags @> ARRAY[$1]::text[]
           AND (sentiment_source LIKE 'llm-%' OR sentiment_reasoning IS NULL)
         ORDER BY (published_at + INTERVAL '0 seconds') DESC
         LIMIT 100
@@ -728,15 +729,14 @@ router.get('/tags/:tagId', adminMiddleware, async (req, res) => {
     const dailyResult = await query(dailySql, dailyParams);
 
     // Recent articles
-    // ТЗ-7.5: (published_at + INTERVAL '0 seconds') вместо published_at.
-    // Значение идентично, но планировщик не может использовать idx_news_published_at
-    // для сортировки — иначе на редких тегах он идёт Index Scan Backward по датам
-    // с построчным фильтром ANY(matched_tags): на проде 'circle' фильтровал 27248 строк
-    // и умирал по statement_timeout (31s). С выражением — GIN BitmapAnd, ~1s cold.
+    // ТЗ-7.5 / ТЗ-7.5.1: @> ARRAY[$1]::text[] + выражение в ORDER BY.
+    // '= ANY' не преобразуется в GIN-операцию — планировщик выбирал Seq Scan
+    // (126k строк, 6s на 'circle'). С '@>' — idx_news_matched_tags_gin,
+    // измерено: 6016ms → 0.64ms. Выражение в ORDER BY отключает idx_news_published_at.
     const articlesResult = await query(`
       SELECT id, title_ru, published_at, sentiment_score, sentiment_source, source
       FROM news
-      WHERE $1 = ANY(matched_tags)
+      WHERE matched_tags @> ARRAY[$1]::text[]
       ORDER BY (published_at + INTERVAL '0 seconds') DESC
       LIMIT 20
     `, [tagId]);
