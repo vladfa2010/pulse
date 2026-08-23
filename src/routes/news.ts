@@ -400,13 +400,16 @@ router.get('/tags/:tagId', async (req, res) => {
         [`%"${tagId}"%`]
       );
     } else {
+      // ТЗ-7.5.2: @> ARRAY[$1]::text[] (даёт idx_news_matched_tags_gin) +
+      // выражение в ORDER BY — иначе Index Scan Backward по idx_news_published_at
+      // с построчным ANY-фильтром (замер на проде: 6043 мс, 61k строк отфильтровано).
       result = await query(
         `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags,
                 tag_impact, source_count, all_sources, fact_check_status, fact_check_result, slug
          FROM news
-         WHERE $1 = ANY(matched_tags)
+         WHERE matched_tags @> ARRAY[$1]::text[]
          AND ${timeFilter}
-         ORDER BY published_at DESC
+         ORDER BY (published_at + INTERVAL '0 seconds') DESC
          LIMIT 50`,
         [tagId]
       );

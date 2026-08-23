@@ -48,13 +48,17 @@ router.get('/news-daily', adminMiddleware, async (req, res) => {
       ];
     } else {
       // PostgreSQL
+      // ТЗ-7.5.2: @> ARRAY[$1]::text[] вместо $1 = ANY(matched_tags) — та же семантика
+      // (array-contains), но детерминированно даёт Bitmap Index Scan по
+      // idx_news_matched_tags_gin. С ANY планировщик шёл по idx_news_published_at
+      // и фильтровал 126k строк (замер на проде: 4077 мс).
       sql = `
         SELECT
           to_char((published_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Moscow')::date, 'YYYY-MM-DD') AS day,
           COUNT(*) AS count
         FROM news
         WHERE published_at >= NOW() - INTERVAL '${days} days'
-          AND $1 = ANY(matched_tags)
+          AND matched_tags @> ARRAY[$1]::text[]
         GROUP BY (published_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Moscow')::date
         ORDER BY day ASC
       `;
@@ -131,6 +135,9 @@ router.get('/articles-by-day', adminMiddleware, async (req, res) => {
         `${date}T00:00:00`,
       ];
     } else {
+      // ТЗ-7.5.2: @> ARRAY[$1]::text[] (даёт idx_news_matched_tags_gin) +
+      // выражение в ORDER BY — иначе LIMIT 50 по idx_news_published_at с построчным
+      // фильтром (та же ловушка, что в ТЗ-7.4; замер на проде: 5480 мс).
       sql = `
         SELECT
           id,
@@ -143,9 +150,9 @@ router.get('/articles-by-day', adminMiddleware, async (req, res) => {
           summary_ru AS summary,
           matched_tags
         FROM news
-        WHERE $1 = ANY(matched_tags)
+        WHERE matched_tags @> ARRAY[$1]::text[]
           AND (published_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Moscow')::date = $2::date
-        ORDER BY published_at DESC
+        ORDER BY (published_at + INTERVAL '0 seconds') DESC
         LIMIT 50
       `;
       params = [tagId, date];
