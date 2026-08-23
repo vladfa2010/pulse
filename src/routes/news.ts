@@ -162,15 +162,24 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
 
       // TZ-40: limit+1 вместо COUNT(*) — total никто не читает (проверено по фронту),
       // COUNT по 90 дням с GIN-фильтром и подзапросом user_news_reads — лишняя работа на каждой странице.
+      //
+      // TZ-7.3: двухстадийный запрос. Внутренний SELECT тянет только id (узкий, GIN+anti-join,
+      // доказано EXPLAIN на проде: 905ms cold). Внешний джойн дочитывает широкие колонки
+      // (summary_ru, tag_impact, fact_check_result и пр.) только для limit+1 отобранных строк —
+      // раньше они вычитывались с диска для всех ~3757 кандидатов, отсюда 7–16s на ленте.
       const pgOrder = 'DESC'; // всегда новые сверху
       const result = await query(
-        `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags,
-                tag_impact, source_count, all_sources, fact_check_status, fact_check_result, slug
-         FROM news
-         WHERE matched_tags && $1::text[]${pgReadFilter}
-         AND ${timeFilter}
-         ORDER BY published_at ${pgOrder}
-         LIMIT $${pgIdx} OFFSET $${pgIdx + 1}`,
+        `SELECT n.id, n.title_ru, n.title_original, n.summary_ru, n.summary_original, n.source, n.url, n.published_at, n.sentiment, n.sentiment_score, n.sentiment_reasoning, n.sentiment_source, n.is_political, n.article_type, n.matched_tags,
+                n.tag_impact, n.source_count, n.all_sources, n.fact_check_status, n.fact_check_result, n.slug
+         FROM news n
+         JOIN (
+           SELECT id FROM news
+           WHERE matched_tags && $1::text[]${pgReadFilter}
+           AND ${timeFilter}
+           ORDER BY published_at ${pgOrder}
+           LIMIT $${pgIdx} OFFSET $${pgIdx + 1}
+         ) t ON t.id = n.id
+         ORDER BY n.published_at ${pgOrder}`,
         [...pgParams, limit + 1, offset]
       );
       hasMore = result.rows.length > limit;
