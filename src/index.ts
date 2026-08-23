@@ -263,8 +263,9 @@ app.get('/debug-tag/:tagId', adminMiddleware, async (req, res) => {
       linksCount = parseInt(linksResult.rows[0].count);
     } catch { /* table may not exist */ }
 
+    // ТЗ-7.5: @> ARRAY[$1] — детерминированный GIN-план (idx_news_matched_tags_gin).
     const matchedResult = await query(
-      `SELECT COUNT(*) as count FROM news WHERE $1::text = ANY(matched_tags)`,
+      `SELECT COUNT(*) as count FROM news WHERE matched_tags @> ARRAY[$1::text]`,
       [tagId]
     );
 
@@ -1831,13 +1832,14 @@ app.get('/trigger/reprocess-tag/:tagId', async (req, res) => {
   try {
     const tagId = req.params.tagId.toLowerCase();
     const { processRawArticles } = await import('./services/newsProcessor');
+    // ТЗ-7.5: @> ARRAY[$1] — детерминированный GIN-план (idx_news_matched_tags_gin).
     const result = await query(
       `UPDATE news
        SET needs_translation = TRUE,
            sentiment_source = NULL,
            matched_tags = '{}',
            tag_impact = '[]'
-       WHERE $1 = ANY(matched_tags)
+       WHERE matched_tags @> ARRAY[$1]::text[]
        RETURNING id`,
       [tagId]
     );

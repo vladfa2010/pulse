@@ -190,12 +190,14 @@ router.post('/backfill', adminMiddleware, async (req, res) => {
       `, [newsIds]);
       articles = result.rows;
     } else if (tag) {
+      // ТЗ-7.5: выражение в ORDER BY — иначе LIMIT 100 по idx_news_published_at
+      // с построчным фильтром ANY(matched_tags) (та же ловушка, что в recent-20 карточки).
       const result = await query(`
         SELECT id, title_ru, summary_ru, matched_tags
         FROM news
         WHERE $1 = ANY(matched_tags)
           AND (sentiment_source LIKE 'llm-%' OR sentiment_reasoning IS NULL)
-        ORDER BY published_at DESC
+        ORDER BY (published_at + INTERVAL '0 seconds') DESC
         LIMIT 100
       `, [tag]);
       articles = result.rows;
@@ -708,13 +710,15 @@ router.get('/tags/:tagId', adminMiddleware, async (req, res) => {
       `;
       dailyParams = [`%"${tagId}"%`, `%[${tagId},%`, `%,${tagId}]%`, tagId];
     } else {
+      // ТЗ-7.5: @> ARRAY[$1] вместо $1 = ANY(matched_tags) — та же семантика (array-contains),
+      // но однозначно маппится на GIN idx_news_matched_tags_gin.
       dailySql = `
         SELECT
           (published_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Moscow')::date as day,
           COUNT(*) as count,
           ROUND(AVG(sentiment_score) FILTER (WHERE sentiment_score IS NOT NULL), 1) as avg_sentiment
         FROM news
-        WHERE $1 = ANY(matched_tags)
+        WHERE matched_tags @> ARRAY[$1]::text[]
           AND published_at > NOW() - INTERVAL '30 days'
         GROUP BY (published_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Moscow')::date
         ORDER BY day ASC
@@ -724,11 +728,16 @@ router.get('/tags/:tagId', adminMiddleware, async (req, res) => {
     const dailyResult = await query(dailySql, dailyParams);
 
     // Recent articles
+    // ТЗ-7.5: (published_at + INTERVAL '0 seconds') вместо published_at.
+    // Значение идентично, но планировщик не может использовать idx_news_published_at
+    // для сортировки — иначе на редких тегах он идёт Index Scan Backward по датам
+    // с построчным фильтром ANY(matched_tags): на проде 'circle' фильтровал 27248 строк
+    // и умирал по statement_timeout (31s). С выражением — GIN BitmapAnd, ~1s cold.
     const articlesResult = await query(`
       SELECT id, title_ru, published_at, sentiment_score, sentiment_source, source
       FROM news
       WHERE $1 = ANY(matched_tags)
-      ORDER BY published_at DESC
+      ORDER BY (published_at + INTERVAL '0 seconds') DESC
       LIMIT 20
     `, [tagId]);
 
@@ -1354,8 +1363,9 @@ router.delete('/tags/:tagId', adminMiddleware, async (req, res) => {
     const deletedPortfolios = portfoliosResult.rowCount || 0;
 
     // 2. Clean matched_tags (TEXT[])
+    // ТЗ-7.5: @> ARRAY[$1] — детерминированный GIN-план (idx_news_matched_tags_gin).
     const matchedResult = await client.query(
-      `UPDATE news SET matched_tags = array_remove(matched_tags, $1) WHERE $1 = ANY(matched_tags)`,
+      `UPDATE news SET matched_tags = array_remove(matched_tags, $1) WHERE matched_tags @> ARRAY[$1]::text[]`,
       [tagId]
     );
     const cleanedMatched = matchedResult.rowCount || 0;
@@ -1472,8 +1482,9 @@ router.get('/tags/:tagId/delete-preview', adminMiddleware, async (req, res) => {
     );
     const portfoliosCount = parseInt(portfoliosResult.rows[0].count);
 
+    // ТЗ-7.5: @> ARRAY[$1] — детерминированный GIN-план (idx_news_matched_tags_gin).
     const matchedResult = await query(
-      `SELECT COUNT(*) as count FROM news WHERE $1::text = ANY(matched_tags)`, [tagId]
+      `SELECT COUNT(*) as count FROM news WHERE matched_tags @> ARRAY[$1::text]`, [tagId]
     );
     const matchedCount = parseInt(matchedResult.rows[0].count);
 
