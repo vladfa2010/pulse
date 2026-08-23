@@ -104,8 +104,8 @@ GET /admin/tags/:tagId
     candidates: { symbol: string; mic: string; name: string }[];
   }
   ```
-- `daily_stats` — статистика новостей по дням (MSK, 30 дней).
-- `recent_articles` — последние 20 новостей.
+- `daily_stats` — статистика новостей по дням (MSK, 30 дней). Использует `matched_tags @> ARRAY[$1]::text[]` для детерминированного GIN-плана (TZ-7.5).
+- `recent_articles` — последние 20 новостей. Запрос использует `@> ARRAY[$1]::text[]` + `ORDER BY (published_at + INTERVAL '0 seconds') DESC`, чтобы планировщик брал `idx_news_matched_tags_gin` вместо Seq Scan / idx_news_published_at (TZ-7.5 / TZ-7.5.1).
 - `subscribers` / `subscriber_count` — подписчики тега.
 
 ### 4.2 Market Timeline
@@ -141,6 +141,42 @@ DELETE /admin/tags/:tagId
 - Если изменились поля, влияющие на матчинг (`keywords`, `ticker`, `synonyms_ru`, `synonyms_en`, `key_products`), после сохранения:
   - `backfillTagMatches(..., { priority: true })` ставит ретро-скан в голову FIFO-очереди (TZ-6).
   - `wakeUpNoTagsArticlesCoalesced()` будит no-tags-статьи для повторного матчинга (TZ-6.3).
+
+### 4.4 SQL-оптимизация запросов карточки (TZ-7.5 / TZ-7.5.1)
+
+Запросы тега по `matched_tags` строятся так, чтобы планировщик PostgreSQL стабильно использовал GIN-индекс `idx_news_matched_tags_gin`:
+
+- **array-contains (`@> ARRAY[$1]::text[]`)** вместо `$1 = ANY(matched_tags)`. Семантика идентична, но `@>` однозначно маппится на GIN; `= ANY` на проде выбирал Seq Scan (126k строк, 6s на теге `circle`).
+- **Expression ORDER BY** `(published_at + INTERVAL '0 seconds') DESC` вместо `published_at DESC` там, где есть `LIMIT`. Без выражения планировщик шёл по `idx_news_published_at` от новых к старым и фильтровал `matched_tags` построчно — на редких тегах 31s → statement timeout. С выражением он не может использовать индекс дат для сортировки и остаётся на GIN-плане.
+
+**Результат на проде (тег `circle`):**
+- Recent-20: 31s (timeout) → **0.64ms**.
+- Daily stats (30 дней): 57s → **2.6ms**.
+- LLM-retry по тегу: Seq Scan → GIN BitmapAnd.
+
+**Запрос recent articles:**
+```sql
+SELECT id, title_ru, published_at, sentiment_score, sentiment_source, source
+FROM news
+WHERE matched_tags @> ARRAY[$1]::text[]
+ORDER BY (published_at + INTERVAL '0 seconds') DESC
+LIMIT 20;
+```
+
+**Запрос daily stats:**
+```sql
+SELECT
+  (published_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Moscow')::date as day,
+  COUNT(*) as count,
+  ROUND(AVG(sentiment_score) FILTER (WHERE sentiment_score IS NOT NULL), 1) as avg_sentiment
+FROM news
+WHERE matched_tags @> ARRAY[$1]::text[]
+  AND published_at > NOW() - INTERVAL '30 days'
+GROUP BY (published_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Moscow')::date
+ORDER BY day ASC;
+```
+
+Тот же приём `@> ARRAY` применён в delete-tag, delete-preview, tag count и reprocess-tag.
 
 ---
 
@@ -226,5 +262,5 @@ useEffect(() => { chart.setOption(option, true) }, [candles, dailyStats, chartRe
 
 ---
 
-*Последние изменения: TZ-3.1fix (iterative `zonedMidnightToUtc`), TZ-3.1 (exchange timezones), TZ-3 (news reaction chart), TZ-2.13 (free-text query wire), TZ-2.12 (free-text ticker), TZ-2.11 (symbol/mic in PUT response), TZ-2.10 (editable MIC), TZ-2.9 (exchange alias), TZ-2.7 (market block + instrument search), TZ-2.5 (provider→exchange).*
+*Последние изменения: TZ-7.5 / TZ-7.5.1 (GIN + expression ORDER BY для recent articles, daily stats, LLM-retry), TZ-3.1fix (iterative `zonedMidnightToUtc`), TZ-3.1 (exchange timezones), TZ-3 (news reaction chart), TZ-2.13 (free-text query wire), TZ-2.12 (free-text ticker), TZ-2.11 (symbol/mic in PUT response), TZ-2.10 (editable MIC), TZ-2.9 (exchange alias), TZ-2.7 (market block + instrument search), TZ-2.5 (provider→exchange).*
 
