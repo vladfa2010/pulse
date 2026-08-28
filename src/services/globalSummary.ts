@@ -17,7 +17,7 @@ const SQL_INTERVAL_10MIN = USE_SQLITE
 
 interface GlobalSummaryCache {
   summary: string;
-  generatedAt: string;
+  generatedAt: string | null;
   articlesCount: number;
   time: number;
 }
@@ -203,7 +203,7 @@ export async function generateGlobalSummary(
     const result = await inflight;
     return {
       summary: result.summary,
-      cached: true,
+      cached: result.generatedAt !== null,
       generatedAt: result.generatedAt,
       articlesCount: result.articlesCount,
     };
@@ -216,7 +216,7 @@ export async function generateGlobalSummary(
     if (!KIMI_API_KEY) {
       return {
         summary: `Новостей в ленте за последние 6 часов: ${count}. LLM недоступен для генерации обзора.`,
-        generatedAt: null as any,
+        generatedAt: null,
         articlesCount: count,
         time: Date.now(),
       };
@@ -288,7 +288,7 @@ export function startGlobalSummaryCron(options: { isShuttingDown: () => boolean 
   const cron = require('node-cron');
   const JOB_NAME = 'global-summary';
 
-  async function runOnce(attempt = 1): Promise<void> {
+  async function runOnce(): Promise<void> {
     if (isShuttingDown()) return;
 
     const acquired = await acquireCronLock(JOB_NAME);
@@ -300,20 +300,25 @@ export function startGlobalSummaryCron(options: { isShuttingDown: () => boolean 
     let status: 'success' | 'warning' = 'success';
 
     try {
-      const result = await generateGlobalSummary({ refresh: true });
-      articlesCount = result.articlesCount;
-      console.log(`[GlobalSummaryCron] success, articles=${articlesCount}`);
-    } catch (err: any) {
-      errors.push(err?.message || String(err));
-      console.error(`[GlobalSummaryCron] failed (attempt ${attempt}):`, err?.message);
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          const result = await generateGlobalSummary({ refresh: true });
+          articlesCount = result.articlesCount;
+          console.log(`[GlobalSummaryCron] success, articles=${articlesCount}`);
+          break;
+        } catch (err: any) {
+          errors.push(err?.message || String(err));
+          console.error(`[GlobalSummaryCron] failed (attempt ${attempt}):`, err?.message);
 
-      if (attempt < 2 && isTimeoutOrNetworkError(err) && !isShuttingDown()) {
-        console.log('[GlobalSummaryCron] retrying in 60s');
-        await new Promise((resolve) => setTimeout(resolve, 60 * 1000));
-        return runOnce(attempt + 1);
+          if (attempt === 1 && isTimeoutOrNetworkError(err) && !isShuttingDown()) {
+            console.log('[GlobalSummaryCron] retrying in 60s');
+            await new Promise((resolve) => setTimeout(resolve, 60 * 1000));
+            continue;
+          }
+
+          status = 'warning';
+        }
       }
-
-      status = 'warning';
     } finally {
       await logCronFinish(logId, articlesCount, errors, status);
       await releaseCronLock(JOB_NAME);
