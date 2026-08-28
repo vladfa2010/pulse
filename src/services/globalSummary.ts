@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { query } from '../config/db';
+import { nowSql } from '../utils/nowSql';
 
 const KIMI_API_KEY = process.env.KIMI_API_KEY;
 const KIMI_MODEL = process.env.KIMI_MODEL || 'kimi-k2.5';
@@ -69,10 +70,13 @@ async function fetchGlobalArticles(): Promise<{
   articles: { title: string; summary: string; tags: string[]; sentiment: string }[];
   count: number;
 }> {
+  const timeFilter = USE_SQLITE
+    ? "datetime('now', '-6 hours')"
+    : `${nowSql()} - INTERVAL '6 hours'`;
   const result = await query(
     `SELECT title_ru, summary_ru, matched_tags, sentiment
      FROM news
-     WHERE published_at > NOW() - INTERVAL '6 hours'
+     WHERE published_at > ${timeFilter}
      ORDER BY published_at DESC
      LIMIT 50`,
     []
