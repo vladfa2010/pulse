@@ -130,3 +130,18 @@ export const promoValidateLimiter = rateLimit({
   keyGenerator: (req) => req.ip || 'unknown',
   validate: { trustProxy: false },
 });
+
+// ─── Global Summary refresh — 1 refresh / 5 minutes per user ───────────────
+export const globalSummaryRefreshLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000, // 5 минут
+  max: 1,
+  message: {
+    error: 'Обновить обзор можно раз в 5 минут.',
+    retryAfter: '5 minutes',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => (req as any).user?.userId || req.ip || 'unknown',
+  skip: (req) => req.query.refresh !== '1',
+  validate: { trustProxy: false },
+});

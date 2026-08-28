@@ -34,6 +34,8 @@ import plansRoutes from './routes/plans';
 import promoRoutes from './routes/promo';
 import featuresRoutes from './routes/features';
 import userRoutes from './routes/user';
+import globalSummaryRoutes from './routes/globalSummary';
+import { startGlobalSummaryCron } from './services/globalSummary';
 import translateRoutes from './routes/translate';
 import webhookRoutes from './routes/webhook';
 import adminRoutes, { adminMiddleware } from './routes/admin';
@@ -2319,6 +2321,7 @@ app.use('/api/plans', plansRoutes);     // GET /api/plans
 app.use('/api/promo/validate', promoValidateLimiter, promoRoutes); // GET /api/promo/validate
 app.use('/api/features', featuresRoutes); // GET /api/features
 app.use('/api/user', userRoutes);       // GET/POST/DELETE /api/user/tags
+app.use('/api/user', globalSummaryRoutes); // GET /api/user/summary-global
 app.use('/api/user', notificationsRouter); // Notification matrix (GET/PUT /notification-matrix, quiet-hours)
 app.use('/api/translate', translateRoutes);
 app.use('/api/webhook', webhookLimiter, webhookRoutes); // Высокий лимит для YuKassa
@@ -3822,6 +3825,7 @@ async function start() {
 
     if (!shuttingDown) {
       startDigestCron(); // TG digest cron (every hour)
+      startGlobalSummaryCron({ isShuttingDown: () => shuttingDown }); // TZ: global AI summary every 6 hours MSK
       startPortfolioSyncWorker(); // Broker portfolio sync (every 15 min MSK)
       startFactCheckCron(); // Fact-check worker (every 10s)
     }
