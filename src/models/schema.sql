@@ -756,3 +756,31 @@ CREATE INDEX IF NOT EXISTS idx_users_lower_email ON users (LOWER(email));
 
 -- TZ-07 v2: composite index for tag-news lookups in getUserTagsFull
 CREATE INDEX IF NOT EXISTS idx_news_tag_links_tag_news ON news_tag_links(tag_id, news_id);
+
+
+-- ============================================================
+-- 21. calendar_events — snapshot data for «Календарь инвестора»
+-- ============================================================
+CREATE TABLE IF NOT EXISTS calendar_events (
+  id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  date        DATE NOT NULL,
+  weekday     VARCHAR(2) NOT NULL,
+  title       TEXT NOT NULL,
+  kind        VARCHAR(10) NOT NULL,      -- МСФО | РСБУ | СД | СА | Дивиденды | Другое
+  status      VARCHAR(10) NOT NULL,      -- expected | confirmed
+  company     VARCHAR(100) NOT NULL,
+  ticker      VARCHAR(10) NOT NULL,
+  uploaded_at TIMESTAMP DEFAULT NOW(),
+  UNIQUE (date, title, ticker)
+);
+
+CREATE INDEX IF NOT EXISTS idx_calendar_events_date ON calendar_events(date);
+
+-- ============================================================
+-- 22. calendar_meta — snapshot metadata (single row, id = 1)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS calendar_meta (
+  id                  INTEGER PRIMARY KEY CHECK (id = 1),
+  uploaded_at         TIMESTAMP DEFAULT NOW(),
+  last_stale_alert_at TIMESTAMP
+);

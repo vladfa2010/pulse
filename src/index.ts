@@ -45,6 +45,7 @@ import marketRoutes from './routes/market';
 import marketPublicRoutes from './routes/marketPublic';
 import tagMarketRoutes from './routes/tagMarket';
 import sentimentRoutes from './routes/sentiment';
+import calendarRoutes from './routes/calendar';
 import appRoutes from './routes/app';
 import { authMiddleware, AuthRequest } from './middleware/auth';
 import { apiLimiter, authLimiter, webhookLimiter, forgotPasswordLimiter, passwordResetFlowLimiter, promoValidateLimiter } from './middleware/rateLimit';
@@ -2316,6 +2317,7 @@ app.use('/api/auth', authLimiter, authRoutes);  // Строгий лимит (15
 app.use('/api/news', newsRoutes);       // GET /api/news, /api/news/:tag (должен быть первым, т.к. содержит публичные маршруты)
 app.use('/api/news', factCheckRoutes);  // POST/GET /api/news/:id/fact-check
 app.use('/api/market', marketPublicRoutes); // Public market data: /api/market/news-chart (TZ-3)
+app.use('/api/calendar', calendarRoutes); // Public investor calendar
 app.use('/api/payment', paymentRoutes); // POST /api/payment/create, /confirm
 app.use('/api/plans', plansRoutes);     // GET /api/plans
 app.use('/api/promo/validate', promoValidateLimiter, promoRoutes); // GET /api/promo/validate
@@ -3432,6 +3434,31 @@ async function start() {
     { sql: `CREATE INDEX IF NOT EXISTS idx_news_matched_tags_gin ON news USING GIN (matched_tags)`, name: 'idx_news_matched_tags_gin' },
     // TZ-7.2/7.6: ANALYZE news перенесён из бут-миграций в отложенный фоновый запуск,
     // т.к. на проде полный ANALYZE ~126k строк не успевал за 30s в первые минуты старта.
+    // TZ_CALENDAR: flat investor calendar events + single-row snapshot metadata
+    {
+      sql: `CREATE TABLE IF NOT EXISTS calendar_events (
+        id          ${USE_SQLITE ? 'TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16))))' : 'UUID PRIMARY KEY DEFAULT uuid_generate_v4()'},
+        date        DATE NOT NULL,
+        weekday     VARCHAR(2) NOT NULL,
+        title       TEXT NOT NULL,
+        kind        VARCHAR(10) NOT NULL,
+        status      VARCHAR(10) NOT NULL,
+        company     VARCHAR(100) NOT NULL,
+        ticker      VARCHAR(10) NOT NULL,
+        uploaded_at TIMESTAMP DEFAULT ${_SQL_NOW},
+        UNIQUE (date, title, ticker)
+      )`,
+      name: 'calendar_events'
+    },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_calendar_events_date ON calendar_events(date)`, name: 'idx_calendar_events_date' },
+    {
+      sql: `CREATE TABLE IF NOT EXISTS calendar_meta (
+        id                  INTEGER PRIMARY KEY CHECK (id = 1),
+        uploaded_at         TIMESTAMP DEFAULT ${_SQL_NOW},
+        last_stale_alert_at TIMESTAMP
+      )`,
+      name: 'calendar_meta'
+    },
   ];
   for (const m of migrations) {
     try {

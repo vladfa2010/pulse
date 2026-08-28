@@ -110,6 +110,28 @@ export function broadcastRefresh(): void {
 }
 
 /**
+ * Broadcast calendar refresh — tells all clients to refetch /api/calendar.
+ * Emitted after a successful admin calendar snapshot upload.
+ */
+export function broadcastCalendarRefresh(): void {
+  if (subscribers.size === 0) return;
+
+  const message = `event: calendar:refresh\ndata: ${JSON.stringify({})}\n\n`;
+
+  let sent = 0;
+  for (const res of subscribers) {
+    if (!res.writableEnded) {
+      res.write(message);
+      sent++;
+    }
+  }
+
+  if (sent > 0) {
+    console.log(`[SSE] Broadcasted calendar:refresh to ${sent} subscriber(s)`);
+  }
+}
+
+/**
  * Get current subscriber count (for health/debug)
  */
 export function getSubscriberCount(): number {

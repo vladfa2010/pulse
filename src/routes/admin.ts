@@ -27,6 +27,7 @@ import { getPromoByCode } from '../services/promo';
 import { logAdminChangedPlan, logAdminExtendedSubscription } from '../services/activityLog';
 import { nowSql } from '../utils/nowSql';
 import { getUserId } from '../utils/users';
+import { saveCalendarSnapshot } from '../services/calendar';
 
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
@@ -1123,5 +1124,30 @@ router.get('/promo-codes/:id/stats', adminMiddleware, async (req: AuthRequest, r
 router.get('/features', adminMiddleware, listAllFeatures);
 router.post('/features', adminMiddleware, validate(CreateFeatureSchema), createFeature);
 router.put('/features/:id', adminMiddleware, updateFeature);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Admin Calendar Upload
+// Body: { days: CalendarDay[] }
+// ═══════════════════════════════════════════════════════════════════════════
+router.post('/calendar', adminMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const { days } = req.body;
+
+    if (!days || !Array.isArray(days) || days.length === 0) {
+      return res.status(400).json({ error: 'days array is required' });
+    }
+
+    const { daysCount, eventsCount } = await saveCalendarSnapshot(days);
+
+    res.json({
+      success: true,
+      days_count: daysCount,
+      events_count: eventsCount,
+    });
+  } catch (err: any) {
+    console.error('[Admin] Calendar upload error:', err.message);
+    res.status(400).json({ error: err.message || 'Failed to save calendar snapshot' });
+  }
+});
 
 export default router;
