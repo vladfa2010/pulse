@@ -65,6 +65,8 @@
 
 Только для администраторов (`adminMiddleware`). Тело — снапшот дней.
 
+> **Важно:** роут зарегистрирован в `src/routes/admin.ts` и примонтирован в `src/index.ts` как `/api/admin`. В проекте есть также legacy-семейство `/admin/...` (`src/routes/adminLegacy.ts`), но календарь специально сделан в новом пространстве `/api/admin/...`, чтобы не смешиваться с legacy.
+
 **Request body**:
 
 ```json
