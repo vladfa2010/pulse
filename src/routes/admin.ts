@@ -1206,7 +1206,8 @@ router.get('/calendar/events/:date/:title/:kind', adminMiddleware, async (req: A
     res.json({ event });
   } catch (err: any) {
     console.error('[Admin] Calendar event get error:', err.message);
-    res.status(calendarErrorStatus(err)).json({ error: err.message || 'Failed to fetch calendar event' });
+    const status = calendarErrorStatus(err);
+    res.status(status).json({ error: status === 500 ? 'Internal error' : err.message || 'Failed to fetch calendar event' });
   }
 });
 
@@ -1225,7 +1226,8 @@ router.get('/calendar/events', adminMiddleware, async (req: AuthRequest, res) =>
     res.json({ events, total });
   } catch (err: any) {
     console.error('[Admin] Calendar events list error:', err.message);
-    res.status(calendarErrorStatus(err)).json({ error: err.message || 'Failed to list calendar events' });
+    const status = calendarErrorStatus(err);
+    res.status(status).json({ error: status === 500 ? 'Internal error' : err.message || 'Failed to list calendar events' });
   }
 });
 
@@ -1236,7 +1238,8 @@ router.post('/calendar/events', adminMiddleware, async (req: AuthRequest, res) =
     res.json({ success: true });
   } catch (err: any) {
     console.error('[Admin] Calendar event create error:', err.message);
-    res.status(calendarErrorStatus(err)).json({ error: err.message || 'Failed to create calendar event' });
+    const status = calendarErrorStatus(err);
+    res.status(status).json({ error: status === 500 ? 'Internal error' : err.message || 'Failed to create calendar event' });
   }
 });
 
@@ -1251,7 +1254,8 @@ router.put('/calendar/events/:date/:title/:kind', adminMiddleware, async (req: A
     res.json({ success: true });
   } catch (err: any) {
     console.error('[Admin] Calendar event update error:', err.message);
-    res.status(calendarErrorStatus(err)).json({ error: err.message || 'Failed to update calendar event' });
+    const status = calendarErrorStatus(err);
+    res.status(status).json({ error: status === 500 ? 'Internal error' : err.message || 'Failed to update calendar event' });
   }
 });
 
@@ -1266,7 +1270,8 @@ router.delete('/calendar/events/:date/:title/:kind', adminMiddleware, async (req
     res.json({ success: true });
   } catch (err: any) {
     console.error('[Admin] Calendar event delete error:', err.message);
-    res.status(calendarErrorStatus(err)).json({ error: err.message || 'Failed to delete calendar event' });
+    const status = calendarErrorStatus(err);
+    res.status(status).json({ error: status === 500 ? 'Internal error' : err.message || 'Failed to delete calendar event' });
   }
 });
 

@@ -122,7 +122,7 @@ async function runMigration(sql: string, name: string) {
 // ═══════════════════════════════════════════════════════════════════════════
 app.set('trust proxy', true); // Required for X-Forwarded-For behind Render proxy
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '5mb' }));
 
 // Health endpoints — before rate limiter, so monitoring can always reach them
 // ═══════════════════════════════════════════════════════════════════════════

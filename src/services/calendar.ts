@@ -64,6 +64,24 @@ const VALID_STATUSES: EventStatus[] = ['confirmed', 'expected'];
 
 const MSK_OFFSET_MS = 3 * 60 * 60 * 1000;
 const STALE_ALERT_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+const CALENDAR_CACHE_TTL_MS = 60 * 1000;
+
+let calendarCache: { data: CalendarResponse; cachedAt: number } | null = null;
+
+class CalendarNotLoadedError extends Error {
+  constructor() {
+    super('calendar_not_loaded');
+    this.name = 'CalendarNotLoadedError';
+  }
+}
+
+export function isCalendarNotLoadedError(err: any): err is CalendarNotLoadedError {
+  return err instanceof CalendarNotLoadedError;
+}
+
+export function invalidateCalendarCache(): void {
+  calendarCache = null;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Date helpers
@@ -228,6 +246,14 @@ export async function isCalendarEmpty(): Promise<boolean> {
 // ═══════════════════════════════════════════════════════════════════════════
 
 export async function getCalendarData(): Promise<CalendarResponse> {
+  if (calendarCache && Date.now() - calendarCache.cachedAt < CALENDAR_CACHE_TTL_MS) {
+    return calendarCache.data;
+  }
+
+  if (await isCalendarEmpty()) {
+    throw new CalendarNotLoadedError();
+  }
+
   const serverDate = await getMskDateString();
   const generatedAt = await getUploadedAt();
   const windowStart = addDays(serverDate, -2);
@@ -260,12 +286,15 @@ export async function getCalendarData(): Promise<CalendarResponse> {
     });
   }
 
-  return {
+  const response: CalendarResponse = {
     server_date: serverDate,
     generated_at: generatedAt || new Date().toISOString(),
     stale,
     days,
   };
+
+  calendarCache = { data: response, cachedAt: Date.now() };
+  return response;
 }
 
 function buildDays(rows: CalendarRow[]): CalendarDay[] {
@@ -395,6 +424,7 @@ export async function saveCalendarSnapshot(days: CalendarDay[]): Promise<{ daysC
   }
 
   broadcastCalendarRefresh();
+  invalidateCalendarCache();
 
   return {
     daysCount: days.length,
@@ -504,6 +534,7 @@ export async function mergeCalendarSnapshot(
   }
 
   broadcastCalendarRefresh();
+  invalidateCalendarCache();
 
   return {
     daysCount: days.length,
@@ -788,6 +819,7 @@ export async function createCalendarEventGroup(event: unknown): Promise<void> {
   });
 
   broadcastCalendarRefresh();
+  invalidateCalendarCache();
 }
 
 export async function updateCalendarEventGroup(
@@ -820,6 +852,7 @@ export async function updateCalendarEventGroup(
   });
 
   broadcastCalendarRefresh();
+  invalidateCalendarCache();
 }
 
 export async function deleteCalendarEventGroup(
@@ -841,6 +874,7 @@ export async function deleteCalendarEventGroup(
   });
 
   broadcastCalendarRefresh();
+  invalidateCalendarCache();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
