@@ -29,6 +29,7 @@ import { nowSql } from '../utils/nowSql';
 import { getUserId } from '../utils/users';
 import {
   saveCalendarSnapshot,
+  mergeCalendarSnapshot,
   listCalendarEventGroups,
   getCalendarEventGroup,
   createCalendarEventGroup,
@@ -1134,23 +1135,37 @@ router.put('/features/:id', adminMiddleware, updateFeature);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Admin Calendar Upload
-// Body: { days: CalendarDay[] }
+// Body: { days: CalendarDay[], mode?: 'replace' | 'merge' }
+// Query: ?mode=merge
 // ═══════════════════════════════════════════════════════════════════════════
 router.post('/calendar', adminMiddleware, async (req: AuthRequest, res) => {
   try {
     const { days } = req.body;
+    const mode = (req.query.mode as string | undefined) || (req.body.mode as string | undefined) || 'replace';
 
     if (!days || !Array.isArray(days) || days.length === 0) {
       return res.status(400).json({ error: 'days array is required' });
     }
 
-    const { daysCount, eventsCount } = await saveCalendarSnapshot(days);
-
-    res.json({
-      success: true,
-      days_count: daysCount,
-      events_count: eventsCount,
-    });
+    if (mode === 'merge') {
+      const { daysCount, eventsCount, addedDays, addedEvents } = await mergeCalendarSnapshot(days);
+      res.json({
+        success: true,
+        mode: 'merge',
+        days_count: daysCount,
+        events_count: eventsCount,
+        added_days: addedDays,
+        added_events: addedEvents,
+      });
+    } else {
+      const { daysCount, eventsCount } = await saveCalendarSnapshot(days);
+      res.json({
+        success: true,
+        mode: 'replace',
+        days_count: daysCount,
+        events_count: eventsCount,
+      });
+    }
   } catch (err: any) {
     console.error('[Admin] Calendar upload error:', err.message);
     res.status(400).json({ error: err.message || 'Failed to save calendar snapshot' });

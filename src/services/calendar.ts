@@ -307,6 +307,8 @@ function buildDays(rows: CalendarRow[]): CalendarDay[] {
 // Admin upload
 // ═══════════════════════════════════════════════════════════════════════════
 
+type QueryFn = (text: string, params?: any[]) => Promise<{ rows: any[]; rowCount?: number }>;
+
 export async function saveCalendarSnapshot(days: CalendarDay[]): Promise<{ daysCount: number; eventsCount: number }> {
   validateCalendarDays(days);
 
@@ -397,6 +399,117 @@ export async function saveCalendarSnapshot(days: CalendarDay[]): Promise<{ daysC
   return {
     daysCount: days.length,
     eventsCount: flatRows.length,
+  };
+}
+
+export async function mergeCalendarSnapshot(
+  days: CalendarDay[]
+): Promise<{ daysCount: number; eventsCount: number; addedDays: number; addedEvents: number }> {
+  validateCalendarDays(days);
+
+  const flatRows: Array<{
+    date: string;
+    weekday: string;
+    title: string;
+    kind: EventKind;
+    status: EventStatus;
+    company: string;
+    ticker: string;
+  }> = [];
+
+  for (const day of days) {
+    for (const group of day.groups) {
+      for (const company of group.companies) {
+        flatRows.push({
+          date: day.date,
+          weekday: day.weekday,
+          title: group.title,
+          kind: group.kind,
+          status: group.status,
+          company: company.name,
+          ticker: company.ticker.toUpperCase(),
+        });
+      }
+    }
+  }
+
+  const USE_SQLITE = process.env.USE_SQLITE === 'true';
+  let addedDays = 0;
+  let addedEvents = 0;
+
+  const processGroups = async (q: QueryFn) => {
+    const seenGroups = new Set<string>();
+
+    for (const day of days) {
+      let dayHasNew = false;
+      for (const group of day.groups) {
+        const groupKey = `${day.date}|${group.title}|${group.kind}`;
+        if (seenGroups.has(groupKey)) continue;
+        seenGroups.add(groupKey);
+
+        const existing = await q(
+          `SELECT 1 FROM calendar_events WHERE date = $1 AND title = $2 AND kind = $3 LIMIT 1`,
+          [day.date, group.title, group.kind]
+        );
+
+        if (existing.rows.length > 0) {
+          continue;
+        }
+
+        dayHasNew = true;
+        addedEvents++;
+        for (const company of group.companies) {
+          await q(
+            `INSERT INTO calendar_events (date, weekday, title, kind, status, company, ticker, uploaded_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, ${nowSql()})`,
+            [day.date, day.weekday, group.title, group.kind, group.status, company.name, company.ticker.toUpperCase()]
+          );
+        }
+      }
+      if (dayHasNew) addedDays++;
+    }
+  };
+
+  if (pool && !USE_SQLITE) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await processGroups((text, params) => client.query(text, params));
+      await client.query(
+        `INSERT INTO calendar_meta (id, uploaded_at, last_stale_alert_at)
+         VALUES (1, ${nowSql()}, NULL)
+         ON CONFLICT (id) DO UPDATE SET uploaded_at = ${nowSql()}`
+      );
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+  } else {
+    await query('BEGIN');
+    try {
+      await processGroups(query);
+      await query(
+        `INSERT INTO calendar_meta (id, uploaded_at, last_stale_alert_at)
+         VALUES (1, ${nowSql()}, NULL)
+         ON CONFLICT (id) DO UPDATE SET uploaded_at = ${nowSql()}`
+      );
+      await query('COMMIT');
+    } catch (err) {
+      await query('ROLLBACK').catch(() => {});
+      throw err;
+    }
+  }
+
+  broadcastCalendarRefresh();
+
+  return {
+    daysCount: days.length,
+    eventsCount: flatRows.length,
+    addedDays,
+    addedEvents,
   };
 }
 
@@ -491,8 +604,6 @@ function validateCalendarAdminEvent(event: unknown): CalendarAdminEvent {
     companies_count: companies.length,
   };
 }
-
-type QueryFn = (text: string, params?: any[]) => Promise<{ rows: any[]; rowCount?: number }>;
 
 async function withCalendarTransaction<T>(fn: (q: QueryFn) => Promise<T>): Promise<T> {
   const USE_SQLITE = process.env.USE_SQLITE === 'true';
