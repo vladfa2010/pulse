@@ -12,6 +12,7 @@ import { query, pool } from '../config/db';
 import { nowSql } from '../utils/nowSql';
 import { sendTelegramMessage } from './telegram';
 import { broadcastCalendarRefresh } from './sse';
+import { NormalizedEvent } from './calendarAdapters';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Types
@@ -40,7 +41,7 @@ export interface CalendarDay {
 
 export interface CalendarResponse {
   server_date: string;
-  generated_at: string;
+  generated_at: string | null;
   stale: boolean;
   days: CalendarDay[];
 }
@@ -68,9 +69,9 @@ const CALENDAR_CACHE_TTL_MS = 60 * 1000;
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
-const PROVIDER_PRIORITY = ['manual', 'investmint', 'smartlab', 'bcs', 'global', 'legacy'];
+export const PROVIDER_PRIORITY = ['manual', 'investmint', 'smartlab', 'bcs', 'global', 'legacy'];
 
-interface CalendarRawRow {
+export interface CalendarRawRow {
   id?: string;
   source: string;
   date: string;
@@ -83,7 +84,7 @@ interface CalendarRawRow {
   uploaded_at?: string;
 }
 
-interface CanonicalRow {
+export interface CanonicalRow {
   date: string;
   weekday: string;
   title: string;
@@ -129,7 +130,7 @@ function toDateString(d: Date): string {
 
 /** PostgreSQL DATE column is returned as a Date object; SQLite returns a string.
  *  Normalize any value to a canonical YYYY-MM-DD string so Map keys and JSON match. */
-function normalizeDbDate(value: unknown): string {
+export function normalizeDbDate(value: unknown): string {
   if (value instanceof Date) {
     return toDateString(value);
   }
@@ -149,7 +150,7 @@ export async function getMskDateString(): Promise<string> {
   return toDateString(msk);
 }
 
-function addDays(dateStr: string, days: number): string {
+export function addDays(dateStr: string, days: number): string {
   const d = new Date(`${dateStr}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + days);
   return toDateString(d);
@@ -254,12 +255,11 @@ interface CalendarRow {
   ticker: string;
 }
 
-async function getUploadedAt(): Promise<string | null> {
+async function getGeneratedAt(): Promise<string | null> {
   try {
-    const result = await query(`SELECT uploaded_at FROM calendar_meta WHERE id = 1`);
-    if (result.rows.length === 0) return null;
-    const uploadedAt = result.rows[0].uploaded_at;
-    return uploadedAt ? new Date(uploadedAt).toISOString() : null;
+    const result = await query(`SELECT MAX(uploaded_at) as generated_at FROM calendar_sources`);
+    const generatedAt = result.rows[0]?.generated_at;
+    return generatedAt ? new Date(generatedAt).toISOString() : null;
   } catch {
     return null;
   }
@@ -295,7 +295,7 @@ export async function getCalendarData(): Promise<CalendarResponse> {
     }
 
     const serverDate = await getMskDateString();
-    const generatedAt = await getUploadedAt();
+    const generatedAt = await getGeneratedAt();
     const windowStart = addDays(serverDate, -2);
     const windowEnd = addDays(serverDate, 120);
 
@@ -318,17 +318,17 @@ export async function getCalendarData(): Promise<CalendarResponse> {
     }));
 
     const days = buildDays(rows);
-    const stale = days.length === 0 || days[days.length - 1].date < addDays(serverDate, -2);
+    const stale = days.length === 0 || days[days.length - 1].date < windowStart;
 
     if (stale) {
-      maybeSendStaleAlert().catch((err: any) => {
-        console.error('[Calendar] Stale alert failed:', err.message);
+      maybeSendProviderStaleAlerts().catch((err: any) => {
+        console.error('[Calendar] Provider stale alerts failed:', err.message);
       });
     }
 
     return {
       server_date: serverDate,
-      generated_at: generatedAt || new Date().toISOString(),
+      generated_at: generatedAt,
       stale,
       days,
     };
@@ -867,42 +867,64 @@ export async function deleteCalendarEventGroup(
 // Stale alert (throttled)
 // ═══════════════════════════════════════════════════════════════════════════
 
-export async function maybeSendStaleAlert(): Promise<void> {
-  const metaResult = await query(`SELECT uploaded_at, last_stale_alert_at FROM calendar_meta WHERE id = 1`);
-  if (metaResult.rows.length === 0) return;
+// Feed-провайдеры, за которыми следим на протухание.
+const FEED_PROVIDERS = ['investmint', 'smartlab', 'bcs', 'global'];
 
-  const meta = metaResult.rows[0];
+/** Per-provider stale alerts. Проверяются только feed-провайдеры из calendar_sources;
+ *  manual и legacy не алертятся. */
+export async function maybeSendProviderStaleAlerts(): Promise<void> {
   const serverDate = await getMskDateString();
   const windowStart = addDays(serverDate, -2);
 
-  const coverResult = await query(
-    `SELECT MAX(date) as max_date FROM calendar_events`
+  const placeholders = FEED_PROVIDERS.map((_, i) => `$${i + 1}`).join(',');
+  const sourcesResult = await query(
+    `SELECT source, last_stale_alert_at FROM calendar_sources WHERE source IN (${placeholders})`,
+    FEED_PROVIDERS
   );
-  const maxDate = normalizeDbDate(coverResult.rows[0]?.max_date);
+  if (sourcesResult.rows.length === 0) return;
 
-  if (!maxDate || maxDate >= windowStart) return;
-
-  const lastAlert = meta.last_stale_alert_at ? new Date(meta.last_stale_alert_at).getTime() : 0;
-  if (Date.now() - lastAlert < STALE_ALERT_COOLDOWN_MS) return;
+  const coverageResult = await query(
+    `SELECT source, MAX(date) as max_date FROM calendar_events_raw
+     WHERE source IN (${placeholders})
+     GROUP BY source`,
+    FEED_PROVIDERS
+  );
+  const coverageBySource = new Map<string, string>();
+  for (const row of coverageResult.rows) {
+    const maxDate = normalizeDbDate(row.max_date);
+    if (maxDate) coverageBySource.set(row.source, maxDate);
+  }
 
   const adminsResult = await query(
     `SELECT tg_chat_id FROM admin_tg_settings WHERE is_active = TRUE AND tg_chat_id IS NOT NULL`
   );
   if (adminsResult.rows.length === 0) return;
 
-  const message = `⚠️ Календарь инвестора устарел\nПоследние данные: ${maxDate}\nСерверная дата: ${serverDate}\nЗагрузите новый снапшот через админку.`;
+  for (const sourceRow of sourcesResult.rows) {
+    const source = sourceRow.source;
+    const coverage = coverageBySource.get(source);
+    if (!coverage || coverage >= windowStart) continue;
 
-  let sent = 0;
-  for (const row of adminsResult.rows) {
-    const ok = await sendTelegramMessage(row.tg_chat_id, message, 'HTML');
-    if (ok) sent++;
-  }
+    const lastAlert = sourceRow.last_stale_alert_at ? new Date(sourceRow.last_stale_alert_at).getTime() : 0;
+    if (Date.now() - lastAlert < STALE_ALERT_COOLDOWN_MS) continue;
 
-  if (sent > 0) {
-    await query(
-      `UPDATE calendar_meta SET last_stale_alert_at = ${nowSql()} WHERE id = 1`
-    );
-    console.log(`[Calendar] Sent stale alert to ${sent} admin(s)`);
+    const message = `Провайдер ${source} протух: покрытие до ${coverage} (серверная дата ${serverDate})`;
+
+    let sent = 0;
+    for (const admin of adminsResult.rows) {
+      const ok = await sendTelegramMessage(admin.tg_chat_id, message, 'HTML');
+      if (ok) sent++;
+    }
+
+    if (sent > 0) {
+      await query(
+        `INSERT INTO calendar_sources (source, uploaded_at, last_stale_alert_at)
+         VALUES ($1, ${nowSql()}, ${nowSql()})
+         ON CONFLICT (source) DO UPDATE SET last_stale_alert_at = ${nowSql()}`,
+        [source]
+      );
+      console.log(`[Calendar] Sent stale alert for ${source} to ${sent} admin(s)`);
+    }
   }
 }
 
@@ -962,15 +984,241 @@ function assertValidStatus(s: string): EventStatus {
   return 'expected';
 }
 
-export async function rebuildCanonical(q: QueryFn = query): Promise<{ rawCount: number; canonicalCount: number; duplicateCount: number }> {
-  const rawResult = await q(
-    `SELECT source, date, weekday, title, kind, status, company, ticker
-     FROM calendar_events_raw
-     ORDER BY date, ticker, title, kind, source`
-  );
+export interface ProviderSliceValidation {
+  reject?: string;
+  warnings: string[];
+}
 
-  const rawRows: CalendarRawRow[] = rawResult.rows.map((r: any) => ({
-    source: r.source,
+/** Sanity-проверки провайдерского среза перед записью. */
+export function validateProviderSlice(
+  _source: string,
+  events: NormalizedEvent[],
+  serverDate: string
+): ProviderSliceValidation {
+  const warnings: string[] = [];
+
+  if (events.length === 0) {
+    return { reject: 'формат не распознан', warnings };
+  }
+
+  const uniqueDates = new Set(events.map((e) => e.date));
+  if (uniqueDates.size < 5) {
+    return { reject: 'слишком короткий срез', warnings };
+  }
+
+  const dates = Array.from(uniqueDates).sort();
+  const maxDate = dates[dates.length - 1];
+  const windowStart = addDays(serverDate, -2);
+  if (maxDate < windowStart) {
+    warnings.push(`все даты в прошлом: max_date ${maxDate} < ${windowStart}`);
+  }
+
+  const noTickerEvents = events.filter((e) => e.companies.every((c) => !c.ticker || c.ticker === 'UNKNOWN'));
+  if (noTickerEvents.length / events.length > 0.2) {
+    warnings.push(`много событий без тикера: ${noTickerEvents.length}/${events.length}`);
+  }
+
+  return { warnings };
+}
+
+// In-memory single-flight сериализация ingestProviderSlice.
+let ingestFlight: Promise<unknown> = Promise.resolve();
+
+interface IngestResult {
+  canonical: CanonicalRow[];
+  generatedAt: string | null;
+}
+
+/** Заменяет срез провайдера и пересобирает канон. dry_run не пишет в БД. */
+export async function ingestProviderSlice(
+  source: string,
+  flatRows: CalendarRawRow[],
+  dryRun: boolean
+): Promise<IngestResult> {
+  const run = async (): Promise<IngestResult> => {
+    if (dryRun) {
+      const rawResult = await query(
+        `SELECT source, date, weekday, title, kind, status, company, ticker
+         FROM calendar_events_raw`
+      );
+      const existingRows: CalendarRawRow[] = rawResult.rows.map((r: any) => ({
+        source: r.source,
+        date: normalizeDbDate(r.date),
+        weekday: r.weekday,
+        title: r.title,
+        kind: r.kind,
+        status: r.status,
+        company: r.company,
+        ticker: r.ticker,
+      }));
+      const simulated = existingRows.filter((r) => r.source !== source).concat(flatRows);
+      const canonical = buildCanonicalRows(simulated);
+      const generatedAt = await getGeneratedAt();
+      return { canonical, generatedAt };
+    }
+
+    await withCalendarTransaction(async (q) => {
+      await q(`DELETE FROM calendar_events_raw WHERE source = $1`, [source]);
+
+      for (const row of flatRows) {
+        await q(
+          `INSERT INTO calendar_events_raw (source, date, weekday, title, kind, status, company, ticker, uploaded_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, ${nowSql()})`,
+          [source, row.date, row.weekday, row.title, row.kind, row.status, row.company, row.ticker]
+        );
+      }
+
+      await q(
+        `INSERT INTO calendar_sources (source, uploaded_at, last_stale_alert_at)
+         VALUES ($1, ${nowSql()}, NULL)
+         ON CONFLICT (source) DO UPDATE SET uploaded_at = ${nowSql()}, last_stale_alert_at = NULL`,
+        [source]
+      );
+
+      await rebuildCanonical(q);
+    });
+
+    const canonicalResult = await query(
+      `SELECT date, weekday, title, kind, status, company, ticker, sources
+       FROM calendar_events
+       ORDER BY date, title`
+    );
+    const canonical: CanonicalRow[] = canonicalResult.rows.map((r: any) => ({
+      date: normalizeDbDate(r.date),
+      weekday: r.weekday,
+      title: r.title,
+      kind: assertValidKind(r.kind),
+      status: assertValidStatus(r.status),
+      company: r.company,
+      ticker: r.ticker,
+      sources: r.sources || '[]',
+      possible_duplicate: r.possible_duplicate ? true : false,
+    }));
+    const generatedAt = await getGeneratedAt();
+    return { canonical, generatedAt };
+  };
+
+  const p = ingestFlight.then(run, run);
+  ingestFlight = p;
+  try {
+    return await p;
+  } finally {
+    // не сбрасываем ingestFlight = null, чтобы последовательность оставалась корректной
+  }
+}
+
+export interface DiffResult {
+  counts: {
+    new_events: number;
+    updated_events: number;
+    confirmed_upgrades: number;
+    confirmations: number;
+    removed_events: number;
+  };
+  samples: {
+    new: string[];
+    removed: string[];
+    upgraded: string[];
+    updated?: string[];
+  };
+  nonempty: boolean;
+}
+
+function canonicalDiffKey(row: CanonicalRow): string {
+  return `${makeCanonicalKey(row.date, row.ticker, row.company)}|${row.kind}`;
+}
+
+function parseSources(sources: string): string[] {
+  try {
+    const parsed = JSON.parse(sources);
+    if (Array.isArray(parsed)) return parsed as string[];
+  } catch { /* ignore */ }
+  return [];
+}
+
+/** Сравнивает текущий канон (snapshot) с новым. */
+export function computeDiff(
+  snapshot: Map<string, CanonicalRow[]>,
+  newCanonical: CanonicalRow[]
+): DiffResult {
+  const newMap = new Map<string, CanonicalRow[]>();
+  for (const row of newCanonical) {
+    const key = canonicalDiffKey(row);
+    if (!newMap.has(key)) newMap.set(key, []);
+    newMap.get(key)!.push(row);
+  }
+
+  const counts = {
+    new_events: 0,
+    updated_events: 0,
+    confirmed_upgrades: 0,
+    confirmations: 0,
+    removed_events: 0,
+  };
+
+  const samples = {
+    new: [] as string[],
+    removed: [] as string[],
+    upgraded: [] as string[],
+    updated: [] as string[],
+  };
+
+  for (const [key, newRows] of newMap) {
+    const oldRows = snapshot.get(key);
+    if (!oldRows || oldRows.length === 0) {
+      counts.new_events++;
+      if (samples.new.length < 20) samples.new.push(key);
+      continue;
+    }
+
+    const old = oldRows[0];
+    const next = newRows[0];
+
+    const titleChanged = old.title !== next.title;
+    const companyChanged = old.company !== next.company;
+    if (titleChanged || companyChanged) {
+      counts.updated_events++;
+      if (samples.updated.length < 20) samples.updated.push(key);
+    }
+
+    if (old.status === 'expected' && next.status === 'confirmed') {
+      counts.confirmed_upgrades++;
+      if (samples.upgraded.length < 20) samples.upgraded.push(key);
+    }
+
+    const oldSources = new Set(parseSources(old.sources));
+    const newSources = parseSources(next.sources);
+    const grew = newSources.some((s) => !oldSources.has(s));
+    if (grew) {
+      counts.confirmations++;
+    }
+  }
+
+  for (const [key] of snapshot) {
+    if (!newMap.has(key)) {
+      counts.removed_events++;
+      if (samples.removed.length < 20) samples.removed.push(key);
+    }
+  }
+
+  const nonempty =
+    counts.new_events > 0 ||
+    counts.updated_events > 0 ||
+    counts.confirmed_upgrades > 0 ||
+    counts.confirmations > 0 ||
+    counts.removed_events > 0;
+
+  return { counts, samples, nonempty };
+}
+
+/** Читает текущий канон и группирует по ключу диффа. */
+export async function getCanonicalSnapshot(): Promise<Map<string, CanonicalRow[]>> {
+  const result = await query(
+    `SELECT date, weekday, title, kind, status, company, ticker, sources, possible_duplicate
+     FROM calendar_events
+     ORDER BY date, title`
+  );
+  const rows: CanonicalRow[] = result.rows.map((r: any) => ({
     date: normalizeDbDate(r.date),
     weekday: r.weekday,
     title: r.title,
@@ -978,10 +1226,33 @@ export async function rebuildCanonical(q: QueryFn = query): Promise<{ rawCount: 
     status: assertValidStatus(r.status),
     company: r.company,
     ticker: r.ticker,
+    sources: r.sources || '[]',
+    possible_duplicate: r.possible_duplicate ? true : false,
+  }));
+
+  const snapshot = new Map<string, CanonicalRow[]>();
+  for (const row of rows) {
+    const key = canonicalDiffKey(row);
+    if (!snapshot.has(key)) snapshot.set(key, []);
+    snapshot.get(key)!.push(row);
+  }
+  return snapshot;
+}
+
+/** Чистая функция: из сырых строк строит канонический срез (без записи в БД). */
+export function buildCanonicalRows(rawRows: CalendarRawRow[]): CanonicalRow[] {
+  return buildCanonicalRowsWithStats(rawRows).canonical;
+}
+
+function buildCanonicalRowsWithStats(rawRows: CalendarRawRow[]): { canonical: CanonicalRow[]; duplicateCount: number } {
+  const rows = rawRows.map((r) => ({
+    ...r,
+    kind: assertValidKind(r.kind),
+    status: assertValidStatus(r.status),
   }));
 
   const groups = new Map<string, CalendarRawRow[]>();
-  for (const row of rawRows) {
+  for (const row of rows) {
     const key = makeCanonicalKey(row.date, row.ticker, row.company);
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key)!.push(row);
@@ -990,11 +1261,11 @@ export async function rebuildCanonical(q: QueryFn = query): Promise<{ rawCount: 
   const canonical: CanonicalRow[] = [];
   let duplicateCount = 0;
 
-  for (const [, rows] of groups) {
-    const allSources = dedupeSources(rows.map((r) => r.source));
+  for (const [, groupRows] of groups) {
+    const allSources = dedupeSources(groupRows.map((r) => r.source));
 
     const kindMap = new Map<EventKind, CalendarRawRow[]>();
-    for (const row of rows) {
+    for (const row of groupRows) {
       if (!kindMap.has(row.kind)) kindMap.set(row.kind, []);
       kindMap.get(row.kind)!.push(row);
     }
@@ -1005,7 +1276,7 @@ export async function rebuildCanonical(q: QueryFn = query): Promise<{ rawCount: 
 
     for (const kind of outputKinds) {
       const kindRows = kindMap.get(kind) || [];
-      const representative = pickRepresentative(kindRows.length > 0 ? kindRows : rows);
+      const representative = pickRepresentative(kindRows.length > 0 ? kindRows : groupRows);
       const status = kindRows.some((r) => r.status === 'confirmed') || (fallbackConfirmed && kind !== 'Другое')
         ? 'confirmed'
         : 'expected';
@@ -1030,6 +1301,29 @@ export async function rebuildCanonical(q: QueryFn = query): Promise<{ rawCount: 
     if (a.date !== b.date) return a.date.localeCompare(b.date);
     return a.title.localeCompare(b.title, 'ru');
   });
+
+  return { canonical, duplicateCount };
+}
+
+export async function rebuildCanonical(q: QueryFn = query): Promise<{ rawCount: number; canonicalCount: number; duplicateCount: number }> {
+  const rawResult = await q(
+    `SELECT source, date, weekday, title, kind, status, company, ticker
+     FROM calendar_events_raw
+     ORDER BY date, ticker, title, kind, source`
+  );
+
+  const rawRows: CalendarRawRow[] = rawResult.rows.map((r: any) => ({
+    source: r.source,
+    date: normalizeDbDate(r.date),
+    weekday: r.weekday,
+    title: r.title,
+    kind: r.kind,
+    status: r.status,
+    company: r.company,
+    ticker: r.ticker,
+  }));
+
+  const { canonical, duplicateCount } = buildCanonicalRowsWithStats(rawRows);
 
   await q('DELETE FROM calendar_events');
   for (const row of canonical) {

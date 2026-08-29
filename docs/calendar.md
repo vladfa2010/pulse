@@ -9,11 +9,12 @@
 - Двухслойная модель: `calendar_events_raw` (срезы по источникам) + `calendar_events` (canonical, дедуплицированная картина).
 - Источники: `legacy`, `manual`, `investmint`, `smartlab`, `bcs` (заглушка), `global`.
 - Приоритет источников: `manual > investmint > smartlab > bcs > global > legacy`.
-- Загрузка через админку: `POST /api/admin/calendar` в режимах `replace`/`merge`.
+- Загрузка провайдерского среза: `POST /api/admin/calendar/:source` с `?dry_run=1`.
+- Legacy-загрузка через админку: `POST /api/admin/calendar` в режимах `replace`/`merge`.
 - CRUD событий в админке пишет в `calendar_events_raw` с `source = 'manual'` и пересобирает canonical.
 - Чтение публичное: `GET /api/calendar` отдаёт `calendar_events`.
 - После успешной загрузки бэкенд рассылает `event: calendar:refresh` по SSE.
-- Если данные устарели, раз в сутки админам отправляется Telegram-алерт.
+- Telegram-алерты о протухании — per-provider, cooldown 24 ч через `calendar_sources.last_stale_alert_at`.
 - Сырые данные провайдеров проходят через `src/services/calendarAdapters/` (M2).
 
 ---
@@ -55,7 +56,7 @@
 | Поле | Тип | Описание |
 |------|-----|----------|
 | `server_date` | `YYYY-MM-DD` | Текущая дата по Europe/Moscow. |
-| `generated_at` | ISO string | Время последней загрузки снапшота. |
+| `generated_at` | ISO string \| null | Время последней загрузки любого провайдерского среза (`MAX(uploaded_at)` из `calendar_sources`). |
 | `stale` | boolean | `true`, если последняя дата в БД меньше `server_date - 2`. |
 | `days` | array | Список дней с группами событий. |
 
@@ -131,6 +132,66 @@
 - Каждая группа содержит непустой массив `companies`.
 - Внутри группы тикеры не должны повторяться (сравнение `toUpperCase()`).
 - У компании обязательны `name` и `ticker`.
+
+---
+
+### `POST /api/admin/calendar/:source`
+
+Загрузка сырого среза провайдера (M3). `:source` — `auto` или один из зарегистрированных адаптеров (`investmint`, `smartlab`). Query `?dry_run=1` выполняет конвейер без записи в БД.
+
+**Request body** — сырое JSON провайдера.
+
+**Response 200**:
+
+```json
+{
+  "parsed": {
+    "days": 5,
+    "events": 12,
+    "warnings": []
+  },
+  "diff": {
+    "new_events": 10,
+    "updated_events": 0,
+    "confirmed_upgrades": 0,
+    "confirmations": 2,
+    "removed_events": 0
+  },
+  "samples": {
+    "new": ["2026-08-29|SBER|МСФО", "..."],
+    "removed": [],
+    "upgraded": []
+  },
+  "generated_at": "2026-08-29T10:00:00.000Z"
+}
+```
+
+**Response 400**:
+
+```json
+{ "error": "формат не распознан" }
+```
+
+```json
+{ "error": "формат неоднозначен, укажите :source", "candidates": ["investmint", "smartlab"] }
+```
+
+```json
+{ "error": "слишком короткий срез", "warnings": [] }
+```
+
+### `GET /api/admin/calendar/sources`
+
+Возвращает массив источников в порядке `PROVIDER_PRIORITY`.
+
+**Response 200**:
+
+```json
+[
+  { "source": "manual", "uploaded_at": "...", "events_count": 0, "last_stale_alert_at": null, "stale": false },
+  { "source": "investmint", "uploaded_at": "...", "events_count": 120, "last_stale_alert_at": null, "stale": false }
+]
+```
 
 ---
 
@@ -300,7 +361,7 @@
 ### `getCalendarData(): CalendarResponse`
 
 1. Получает `server_date` по Europe/Moscow.
-2. Читает `generated_at` из `calendar_meta`.
+2. Читает `generated_at` как `MAX(uploaded_at)` из `calendar_sources` (null, если источников ещё нет).
 3. Запрашивает строки за окно `server_date - 2` … `server_date + 120`.
 4. Группирует строки в `CalendarDay[]`:
    - дни отсортированы по дате;
@@ -310,7 +371,7 @@
    ```ts
    stale = days.length === 0 || days[days.length - 1].date < serverDate - 2 days
    ```
-6. Если `stale === true`, запускает `maybeSendStaleAlert()` (fire-and-forget).
+6. Если `stale === true`, запускает `maybeSendProviderStaleAlerts()` (fire-and-forget).
 
 ### `saveCalendarSnapshot(days): { daysCount, eventsCount }`
 
@@ -382,25 +443,64 @@
 3. Обновляет `calendar_meta`.
 4. Рассылает `calendar:refresh` по SSE.
 
-### `maybeSendStaleAlert()`
+### `buildCanonicalRows(rawRows): CanonicalRow[]`
+
+Чистая функция, строит канонический срез из сырых строк без обращения к БД. Используется в `rebuildCanonical` и в `dry_run`.
+
+### `validateProviderSlice(source, events, serverDate): { reject?, warnings }`
+
+Sanity-проверки перед записью среза:
+
+- 0 событий → reject;
+- уникальных дат < 5 → reject;
+- `max_date < server_date - 2` → warning;
+- событий без тикера > 20% → warning.
+
+### `ingestProviderSlice(source, flatRows, dryRun): { canonical, generatedAt }`
+
+Заменяет срез провайдера и пересобирает канон.
+
+- Работает под in-memory single-flight (promise-цепочка), параллельные загрузки сериализуются.
+- В обычном режиме: транзакция `DELETE raw → INSERT flatRows → UPSERT calendar_sources → rebuildCanonical`.
+- В `dry_run`: без транзакции и записи, симуляция в памяти через `buildCanonicalRows`.
+
+### `computeDiff(snapshot, newCanonical): DiffResult`
+
+Сравнивает текущий канон (Map ключ → строки) с новым. Возвращает счётчики:
+
+- `new_events` — новые ключи в каноне;
+- `updated_events` — ключ сохранился, изменился `title` или `company`;
+- `confirmed_upgrades` — `expected → confirmed`;
+- `confirmations` — `sources` вырос без появления нового ключа;
+- `removed_events` — ключ полностью ушёл из канона.
+
+`samples` содержит до 20 ключей на категорию.
+
+### `getCanonicalSnapshot(): Map<string, CanonicalRow[]>`
+
+Читает `calendar_events` и группирует по ключу диффа.
+
+### `maybeSendProviderStaleAlerts()`
+
+Глобальный `maybeSendStaleAlert` заменён на per-provider алерты.
 
 Условия отправки алерта:
 
-1. `calendar_meta` существует.
-2. `MAX(date)` в `calendar_events` строго меньше `server_date - 2` (данные действительно устарели).
-3. С последнего алерта прошло больше 24 часов.
-4. Есть активные админы с `tg_chat_id` в `admin_tg_settings`.
+1. Провайдер — один из feed-источников: `investmint`, `smartlab`, `bcs`, `global`.
+2. У провайдера есть запись в `calendar_sources`.
+3. `MAX(date)` по `calendar_events_raw WHERE source = <provider>` строго меньше `server_date - 2`.
+4. С последнего алерта этого провайдера прошло больше 24 часов (кулдаун через `calendar_sources.last_stale_alert_at`).
+5. Есть активные админы с `tg_chat_id` в `admin_tg_settings`.
+
+`manual` и `legacy` не проверяются.
 
 Сообщение в Telegram:
 
 ```
-⚠️ Календарь инвестора устарел
-Последние данные: <maxDate>
-Серверная дата: <serverDate>
-Загрузите новый снапшот через админку.
+Провайдер <source> протух: покрытие до <maxDate> (серверная дата <serverDate>)
 ```
 
-После успешной отправки обновляет `last_stale_alert_at`.
+После успешной отправки обновляет `calendar_sources.last_stale_alert_at`.
 
 ---
 
@@ -510,4 +610,6 @@ Boot-миграция использует `USE_SQLITE` для выбора ме
 | `src/models/schema.sql` | SQL-схема таблиц. |
 | `src/index.ts` | Boot-миграции, mount роута `/api/calendar`. |
 | `scripts/calendar-m2-verify.js` | Verify-скрипт для адаптеров. |
+| `scripts/calendar-m3-verify.js` | Verify-скрипт для Ingest API и диффа. |
 | `tests/calendarAdapters/` | Fixtures и reference-парсеры для verify. |
+| `docs/ingest.md` | Документация endpoint'а загрузки срезов. |

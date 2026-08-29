@@ -25,6 +25,7 @@ import {
 import { listAllFeatures, createFeature, updateFeature } from './features';
 import { getPromoByCode } from '../services/promo';
 import { logAdminChangedPlan, logAdminExtendedSubscription } from '../services/activityLog';
+import { broadcastCalendarRefresh } from '../services/sse';
 import { nowSql } from '../utils/nowSql';
 import { getUserId } from '../utils/users';
 import {
@@ -35,7 +36,23 @@ import {
   createCalendarEventGroup,
   updateCalendarEventGroup,
   deleteCalendarEventGroup,
+  validateProviderSlice,
+  ingestProviderSlice,
+  computeDiff,
+  getCanonicalSnapshot,
+  getMskDateString,
+  addDays,
+  normalizeDbDate,
+  PROVIDER_PRIORITY,
+  invalidateCalendarCache,
 } from '../services/calendar';
+import {
+  detectAdapter,
+  getAdapterBySource,
+  getAdapters,
+  toRawRows,
+  CalendarAdapter,
+} from '../services/calendarAdapters';
 
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
@@ -1273,6 +1290,133 @@ router.delete('/calendar/events/:date/:title/:kind', adminMiddleware, async (req
     console.error('[Admin] Calendar event delete error:', err.message);
     const status = calendarErrorStatus(err);
     res.status(status).json({ error: status === 500 ? 'Internal error' : err.message || 'Failed to delete calendar event' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Provider slice ingest (M3)
+// POST /api/admin/calendar/:source
+// GET  /api/admin/calendar/sources
+// ═══════════════════════════════════════════════════════════════════════════
+
+router.get('/calendar/sources', adminMiddleware, async (_req, res) => {
+  try {
+    const serverDate = await getMskDateString();
+    const windowStart = addDays(serverDate, -2);
+    const feedProviders = new Set(['investmint', 'smartlab', 'bcs', 'global']);
+
+    const sourcesMeta = await query('SELECT source, uploaded_at, last_stale_alert_at FROM calendar_sources');
+    const countsResult = await query('SELECT source, COUNT(*) as cnt FROM calendar_events_raw GROUP BY source');
+    const counts = new Map<string, number>();
+    for (const row of countsResult.rows) {
+      counts.set(row.source, Number(row.cnt || 0));
+    }
+
+    const coverageResult = await query(
+      `SELECT source, MAX(date) as max_date FROM calendar_events_raw
+       WHERE source IN ('investmint', 'smartlab', 'bcs', 'global')
+       GROUP BY source`
+    );
+    const coverage = new Map<string, string>();
+    for (const row of coverageResult.rows) {
+      const maxDate = normalizeDbDate(row.max_date);
+      if (maxDate) coverage.set(row.source, maxDate);
+    }
+
+    const metaBySource = new Map<string, any>();
+    for (const row of sourcesMeta.rows) {
+      metaBySource.set(row.source, row);
+    }
+
+    const result = PROVIDER_PRIORITY.map((source) => {
+      const meta = metaBySource.get(source);
+      const eventsCount = counts.get(source) || 0;
+      const maxDate = coverage.get(source);
+      const stale = feedProviders.has(source)
+        ? !!(maxDate && maxDate < windowStart && eventsCount > 0)
+        : false;
+      return {
+        source,
+        uploaded_at: meta?.uploaded_at ? new Date(meta.uploaded_at).toISOString() : null,
+        events_count: eventsCount,
+        last_stale_alert_at: meta?.last_stale_alert_at ? new Date(meta.last_stale_alert_at).toISOString() : null,
+        stale,
+      };
+    });
+
+    res.json(result);
+  } catch (err: any) {
+    console.error('[Admin] Calendar sources error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch calendar sources' });
+  }
+});
+
+router.post('/calendar/:source', adminMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const requestedSource = req.params.source;
+    const dryRun = req.query.dry_run === '1' || req.query.dry_run === 'true';
+    const raw = req.body;
+
+    let source = requestedSource;
+    let adapter: CalendarAdapter | undefined;
+
+    if (source === 'auto') {
+      const detection = detectAdapter(raw);
+      if (detection.ambiguous) {
+        const candidates = getAdapters().map((a) => a.source);
+        return res.status(400).json({ error: 'формат неоднозначен, укажите :source', candidates });
+      }
+      if (!detection.adapter) {
+        return res.status(400).json({ error: 'формат не распознан' });
+      }
+      source = detection.adapter.source;
+      adapter = detection.adapter;
+    } else {
+      adapter = getAdapterBySource(source);
+      if (!adapter) {
+        return res.status(400).json({ error: `неизвестный источник: ${source}` });
+      }
+    }
+
+    const { events, warnings: parseWarnings } = adapter.parse(raw);
+    const serverDate = await getMskDateString();
+    const validation = validateProviderSlice(source, events, serverDate);
+
+    if (validation.reject) {
+      return res.status(400).json({ error: validation.reject, warnings: validation.warnings });
+    }
+
+    const flatRows = toRawRows(events, source);
+    const snapshot = await getCanonicalSnapshot();
+    const { canonical: newCanonical, generatedAt } = await ingestProviderSlice(source, flatRows, dryRun);
+    const diff = computeDiff(snapshot, newCanonical);
+
+    if (!dryRun && diff.nonempty) {
+      broadcastCalendarRefresh();
+      invalidateCalendarCache();
+    }
+
+    const uniqueDates = new Set(events.map((e) => e.date));
+    const allWarnings = [...parseWarnings.details, ...validation.warnings];
+
+    res.json({
+      parsed: {
+        days: uniqueDates.size,
+        events: events.length,
+        warnings: allWarnings,
+      },
+      diff: diff.counts,
+      samples: {
+        new: diff.samples.new,
+        removed: diff.samples.removed,
+        upgraded: diff.samples.upgraded,
+      },
+      generated_at: generatedAt,
+    });
+  } catch (err: any) {
+    console.error('[Admin] Calendar provider upload error:', err.message);
+    const status = calendarErrorStatus(err);
+    res.status(status).json({ error: status === 500 ? 'Internal error' : err.message || 'Failed to upload provider slice' });
   }
 });
 
