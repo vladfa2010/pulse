@@ -496,6 +496,18 @@ export async function mergeCalendarSnapshot(
   const processGroups = async (q: QueryFn) => {
     const seenGroups = new Set<string>();
 
+    // One SELECT for all candidate dates instead of one SELECT per group (N+1 fix).
+    const uniqueDates = [...new Set(days.map((d) => d.date))];
+    const datePlaceholders = uniqueDates.map((_, i) => `$${i + 1}`).join(',');
+    const existingResult = await q(
+      `SELECT date, title, kind FROM calendar_events WHERE date IN (${datePlaceholders})`,
+      uniqueDates
+    );
+    const existingGroups = new Set<string>();
+    for (const row of existingResult.rows) {
+      existingGroups.add(`${normalizeDbDate(row.date)}|${row.title}|${row.kind}`);
+    }
+
     for (const day of days) {
       let dayHasNew = false;
       for (const group of day.groups) {
@@ -503,12 +515,7 @@ export async function mergeCalendarSnapshot(
         if (seenGroups.has(groupKey)) continue;
         seenGroups.add(groupKey);
 
-        const existing = await q(
-          `SELECT 1 FROM calendar_events WHERE date = $1 AND title = $2 AND kind = $3 LIMIT 1`,
-          [day.date, group.title, group.kind]
-        );
-
-        if (existing.rows.length > 0) {
+        if (existingGroups.has(groupKey)) {
           continue;
         }
 
@@ -517,7 +524,8 @@ export async function mergeCalendarSnapshot(
         for (const company of group.companies) {
           await q(
             `INSERT INTO calendar_events (date, weekday, title, kind, status, company, ticker, uploaded_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, ${nowSql()})`,
+             VALUES ($1, $2, $3, $4, $5, $6, $7, ${nowSql()})
+             ON CONFLICT (date, title, ticker) DO NOTHING`,
             [day.date, day.weekday, group.title, group.kind, group.status, company.name, company.ticker.toUpperCase()]
           );
         }
