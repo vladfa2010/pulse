@@ -18,8 +18,8 @@ export const smartlabAdapter: CalendarAdapter = {
     let score = 0
     let checks = 0
     for (const item of sample) {
-      checks++
       if (!item || typeof item !== 'object') continue
+      checks++
       const i = item as any
       if (typeof i.date === 'string' && /^\d{2}\.\d{2}\.\d{4}$/.test(i.date)) {
         score += 0.5
@@ -42,7 +42,7 @@ export const smartlabAdapter: CalendarAdapter = {
       const parsed = parseDate(item.date)
       if (!parsed) {
         warnings.invalidDates++
-        warnings.details!.push(`invalid date skipped: ${item.date}`)
+        warnings.details.push(`invalid date skipped: ${item.date}`)
         continue
       }
 
@@ -54,7 +54,7 @@ export const smartlabAdapter: CalendarAdapter = {
       const fullTitle = (item.title || '').trim()
       if (!fullTitle) {
         warnings.skipped++
-        warnings.details!.push(`skipped empty title on ${parsed.date}`)
+        warnings.details.push(`skipped empty title on ${parsed.date}`)
         continue
       }
 
@@ -65,7 +65,7 @@ export const smartlabAdapter: CalendarAdapter = {
       }
 
       const kind = detectKind(parsedTitle.title)
-      const status: 'confirmed' | 'expected' = 'confirmed' // smartlab — расписание, по умолчанию confirmed
+      const status = detectStatus(parsedTitle.title)
       const title = parsedTitle.title
       const key = `${title}|${kind}`
 
@@ -85,7 +85,7 @@ export const smartlabAdapter: CalendarAdapter = {
         group.companies.sort((a, b) => a.ticker.localeCompare(b.ticker))
         const expectedWeekday = getWeekday(group.date)
         if (group.weekday && expectedWeekday && group.weekday !== expectedWeekday) {
-          warnings.details!.push(
+          warnings.details.push(
             `weekday mismatch on ${group.date}: file=${group.weekday}, computed=${expectedWeekday}`
           )
         }

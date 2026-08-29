@@ -9,6 +9,10 @@ const MONTHS: Record<string, number> = {
 
 const COMPANY_RE = /^([АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯA-Z])\s+(.+?)\s+([A-Z][A-Z0-9.]*)$/
 
+const WD_MAP: Record<string, string> = {
+  пн: 'пн', вт: 'вт', ср: 'ср', чт: 'чт', пт: 'пт', сб: 'сб', вс: 'вс',
+}
+
 interface RawInvestmintItem {
   date: string
   events: string[]
@@ -24,8 +28,8 @@ export const investmintAdapter: CalendarAdapter = {
     let score = 0
     let checks = 0
     for (const item of sample) {
-      checks++
       if (!item || typeof item !== 'object') continue
+      checks++
       const i = item as any
       if (typeof i.date === 'string' && /^\d{1,2}\s+[а-яё]+/i.test(i.date)) {
         score += 0.5
@@ -48,7 +52,7 @@ export const investmintAdapter: CalendarAdapter = {
       const parsed = parseDate(item.date)
       if (!parsed) {
         warnings.invalidDates++
-        warnings.details!.push(`invalid date skipped: ${item.date}`)
+        warnings.details.push(`invalid date skipped: ${item.date}`)
         continue
       }
 
@@ -61,7 +65,7 @@ export const investmintAdapter: CalendarAdapter = {
         const tokens = splitTokens(ev)
         if (tokens.length < 2) {
           warnings.skipped++
-          warnings.details!.push(`skipped event with <2 tokens on ${parsed.date}: ${ev}`)
+          warnings.details.push(`skipped event with <2 tokens on ${parsed.date}: ${ev}`)
           continue
         }
 
@@ -73,7 +77,7 @@ export const investmintAdapter: CalendarAdapter = {
         }
         if (companies.length === 0) {
           warnings.skipped++
-          warnings.details!.push(`skipped event without companies on ${parsed.date}: ${ev}`)
+          warnings.details.push(`skipped event without companies on ${parsed.date}: ${ev}`)
           continue
         }
 
@@ -99,7 +103,7 @@ export const investmintAdapter: CalendarAdapter = {
         // sanity-check weekday: дата важнее, weekday всё равно перевычисляется в canonical
         const expectedWeekday = getWeekday(group.date)
         if (group.weekday && expectedWeekday && group.weekday !== expectedWeekday) {
-          warnings.details!.push(
+          warnings.details.push(
             `weekday mismatch on ${group.date}: file=${group.weekday}, computed=${expectedWeekday}`
           )
         }
@@ -118,7 +122,7 @@ function parseDate(str: string): { date: string; weekday: string } | null {
   const [, day, monthRaw, wdRaw] = m
   const month = MONTHS[monthRaw.toLowerCase()]
   if (!month) return null
-  const weekday = wdRaw.toLowerCase()
+  const weekday = WD_MAP[wdRaw.toLowerCase()] || wdRaw.toLowerCase().slice(0, 2)
   const year = inferYear(month)
   const date = `${year}-${pad(month)}-${pad(parseInt(day, 10))}`
   return { date, weekday }

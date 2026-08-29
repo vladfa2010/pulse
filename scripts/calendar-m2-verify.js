@@ -111,13 +111,37 @@ function main() {
   // Parity smartlab
   parity(smartRes.events, flattenSmartlabFrontend(parseSmartlabCalendar(smartRaw)), 'smartlab');
 
-  // 3. toRawRows shape
+  // 3. toRawRows shape and contents
   const investRows = toRawRows(investRes.events, 'investmint');
   assert(investRows.length > 0, 'investmint toRawRows expected >0');
+  const expectedInvestRowCount = investRes.events.reduce((sum, e) => sum + e.companies.length, 0);
+  assert(investRows.length === expectedInvestRowCount, `investmint row count mismatch: expected ${expectedInvestRowCount}, got ${investRows.length}`);
   assert(
     investRows.every(r => r.source === 'investmint' && r.date && r.title && r.kind && r.company && r.ticker),
     'investmint raw rows shape invalid'
   );
+  assert(
+    investRows.every(r => r.ticker === r.ticker.toUpperCase()),
+    'investment tickers must be uppercase in raw rows'
+  );
+  const investKeys = new Set(investRows.map(r => `${r.date}|${r.title}|${r.kind}|${r.company}|${r.ticker}`));
+  assert(investKeys.size === investRows.length, 'investmint raw rows contain duplicates');
+
+  const smartRows = toRawRows(smartRes.events, 'smartlab');
+  assert(smartRows.length > 0, 'smartlab toRawRows expected >0');
+  assert(
+    smartRows.every(r => r.source === 'smartlab' && r.status && r.company && r.ticker),
+    'smartlab raw rows shape invalid'
+  );
+
+  // 3a. smartlab status must respect detectStatus (synthetic expected title)
+  const syntheticSmartlab = [
+    { date: '28.08.2026', title: 'MGKL: Ожидается презентация отчёта' },
+  ];
+  const syntheticRes = smartlabAdapter.parse(syntheticSmartlab);
+  assert(syntheticRes.events.length === 1, 'synthetic smartlab expected 1 event');
+  assert(syntheticRes.events[0].status === 'expected', 'smartlab expected title must yield status expected');
+  assert(syntheticRes.events[0].title === 'Ожидается презентация отчёта', 'smartlab title should strip ticker prefix');
 
   // 4. Registry detect
   const d1 = detectAdapter(investRaw);

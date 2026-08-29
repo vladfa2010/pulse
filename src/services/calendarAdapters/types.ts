@@ -26,7 +26,7 @@ export interface ParseWarnings {
   noTicker: number
   skipped: number
   invalidDates: number
-  details?: string[]
+  details: string[]
 }
 
 export interface CalendarAdapter {
