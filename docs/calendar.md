@@ -6,11 +6,15 @@
 
 ## Обзор
 
-- Данные хранятся **плоско** в `calendar_events` и **мета-снапшот** в `calendar_meta`.
-- Загрузка только через админку: `POST /api/admin/calendar`.
-- Чтение публичное: `GET /api/calendar`.
+- Двухслойная модель: `calendar_events_raw` (срезы по источникам) + `calendar_events` (canonical, дедуплицированная картина).
+- Источники: `legacy`, `manual`, `investmint`, `smartlab`, `bcs` (заглушка), `global`.
+- Приоритет источников: `manual > investmint > smartlab > bcs > global > legacy`.
+- Загрузка через админку: `POST /api/admin/calendar` в режимах `replace`/`merge`.
+- CRUD событий в админке пишет в `calendar_events_raw` с `source = 'manual'` и пересобирает canonical.
+- Чтение публичное: `GET /api/calendar` отдаёт `calendar_events`.
 - После успешной загрузки бэкенд рассылает `event: calendar:refresh` по SSE.
 - Если данные устарели, раз в сутки админам отправляется Telegram-алерт.
+- Сырые данные провайдеров проходят через `src/services/calendarAdapters/` (M2).
 
 ---
 
@@ -400,6 +404,44 @@
 
 ---
 
+## Адаптеры провайдеров (`src/services/calendarAdapters/`)
+
+Модуль изолирует знание о форматах внешних провайдеров. Каждый провайдер реализует интерфейс `CalendarAdapter`:
+
+```typescript
+export interface CalendarAdapter {
+  source: string
+  detect(raw: unknown): number   // 0..1
+  parse(raw: unknown): { events: NormalizedEvent[]; warnings: ParseWarnings }
+}
+```
+
+**Файлы:**
+
+| Файл | Назначение |
+|------|-----------|
+| `types.ts` | `CalendarAdapter`, `NormalizedEvent`, `ParseWarnings` |
+| `classify.ts` | Единые `detectKind` / `detectStatus` для бэка и фронта |
+| `dateUtils.ts` | `pad`, `inferYear`, `getWeekday`, `toDateString` |
+| `investmint.ts` | Адаптер для `investmint_calendar.json` (date + events[]) |
+| `smartlab.ts` | Адаптер для smartlab-массива `{ date, title }` |
+| `bcs.ts` | Заглушка под будущий BCS-источник |
+| `index.ts` | Registry, `detectAdapter()`, `toRawRows()` |
+
+**`detectAdapter(raw)`** выбирает адаптер с максимальным `score >= 0.5`. Если два лидера отличаются менее чем на `0.001`, файл считается неоднозначным и отклоняется.
+
+**`toRawRows(events, source)`** разворачивает `NormalizedEvent[]` в плоские строки `calendar_events_raw`: одна строка на одну компанию, тикер uppercase.
+
+**Верификация:**
+
+```bash
+npm run verify:calendarAdapters
+```
+
+Скрипт `scripts/calendar-m2-verify.js` проверяет detect, parse, shape и parity с замороженными фронтовыми парсерами.
+
+---
+
 ## SSE
 
 Файл: `services/sse.ts`.
@@ -460,5 +502,8 @@ Boot-миграция использует `USE_SQLITE` для выбора ме
 | `src/routes/admin.ts` | Админские роуты календаря: загрузка снапшота и CRUD событий. |
 | `src/services/calendar.ts` | Вся бизнес-логика календаря. |
 | `src/services/sse.ts` | `broadcastCalendarRefresh()`. |
+| `src/services/calendarAdapters/` | Адаптеры провайдеров (M2). |
 | `src/models/schema.sql` | SQL-схема таблиц. |
 | `src/index.ts` | Boot-миграции, mount роута `/api/calendar`. |
+| `scripts/calendar-m2-verify.js` | Verify-скрипт для адаптеров. |
+| `tests/calendarAdapters/` | Fixtures и reference-парсеры для verify. |
