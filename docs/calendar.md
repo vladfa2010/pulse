@@ -215,7 +215,7 @@
 
 **Response 400** — ошибка валидации (все те же правила, что и для снапшота).
 
-**Response 409** — группа с такой парой `date + title + kind` уже существует.
+**Response 409** — группа с такой парой `date + title + kind` уже существует (`Event group already exists`).
 
 ---
 
@@ -335,9 +335,10 @@
 
 1. Валидирует тело через `validateCalendarAdminEvent()`.
 2. В транзакции проверяет, что группа `(date, title, kind)` ещё не существует.
-3. Вставляет одну строку на каждую компанию.
-4. Обновляет `calendar_meta`.
-5. Рассылает `calendar:refresh` по SSE.
+3. Если группа уже есть — бросает `CalendarAdminError('Event group already exists', 409)`.
+4. Вставляет одну строку на каждую компанию.
+5. Обновляет `calendar_meta`.
+6. Рассылает `calendar:refresh` по SSE.
 
 ### `updateCalendarEventGroup(oldDate, oldTitle, oldKind, event)`
 
