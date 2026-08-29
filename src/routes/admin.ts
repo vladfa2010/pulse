@@ -1168,7 +1168,8 @@ router.post('/calendar', adminMiddleware, async (req: AuthRequest, res) => {
     }
   } catch (err: any) {
     console.error('[Admin] Calendar upload error:', err.message);
-    res.status(400).json({ error: err.message || 'Failed to save calendar snapshot' });
+    const status = calendarErrorStatus(err);
+    res.status(status).json({ error: status === 500 ? 'Internal error' : err.message || 'Failed to save calendar snapshot' });
   }
 });
 

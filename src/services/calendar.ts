@@ -67,6 +67,8 @@ const STALE_ALERT_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 const CALENDAR_CACHE_TTL_MS = 60 * 1000;
 
 let calendarCache: { data: CalendarResponse; cachedAt: number } | null = null;
+let calendarCachePromise: Promise<CalendarResponse> | null = null;
+let calendarCacheGeneration = 0;
 
 class CalendarNotLoadedError extends Error {
   constructor() {
@@ -81,6 +83,8 @@ export function isCalendarNotLoadedError(err: any): err is CalendarNotLoadedErro
 
 export function invalidateCalendarCache(): void {
   calendarCache = null;
+  calendarCachePromise = null;
+  calendarCacheGeneration++;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -250,51 +254,73 @@ export async function getCalendarData(): Promise<CalendarResponse> {
     return calendarCache.data;
   }
 
-  if (await isCalendarEmpty()) {
-    throw new CalendarNotLoadedError();
+  if (calendarCachePromise) {
+    return calendarCachePromise;
   }
 
-  const serverDate = await getMskDateString();
-  const generatedAt = await getUploadedAt();
-  const windowStart = addDays(serverDate, -2);
-  const windowEnd = addDays(serverDate, 120);
+  const gen = calendarCacheGeneration;
 
-  const result = await query(
-    `SELECT date, weekday, title, kind, status, company, ticker
-     FROM calendar_events
-     WHERE date >= $1 AND date <= $2
-     ORDER BY date, title`,
-    [windowStart, windowEnd]
-  );
+  calendarCachePromise = (async (): Promise<CalendarResponse> => {
+    if (await isCalendarEmpty()) {
+      throw new CalendarNotLoadedError();
+    }
 
-  const rows: CalendarRow[] = result.rows.map((r: any) => ({
-    date: normalizeDbDate(r.date),
-    weekday: r.weekday,
-    title: r.title,
-    kind: r.kind,
-    status: r.status,
-    company: r.company,
-    ticker: r.ticker,
-  }));
+    const serverDate = await getMskDateString();
+    const generatedAt = await getUploadedAt();
+    const windowStart = addDays(serverDate, -2);
+    const windowEnd = addDays(serverDate, 120);
 
-  const days = buildDays(rows);
-  const stale = days.length === 0 || days[days.length - 1].date < addDays(serverDate, -2);
+    const result = await query(
+      `SELECT date, weekday, title, kind, status, company, ticker
+       FROM calendar_events
+       WHERE date >= $1 AND date <= $2
+       ORDER BY date, title`,
+      [windowStart, windowEnd]
+    );
 
-  if (stale) {
-    maybeSendStaleAlert().catch((err: any) => {
-      console.error('[Calendar] Stale alert failed:', err.message);
-    });
+    const rows: CalendarRow[] = result.rows.map((r: any) => ({
+      date: normalizeDbDate(r.date),
+      weekday: r.weekday,
+      title: r.title,
+      kind: r.kind,
+      status: r.status,
+      company: r.company,
+      ticker: r.ticker,
+    }));
+
+    const days = buildDays(rows);
+    const stale = days.length === 0 || days[days.length - 1].date < addDays(serverDate, -2);
+
+    if (stale) {
+      maybeSendStaleAlert().catch((err: any) => {
+        console.error('[Calendar] Stale alert failed:', err.message);
+      });
+    }
+
+    return {
+      server_date: serverDate,
+      generated_at: generatedAt || new Date().toISOString(),
+      stale,
+      days,
+    };
+  })();
+
+  try {
+    const response = await calendarCachePromise;
+    if (gen === calendarCacheGeneration) {
+      calendarCache = { data: response, cachedAt: Date.now() };
+    }
+    return response;
+  } catch (err) {
+    if (gen === calendarCacheGeneration) {
+      calendarCachePromise = null;
+    }
+    throw err;
+  } finally {
+    if (gen === calendarCacheGeneration) {
+      calendarCachePromise = null;
+    }
   }
-
-  const response: CalendarResponse = {
-    server_date: serverDate,
-    generated_at: generatedAt || new Date().toISOString(),
-    stale,
-    days,
-  };
-
-  calendarCache = { data: response, cachedAt: Date.now() };
-  return response;
 }
 
 function buildDays(rows: CalendarRow[]): CalendarDay[] {
@@ -508,7 +534,7 @@ export async function mergeCalendarSnapshot(
       await client.query(
         `INSERT INTO calendar_meta (id, uploaded_at, last_stale_alert_at)
          VALUES (1, ${nowSql()}, NULL)
-         ON CONFLICT (id) DO UPDATE SET uploaded_at = ${nowSql()}`
+         ON CONFLICT (id) DO UPDATE SET uploaded_at = ${nowSql()}, last_stale_alert_at = NULL`
       );
       await client.query('COMMIT');
     } catch (err) {
@@ -524,7 +550,7 @@ export async function mergeCalendarSnapshot(
       await query(
         `INSERT INTO calendar_meta (id, uploaded_at, last_stale_alert_at)
          VALUES (1, ${nowSql()}, NULL)
-         ON CONFLICT (id) DO UPDATE SET uploaded_at = ${nowSql()}`
+         ON CONFLICT (id) DO UPDATE SET uploaded_at = ${nowSql()}, last_stale_alert_at = NULL`
       );
       await query('COMMIT');
     } catch (err) {
@@ -667,8 +693,8 @@ async function withCalendarTransaction<T>(fn: (q: QueryFn) => Promise<T>): Promi
 
 async function touchCalendarMeta(q: QueryFn): Promise<void> {
   await q(
-    `INSERT INTO calendar_meta (id, uploaded_at) VALUES (1, ${nowSql()})
-     ON CONFLICT (id) DO UPDATE SET uploaded_at = ${nowSql()}`
+    `INSERT INTO calendar_meta (id, uploaded_at, last_stale_alert_at) VALUES (1, ${nowSql()}, NULL)
+     ON CONFLICT (id) DO UPDATE SET uploaded_at = ${nowSql()}, last_stale_alert_at = NULL`
   );
 }
 
