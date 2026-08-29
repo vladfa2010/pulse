@@ -66,6 +66,18 @@ function toDateString(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
+/** PostgreSQL DATE column is returned as a Date object; SQLite returns a string.
+ *  Normalize any value to a canonical YYYY-MM-DD string so Map keys and JSON match. */
+function normalizeDbDate(value: unknown): string {
+  if (value instanceof Date) {
+    return toDateString(value);
+  }
+  if (typeof value === 'string') {
+    return value.length >= 10 ? value.slice(0, 10) : value;
+  }
+  return String(value).slice(0, 10);
+}
+
 /** Current date in Europe/Moscow as YYYY-MM-DD. Computed in JS to work on both SQLite and PostgreSQL. */
 export async function getMskDateString(): Promise<string> {
   const result = await query(`SELECT ${nowSql()} as now`);
@@ -220,7 +232,7 @@ export async function getCalendarData(): Promise<CalendarResponse> {
   );
 
   const rows: CalendarRow[] = result.rows.map((r: any) => ({
-    date: r.date,
+    date: normalizeDbDate(r.date),
     weekday: r.weekday,
     title: r.title,
     kind: r.kind,
@@ -393,7 +405,7 @@ export async function maybeSendStaleAlert(): Promise<void> {
   const coverResult = await query(
     `SELECT MAX(date) as max_date FROM calendar_events`
   );
-  const maxDate = coverResult.rows[0]?.max_date;
+  const maxDate = normalizeDbDate(coverResult.rows[0]?.max_date);
 
   if (!maxDate || maxDate >= windowStart) return;
 
