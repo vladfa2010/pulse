@@ -662,7 +662,7 @@ export async function createCalendarEventGroup(event: unknown): Promise<void> {
       [validated.date, validated.title, validated.kind]
     );
     if (existing.rows.length > 0) {
-      throw new CalendarAdminError('Event group already exists');
+      throw new CalendarAdminError('Event group already exists', 409);
     }
 
     for (const company of validated.companies) {

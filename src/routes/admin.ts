@@ -1171,6 +1171,7 @@ function calendarErrorStatus(err: any): number {
   if (err && err.message && typeof err.message === 'string') {
     const msg = err.message.toLowerCase();
     if (msg.includes('not found')) return 404;
+    if (msg.includes('already exists')) return 409;
     if (msg.includes('invalid') || msg.includes('required') || msg.includes('must be') || msg.includes('duplicate')) return 400;
   }
   return 500;
