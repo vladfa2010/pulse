@@ -38,8 +38,6 @@ import {
   deleteCalendarEventGroup,
   validateProviderSlice,
   ingestProviderSlice,
-  computeDiff,
-  getCanonicalSnapshot,
   getMskDateString,
   addDays,
   normalizeDbDate,
@@ -1305,7 +1303,7 @@ router.get('/calendar/sources', adminMiddleware, async (_req, res) => {
     const windowStart = addDays(serverDate, -2);
     const feedProviders = new Set(['investmint', 'smartlab', 'bcs', 'global']);
 
-    const sourcesMeta = await query('SELECT source, uploaded_at, last_stale_alert_at FROM calendar_sources');
+    const sourcesMeta = await query('SELECT source, uploaded_at, last_stale_alert_at, last_warnings FROM calendar_sources');
     const countsResult = await query('SELECT source, COUNT(*) as cnt FROM calendar_events_raw GROUP BY source');
     const counts = new Map<string, number>();
     for (const row of countsResult.rows) {
@@ -1328,6 +1326,16 @@ router.get('/calendar/sources', adminMiddleware, async (_req, res) => {
       metaBySource.set(row.source, row);
     }
 
+    function parseLastWarnings(raw: unknown): string[] {
+      if (!raw || typeof raw !== 'string') return [];
+      try {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    }
+
     const result = PROVIDER_PRIORITY.map((source) => {
       const meta = metaBySource.get(source);
       const eventsCount = counts.get(source) || 0;
@@ -1340,6 +1348,7 @@ router.get('/calendar/sources', adminMiddleware, async (_req, res) => {
         uploaded_at: meta?.uploaded_at ? new Date(meta.uploaded_at).toISOString() : null,
         events_count: eventsCount,
         last_stale_alert_at: meta?.last_stale_alert_at ? new Date(meta.last_stale_alert_at).toISOString() : null,
+        last_warnings: parseLastWarnings(meta?.last_warnings),
         stale,
       };
     });
@@ -1387,9 +1396,8 @@ router.post('/calendar/:source', adminMiddleware, async (req: AuthRequest, res) 
     }
 
     const flatRows = toRawRows(events, source);
-    const snapshot = await getCanonicalSnapshot();
-    const { canonical: newCanonical, generatedAt } = await ingestProviderSlice(source, flatRows, dryRun);
-    const diff = computeDiff(snapshot, newCanonical);
+    const allWarnings = [...parseWarnings.details, ...validation.warnings];
+    const { diff, generatedAt } = await ingestProviderSlice(source, flatRows, dryRun, allWarnings);
 
     if (!dryRun && diff.nonempty) {
       broadcastCalendarRefresh();
@@ -1397,7 +1405,6 @@ router.post('/calendar/:source', adminMiddleware, async (req: AuthRequest, res) 
     }
 
     const uniqueDates = new Set(events.map((e) => e.date));
-    const allWarnings = [...parseWarnings.details, ...validation.warnings];
 
     res.json({
       parsed: {

@@ -804,7 +804,8 @@ CREATE INDEX IF NOT EXISTS idx_cal_raw_key ON calendar_events_raw(date, ticker);
 CREATE TABLE IF NOT EXISTS calendar_sources (
   source              VARCHAR(20) PRIMARY KEY,
   uploaded_at         TIMESTAMP,
-  last_stale_alert_at TIMESTAMP
+  last_stale_alert_at TIMESTAMP,
+  last_warnings       TEXT                       -- JSON array последних варнингов провайдера
 );
 
 -- ============================================================

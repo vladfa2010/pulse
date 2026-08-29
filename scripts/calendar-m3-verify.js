@@ -81,7 +81,7 @@ async function setup() {
   )`);
   await query(`CREATE INDEX IF NOT EXISTS idx_cal_raw_source ON calendar_events_raw(source)`);
   await query(`CREATE INDEX IF NOT EXISTS idx_cal_raw_key ON calendar_events_raw(date, ticker)`);
-  await query(`CREATE TABLE IF NOT EXISTS calendar_sources (source VARCHAR(20) PRIMARY KEY, uploaded_at TIMESTAMP, last_stale_alert_at TIMESTAMP)`);
+  await query(`CREATE TABLE IF NOT EXISTS calendar_sources (source VARCHAR(20) PRIMARY KEY, uploaded_at TIMESTAMP, last_stale_alert_at TIMESTAMP, last_warnings TEXT)`);
   await query(`CREATE TABLE IF NOT EXISTS calendar_meta (id INTEGER PRIMARY KEY CHECK (id = 1), uploaded_at TIMESTAMP DEFAULT (datetime('now')), last_stale_alert_at TIMESTAMP)`);
   await query(`CREATE TABLE IF NOT EXISTS admin_tg_settings (
     id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
@@ -278,6 +278,20 @@ async function main() {
       'test8: canonical should be consistent with final slice'
     );
     console.log('[m3] test8 passed: parallel ingests serialized, final raw rows=', rawCount8.rows[0].c);
+
+    // === Test 9: last_warnings сохраняются в calendar_sources ===
+    await resetCalendarTables();
+    const investRaw9 = readFixture('investmint.json');
+    const events9 = investmintAdapter.parse(investRaw9).events;
+    const rows9 = toRawRows(events9, 'investmint');
+    await ingestProviderSlice('investmint', rows9, false, ['warning one', 'warning two']);
+    const meta9 = await query(`SELECT last_warnings FROM calendar_sources WHERE source = 'investmint'`);
+    const savedWarnings = JSON.parse(meta9.rows[0].last_warnings || '[]');
+    assert(
+      Array.isArray(savedWarnings) && savedWarnings.length === 2 && savedWarnings[0] === 'warning one',
+      'test9: last_warnings should persist in calendar_sources'
+    );
+    console.log('[m3] test9 passed: last_warnings persisted');
 
     console.log('\n[M3 VERIFY] ALL TESTS PASSED');
     process.exit(0);

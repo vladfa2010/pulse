@@ -320,11 +320,9 @@ export async function getCalendarData(): Promise<CalendarResponse> {
     const days = buildDays(rows);
     const stale = days.length === 0 || days[days.length - 1].date < windowStart;
 
-    if (stale) {
-      maybeSendProviderStaleAlerts().catch((err: any) => {
-        console.error('[Calendar] Provider stale alerts failed:', err.message);
-      });
-    }
+    maybeSendProviderStaleAlerts().catch((err: any) => {
+      console.error('[Calendar] Provider stale alerts failed:', err.message);
+    });
 
     return {
       server_date: serverDate,
@@ -1027,15 +1025,21 @@ let ingestFlight: Promise<unknown> = Promise.resolve();
 interface IngestResult {
   canonical: CanonicalRow[];
   generatedAt: string | null;
+  diff: DiffResult;
 }
 
-/** Заменяет срез провайдера и пересобирает канон. dry_run не пишет в БД. */
+/** Заменяет срез провайдера и пересобирает канон. dry_run не пишет в БД.
+ *  Снапшот канона снимается внутри single-flight, чтобы diff атрибутировался
+ *  корректно при параллельных загрузках. */
 export async function ingestProviderSlice(
   source: string,
   flatRows: CalendarRawRow[],
-  dryRun: boolean
+  dryRun: boolean,
+  warnings: string[] = []
 ): Promise<IngestResult> {
   const run = async (): Promise<IngestResult> => {
+    const snapshot = await getCanonicalSnapshot();
+
     if (dryRun) {
       const rawResult = await query(
         `SELECT source, date, weekday, title, kind, status, company, ticker
@@ -1054,7 +1058,8 @@ export async function ingestProviderSlice(
       const simulated = existingRows.filter((r) => r.source !== source).concat(flatRows);
       const canonical = buildCanonicalRows(simulated);
       const generatedAt = await getGeneratedAt();
-      return { canonical, generatedAt };
+      const diff = computeDiff(snapshot, canonical);
+      return { canonical, generatedAt, diff };
     }
 
     const { canonical } = await withCalendarTransaction(async (q) => {
@@ -1069,10 +1074,10 @@ export async function ingestProviderSlice(
       }
 
       await q(
-        `INSERT INTO calendar_sources (source, uploaded_at, last_stale_alert_at)
-         VALUES ($1, ${nowSql()}, NULL)
-         ON CONFLICT (source) DO UPDATE SET uploaded_at = ${nowSql()}, last_stale_alert_at = NULL`,
-        [source]
+        `INSERT INTO calendar_sources (source, uploaded_at, last_stale_alert_at, last_warnings)
+         VALUES ($1, ${nowSql()}, NULL, $2)
+         ON CONFLICT (source) DO UPDATE SET uploaded_at = ${nowSql()}, last_stale_alert_at = NULL, last_warnings = $2`,
+        [source, JSON.stringify(warnings)]
       );
 
       const { canonical } = await rebuildCanonical(q);
@@ -1080,7 +1085,8 @@ export async function ingestProviderSlice(
     });
 
     const generatedAt = await getGeneratedAt();
-    return { canonical, generatedAt };
+    const diff = computeDiff(snapshot, canonical);
+    return { canonical, generatedAt, diff };
   };
 
   const p = ingestFlight.then(run, run);
@@ -1396,6 +1402,7 @@ async function ensureCalendarEventsColumnsPostgres(q: QueryFn): Promise<void> {
   await q(`ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS sources TEXT`);
   await q(`ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS possible_duplicate BOOLEAN DEFAULT FALSE`);
   await q(`ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS tag_ids TEXT`);
+  await q(`ALTER TABLE calendar_sources ADD COLUMN IF NOT EXISTS last_warnings TEXT`);
 }
 
 async function ensureCalendarEventsColumnsSQLite(q: QueryFn): Promise<void> {
@@ -1404,6 +1411,16 @@ async function ensureCalendarEventsColumnsSQLite(q: QueryFn): Promise<void> {
   if (!existing.has('sources')) await q(`ALTER TABLE calendar_events ADD COLUMN sources TEXT`);
   if (!existing.has('possible_duplicate')) await q(`ALTER TABLE calendar_events ADD COLUMN possible_duplicate INTEGER DEFAULT 0`);
   if (!existing.has('tag_ids')) await q(`ALTER TABLE calendar_events ADD COLUMN tag_ids TEXT`);
+}
+
+async function ensureCalendarSourcesColumnsPostgres(q: QueryFn): Promise<void> {
+  await q(`ALTER TABLE calendar_sources ADD COLUMN IF NOT EXISTS last_warnings TEXT`);
+}
+
+async function ensureCalendarSourcesColumnsSQLite(q: QueryFn): Promise<void> {
+  const info = await q(`PRAGMA table_info(calendar_sources)`);
+  const existing = new Set(info.rows.map((r: any) => r.name));
+  if (!existing.has('last_warnings')) await q(`ALTER TABLE calendar_sources ADD COLUMN last_warnings TEXT`);
 }
 
 async function ensureCalendarEventsUniqueSQLite(q: QueryFn): Promise<void> {
@@ -1443,8 +1460,10 @@ export async function runCalendarV2Migrations(): Promise<void> {
   if (USE_SQLITE) {
     await ensureCalendarEventsUniqueSQLite(query);
     await ensureCalendarEventsColumnsSQLite(query);
+    await ensureCalendarSourcesColumnsSQLite(query);
   } else {
     await ensureCalendarEventsColumnsPostgres(query);
+    await ensureCalendarSourcesColumnsPostgres(query);
     await ensureCalendarEventsUniquePostgres(query);
   }
 
