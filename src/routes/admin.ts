@@ -27,7 +27,14 @@ import { getPromoByCode } from '../services/promo';
 import { logAdminChangedPlan, logAdminExtendedSubscription } from '../services/activityLog';
 import { nowSql } from '../utils/nowSql';
 import { getUserId } from '../utils/users';
-import { saveCalendarSnapshot } from '../services/calendar';
+import {
+  saveCalendarSnapshot,
+  listCalendarEventGroups,
+  getCalendarEventGroup,
+  createCalendarEventGroup,
+  updateCalendarEventGroup,
+  deleteCalendarEventGroup,
+} from '../services/calendar';
 
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
@@ -1147,6 +1154,103 @@ router.post('/calendar', adminMiddleware, async (req: AuthRequest, res) => {
   } catch (err: any) {
     console.error('[Admin] Calendar upload error:', err.message);
     res.status(400).json({ error: err.message || 'Failed to save calendar snapshot' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Admin Calendar Events CRUD
+// Routes are mounted under /api/admin, so full paths are:
+//   GET    /api/admin/calendar/events
+//   POST   /api/admin/calendar/events
+//   PUT    /api/admin/calendar/events/:date/:title/:kind
+//   DELETE /api/admin/calendar/events/:date/:title/:kind
+// ═══════════════════════════════════════════════════════════════════════════
+
+function calendarErrorStatus(err: any): number {
+  if (err && typeof err.status === 'number') return err.status;
+  if (err && err.message && typeof err.message === 'string') {
+    const msg = err.message.toLowerCase();
+    if (msg.includes('not found')) return 404;
+    if (msg.includes('invalid') || msg.includes('required') || msg.includes('must be') || msg.includes('duplicate')) return 400;
+  }
+  return 500;
+}
+
+// GET /api/admin/calendar/events/:date/:title/:kind
+router.get('/calendar/events/:date/:title/:kind', adminMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const date = decodeURIComponent(req.params.date);
+    const title = decodeURIComponent(req.params.title);
+    const kind = decodeURIComponent(req.params.kind);
+
+    const event = await getCalendarEventGroup(date, title, kind);
+    if (!event) {
+      return res.status(404).json({ error: 'Event not found' });
+    }
+    res.json({ event });
+  } catch (err: any) {
+    console.error('[Admin] Calendar event get error:', err.message);
+    res.status(calendarErrorStatus(err)).json({ error: err.message || 'Failed to fetch calendar event' });
+  }
+});
+
+// GET /api/admin/calendar/events
+router.get('/calendar/events', adminMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const filters = {
+      search: req.query.search as string | undefined,
+      kind: req.query.kind as string | undefined,
+      status: req.query.status as string | undefined,
+      limit: req.query.limit ? Number(req.query.limit) : undefined,
+      offset: req.query.offset ? Number(req.query.offset) : undefined,
+    };
+
+    const { events, total } = await listCalendarEventGroups(filters);
+    res.json({ events, total });
+  } catch (err: any) {
+    console.error('[Admin] Calendar events list error:', err.message);
+    res.status(calendarErrorStatus(err)).json({ error: err.message || 'Failed to list calendar events' });
+  }
+});
+
+// POST /api/admin/calendar/events
+router.post('/calendar/events', adminMiddleware, async (req: AuthRequest, res) => {
+  try {
+    await createCalendarEventGroup(req.body);
+    res.json({ success: true });
+  } catch (err: any) {
+    console.error('[Admin] Calendar event create error:', err.message);
+    res.status(calendarErrorStatus(err)).json({ error: err.message || 'Failed to create calendar event' });
+  }
+});
+
+// PUT /api/admin/calendar/events/:date/:title/:kind
+router.put('/calendar/events/:date/:title/:kind', adminMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const oldDate = decodeURIComponent(req.params.date);
+    const oldTitle = decodeURIComponent(req.params.title);
+    const oldKind = decodeURIComponent(req.params.kind);
+
+    await updateCalendarEventGroup(oldDate, oldTitle, oldKind, req.body);
+    res.json({ success: true });
+  } catch (err: any) {
+    console.error('[Admin] Calendar event update error:', err.message);
+    res.status(calendarErrorStatus(err)).json({ error: err.message || 'Failed to update calendar event' });
+  }
+});
+
+// DELETE /api/admin/calendar/events/:date/:title/:kind
+router.delete('/calendar/events/:date/:title/:kind', adminMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const date = decodeURIComponent(req.params.date);
+    const title = decodeURIComponent(req.params.title);
+    const kind = decodeURIComponent(req.params.kind);
+
+    await deleteCalendarEventGroup(date, title, kind);
+    res.json({ success: true });
+  } catch (err: any) {
+    console.error('[Admin] Calendar event delete error:', err.message);
+    res.status(calendarErrorStatus(err)).json({ error: err.message || 'Failed to delete calendar event' });
   }
 });
 

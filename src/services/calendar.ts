@@ -45,6 +45,16 @@ export interface CalendarResponse {
   days: CalendarDay[];
 }
 
+export interface CalendarAdminEvent {
+  date: string;
+  weekday: string;
+  title: string;
+  kind: EventKind;
+  status: EventStatus;
+  companies: CalendarCompany[];
+  companies_count: number;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Constants
 // ═══════════════════════════════════════════════════════════════════════════
@@ -388,6 +398,338 @@ export async function saveCalendarSnapshot(days: CalendarDay[]): Promise<{ daysC
     daysCount: days.length,
     eventsCount: flatRows.length,
   };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Admin single-event CRUD
+// ═══════════════════════════════════════════════════════════════════════════
+
+class CalendarAdminError extends Error {
+  status: number;
+  constructor(message: string, status: number = 400) {
+    super(message);
+    this.name = 'CalendarAdminError';
+    this.status = status;
+  }
+}
+
+export function isValidKind(k: unknown): k is EventKind {
+  return typeof k === 'string' && VALID_KINDS.includes(k as EventKind);
+}
+
+export function isValidStatus(s: unknown): s is EventStatus {
+  return typeof s === 'string' && VALID_STATUSES.includes(s as EventStatus);
+}
+
+const RUSSIAN_WEEKDAYS = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
+
+export function getWeekday(dateStr: string): string {
+  const d = new Date(`${dateStr}T00:00:00Z`);
+  if (isNaN(d.getTime())) return '';
+  return RUSSIAN_WEEKDAYS[d.getUTCDay()];
+}
+
+function validateCalendarAdminEvent(event: unknown): CalendarAdminEvent {
+  if (!event || typeof event !== 'object') {
+    throw new CalendarAdminError('event must be an object');
+  }
+
+  const e = event as Record<string, unknown>;
+
+  if (!isValidDate(e.date)) {
+    throw new CalendarAdminError(`invalid date: ${e.date}`);
+  }
+  if (!isValidKind(e.kind)) {
+    throw new CalendarAdminError(`invalid kind: ${e.kind}`);
+  }
+  if (!isValidStatus(e.status)) {
+    throw new CalendarAdminError(`invalid status: ${e.status}`);
+  }
+  if (typeof e.title !== 'string' || e.title.length === 0) {
+    throw new CalendarAdminError('title is required');
+  }
+  if (!Array.isArray(e.companies) || e.companies.length === 0) {
+    throw new CalendarAdminError('companies must be a non-empty array');
+  }
+
+  const tickers = new Set<string>();
+  const companies: CalendarCompany[] = [];
+
+  for (const item of e.companies) {
+    if (!item || typeof item !== 'object') {
+      throw new CalendarAdminError('each company must be an object');
+    }
+
+    const c = item as Record<string, unknown>;
+    if (typeof c.name !== 'string' || c.name.length === 0) {
+      throw new CalendarAdminError('company name is required');
+    }
+    if (typeof c.ticker !== 'string' || c.ticker.length === 0) {
+      throw new CalendarAdminError('company ticker is required');
+    }
+
+    const tickerUpper = c.ticker.toUpperCase();
+    if (tickers.has(tickerUpper)) {
+      throw new CalendarAdminError(`duplicate ticker ${tickerUpper}`);
+    }
+    tickers.add(tickerUpper);
+
+    companies.push({ name: c.name, ticker: tickerUpper });
+  }
+
+  const weekday = typeof e.weekday === 'string' && e.weekday.length > 0
+    ? e.weekday
+    : getWeekday(e.date);
+
+  return {
+    date: e.date,
+    weekday,
+    title: e.title,
+    kind: e.kind,
+    status: e.status,
+    companies,
+    companies_count: companies.length,
+  };
+}
+
+type QueryFn = (text: string, params?: any[]) => Promise<{ rows: any[]; rowCount?: number }>;
+
+async function withCalendarTransaction<T>(fn: (q: QueryFn) => Promise<T>): Promise<T> {
+  const USE_SQLITE = process.env.USE_SQLITE === 'true';
+
+  if (pool && !USE_SQLITE) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await fn((text, params) => client.query(text, params));
+      await client.query('COMMIT');
+      return result;
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+  } else {
+    await query('BEGIN');
+    try {
+      const result = await fn(query);
+      await query('COMMIT');
+      return result;
+    } catch (err) {
+      await query('ROLLBACK').catch(() => {});
+      throw err;
+    }
+  }
+}
+
+async function touchCalendarMeta(q: QueryFn): Promise<void> {
+  await q(
+    `INSERT INTO calendar_meta (id, uploaded_at) VALUES (1, ${nowSql()})
+     ON CONFLICT (id) DO UPDATE SET uploaded_at = ${nowSql()}`
+  );
+}
+
+export interface CalendarAdminFilters {
+  search?: string;
+  kind?: string;
+  status?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export async function listCalendarEventGroups(
+  filters: CalendarAdminFilters
+): Promise<{ events: CalendarAdminEvent[]; total: number }> {
+  const search = typeof filters.search === 'string' && filters.search.length > 0 ? filters.search : undefined;
+  const kind = typeof filters.kind === 'string' && filters.kind.length > 0 ? filters.kind : undefined;
+  const status = typeof filters.status === 'string' && filters.status.length > 0 ? filters.status : undefined;
+  const limit = Number.isFinite(Number(filters.limit)) && Number(filters.limit) > 0 ? Number(filters.limit) : 50;
+  const offset = Number.isFinite(Number(filters.offset)) && Number(filters.offset) >= 0 ? Number(filters.offset) : 0;
+
+  const conditions: string[] = [];
+  const params: any[] = [];
+  let idx = 1;
+
+  if (kind) {
+    conditions.push(`ce.kind = $${idx}`);
+    params.push(kind);
+    idx++;
+  }
+  if (status) {
+    conditions.push(`ce.status = $${idx}`);
+    params.push(status);
+    idx++;
+  }
+  if (search) {
+    const pattern = `%${search}%`;
+    conditions.push(
+      `(lower(ce.title) LIKE $${idx} OR EXISTS (` +
+        `SELECT 1 FROM calendar_events ce2 ` +
+        `WHERE ce2.date = ce.date AND ce2.title = ce.title AND ce2.kind = ce.kind ` +
+        `AND (lower(ce2.company) LIKE $${idx} OR lower(ce2.ticker) LIKE $${idx})))`
+    );
+    params.push(pattern);
+    idx++;
+  }
+
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  const dataSql = `
+    SELECT ce.date, ce.weekday, ce.title, ce.kind, ce.status, COUNT(*) as companies_count
+    FROM calendar_events ce
+    ${where}
+    GROUP BY ce.date, ce.weekday, ce.title, ce.kind, ce.status
+    ORDER BY ce.date DESC, ce.title
+    LIMIT $${idx} OFFSET $${idx + 1}
+  `;
+  const dataParams = [...params, limit, offset];
+
+  const totalSql = `
+    SELECT COUNT(*) as total FROM (
+      SELECT 1 FROM calendar_events ce
+      ${where}
+      GROUP BY ce.date, ce.title, ce.kind
+    ) sub
+  `;
+
+  const [dataResult, totalResult] = await Promise.all([
+    query(dataSql, dataParams),
+    query(totalSql, params),
+  ]);
+
+  const events: CalendarAdminEvent[] = dataResult.rows.map((r: any) => ({
+    date: normalizeDbDate(r.date),
+    weekday: r.weekday,
+    title: r.title,
+    kind: r.kind,
+    status: r.status,
+    companies: [],
+    companies_count: Number(r.companies_count || 0),
+  }));
+
+  const total = Number(totalResult.rows[0]?.total || 0);
+  return { events, total };
+}
+
+export async function getCalendarEventGroup(
+  date: string,
+  title: string,
+  kind: string
+): Promise<CalendarAdminEvent | null> {
+  const result = await query(
+    `SELECT date, weekday, title, kind, status, company, ticker
+     FROM calendar_events
+     WHERE date = $1 AND title = $2 AND kind = $3
+     ORDER BY ticker`,
+    [date, title, kind]
+  );
+
+  if (result.rows.length === 0) {
+    return null;
+  }
+
+  const rows = result.rows.map((r: any) => ({
+    date: normalizeDbDate(r.date),
+    weekday: r.weekday,
+    title: r.title,
+    kind: r.kind,
+    status: r.status,
+    company: r.company,
+    ticker: r.ticker,
+  }));
+
+  const first = rows[0];
+  const companies = rows.map((r: any) => ({ name: r.company, ticker: r.ticker }));
+
+  return {
+    date: first.date,
+    weekday: first.weekday,
+    title: first.title,
+    kind: first.kind,
+    status: first.status,
+    companies,
+    companies_count: companies.length,
+  };
+}
+
+export async function createCalendarEventGroup(event: unknown): Promise<void> {
+  const validated = validateCalendarAdminEvent(event);
+
+  await withCalendarTransaction(async (q) => {
+    const existing = await q(
+      `SELECT 1 FROM calendar_events WHERE date = $1 AND title = $2 AND kind = $3 LIMIT 1`,
+      [validated.date, validated.title, validated.kind]
+    );
+    if (existing.rows.length > 0) {
+      throw new CalendarAdminError('Event group already exists');
+    }
+
+    for (const company of validated.companies) {
+      await q(
+        `INSERT INTO calendar_events (date, weekday, title, kind, status, company, ticker, uploaded_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, ${nowSql()})`,
+        [validated.date, validated.weekday, validated.title, validated.kind, validated.status, company.name, company.ticker]
+      );
+    }
+
+    await touchCalendarMeta(q);
+  });
+
+  broadcastCalendarRefresh();
+}
+
+export async function updateCalendarEventGroup(
+  oldDate: string,
+  oldTitle: string,
+  oldKind: string,
+  event: unknown
+): Promise<void> {
+  const validated = validateCalendarAdminEvent(event);
+
+  await withCalendarTransaction(async (q) => {
+    const del = await q(
+      `DELETE FROM calendar_events WHERE date = $1 AND title = $2 AND kind = $3`,
+      [oldDate, oldTitle, oldKind]
+    );
+
+    if (!del.rowCount) {
+      throw new CalendarAdminError('Event group not found', 404);
+    }
+
+    for (const company of validated.companies) {
+      await q(
+        `INSERT INTO calendar_events (date, weekday, title, kind, status, company, ticker, uploaded_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, ${nowSql()})`,
+        [validated.date, validated.weekday, validated.title, validated.kind, validated.status, company.name, company.ticker]
+      );
+    }
+
+    await touchCalendarMeta(q);
+  });
+
+  broadcastCalendarRefresh();
+}
+
+export async function deleteCalendarEventGroup(
+  date: string,
+  title: string,
+  kind: string
+): Promise<void> {
+  await withCalendarTransaction(async (q) => {
+    const del = await q(
+      `DELETE FROM calendar_events WHERE date = $1 AND title = $2 AND kind = $3`,
+      [date, title, kind]
+    );
+
+    if (!del.rowCount) {
+      throw new CalendarAdminError('Event group not found', 404);
+    }
+
+    await touchCalendarMeta(q);
+  });
+
+  broadcastCalendarRefresh();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
