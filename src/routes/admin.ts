@@ -1410,6 +1410,7 @@ router.post('/calendar/:source', adminMiddleware, async (req: AuthRequest, res) 
         new: diff.samples.new,
         removed: diff.samples.removed,
         upgraded: diff.samples.upgraded,
+        updated: diff.samples.updated,
       },
       generated_at: generatedAt,
     });

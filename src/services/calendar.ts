@@ -1057,7 +1057,7 @@ export async function ingestProviderSlice(
       return { canonical, generatedAt };
     }
 
-    await withCalendarTransaction(async (q) => {
+    const { canonical } = await withCalendarTransaction(async (q) => {
       await q(`DELETE FROM calendar_events_raw WHERE source = $1`, [source]);
 
       for (const row of flatRows) {
@@ -1075,25 +1075,10 @@ export async function ingestProviderSlice(
         [source]
       );
 
-      await rebuildCanonical(q);
+      const { canonical } = await rebuildCanonical(q);
+      return { canonical, generatedAt: null };
     });
 
-    const canonicalResult = await query(
-      `SELECT date, weekday, title, kind, status, company, ticker, sources
-       FROM calendar_events
-       ORDER BY date, title`
-    );
-    const canonical: CanonicalRow[] = canonicalResult.rows.map((r: any) => ({
-      date: normalizeDbDate(r.date),
-      weekday: r.weekday,
-      title: r.title,
-      kind: assertValidKind(r.kind),
-      status: assertValidStatus(r.status),
-      company: r.company,
-      ticker: r.ticker,
-      sources: r.sources || '[]',
-      possible_duplicate: r.possible_duplicate ? true : false,
-    }));
     const generatedAt = await getGeneratedAt();
     return { canonical, generatedAt };
   };
@@ -1305,7 +1290,14 @@ function buildCanonicalRowsWithStats(rawRows: CalendarRawRow[]): { canonical: Ca
   return { canonical, duplicateCount };
 }
 
-export async function rebuildCanonical(q: QueryFn = query): Promise<{ rawCount: number; canonicalCount: number; duplicateCount: number }> {
+export interface RebuildCanonicalResult {
+  rawCount: number;
+  canonicalCount: number;
+  duplicateCount: number;
+  canonical: CanonicalRow[];
+}
+
+export async function rebuildCanonical(q: QueryFn = query): Promise<RebuildCanonicalResult> {
   const rawResult = await q(
     `SELECT source, date, weekday, title, kind, status, company, ticker
      FROM calendar_events_raw
@@ -1338,6 +1330,7 @@ export async function rebuildCanonical(q: QueryFn = query): Promise<{ rawCount: 
     rawCount: rawRows.length,
     canonicalCount: canonical.length,
     duplicateCount,
+    canonical,
   };
 }
 
