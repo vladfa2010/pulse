@@ -783,7 +783,7 @@ export async function createCalendarEventGroup(event: unknown): Promise<void> {
 
   await withCalendarTransaction(async (q) => {
     const existing = await q(
-      `SELECT 1 FROM calendar_events WHERE date = $1 AND title = $2 AND kind = $3 LIMIT 1`,
+      `SELECT 1 FROM calendar_events_raw WHERE date = $1 AND title = $2 AND kind = $3 LIMIT 1`,
       [validated.date, validated.title, validated.kind]
     );
     if (existing.rows.length > 0) {
@@ -792,13 +792,14 @@ export async function createCalendarEventGroup(event: unknown): Promise<void> {
 
     for (const company of validated.companies) {
       await q(
-        `INSERT INTO calendar_events (date, weekday, title, kind, status, company, ticker, uploaded_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, ${nowSql()})`,
+        `INSERT INTO calendar_events_raw (source, date, weekday, title, kind, status, company, ticker, uploaded_at)
+         VALUES ('manual', $1, $2, $3, $4, $5, $6, $7, ${nowSql()})`,
         [validated.date, validated.weekday, validated.title, validated.kind, validated.status, company.name, company.ticker]
       );
     }
 
     await touchCalendarMeta(q);
+    await rebuildCanonical(q);
   });
 
   broadcastCalendarRefresh();
@@ -815,7 +816,7 @@ export async function updateCalendarEventGroup(
 
   await withCalendarTransaction(async (q) => {
     const del = await q(
-      `DELETE FROM calendar_events WHERE date = $1 AND title = $2 AND kind = $3`,
+      `DELETE FROM calendar_events_raw WHERE date = $1 AND title = $2 AND kind = $3`,
       [oldDate, oldTitle, oldKind]
     );
 
@@ -825,13 +826,14 @@ export async function updateCalendarEventGroup(
 
     for (const company of validated.companies) {
       await q(
-        `INSERT INTO calendar_events (date, weekday, title, kind, status, company, ticker, uploaded_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, ${nowSql()})`,
+        `INSERT INTO calendar_events_raw (source, date, weekday, title, kind, status, company, ticker, uploaded_at)
+         VALUES ('manual', $1, $2, $3, $4, $5, $6, $7, ${nowSql()})`,
         [validated.date, validated.weekday, validated.title, validated.kind, validated.status, company.name, company.ticker]
       );
     }
 
     await touchCalendarMeta(q);
+    await rebuildCanonical(q);
   });
 
   broadcastCalendarRefresh();
@@ -845,7 +847,7 @@ export async function deleteCalendarEventGroup(
 ): Promise<void> {
   await withCalendarTransaction(async (q) => {
     const del = await q(
-      `DELETE FROM calendar_events WHERE date = $1 AND title = $2 AND kind = $3`,
+      `DELETE FROM calendar_events_raw WHERE date = $1 AND title = $2 AND kind = $3`,
       [date, title, kind]
     );
 
@@ -854,6 +856,7 @@ export async function deleteCalendarEventGroup(
     }
 
     await touchCalendarMeta(q);
+    await rebuildCanonical(q);
   });
 
   broadcastCalendarRefresh();
@@ -998,11 +1001,14 @@ export async function rebuildCanonical(q: QueryFn = query): Promise<{ rawCount: 
 
     const concreteKinds = VALID_KINDS.filter((k) => k !== 'Другое' && kindMap.has(k));
     const outputKinds: EventKind[] = concreteKinds.length > 0 ? concreteKinds : ['Другое'];
+    const fallbackConfirmed = kindMap.get('Другое')?.some((r) => r.status === 'confirmed') ?? false;
 
     for (const kind of outputKinds) {
       const kindRows = kindMap.get(kind) || [];
       const representative = pickRepresentative(kindRows.length > 0 ? kindRows : rows);
-      const status = kindRows.some((r) => r.status === 'confirmed') ? 'confirmed' : 'expected';
+      const status = kindRows.some((r) => r.status === 'confirmed') || (fallbackConfirmed && kind !== 'Другое')
+        ? 'confirmed'
+        : 'expected';
 
       canonical.push({
         date: representative.date,
@@ -1099,6 +1105,20 @@ async function ensureCalendarEventsUniquePostgres(q: QueryFn): Promise<void> {
   await q(`ALTER TABLE calendar_events ADD CONSTRAINT cal_events_uniq UNIQUE (date, title, kind, ticker)`);
 }
 
+async function ensureCalendarEventsColumnsPostgres(q: QueryFn): Promise<void> {
+  await q(`ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS sources TEXT`);
+  await q(`ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS possible_duplicate BOOLEAN DEFAULT FALSE`);
+  await q(`ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS tag_ids TEXT`);
+}
+
+async function ensureCalendarEventsColumnsSQLite(q: QueryFn): Promise<void> {
+  const info = await q(`PRAGMA table_info(calendar_events)`);
+  const existing = new Set(info.rows.map((r: any) => r.name));
+  if (!existing.has('sources')) await q(`ALTER TABLE calendar_events ADD COLUMN sources TEXT`);
+  if (!existing.has('possible_duplicate')) await q(`ALTER TABLE calendar_events ADD COLUMN possible_duplicate INTEGER DEFAULT 0`);
+  if (!existing.has('tag_ids')) await q(`ALTER TABLE calendar_events ADD COLUMN tag_ids TEXT`);
+}
+
 async function ensureCalendarEventsUniqueSQLite(q: QueryFn): Promise<void> {
   const info = await q(`SELECT sql FROM sqlite_master WHERE type='table' AND name='calendar_events'`);
   const createSql: string = info.rows[0]?.sql || '';
@@ -1135,7 +1155,9 @@ async function ensureCalendarEventsUniqueSQLite(q: QueryFn): Promise<void> {
 export async function runCalendarV2Migrations(): Promise<void> {
   if (USE_SQLITE) {
     await ensureCalendarEventsUniqueSQLite(query);
+    await ensureCalendarEventsColumnsSQLite(query);
   } else {
+    await ensureCalendarEventsColumnsPostgres(query);
     await ensureCalendarEventsUniquePostgres(query);
   }
 
