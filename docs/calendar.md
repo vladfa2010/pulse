@@ -16,7 +16,9 @@
 
 ## Endpoints
 
-### `GET /api/calendar`
+### Публичный endpoint
+
+#### `GET /api/calendar`
 
 Публичный. Возвращает сгруппированный снапшот за окно: `server_date - 2` … `server_date + 120` дней.
 
@@ -123,6 +125,130 @@
 
 ---
 
+### `GET /api/admin/calendar/events`
+
+Только для администраторов. Возвращает список групп событий с пагинацией и фильтрами.
+
+**Query-параметры:**
+
+| Параметр | Тип | Описание |
+|----------|-----|----------|
+| `search` | string | Поиск по `title`, `company` или `ticker` (case-insensitive). |
+| `kind` | string | Точное совпадение по `kind`. |
+| `status` | string | Точное совпадение по `status`. |
+| `limit` | number | Размер страницы (по умолчанию `50`). |
+| `offset` | number | Смещение (по умолчанию `0`). |
+
+**Response 200**:
+
+```json
+{
+  "events": [
+    {
+      "date": "2026-08-29",
+      "weekday": "сб",
+      "title": "Годовой отчёт",
+      "kind": "МСФО",
+      "status": "confirmed",
+      "companies": [],
+      "companies_count": 1
+    }
+  ],
+  "total": 1
+}
+```
+
+> Поле `companies` в списке пустое намеренно, чтобы не раздувать payload. Полный состав группы запрашивается отдельным `GET /api/admin/calendar/events/:date/:title/:kind`.
+
+---
+
+### `GET /api/admin/calendar/events/:date/:title/:kind`
+
+Только для администраторов. Возвращает одну группу событий вместе со списком компаний.
+
+**Response 200**:
+
+```json
+{
+  "event": {
+    "date": "2026-08-29",
+    "weekday": "сб",
+    "title": "Годовой отчёт",
+    "kind": "МСФО",
+    "status": "confirmed",
+    "companies": [
+      { "name": "Сбербанк", "ticker": "SBER" }
+    ],
+    "companies_count": 1
+  }
+}
+```
+
+**Response 404** — группа не найдена.
+
+---
+
+### `POST /api/admin/calendar/events`
+
+Только для администраторов. Создаёт новую группу событий.
+
+**Request body** (`CalendarAdminEvent`):
+
+```json
+{
+  "date": "2026-08-29",
+  "weekday": "сб",
+  "title": "Годовой отчёт",
+  "kind": "МСФО",
+  "status": "confirmed",
+  "companies": [
+    { "name": "Сбербанк", "ticker": "SBER" }
+  ]
+}
+```
+
+**Response 200**:
+
+```json
+{ "success": true }
+```
+
+**Response 400** — ошибка валидации (все те же правила, что и для снапшота).
+
+**Response 409** — группа с такой парой `date + title + kind` уже существует.
+
+---
+
+### `PUT /api/admin/calendar/events/:date/:title/:kind`
+
+Только для администраторов. Полностью заменяет существующую группу. Параметры пути — старый ключ группы; тело — новое состояние (при этом `date`/`title`/`kind` в теле могут отличаться, т.е. можно перенести событие на другую дату или сменить тип).
+
+**Request body** — то же, что и для `POST`.
+
+**Response 200**:
+
+```json
+{ "success": true }
+```
+
+**Response 404** — исходная группа не найдена.
+
+---
+
+### `DELETE /api/admin/calendar/events/:date/:title/:kind`
+
+Только для администраторов. Удаляет группу событий целиком.
+
+**Response 200**:
+
+```json
+{ "success": true }
+```
+
+**Response 404** — группа не найдена.
+
+---
+
 ## Схема данных
 
 ### `calendar_events`
@@ -187,6 +313,51 @@
    - `UPSERT` в `calendar_meta` (`id = 1`).
 4. Транзакция реализована через `pool.connect()` для PostgreSQL и через обычный `query('BEGIN'/'COMMIT'/'ROLLBACK')` для SQLite.
 5. После коммита вызывает `broadcastCalendarRefresh()`.
+
+### `listCalendarEventGroups(filters): { events, total }`
+
+Возвращает страницу групп событий. Поддерживает фильтры:
+
+- `search` — ищет по `title` и по компаниям внутри группы;
+- `kind` — точное совпадение;
+- `status` — точное совпадение;
+- `limit`/`offset` — пагинация.
+
+Сортировка: `date DESC, title ASC`. В списке `companies` всегда пустой, `companies_count` — количество строк в группе.
+
+### `getCalendarEventGroup(date, title, kind): CalendarAdminEvent | null`
+
+Возвращает одну группу со списком компаний, отсортированным по тикеру. Если группа не найдена — `null`.
+
+### `createCalendarEventGroup(event)`
+
+Создаёт новую группу:
+
+1. Валидирует тело через `validateCalendarAdminEvent()`.
+2. В транзакции проверяет, что группа `(date, title, kind)` ещё не существует.
+3. Вставляет одну строку на каждую компанию.
+4. Обновляет `calendar_meta`.
+5. Рассылает `calendar:refresh` по SSE.
+
+### `updateCalendarEventGroup(oldDate, oldTitle, oldKind, event)`
+
+Полностью заменяет группу:
+
+1. Валидирует тело.
+2. В транзакции удаляет старые строки по `(oldDate, oldTitle, oldKind)`.
+3. Если `rowCount === 0` — бросает 404.
+4. Вставляет новые строки с новыми `date`/`title`/`kind`.
+5. Обновляет `calendar_meta`.
+6. Рассылает `calendar:refresh` по SSE.
+
+### `deleteCalendarEventGroup(date, title, kind)`
+
+Удаляет группу:
+
+1. В транзакции удаляет строки по `(date, title, kind)`.
+2. Если `rowCount === 0` — бросает 404.
+3. Обновляет `calendar_meta`.
+4. Рассылает `calendar:refresh` по SSE.
 
 ### `maybeSendStaleAlert()`
 
@@ -256,7 +427,7 @@ Boot-миграция использует `USE_SQLITE` для выбора ме
 | Файл | Назначение |
 |------|-----------|
 | `src/routes/calendar.ts` | Публичный роут `GET /api/calendar`. |
-| `src/routes/admin.ts` | Админский роут `POST /api/admin/calendar`. |
+| `src/routes/admin.ts` | Админские роуты календаря: загрузка снапшота и CRUD событий. |
 | `src/services/calendar.ts` | Вся бизнес-логика календаря. |
 | `src/services/sse.ts` | `broadcastCalendarRefresh()`. |
 | `src/models/schema.sql` | SQL-схема таблиц. |
