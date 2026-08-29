@@ -46,6 +46,7 @@ import marketPublicRoutes from './routes/marketPublic';
 import tagMarketRoutes from './routes/tagMarket';
 import sentimentRoutes from './routes/sentiment';
 import calendarRoutes from './routes/calendar';
+import { runCalendarV2Migrations } from './services/calendar';
 import appRoutes from './routes/app';
 import { authMiddleware, AuthRequest } from './middleware/auth';
 import { apiLimiter, authLimiter, webhookLimiter, forgotPasswordLimiter, passwordResetFlowLimiter, promoValidateLimiter } from './middleware/rateLimit';
@@ -83,7 +84,7 @@ if (!CRON_SECRET_KEY) {
 // ═══════════════════════════════════════════════════════════════════════════
 // PostgreSQL vs SQLite datetime helpers for migrations
 // ═══════════════════════════════════════════════════════════════════════════
-const _SQL_NOW = USE_SQLITE ? "datetime('now')" : 'NOW()';
+const _SQL_NOW = USE_SQLITE ? "(datetime('now'))" : 'NOW()';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SQLite-safe ALTER TABLE ADD COLUMN IF NOT EXISTS helper
@@ -3434,10 +3435,10 @@ async function start() {
     { sql: `CREATE INDEX IF NOT EXISTS idx_news_matched_tags_gin ON news USING GIN (matched_tags)`, name: 'idx_news_matched_tags_gin' },
     // TZ-7.2/7.6: ANALYZE news перенесён из бут-миграций в отложенный фоновый запуск,
     // т.к. на проде полный ANALYZE ~126k строк не успевал за 30s в первые минуты старта.
-    // TZ_CALENDAR: flat investor calendar events + single-row snapshot metadata
+    // TZ_CALENDAR: canonical investor calendar events + raw slices + source metadata
     {
       sql: `CREATE TABLE IF NOT EXISTS calendar_events (
-        id          ${USE_SQLITE ? 'TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16))))' : 'UUID PRIMARY KEY DEFAULT uuid_generate_v4()'},
+        id                 ${USE_SQLITE ? 'TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16))))' : 'UUID PRIMARY KEY DEFAULT uuid_generate_v4()'},
         date        DATE NOT NULL,
         weekday     VARCHAR(2) NOT NULL,
         title       TEXT NOT NULL,
@@ -3446,11 +3447,39 @@ async function start() {
         company     VARCHAR(100) NOT NULL,
         ticker      VARCHAR(10) NOT NULL,
         uploaded_at TIMESTAMP DEFAULT ${_SQL_NOW},
-        UNIQUE (date, title, ticker)
+        sources     TEXT,
+        possible_duplicate ${USE_SQLITE ? 'INTEGER DEFAULT 0' : 'BOOLEAN DEFAULT FALSE'},
+        tag_ids     TEXT,
+        UNIQUE (date, title, kind, ticker)
       )`,
       name: 'calendar_events'
     },
     { sql: `CREATE INDEX IF NOT EXISTS idx_calendar_events_date ON calendar_events(date)`, name: 'idx_calendar_events_date' },
+    {
+      sql: `CREATE TABLE IF NOT EXISTS calendar_events_raw (
+        id          ${USE_SQLITE ? 'TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16))))' : 'UUID PRIMARY KEY DEFAULT gen_random_uuid()'},
+        source      VARCHAR(20) NOT NULL,
+        date        DATE NOT NULL,
+        weekday     VARCHAR(2) NOT NULL,
+        title       TEXT NOT NULL,
+        kind        VARCHAR(10) NOT NULL,
+        status      VARCHAR(10) NOT NULL,
+        company     VARCHAR(100) NOT NULL,
+        ticker      VARCHAR(10) NOT NULL,
+        uploaded_at TIMESTAMP DEFAULT ${_SQL_NOW}
+      )`,
+      name: 'calendar_events_raw'
+    },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_cal_raw_source ON calendar_events_raw(source)`, name: 'idx_cal_raw_source' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_cal_raw_key ON calendar_events_raw(date, ticker)`, name: 'idx_cal_raw_key' },
+    {
+      sql: `CREATE TABLE IF NOT EXISTS calendar_sources (
+        source              VARCHAR(20) PRIMARY KEY,
+        uploaded_at         TIMESTAMP,
+        last_stale_alert_at TIMESTAMP
+      )`,
+      name: 'calendar_sources'
+    },
     {
       sql: `CREATE TABLE IF NOT EXISTS calendar_meta (
         id                  INTEGER PRIMARY KEY CHECK (id = 1),
@@ -3466,6 +3495,13 @@ async function start() {
     } catch (e: any) {
       console.log(`[DB] Migration warning for ${m.name}:`, e.message);
     }
+  }
+
+  // ─── Calendar v2: model + migration + canonical rebuild ─────────────────
+  try {
+    await runCalendarV2Migrations();
+  } catch (e: any) {
+    console.error('[Calendar] V2 migration failed:', e.message);
   }
 
   // ─── Деплой-проверка новостных данных ─────────────────────────────────

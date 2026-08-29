@@ -82,10 +82,10 @@ export async function query(text: string, params?: any[]): Promise<{ rows: any[]
     .replace(/' \+ INTERVAL '/g, ", '")
     .replace(/CURRENT_TIMESTAMP \+ INTERVAL '/g, "datetime('now', '")
     .replace(/NOW\(\)/g, "datetime('now')")
-    .replace(/GIN/g, ''); // remove GIN
+    .replace(/\s*USING GIN\s*/g, ' '); // remove GIN index clause (SQLite has no GIN)
 
   try {
-    const isWrite = /^(INSERT|UPDATE|DELETE|REPLACE|CREATE|DROP|ALTER)/i.test(sql.trim());
+    const isWrite = /^(INSERT|UPDATE|DELETE|REPLACE|CREATE|DROP|ALTER|BEGIN|COMMIT|ROLLBACK)/i.test(sql.trim());
 
     // Flatten params
     const flatParams: any[] = [];
@@ -120,8 +120,8 @@ export async function query(text: string, params?: any[]): Promise<{ rows: any[]
       stmt.free();
     }
 
-    // Save after every write operation
-    if (isWrite) {
+    // Save after every write operation (DDL/DML only; BEGIN/COMMIT/ROLLBACK must not save because db.export() closes the active transaction in sql.js)
+    if (isWrite && !/^(BEGIN|COMMIT|ROLLBACK)/i.test(sql.trim())) {
       saveDb();
     }
 
@@ -284,8 +284,6 @@ export async function initSQLiteSchema(): Promise<void> {
       payment_id TEXT REFERENCES payments(id),
       created_at TEXT DEFAULT (datetime('now'))
     );
-
-    DROP INDEX IF EXISTS sqlite_autoindex_user_promo_uses_1;
 
     CREATE INDEX IF NOT EXISTS idx_user_promo_uses_user ON user_promo_uses(user_id);
     CREATE INDEX IF NOT EXISTS idx_user_promo_uses_promo ON user_promo_uses(promo_code_id);

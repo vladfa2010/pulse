@@ -759,10 +759,10 @@ CREATE INDEX IF NOT EXISTS idx_news_tag_links_tag_news ON news_tag_links(tag_id,
 
 
 -- ============================================================
--- 21. calendar_events — snapshot data for «Календарь инвестора»
+-- 21. calendar_events — canonical snapshot for «Календарь инвестора»
 -- ============================================================
 CREATE TABLE IF NOT EXISTS calendar_events (
-  id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id                 UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   date        DATE NOT NULL,
   weekday     VARCHAR(2) NOT NULL,
   title       TEXT NOT NULL,
@@ -771,10 +771,41 @@ CREATE TABLE IF NOT EXISTS calendar_events (
   company     VARCHAR(100) NOT NULL,
   ticker      VARCHAR(10) NOT NULL,
   uploaded_at TIMESTAMP DEFAULT NOW(),
-  UNIQUE (date, title, ticker)
+  sources     TEXT,                      -- JSON ["investmint",...]
+  possible_duplicate BOOLEAN DEFAULT FALSE,
+  tag_ids     TEXT,                      -- заполняется в М6
+  UNIQUE (date, title, kind, ticker)
 );
 
 CREATE INDEX IF NOT EXISTS idx_calendar_events_date ON calendar_events(date);
+
+-- ============================================================
+-- 21a. calendar_events_raw — сырые срезы провайдеров
+-- ============================================================
+CREATE TABLE IF NOT EXISTS calendar_events_raw (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  source      VARCHAR(20) NOT NULL,        -- 'investmint' | 'smartlab' | 'legacy' | 'manual'
+  date        DATE NOT NULL,
+  weekday     VARCHAR(2) NOT NULL,        -- значение парсера, sanity-check в М2
+  title       TEXT NOT NULL,
+  kind        VARCHAR(10) NOT NULL,
+  status      VARCHAR(10) NOT NULL,
+  company     VARCHAR(100) NOT NULL,
+  ticker      VARCHAR(10) NOT NULL,        -- может быть 'UNKNOWN'
+  uploaded_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_cal_raw_source ON calendar_events_raw(source);
+CREATE INDEX IF NOT EXISTS idx_cal_raw_key ON calendar_events_raw(date, ticker);
+
+-- ============================================================
+-- 21b. calendar_sources — per-source metadata
+-- ============================================================
+CREATE TABLE IF NOT EXISTS calendar_sources (
+  source              VARCHAR(20) PRIMARY KEY,
+  uploaded_at         TIMESTAMP,
+  last_stale_alert_at TIMESTAMP
+);
 
 -- ============================================================
 -- 22. calendar_meta — snapshot metadata (single row, id = 1)

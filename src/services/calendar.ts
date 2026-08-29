@@ -66,6 +66,35 @@ const MSK_OFFSET_MS = 3 * 60 * 60 * 1000;
 const STALE_ALERT_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 const CALENDAR_CACHE_TTL_MS = 60 * 1000;
 
+const USE_SQLITE = process.env.USE_SQLITE === 'true';
+
+const PROVIDER_PRIORITY = ['manual', 'investmint', 'smartlab', 'bcs', 'global', 'legacy'];
+
+interface CalendarRawRow {
+  id?: string;
+  source: string;
+  date: string;
+  weekday: string;
+  title: string;
+  kind: EventKind;
+  status: EventStatus;
+  company: string;
+  ticker: string;
+  uploaded_at?: string;
+}
+
+interface CanonicalRow {
+  date: string;
+  weekday: string;
+  title: string;
+  kind: EventKind;
+  status: EventStatus;
+  company: string;
+  ticker: string;
+  sources: string;
+  possible_duplicate: boolean;
+}
+
 let calendarCache: { data: CalendarResponse; cachedAt: number } | null = null;
 let calendarCachePromise: Promise<CalendarResponse> | null = null;
 let calendarCacheGeneration = 0;
@@ -367,20 +396,12 @@ type QueryFn = (text: string, params?: any[]) => Promise<{ rows: any[]; rowCount
 export async function saveCalendarSnapshot(days: CalendarDay[]): Promise<{ daysCount: number; eventsCount: number }> {
   validateCalendarDays(days);
 
-  const flatRows: Array<{
-    date: string;
-    weekday: string;
-    title: string;
-    kind: EventKind;
-    status: EventStatus;
-    company: string;
-    ticker: string;
-  }> = [];
-
+  const flatRows: CalendarRawRow[] = [];
   for (const day of days) {
     for (const group of day.groups) {
       for (const company of group.companies) {
         flatRows.push({
+          source: 'legacy',
           date: day.date,
           weekday: day.weekday,
           title: group.title,
@@ -393,61 +414,31 @@ export async function saveCalendarSnapshot(days: CalendarDay[]): Promise<{ daysC
     }
   }
 
-  // Cross-platform transaction
-  const USE_SQLITE = process.env.USE_SQLITE === 'true';
+  await withCalendarTransaction(async (q) => {
+    await q(`DELETE FROM calendar_events_raw WHERE source = 'legacy'`);
 
-  if (pool && !USE_SQLITE) {
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      await client.query(`DELETE FROM calendar_events`);
-
-      for (const row of flatRows) {
-        await client.query(
-          `INSERT INTO calendar_events (date, weekday, title, kind, status, company, ticker, uploaded_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, ${nowSql()})`,
-          [row.date, row.weekday, row.title, row.kind, row.status, row.company, row.ticker]
-        );
-      }
-
-      await client.query(
-        `INSERT INTO calendar_meta (id, uploaded_at, last_stale_alert_at)
-         VALUES (1, ${nowSql()}, NULL)
-         ON CONFLICT (id) DO UPDATE SET uploaded_at = ${nowSql()}, last_stale_alert_at = NULL`
+    for (const row of flatRows) {
+      await q(
+        `INSERT INTO calendar_events_raw (source, date, weekday, title, kind, status, company, ticker, uploaded_at)
+         VALUES ('legacy', $1, $2, $3, $4, $5, $6, $7, ${nowSql()})`,
+        [row.date, row.weekday, row.title, row.kind, row.status, row.company, row.ticker]
       );
-
-      await client.query('COMMIT');
-    } catch (err) {
-      await client.query('ROLLBACK').catch(() => {});
-      throw err;
-    } finally {
-      client.release();
     }
-  } else {
-    await query('BEGIN');
-    try {
-      await query(`DELETE FROM calendar_events`);
 
-      for (const row of flatRows) {
-        await query(
-          `INSERT INTO calendar_events (date, weekday, title, kind, status, company, ticker, uploaded_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, ${nowSql()})`,
-          [row.date, row.weekday, row.title, row.kind, row.status, row.company, row.ticker]
-        );
-      }
+    await q(
+      `INSERT INTO calendar_meta (id, uploaded_at, last_stale_alert_at)
+       VALUES (1, ${nowSql()}, NULL)
+       ON CONFLICT (id) DO UPDATE SET uploaded_at = ${nowSql()}, last_stale_alert_at = NULL`
+    );
 
-      await query(
-        `INSERT INTO calendar_meta (id, uploaded_at, last_stale_alert_at)
-         VALUES (1, ${nowSql()}, NULL)
-         ON CONFLICT (id) DO UPDATE SET uploaded_at = ${nowSql()}, last_stale_alert_at = NULL`
-      );
+    await q(
+      `INSERT INTO calendar_sources (source, uploaded_at, last_stale_alert_at)
+       VALUES ('legacy', ${nowSql()}, NULL)
+       ON CONFLICT (source) DO UPDATE SET uploaded_at = ${nowSql()}, last_stale_alert_at = NULL`
+    );
 
-      await query('COMMIT');
-    } catch (err) {
-      await query('ROLLBACK').catch(() => {});
-      throw err;
-    }
-  }
+    await rebuildCanonical(q);
+  });
 
   broadcastCalendarRefresh();
   invalidateCalendarCache();
@@ -463,20 +454,12 @@ export async function mergeCalendarSnapshot(
 ): Promise<{ daysCount: number; eventsCount: number; addedDays: number; addedEvents: number }> {
   validateCalendarDays(days);
 
-  const flatRows: Array<{
-    date: string;
-    weekday: string;
-    title: string;
-    kind: EventKind;
-    status: EventStatus;
-    company: string;
-    ticker: string;
-  }> = [];
-
+  const flatRows: CalendarRawRow[] = [];
   for (const day of days) {
     for (const group of day.groups) {
       for (const company of group.companies) {
         flatRows.push({
+          source: 'legacy',
           date: day.date,
           weekday: day.weekday,
           title: group.title,
@@ -489,83 +472,55 @@ export async function mergeCalendarSnapshot(
     }
   }
 
-  const USE_SQLITE = process.env.USE_SQLITE === 'true';
-  let addedDays = 0;
-  let addedEvents = 0;
-
-  const processGroups = async (q: QueryFn) => {
-    const seenGroups = new Set<string>();
-
-    // One SELECT for all candidate dates instead of one SELECT per group (N+1 fix).
-    const uniqueDates = [...new Set(days.map((d) => d.date))];
-    const datePlaceholders = uniqueDates.map((_, i) => `$${i + 1}`).join(',');
-    const existingResult = await q(
-      `SELECT date, title, kind FROM calendar_events WHERE date IN (${datePlaceholders})`,
-      uniqueDates
-    );
-    const existingGroups = new Set<string>();
-    for (const row of existingResult.rows) {
-      existingGroups.add(`${normalizeDbDate(row.date)}|${row.title}|${row.kind}`);
-    }
-
-    for (const day of days) {
-      let dayHasNew = false;
-      for (const group of day.groups) {
-        const groupKey = `${day.date}|${group.title}|${group.kind}`;
-        if (seenGroups.has(groupKey)) continue;
-        seenGroups.add(groupKey);
-
-        if (existingGroups.has(groupKey)) {
-          continue;
-        }
-
-        dayHasNew = true;
-        addedEvents++;
-        for (const company of group.companies) {
-          await q(
-            `INSERT INTO calendar_events (date, weekday, title, kind, status, company, ticker, uploaded_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, ${nowSql()})
-             ON CONFLICT (date, title, ticker) DO NOTHING`,
-            [day.date, day.weekday, group.title, group.kind, group.status, company.name, company.ticker.toUpperCase()]
-          );
-        }
-      }
-      if (dayHasNew) addedDays++;
-    }
-  };
-
-  if (pool && !USE_SQLITE) {
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      await processGroups((text, params) => client.query(text, params));
-      await client.query(
-        `INSERT INTO calendar_meta (id, uploaded_at, last_stale_alert_at)
-         VALUES (1, ${nowSql()}, NULL)
-         ON CONFLICT (id) DO UPDATE SET uploaded_at = ${nowSql()}, last_stale_alert_at = NULL`
-      );
-      await client.query('COMMIT');
-    } catch (err) {
-      await client.query('ROLLBACK').catch(() => {});
-      throw err;
-    } finally {
-      client.release();
-    }
-  } else {
-    await query('BEGIN');
-    try {
-      await processGroups(query);
-      await query(
-        `INSERT INTO calendar_meta (id, uploaded_at, last_stale_alert_at)
-         VALUES (1, ${nowSql()}, NULL)
-         ON CONFLICT (id) DO UPDATE SET uploaded_at = ${nowSql()}, last_stale_alert_at = NULL`
-      );
-      await query('COMMIT');
-    } catch (err) {
-      await query('ROLLBACK').catch(() => {});
-      throw err;
+  // Count genuinely new groups before the transaction for the API response.
+  const inputGroups = new Map<string, string>();
+  for (const day of days) {
+    for (const group of day.groups) {
+      const key = `${day.date}|${group.title}|${group.kind}`;
+      if (!inputGroups.has(key)) inputGroups.set(key, day.date);
     }
   }
+
+  const uniqueDates = [...new Set(days.map((d) => d.date))];
+  const datePlaceholders = uniqueDates.map((_, i) => `$${i + 1}`).join(',');
+  const existingGroupsResult = await query(
+    `SELECT date, title, kind FROM calendar_events WHERE date IN (${datePlaceholders})`,
+    uniqueDates
+  );
+  const existingGroups = new Set(existingGroupsResult.rows.map((r: any) => `${normalizeDbDate(r.date)}|${r.title}|${r.kind}`));
+
+  let addedEvents = 0;
+  const addedDates = new Set<string>();
+  for (const [key, date] of inputGroups) {
+    if (!existingGroups.has(key)) {
+      addedEvents++;
+      addedDates.add(date);
+    }
+  }
+
+  await withCalendarTransaction(async (q) => {
+    for (const row of flatRows) {
+      await q(
+        `INSERT INTO calendar_events_raw (source, date, weekday, title, kind, status, company, ticker, uploaded_at)
+         VALUES ('legacy', $1, $2, $3, $4, $5, $6, $7, ${nowSql()})`,
+        [row.date, row.weekday, row.title, row.kind, row.status, row.company, row.ticker]
+      );
+    }
+
+    await q(
+      `INSERT INTO calendar_meta (id, uploaded_at, last_stale_alert_at)
+       VALUES (1, ${nowSql()}, NULL)
+       ON CONFLICT (id) DO UPDATE SET uploaded_at = ${nowSql()}, last_stale_alert_at = NULL`
+    );
+
+    await q(
+      `INSERT INTO calendar_sources (source, uploaded_at, last_stale_alert_at)
+       VALUES ('legacy', ${nowSql()}, NULL)
+       ON CONFLICT (source) DO UPDATE SET uploaded_at = ${nowSql()}, last_stale_alert_at = NULL`
+    );
+
+    await rebuildCanonical(q);
+  });
 
   broadcastCalendarRefresh();
   invalidateCalendarCache();
@@ -573,7 +528,7 @@ export async function mergeCalendarSnapshot(
   return {
     daysCount: days.length,
     eventsCount: flatRows.length,
-    addedDays,
+    addedDays: addedDates.size,
     addedEvents,
   };
 }
@@ -687,15 +642,9 @@ async function withCalendarTransaction<T>(fn: (q: QueryFn) => Promise<T>): Promi
       client.release();
     }
   } else {
-    await query('BEGIN');
-    try {
-      const result = await fn(query);
-      await query('COMMIT');
-      return result;
-    } catch (err) {
-      await query('ROLLBACK').catch(() => {});
-      throw err;
-    }
+    // SQLite (sql.js): db.export() (used by saveDb after every write) closes any active transaction,
+    // so explicit BEGIN/COMMIT cannot be safely used here. Writes run in autocommit mode on dev SQLite.
+    return await fn(query);
   }
 }
 
@@ -951,5 +900,250 @@ export async function maybeSendStaleAlert(): Promise<void> {
       `UPDATE calendar_meta SET last_stale_alert_at = ${nowSql()} WHERE id = 1`
     );
     console.log(`[Calendar] Sent stale alert to ${sent} admin(s)`);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Calendar v2: raw slices, canonical rebuild, migrations
+// ═══════════════════════════════════════════════════════════════════════════
+
+function providerRank(source: string): number {
+  const idx = PROVIDER_PRIORITY.indexOf(source);
+  return idx === -1 ? PROVIDER_PRIORITY.length : idx;
+}
+
+function normalizeCompanyName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[«»"'`]/g, '')
+    .replace(/\b(пao|pao|ао|оао|зао|ооо)\b/g, ' ')
+    .replace(/[^a-zа-яё0-9]+/g, ' ')
+    .trim();
+}
+
+function makeCanonicalKey(date: string, ticker: string, company: string): string {
+  const tickerUpper = (ticker || '').toUpperCase();
+  if (tickerUpper && tickerUpper !== 'UNKNOWN') {
+    return `${date}|${tickerUpper}`;
+  }
+  return `${date}|n:${normalizeCompanyName(company)}`;
+}
+
+function pickRepresentative(rows: CalendarRawRow[]): CalendarRawRow {
+  const sorted = [...rows].sort((a, b) => {
+    const rankA = providerRank(a.source);
+    const rankB = providerRank(b.source);
+    if (rankA !== rankB) return rankA - rankB;
+    if (b.title.length !== a.title.length) return b.title.length - a.title.length;
+    return a.title.localeCompare(b.title, 'ru');
+  });
+  return sorted[0];
+}
+
+function dedupeSources(sources: string[]): string[] {
+  const set = new Set(sources);
+  const hasNonLegacy = Array.from(set).some((s) => s !== 'legacy');
+  if (hasNonLegacy) {
+    set.delete('legacy');
+  }
+  return Array.from(set).sort();
+}
+
+function assertValidKind(k: string): EventKind {
+  if (VALID_KINDS.includes(k as EventKind)) return k as EventKind;
+  return 'Другое';
+}
+
+function assertValidStatus(s: string): EventStatus {
+  if (VALID_STATUSES.includes(s as EventStatus)) return s as EventStatus;
+  return 'expected';
+}
+
+export async function rebuildCanonical(q: QueryFn = query): Promise<{ rawCount: number; canonicalCount: number; duplicateCount: number }> {
+  const rawResult = await q(
+    `SELECT source, date, weekday, title, kind, status, company, ticker
+     FROM calendar_events_raw
+     ORDER BY date, ticker, title, kind, source`
+  );
+
+  const rawRows: CalendarRawRow[] = rawResult.rows.map((r: any) => ({
+    source: r.source,
+    date: normalizeDbDate(r.date),
+    weekday: r.weekday,
+    title: r.title,
+    kind: assertValidKind(r.kind),
+    status: assertValidStatus(r.status),
+    company: r.company,
+    ticker: r.ticker,
+  }));
+
+  const groups = new Map<string, CalendarRawRow[]>();
+  for (const row of rawRows) {
+    const key = makeCanonicalKey(row.date, row.ticker, row.company);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(row);
+  }
+
+  const canonical: CanonicalRow[] = [];
+  let duplicateCount = 0;
+
+  for (const [, rows] of groups) {
+    const allSources = dedupeSources(rows.map((r) => r.source));
+
+    const kindMap = new Map<EventKind, CalendarRawRow[]>();
+    for (const row of rows) {
+      if (!kindMap.has(row.kind)) kindMap.set(row.kind, []);
+      kindMap.get(row.kind)!.push(row);
+    }
+
+    const concreteKinds = VALID_KINDS.filter((k) => k !== 'Другое' && kindMap.has(k));
+    const outputKinds: EventKind[] = concreteKinds.length > 0 ? concreteKinds : ['Другое'];
+
+    for (const kind of outputKinds) {
+      const kindRows = kindMap.get(kind) || [];
+      const representative = pickRepresentative(kindRows.length > 0 ? kindRows : rows);
+      const status = kindRows.some((r) => r.status === 'confirmed') ? 'confirmed' : 'expected';
+
+      canonical.push({
+        date: representative.date,
+        weekday: getWeekday(representative.date),
+        title: representative.title,
+        kind,
+        status,
+        company: representative.company,
+        ticker: representative.ticker.toUpperCase(),
+        sources: JSON.stringify(allSources),
+        possible_duplicate: outputKinds.length > 1,
+      });
+
+      if (outputKinds.length > 1) duplicateCount++;
+    }
+  }
+
+  canonical.sort((a, b) => {
+    if (a.date !== b.date) return a.date.localeCompare(b.date);
+    return a.title.localeCompare(b.title, 'ru');
+  });
+
+  await q('DELETE FROM calendar_events');
+  for (const row of canonical) {
+    await q(
+      `INSERT INTO calendar_events (date, weekday, title, kind, status, company, ticker, uploaded_at, sources, possible_duplicate, tag_ids)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, ${nowSql()}, $8, $9, NULL)`,
+      [row.date, row.weekday, row.title, row.kind, row.status, row.company, row.ticker, row.sources, row.possible_duplicate]
+    );
+  }
+
+  return {
+    rawCount: rawRows.length,
+    canonicalCount: canonical.length,
+    duplicateCount,
+  };
+}
+
+export async function migrateExistingCalendarToRaw(q: QueryFn = query): Promise<void> {
+  const rawCount = await q('SELECT COUNT(*) as c FROM calendar_events_raw');
+  if (Number(rawCount.rows[0]?.c || 0) > 0) return;
+
+  const existing = await q(
+    `SELECT date, weekday, title, kind, status, company, ticker
+     FROM calendar_events`
+  );
+  if (existing.rows.length === 0) return;
+
+  for (const row of existing.rows) {
+    await q(
+      `INSERT INTO calendar_events_raw (source, date, weekday, title, kind, status, company, ticker, uploaded_at)
+       VALUES ('legacy', $1, $2, $3, $4, $5, $6, $7, ${nowSql()})`,
+      [
+        normalizeDbDate(row.date),
+        row.weekday,
+        row.title,
+        row.kind,
+        row.status,
+        row.company,
+        (row.ticker || '').toUpperCase(),
+      ]
+    );
+  }
+
+  const metaResult = await q('SELECT uploaded_at FROM calendar_meta WHERE id = 1');
+  const uploadedAt = metaResult.rows[0]?.uploaded_at || new Date().toISOString();
+  await q(
+    `INSERT INTO calendar_sources (source, uploaded_at, last_stale_alert_at)
+     VALUES ('legacy', $1, NULL)
+     ON CONFLICT (source) DO UPDATE SET uploaded_at = $1, last_stale_alert_at = NULL`,
+    [uploadedAt]
+  );
+
+  console.log(`[Calendar] Migrated ${existing.rows.length} legacy rows to raw`);
+}
+
+async function ensureCalendarEventsUniquePostgres(q: QueryFn): Promise<void> {
+  const existing = await q(
+    `SELECT conname, pg_get_constraintdef(oid) AS def
+     FROM pg_constraint
+     WHERE conrelid = 'calendar_events'::regclass AND contype = 'u'`
+  );
+
+  const hasNew = existing.rows.some((r: any) => r.def?.includes('(date, title, kind, ticker)'));
+  if (hasNew) return;
+
+  const oldRow = existing.rows.find((r: any) =>
+    r.def?.includes('(date, title, ticker)') && !r.def?.includes('kind')
+  );
+  if (oldRow) {
+    await q(`ALTER TABLE calendar_events DROP CONSTRAINT IF EXISTS ${oldRow.conname}`);
+  }
+
+  await q(`ALTER TABLE calendar_events ADD CONSTRAINT cal_events_uniq UNIQUE (date, title, kind, ticker)`);
+}
+
+async function ensureCalendarEventsUniqueSQLite(q: QueryFn): Promise<void> {
+  const info = await q(`SELECT sql FROM sqlite_master WHERE type='table' AND name='calendar_events'`);
+  const createSql: string = info.rows[0]?.sql || '';
+  if (createSql.includes('UNIQUE (date, title, kind, ticker)')) return;
+
+  // SQLite/sql.js: db.export() (called by saveDb after every write) closes active transactions,
+  // so explicit BEGIN/COMMIT cannot safely wrap DDL here. Run steps in autocommit mode.
+  await q(`CREATE TABLE calendar_events_new (
+    id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+    date DATE NOT NULL,
+    weekday VARCHAR(2) NOT NULL,
+    title TEXT NOT NULL,
+    kind VARCHAR(10) NOT NULL,
+    status VARCHAR(10) NOT NULL,
+    company VARCHAR(100) NOT NULL,
+    ticker VARCHAR(10) NOT NULL,
+    uploaded_at TIMESTAMP DEFAULT (datetime('now')),
+    sources TEXT,
+    possible_duplicate INTEGER DEFAULT 0,
+    tag_ids TEXT,
+    UNIQUE (date, title, kind, ticker)
+  )`);
+
+  await q(
+    `INSERT INTO calendar_events_new (id, date, weekday, title, kind, status, company, ticker, uploaded_at, sources, possible_duplicate, tag_ids)
+     SELECT id, date, weekday, title, kind, status, company, ticker, uploaded_at, NULL, NULL, NULL FROM calendar_events`
+  );
+
+  await q(`DROP TABLE calendar_events`);
+  await q(`ALTER TABLE calendar_events_new RENAME TO calendar_events`);
+  await q(`CREATE INDEX IF NOT EXISTS idx_calendar_events_date ON calendar_events(date)`);
+}
+
+export async function runCalendarV2Migrations(): Promise<void> {
+  if (USE_SQLITE) {
+    await ensureCalendarEventsUniqueSQLite(query);
+  } else {
+    await ensureCalendarEventsUniquePostgres(query);
+  }
+
+  await migrateExistingCalendarToRaw(query);
+
+  const rawCount = await query('SELECT COUNT(*) as c FROM calendar_events_raw');
+  if (Number(rawCount.rows[0]?.c || 0) > 0) {
+    const result = await withCalendarTransaction(async (q) => rebuildCanonical(q));
+    console.log(`[Calendar] Rebuilt canonical: ${result.canonicalCount} rows from ${result.rawCount} raw (duplicates: ${result.duplicateCount})`);
   }
 }
