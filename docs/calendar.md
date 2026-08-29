@@ -67,7 +67,12 @@
 
 Только для администраторов (`adminMiddleware`). Тело — снапшот дней.
 
-> **Важно:** роут зарегистрирован в `src/routes/admin.ts` и примонтирован в `src/index.ts` как `/api/admin`. В проекте есть также legacy-семейство `/admin/...` (`src/routes/adminLegacy.ts`), но календарь специально сделан в новом пространстве `/api/admin/...`, чтобы не смешиваться с legacy.
+**Режимы загрузки:**
+
+| Режим | Query / body | Поведение |
+|-------|--------------|-----------|
+| `replace` (по умолчанию) | `mode=replace` | `DELETE FROM calendar_events`, затем вставка всего файла. |
+| `merge` | `mode=merge` | Для каждой группы проверяется `(date, title, kind)`; если такой ещё нет — группа добавляется, иначе пропускается. Существующие события не удаляются. |
 
 **Request body**:
 
@@ -313,6 +318,19 @@
    - `UPSERT` в `calendar_meta` (`id = 1`).
 4. Транзакция реализована через `pool.connect()` для PostgreSQL и через обычный `query('BEGIN'/'COMMIT'/'ROLLBACK')` для SQLite.
 5. После коммита вызывает `broadcastCalendarRefresh()`.
+
+### `mergeCalendarSnapshot(days): { daysCount, eventsCount, addedDays, addedEvents }`
+
+Режим "добавить новое":
+
+1. Валидирует вход.
+2. В транзакции для каждой группы `(date, title, kind)`:
+   - проверяет, существует ли такая группа;
+   - если нет — вставляет все строки группы;
+   - если есть — пропускает.
+3. Обновляет `calendar_meta`.
+4. После коммита вызывает `broadcastCalendarRefresh()`.
+5. Возвращает общее количество дней/событий в файле и сколько из них реально добавлено.
 
 ### `listCalendarEventGroups(filters): { events, total }`
 
