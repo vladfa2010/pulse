@@ -16,11 +16,26 @@ const COMPANY_RE = /^([АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪ�
 
 function pad(n) { return String(n).padStart(2, '0') }
 
+function getWeekday(dateStr) {
+  const d = new Date(`${dateStr}T00:00:00Z`)
+  if (isNaN(d.getTime())) return ''
+  return ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'][d.getUTCDay()]
+}
+
 function inferYear(month) {
   const now = new Date()
   const currentYear = now.getFullYear()
   const currentMonth = now.getMonth() + 1
   return month < currentMonth ? currentYear + 1 : currentYear
+}
+
+function inferYearWithWeekday(day, month, fileWd) {
+  const currentYear = new Date().getFullYear()
+  for (const year of [currentYear, currentYear + 1]) {
+    const date = `${year}-${pad(month)}-${pad(day)}`
+    if (getWeekday(date) === fileWd) return year
+  }
+  return inferYear(month)
 }
 
 function parseDate(str) {
@@ -29,14 +44,24 @@ function parseDate(str) {
   const [, day, monthRaw, wdRaw] = m
   const month = MONTHS[monthRaw.toLowerCase()]
   if (!month) return null
-  const weekday = WD_MAP[wdRaw.toLowerCase()] || wdRaw.toLowerCase()
-  const year = inferYear(month)
-  const date = `${year}-${pad(month)}-${pad(parseInt(day, 10))}`
+  const weekday = WD_MAP[wdRaw.toLowerCase()] || wdRaw.toLowerCase().slice(0, 2)
+  const dayNum = parseInt(day, 10)
+  const year = inferYearWithWeekday(dayNum, month, weekday)
+  const date = `${year}-${pad(month)}-${pad(dayNum)}`
   return { date, weekday }
 }
 
 function splitTokens(s) {
   return s.split(/\s{2,}/).map((t) => t.trim()).filter(Boolean)
+}
+
+function isKnownFragment(title, groups) {
+  const t = title.toLowerCase()
+  for (const g of groups.values()) {
+    const gt = g.title.toLowerCase()
+    if (gt.includes(t) || t.includes(gt)) return true
+  }
+  return false
 }
 
 function parseCompany(token) {
@@ -76,14 +101,21 @@ function parseInvestmintCalendar(raw) {
     const day = days.get(parsedDate.date)
     for (const ev of item.events || []) {
       const tokens = splitTokens(ev)
-      if (tokens.length < 2) continue
+      if (tokens.length < 2) {
+        const title = tokens[0] || ev.trim()
+        if (isKnownFragment(title, day.groups)) continue
+        continue
+      }
       const title = tokens[0]
       const companies = []
       for (const tok of tokens.slice(1)) {
         const c = parseCompany(tok)
         if (c) companies.push(c)
       }
-      if (companies.length === 0) continue
+      if (companies.length === 0) {
+        if (isKnownFragment(title, day.groups)) continue
+        continue
+      }
       const kind = detectKind(title)
       const status = detectStatus(title)
       const key = `${title}|${kind}`

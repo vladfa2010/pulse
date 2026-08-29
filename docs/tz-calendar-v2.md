@@ -24,7 +24,7 @@
 ```
 ┌────────────────────────────────────────────────────────┐
 │ [▦] Календарь                    Обновлено 09:40  ⟳    │  ← шапка (как у DailySummary)
-│     Отчётности и события по рынку · Investmint         │
+│     Отчётности и события по рынку · мультипровайдер    │
 ├────────────────────────────────────────────────────────┤
 │ [пн 24] [вт 25] [СР 26●] [чт 27] [пт 28] [сб 29] ...   │  ← лента дат (горизонт. скролл)
 │                                                        │
@@ -382,7 +382,7 @@ ORDER BY date, title;
 src/services/calendarAdapters/
   types.ts       — CalendarAdapter, NormalizedEvent, NormalizedCompany, ParseWarnings
   classify.ts    — detectKind(title), detectStatus(title)
-  dateUtils.ts   — pad, inferYear, getWeekday, toDateString
+  dateUtils.ts   — pad, inferYear, inferYearWithWeekday, getWeekday, toDateString
   investmint.ts  — адаптер investmint
   smartlab.ts    — адаптер smartlab
   bcs.ts         — заглушка BCS
@@ -422,6 +422,10 @@ export interface CalendarAdapter {
 - `Дивиденды`: только после проверки СД, чтобы «СД по дивидендам» попадало в `СД`;
 - `Другое` — всё остальное.
 - Статус `expected`, если в заголовке есть «ожидается» или «предварительно»; иначе `confirmed`.
+
+**Определение года (`dateUtils.ts`).** Investmint не передаёт год (`"30 июля чт"`). Простая эвристика `month < currentMonth → nextYear` ломается на прошедших месяцах текущего года: события за июль 2026 улетят в 2027. Вместо этого `inferYearWithWeekday(day, month, fileWd)` проверяет текущий и следующий год и выбирает тот, чей день недели совпадает с `fileWd`. Если weekday из файла неизвестен или не совпал — fallback на старую эвристику.
+
+**Investmint: игнорирование фрагментов.** Провайдер иногда дублирует событие фрагментами (только title, только компанию и т.п.). Если строка не удалось распарсить, но её title является подстрокой уже распознанного события того же дня (или наоборот) — она скипается молча, без увеличения `warnings.skipped`.
 
 **`toRawRows(events, source)`** — мост в БД:
 
@@ -518,10 +522,12 @@ npm run verify:calendarAdapters
   - `investmint.ts` — адаптер для raw-формата investmint (`date` + `events[]`), парсит тикеры из строки компании, дедуплицирует компании внутри группы.
   - `smartlab.ts` — адаптер для массива объектов `{ date, title }` с разбором тикера из префикса `TICKER: title`; записывает `UNKNOWN` тикер, если префикс не найден.
   - `classify.ts` — единая логика `detectKind`/`detectStatus` (СД/СА/МСФО/РСБУ/Дивиденды/Другое), общая с фронтом.
-  - `dateUtils.ts` — чистые утилиты дат: `inferYear` для investmint (месяц < текущего → следующий год), `getWeekday`, `pad`.
+  - `dateUtils.ts` — чистые утилиты дат: `pad`, `getWeekday`, `inferYear`, `inferYearWithWeekday`.
   - `bcs.ts` — заглушка-контракт для будущего BCS-источника.
   - Registry `detectAdapter(raw)` выбирает лучший адаптер по score 0–1 и отклоняет неоднозначные семплы.
   - `toRawRows(events, source)` разворачивает нормализованные события в плоские raw-строки, готовые для `calendar_events_raw`.
+  - **Исправление года для investmint:** `inferYearWithWeekday(day, month, fileWd)` выбирает между текущим и следующим годом по совпадению дня недели из файла, устраняя сдвиг прошедших месяцев текущего года в 2027.
+  - **Игнорирование investmint-фрагментов:** строки, являющиеся фрагментами уже распознанного события того же дня (подстрока title), скипаются молча, не засчитываясь в `warnings.skipped`.
   - Verify-скрипт `npm run verify:calendarAdapters` (`scripts/calendar-m2-verify.js`) проверяет detect, parse, shape, parity с замороженными фронтовыми парсерами.
   - Документация: разделы 5.0 и 5.6.
 

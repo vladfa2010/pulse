@@ -1,6 +1,6 @@
 import { CalendarAdapter, NormalizedEvent, ParseWarnings, NormalizedCompany } from './types'
 import { detectKind, detectStatus } from './classify'
-import { pad, inferYear, getWeekday } from './dateUtils'
+import { pad, inferYearWithWeekday, getWeekday } from './dateUtils'
 
 const MONTHS: Record<string, number> = {
   января: 1, февраля: 2, марта: 3, апреля: 4, мая: 5, июня: 6,
@@ -64,6 +64,8 @@ export const investmintAdapter: CalendarAdapter = {
       for (const ev of item.events || []) {
         const tokens = splitTokens(ev)
         if (tokens.length < 2) {
+          const title = tokens[0] || ev.trim()
+          if (isKnownFragment(title, day.groups)) continue
           warnings.skipped++
           warnings.details.push(`skipped event with <2 tokens on ${parsed.date}: ${ev}`)
           continue
@@ -76,6 +78,7 @@ export const investmintAdapter: CalendarAdapter = {
           if (c) companies.push(c)
         }
         if (companies.length === 0) {
+          if (isKnownFragment(title, day.groups)) continue
           warnings.skipped++
           warnings.details.push(`skipped event without companies on ${parsed.date}: ${ev}`)
           continue
@@ -123,8 +126,9 @@ function parseDate(str: string): { date: string; weekday: string } | null {
   const month = MONTHS[monthRaw.toLowerCase()]
   if (!month) return null
   const weekday = WD_MAP[wdRaw.toLowerCase()] || wdRaw.toLowerCase().slice(0, 2)
-  const year = inferYear(month)
-  const date = `${year}-${pad(month)}-${pad(parseInt(day, 10))}`
+  const dayNum = parseInt(day, 10)
+  const year = inferYearWithWeekday(dayNum, month, weekday)
+  const date = `${year}-${pad(month)}-${pad(dayNum)}`
   return { date, weekday }
 }
 
@@ -133,6 +137,18 @@ function splitTokens(s: string): string[] {
     .split(/\s{2,}/)
     .map((t) => t.trim())
     .filter(Boolean)
+}
+
+/** Проверяет, является ли title фрагментом уже распознанного события того же дня.
+ *  Investmint отдаёт полное событие + фрагменты (только title, только компанию и т.п.).
+ *  Такие фрагменты скипаем молча, не засчитывая как ошибку. */
+function isKnownFragment(title: string, groups: Map<string, NormalizedEvent>): boolean {
+  const t = title.toLowerCase()
+  for (const g of groups.values()) {
+    const gt = g.title.toLowerCase()
+    if (gt.includes(t) || t.includes(gt)) return true
+  }
+  return false
 }
 
 function parseCompany(token: string): NormalizedCompany | null {

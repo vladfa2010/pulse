@@ -19,6 +19,18 @@ export function inferYear(month: number): number {
   return month < currentMonth ? currentYear + 1 : currentYear
 }
 
+/** Определяет год по дню, месяцу и дню недели из файла.
+ *  Проверяет текущий и следующий год; если weekday совпадает — берёт его.
+ *  Fallback на старую эвристику, если weekday неизвестен или не совпал. */
+export function inferYearWithWeekday(day: number, month: number, fileWd: string): number {
+  const currentYear = new Date().getFullYear()
+  for (const year of [currentYear, currentYear + 1]) {
+    const dateStr = `${year}-${pad(month)}-${pad(day)}`
+    if (getWeekday(dateStr) === fileWd) return year
+  }
+  return inferYear(month)
+}
+
 /** День недели по дате (Europe/Moscow не нужна: JS-день недели для даты UTC
  *  совпадает с московским для полночи по UTC). */
 export function getWeekday(dateStr: string): string {

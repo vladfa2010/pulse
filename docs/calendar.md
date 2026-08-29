@@ -422,7 +422,7 @@ export interface CalendarAdapter {
 |------|-----------|
 | `types.ts` | `CalendarAdapter`, `NormalizedEvent`, `ParseWarnings` |
 | `classify.ts` | Единые `detectKind` / `detectStatus` для бэка и фронта |
-| `dateUtils.ts` | `pad`, `inferYear`, `getWeekday`, `toDateString` |
+| `dateUtils.ts` | `pad`, `inferYear`, `inferYearWithWeekday`, `getWeekday`, `toDateString` |
 | `investmint.ts` | Адаптер для `investmint_calendar.json` (date + events[]) |
 | `smartlab.ts` | Адаптер для smartlab-массива `{ date, title }` |
 | `bcs.ts` | Заглушка под будущий BCS-источник |
@@ -432,7 +432,11 @@ export interface CalendarAdapter {
 
 **`toRawRows(events, source)`** разворачивает `NormalizedEvent[]` в плоские строки `calendar_events_raw`: одна строка на одну компанию, тикер uppercase.
 
-**Верификация:**
+**Определение года (investmint).** Investmint не передаёт год (`"30 июля чт"`). `inferYearWithWeekday(day, month, fileWd)` выбирает между текущим и следующим годом по совпадению дня недели из файла, чтобы прошедшие месяцы текущего года не улетали в следующий.
+
+**Фрагменты investmint.** Провайдер дублирует события фрагментами (только title, только компания и т.п.). Если нераспознанная строка является подстрокой уже распознанного события того же дня — она игнорируется молча, не засчитываясь в `warnings.skipped`.
+
+**Верификация:
 
 ```bash
 npm run verify:calendarAdapters

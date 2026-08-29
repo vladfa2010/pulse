@@ -73,6 +73,8 @@ function main() {
   console.log(`[investmint] events=${investRes.events.length}, skipped=${investRes.warnings.skipped}`);
   assert(investRes.events.length > 0, 'investmint events expected >0');
   assert(investRes.warnings.invalidDates === 0, `investmint invalidDates expected 0, got ${investRes.warnings.invalidDates}`);
+  const weekdayMismatches = investRes.warnings.details.filter(d => d.includes('weekday mismatch'));
+  assert(weekdayMismatches.length === 0, `investmint weekday mismatches expected 0, got ${weekdayMismatches.length}: ${weekdayMismatches.join('; ')}`);
   // СД по дивидендам → СД
   assert(
     investRes.events.some(e => e.title.toLowerCase().includes('дивиденд') && e.kind === 'СД'),
