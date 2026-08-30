@@ -31,6 +31,7 @@ export interface ParseWarnings {
 
 export interface CalendarAdapter {
   source: string
+  stub: boolean                  // true для заглушек, не готовых к загрузке
   detect(raw: unknown): number   // 0–1, уверенность
   parse(raw: unknown): { events: NormalizedEvent[]; warnings: ParseWarnings }
 }

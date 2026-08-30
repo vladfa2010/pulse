@@ -11,7 +11,8 @@
     "check:news-data": "npx ts-node --transpile-only src/scripts/check-news-data.ts",
     "verify:calendar": "npm run build && node scripts/calendar-m1-verify.js",
     "verify:calendarAdapters": "npm run build && node scripts/calendar-m2-verify.js",
-    "verify:calendarM3": "npm run build && node scripts/calendar-m3-verify.js"
+    "verify:calendarM3": "npm run build && node scripts/calendar-m3-verify.js",
+    "verify:calendarM4": "npm run build && node scripts/calendar-m4-verify.js"
   },
   "keywords": [
     "news",

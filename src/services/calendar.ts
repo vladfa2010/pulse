@@ -24,6 +24,7 @@ export type EventStatus = 'confirmed' | 'expected';
 export interface CalendarCompany {
   name: string;
   ticker: string;
+  sources?: string[];
 }
 
 export interface CalendarEventGroup {
@@ -54,6 +55,8 @@ export interface CalendarAdminEvent {
   status: EventStatus;
   companies: CalendarCompany[];
   companies_count: number;
+  sources?: string[];
+  possible_duplicate?: boolean;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -623,7 +626,7 @@ function validateCalendarAdminEvent(event: unknown): CalendarAdminEvent {
   };
 }
 
-async function withCalendarTransaction<T>(fn: (q: QueryFn) => Promise<T>): Promise<T> {
+export async function withCalendarTransaction<T>(fn: (q: QueryFn) => Promise<T>): Promise<T> {
   const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
   if (pool && !USE_SQLITE) {
@@ -657,6 +660,7 @@ export interface CalendarAdminFilters {
   search?: string;
   kind?: string;
   status?: string;
+  possible_duplicate?: boolean;
   limit?: number;
   offset?: number;
 }
@@ -667,6 +671,7 @@ export async function listCalendarEventGroups(
   const search = typeof filters.search === 'string' && filters.search.length > 0 ? filters.search : undefined;
   const kind = typeof filters.kind === 'string' && filters.kind.length > 0 ? filters.kind : undefined;
   const status = typeof filters.status === 'string' && filters.status.length > 0 ? filters.status : undefined;
+  const possibleDuplicate = filters.possible_duplicate === true;
   const limit = Number.isFinite(Number(filters.limit)) && Number(filters.limit) > 0 ? Number(filters.limit) : 50;
   const offset = Number.isFinite(Number(filters.offset)) && Number(filters.offset) >= 0 ? Number(filters.offset) : 0;
 
@@ -675,63 +680,76 @@ export async function listCalendarEventGroups(
   let idx = 1;
 
   if (kind) {
-    conditions.push(`ce.kind = $${idx}`);
+    conditions.push(`kind = $${idx}`);
     params.push(kind);
     idx++;
   }
   if (status) {
-    conditions.push(`ce.status = $${idx}`);
+    conditions.push(`status = $${idx}`);
     params.push(status);
-    idx++;
-  }
-  if (search) {
-    const pattern = `%${search}%`;
-    conditions.push(
-      `(lower(ce.title) LIKE $${idx} OR EXISTS (` +
-        `SELECT 1 FROM calendar_events ce2 ` +
-        `WHERE ce2.date = ce.date AND ce2.title = ce.title AND ce2.kind = ce.kind ` +
-        `AND (lower(ce2.company) LIKE $${idx} OR lower(ce2.ticker) LIKE $${idx})))`
-    );
-    params.push(pattern);
     idx++;
   }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
-  const dataSql = `
-    SELECT ce.date, ce.weekday, ce.title, ce.kind, ce.status, COUNT(*) as companies_count
-    FROM calendar_events ce
-    ${where}
-    GROUP BY ce.date, ce.weekday, ce.title, ce.kind, ce.status
-    ORDER BY ce.date DESC, ce.title
-    LIMIT $${idx} OFFSET $${idx + 1}
-  `;
-  const dataParams = [...params, limit, offset];
+  const rowsResult = await query(
+    `SELECT date, weekday, title, kind, status, company, ticker, sources, possible_duplicate
+     FROM calendar_events
+     ${where}
+     ORDER BY date DESC, title`,
+    params
+  );
 
-  const totalSql = `
-    SELECT COUNT(*) as total FROM (
-      SELECT 1 FROM calendar_events ce
-      ${where}
-      GROUP BY ce.date, ce.title, ce.kind
-    ) sub
-  `;
+  const groups = new Map<string, CalendarAdminEvent>();
+  for (const r of rowsResult.rows) {
+    const key = `${normalizeDbDate(r.date)}|${r.title}|${r.kind}|${r.status}`;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        date: normalizeDbDate(r.date),
+        weekday: r.weekday,
+        title: r.title,
+        kind: assertValidKind(r.kind),
+        status: assertValidStatus(r.status),
+        companies: [],
+        companies_count: 0,
+        sources: [],
+        possible_duplicate: false,
+      });
+    }
+    const group = groups.get(key)!;
+    const rowSources = parseSources(r.sources || '[]');
+    group.companies.push({ name: r.company, ticker: r.ticker, sources: rowSources });
+    group.companies_count++;
+    for (const s of rowSources) {
+      if (!group.sources!.includes(s)) group.sources!.push(s);
+    }
+    if (r.possible_duplicate) group.possible_duplicate = true;
+  }
 
-  const [dataResult, totalResult] = await Promise.all([
-    query(dataSql, dataParams),
-    query(totalSql, params),
-  ]);
+  let events = Array.from(groups.values());
+  events.sort((a, b) => {
+    if (a.date !== b.date) return b.date.localeCompare(a.date);
+    return a.title.localeCompare(b.title, 'ru');
+  });
 
-  const events: CalendarAdminEvent[] = dataResult.rows.map((r: any) => ({
-    date: normalizeDbDate(r.date),
-    weekday: r.weekday,
-    title: r.title,
-    kind: r.kind,
-    status: r.status,
-    companies: [],
-    companies_count: Number(r.companies_count || 0),
-  }));
+  if (search) {
+    const pat = search.toLowerCase();
+    events = events.filter(
+      (e) =>
+        e.title.toLowerCase().includes(pat) ||
+        e.companies.some(
+          (c) => c.name.toLowerCase().includes(pat) || c.ticker.toLowerCase().includes(pat)
+        )
+    );
+  }
 
-  const total = Number(totalResult.rows[0]?.total || 0);
+  if (possibleDuplicate) {
+    events = events.filter((e) => e.possible_duplicate);
+  }
+
+  const total = events.length;
+  events = events.slice(offset, offset + limit);
+
   return { events, total };
 }
 
@@ -741,7 +759,7 @@ export async function getCalendarEventGroup(
   kind: string
 ): Promise<CalendarAdminEvent | null> {
   const result = await query(
-    `SELECT date, weekday, title, kind, status, company, ticker
+    `SELECT date, weekday, title, kind, status, company, ticker, sources
      FROM calendar_events
      WHERE date = $1 AND title = $2 AND kind = $3
      ORDER BY ticker`,
@@ -760,10 +778,11 @@ export async function getCalendarEventGroup(
     status: r.status,
     company: r.company,
     ticker: r.ticker,
+    sources: parseSources(r.sources || '[]'),
   }));
 
   const first = rows[0];
-  const companies = rows.map((r: any) => ({ name: r.company, ticker: r.ticker }));
+  const companies = rows.map((r: any) => ({ name: r.company, ticker: r.ticker, sources: r.sources }));
 
   return {
     date: first.date,

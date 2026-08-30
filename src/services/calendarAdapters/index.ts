@@ -2,13 +2,25 @@ import { CalendarAdapter, NormalizedEvent, ParseWarnings, EventKind, EventStatus
 import { investmintAdapter } from './investmint'
 import { smartlabAdapter } from './smartlab'
 import { bcsAdapter } from './bcs'
+import { globalAdapter } from './global'
 
 export * from './types'
-export { investmintAdapter, smartlabAdapter, bcsAdapter }
+export { investmintAdapter, smartlabAdapter, bcsAdapter, globalAdapter }
 export { detectKind, detectStatus } from './classify'
 export { pad, inferYear, getWeekday } from './dateUtils'
 
-const ADAPTERS: CalendarAdapter[] = [investmintAdapter, smartlabAdapter, bcsAdapter]
+const FEED_SOURCES = new Set(['investmint', 'smartlab', 'bcs', 'global'])
+
+const ADAPTERS: CalendarAdapter[] = [investmintAdapter, smartlabAdapter, bcsAdapter, globalAdapter]
+
+export function isFeedSource(source: string): boolean {
+  return FEED_SOURCES.has(source)
+}
+
+export function isAdapterReady(source: string): boolean {
+  const adapter = getAdapterBySource(source)
+  return !!adapter && !adapter.stub
+}
 
 export function getAdapters(): CalendarAdapter[] {
   return ADAPTERS

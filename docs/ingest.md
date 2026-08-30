@@ -1,6 +1,6 @@
 # Ingest API провайдерских срезов
 
-> M3 календаря. Единая точка загрузки сырых файлов провайдеров, их парсинга, замены среза, пересборки канона и получения дифф-сводки.
+> M3/M4 календаря. Единая точка загрузки сырых файлов провайдеров, их парсинга, замены среза, пересборки канона и получения дифф-сводки.
 
 ---
 
@@ -11,8 +11,14 @@
 Требует авторизации администратора.
 
 - `:source` — `auto` или имя адаптера (`investmint`, `smartlab`).
+  Заглушки (`bcs`, `global`) и устаревший legacy-загрузчик не допускаются — вернёт 400.
 - Query: `?dry_run=1` — пробный прогон без записи в БД.
 - Body: сырое JSON провайдера (Content-Type: `application/json`).
+
+> **DEPRECATED:** старый `POST /api/admin/calendar` (загрузка `days[]` целиком)
+> больше не рекомендуется. Новые провайдерские срезы загружаются через
+> `POST /api/admin/calendar/:source`. Legacy endpoint остаётся работающим до
+> удаления редактора календаря (М5).
 
 #### Пример
 
@@ -39,6 +45,8 @@ curl -X POST "https://api.example.com/api/admin/calendar/investmint?dry_run=1" \
   "parsed": {
     "days": 5,
     "events": 12,
+    "no_ticker": 0,
+    "skipped": 0,
     "warnings": []
   },
   "diff": {
@@ -61,6 +69,8 @@ curl -X POST "https://api.example.com/api/admin/calendar/investmint?dry_run=1" \
 |------|----------|
 | `parsed.days` | Количество уникальных дат в распознанных событиях. |
 | `parsed.events` | Количество распознанных событий. |
+| `parsed.no_ticker` | Количество событий без тикера (из `ParseWarnings.noTicker`). |
+| `parsed.skipped` | Количество пропущенных строк (из `ParseWarnings.skipped`). |
 | `parsed.warnings` | Массив warning'ов адаптера и sanity-проверок. |
 | `diff.new_events` | Новые ключи в каноне. |
 | `diff.updated_events` | Ключ сохранился, изменился `title` или `company`. |
@@ -93,6 +103,12 @@ curl -X POST "https://api.example.com/api/admin/calendar/investmint?dry_run=1" \
 
 ```json
 { "error": "неизвестный источник: bcs" }
+```
+
+**Источник пока не поддерживается (stub-адаптер):**
+
+```json
+{ "error": "источник пока не поддерживается" }
 ```
 
 **Отклонённые sanity-проверки:**
@@ -145,13 +161,22 @@ curl "https://api.example.com/api/admin/calendar/sources" \
     "source": "investmint",
     "uploaded_at": "2026-08-29T09:15:00.000Z",
     "events_count": 120,
+    "days": 91,
     "last_stale_alert_at": null,
-    "stale": false
+    "last_warnings": [],
+    "stale": false,
+    "feed": true,
+    "adapter_ready": true
   }
 ]
 ```
 
-Незагружавшиеся источники возвращаются с `uploaded_at: null`, `events_count: 0`, `stale: false`.
+- `feed: true` для источников с файлом: `investmint`, `smartlab`, `bcs`, `global`.
+- `adapter_ready: true` только если адаптер существует и не является stub.
+- `days` — COUNT(DISTINCT date) в raw-срезе источника.
+- `last_warnings` — предупреждения последней загрузки.
+
+Незагружавшиеся источники возвращаются с `uploaded_at: null`, `events_count: 0`, `days: 0`, `stale: false`.
 
 ---
 

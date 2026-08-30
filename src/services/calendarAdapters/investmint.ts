@@ -21,6 +21,7 @@ interface RawInvestmintItem {
 
 export const investmintAdapter: CalendarAdapter = {
   source: 'investmint',
+  stub: false,
 
   detect(raw: unknown): number {
     if (!Array.isArray(raw) || raw.length === 0) return 0

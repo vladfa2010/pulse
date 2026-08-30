@@ -43,6 +43,10 @@ import {
   normalizeDbDate,
   PROVIDER_PRIORITY,
   invalidateCalendarCache,
+  getCanonicalSnapshot,
+  computeDiff,
+  withCalendarTransaction,
+  rebuildCanonical,
 } from '../services/calendar';
 import {
   detectAdapter,
@@ -50,6 +54,8 @@ import {
   getAdapters,
   toRawRows,
   CalendarAdapter,
+  isFeedSource,
+  isAdapterReady,
 } from '../services/calendarAdapters';
 
 const router = Router();
@@ -1149,9 +1155,13 @@ router.post('/features', adminMiddleware, validate(CreateFeatureSchema), createF
 router.put('/features/:id', adminMiddleware, updateFeature);
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Admin Calendar Upload
+// Admin Calendar Upload (DEPRECATED)
 // Body: { days: CalendarDay[], mode?: 'replace' | 'merge' }
 // Query: ?mode=merge
+//
+// Legacy endpoint для ручной загрузки целиком. Новые загрузки провайдеров
+// должны идти через POST /api/admin/calendar/:source (M3/M4).
+// Endpoint остаётся работающим до удаления редактора календаря (М5).
 // ═══════════════════════════════════════════════════════════════════════════
 router.post('/calendar', adminMiddleware, async (req: AuthRequest, res) => {
   try {
@@ -1234,6 +1244,7 @@ router.get('/calendar/events', adminMiddleware, async (req: AuthRequest, res) =>
       search: req.query.search as string | undefined,
       kind: req.query.kind as string | undefined,
       status: req.query.status as string | undefined,
+      possible_duplicate: req.query.possible_duplicate === 'true' ? true : undefined,
       limit: req.query.limit ? Number(req.query.limit) : undefined,
       offset: req.query.offset ? Number(req.query.offset) : undefined,
     };
@@ -1301,13 +1312,20 @@ router.get('/calendar/sources', adminMiddleware, async (_req, res) => {
   try {
     const serverDate = await getMskDateString();
     const windowStart = addDays(serverDate, -2);
-    const feedProviders = new Set(['investmint', 'smartlab', 'bcs', 'global']);
 
     const sourcesMeta = await query('SELECT source, uploaded_at, last_stale_alert_at, last_warnings FROM calendar_sources');
-    const countsResult = await query('SELECT source, COUNT(*) as cnt FROM calendar_events_raw GROUP BY source');
+    const countsResult = await query(
+      `SELECT source,
+              COUNT(*) as cnt,
+              COUNT(DISTINCT date) as days
+       FROM calendar_events_raw
+       GROUP BY source`
+    );
     const counts = new Map<string, number>();
+    const days = new Map<string, number>();
     for (const row of countsResult.rows) {
       counts.set(row.source, Number(row.cnt || 0));
+      days.set(row.source, Number(row.days || 0));
     }
 
     const coverageResult = await query(
@@ -1339,17 +1357,21 @@ router.get('/calendar/sources', adminMiddleware, async (_req, res) => {
     const result = PROVIDER_PRIORITY.map((source) => {
       const meta = metaBySource.get(source);
       const eventsCount = counts.get(source) || 0;
+      const daysCount = days.get(source) || 0;
       const maxDate = coverage.get(source);
-      const stale = feedProviders.has(source)
+      const stale = isFeedSource(source)
         ? !!(maxDate && maxDate < windowStart && eventsCount > 0)
         : false;
       return {
         source,
         uploaded_at: meta?.uploaded_at ? new Date(meta.uploaded_at).toISOString() : null,
         events_count: eventsCount,
+        days: daysCount,
         last_stale_alert_at: meta?.last_stale_alert_at ? new Date(meta.last_stale_alert_at).toISOString() : null,
         last_warnings: parseLastWarnings(meta?.last_warnings),
         stale,
+        feed: isFeedSource(source),
+        adapter_ready: isAdapterReady(source),
       };
     });
 
@@ -1357,6 +1379,39 @@ router.get('/calendar/sources', adminMiddleware, async (_req, res) => {
   } catch (err: any) {
     console.error('[Admin] Calendar sources error:', err.message);
     res.status(500).json({ error: 'Failed to fetch calendar sources' });
+  }
+});
+
+// DELETE /api/admin/calendar/sources/:source — очистка среза провайдера.
+// Поддерживается только legacy; остальные источники перезаписываются через POST ingest.
+router.delete('/calendar/sources/:source', adminMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const source = req.params.source;
+    if (source !== 'legacy') {
+      return res.status(400).json({ error: 'чистка поддерживается только для legacy' });
+    }
+
+    const snapshotBefore = await getCanonicalSnapshot();
+
+    const { canonical } = await withCalendarTransaction(async (q) => {
+      await q(`DELETE FROM calendar_events_raw WHERE source = $1`, [source]);
+      await q(`DELETE FROM calendar_sources WHERE source = $1`, [source]);
+      const result = await rebuildCanonical(q);
+      return { canonical: result.canonical };
+    });
+
+    const diff = computeDiff(snapshotBefore, canonical);
+
+    if (diff.nonempty) {
+      broadcastCalendarRefresh();
+      invalidateCalendarCache();
+    }
+
+    res.json({ removed_events: diff.counts.removed_events });
+  } catch (err: any) {
+    console.error('[Admin] Calendar source delete error:', err.message);
+    const status = calendarErrorStatus(err);
+    res.status(status).json({ error: status === 500 ? 'Internal error' : err.message || 'Failed to delete calendar source' });
   }
 });
 
@@ -1372,11 +1427,16 @@ router.post('/calendar/:source', adminMiddleware, async (req: AuthRequest, res) 
     if (source === 'auto') {
       const detection = detectAdapter(raw);
       if (detection.ambiguous) {
-        const candidates = getAdapters().map((a) => a.source);
+        const candidates = getAdapters()
+          .filter((a) => !a.stub)
+          .map((a) => a.source);
         return res.status(400).json({ error: 'формат неоднозначен, укажите :source', candidates });
       }
       if (!detection.adapter) {
         return res.status(400).json({ error: 'формат не распознан' });
+      }
+      if (detection.adapter.stub) {
+        return res.status(400).json({ error: 'источник пока не поддерживается' });
       }
       source = detection.adapter.source;
       adapter = detection.adapter;
@@ -1384,6 +1444,9 @@ router.post('/calendar/:source', adminMiddleware, async (req: AuthRequest, res) 
       adapter = getAdapterBySource(source);
       if (!adapter) {
         return res.status(400).json({ error: `неизвестный источник: ${source}` });
+      }
+      if (adapter.stub) {
+        return res.status(400).json({ error: 'источник пока не поддерживается' });
       }
     }
 
@@ -1410,6 +1473,8 @@ router.post('/calendar/:source', adminMiddleware, async (req: AuthRequest, res) 
       parsed: {
         days: uniqueDates.size,
         events: events.length,
+        no_ticker: parseWarnings.noTicker || 0,
+        skipped: parseWarnings.skipped || 0,
         warnings: allWarnings,
       },
       diff: diff.counts,

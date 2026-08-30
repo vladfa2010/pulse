@@ -1,12 +1,12 @@
 import { CalendarAdapter } from './types'
 
-export const bcsAdapter: CalendarAdapter = {
-  source: 'bcs',
+export const globalAdapter: CalendarAdapter = {
+  source: 'global',
   stub: true,
   detect(): number {
     return 0
   },
   parse(): never {
-    throw new Error('bcs adapter not implemented')
+    throw new Error('global adapter not implemented')
   },
 }

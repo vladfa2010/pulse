@@ -11,6 +11,7 @@ interface RawSmartlabItem {
 
 export const smartlabAdapter: CalendarAdapter = {
   source: 'smartlab',
+  stub: false,
 
   detect(raw: unknown): number {
     if (!Array.isArray(raw) || raw.length === 0) return 0
