@@ -415,134 +415,6 @@ function buildDays(rows: CalendarRow[]): CalendarDay[] {
 
 type QueryFn = (text: string, params?: any[]) => Promise<{ rows: any[]; rowCount?: number }>;
 
-export async function saveCalendarSnapshot(days: CalendarDay[]): Promise<{ daysCount: number; eventsCount: number }> {
-  validateCalendarDays(days);
-
-  const flatRows: CalendarRawRow[] = [];
-  for (const day of days) {
-    for (const group of day.groups) {
-      for (const company of group.companies) {
-        flatRows.push({
-          source: 'legacy',
-          date: day.date,
-          weekday: day.weekday,
-          title: group.title,
-          kind: group.kind,
-          status: group.status,
-          company: company.name,
-          ticker: company.ticker.toUpperCase(),
-        });
-      }
-    }
-  }
-
-  await withCalendarTransaction(async (q) => {
-    await q(`DELETE FROM calendar_events_raw WHERE source = 'legacy'`);
-
-    for (const row of flatRows) {
-      await q(
-        `INSERT INTO calendar_events_raw (source, date, weekday, title, kind, status, company, ticker, uploaded_at)
-         VALUES ('legacy', $1, $2, $3, $4, $5, $6, $7, ${nowSql()})`,
-        [row.date, row.weekday, row.title, row.kind, row.status, row.company, row.ticker]
-      );
-    }
-
-    await q(
-      `INSERT INTO calendar_sources (source, uploaded_at, last_stale_alert_at)
-       VALUES ('legacy', ${nowSql()}, NULL)
-       ON CONFLICT (source) DO UPDATE SET uploaded_at = ${nowSql()}, last_stale_alert_at = NULL`
-    );
-
-    await rebuildCanonical(q);
-  });
-
-  broadcastCalendarRefresh();
-  invalidateCalendarCache();
-
-  return {
-    daysCount: days.length,
-    eventsCount: flatRows.length,
-  };
-}
-
-export async function mergeCalendarSnapshot(
-  days: CalendarDay[]
-): Promise<{ daysCount: number; eventsCount: number; addedDays: number; addedEvents: number }> {
-  validateCalendarDays(days);
-
-  const flatRows: CalendarRawRow[] = [];
-  for (const day of days) {
-    for (const group of day.groups) {
-      for (const company of group.companies) {
-        flatRows.push({
-          source: 'legacy',
-          date: day.date,
-          weekday: day.weekday,
-          title: group.title,
-          kind: group.kind,
-          status: group.status,
-          company: company.name,
-          ticker: company.ticker.toUpperCase(),
-        });
-      }
-    }
-  }
-
-  // Count genuinely new groups before the transaction for the API response.
-  const inputGroups = new Map<string, string>();
-  for (const day of days) {
-    for (const group of day.groups) {
-      const key = `${day.date}|${group.title}|${group.kind}`;
-      if (!inputGroups.has(key)) inputGroups.set(key, day.date);
-    }
-  }
-
-  const uniqueDates = [...new Set(days.map((d) => d.date))];
-  const datePlaceholders = uniqueDates.map((_, i) => `$${i + 1}`).join(',');
-  const existingGroupsResult = await query(
-    `SELECT date, title, kind FROM calendar_events WHERE date IN (${datePlaceholders})`,
-    uniqueDates
-  );
-  const existingGroups = new Set(existingGroupsResult.rows.map((r: any) => `${normalizeDbDate(r.date)}|${r.title}|${r.kind}`));
-
-  let addedEvents = 0;
-  const addedDates = new Set<string>();
-  for (const [key, date] of inputGroups) {
-    if (!existingGroups.has(key)) {
-      addedEvents++;
-      addedDates.add(date);
-    }
-  }
-
-  await withCalendarTransaction(async (q) => {
-    for (const row of flatRows) {
-      await q(
-        `INSERT INTO calendar_events_raw (source, date, weekday, title, kind, status, company, ticker, uploaded_at)
-         VALUES ('legacy', $1, $2, $3, $4, $5, $6, $7, ${nowSql()})`,
-        [row.date, row.weekday, row.title, row.kind, row.status, row.company, row.ticker]
-      );
-    }
-
-    await q(
-      `INSERT INTO calendar_sources (source, uploaded_at, last_stale_alert_at)
-       VALUES ('legacy', ${nowSql()}, NULL)
-       ON CONFLICT (source) DO UPDATE SET uploaded_at = ${nowSql()}, last_stale_alert_at = NULL`
-    );
-
-    await rebuildCanonical(q);
-  });
-
-  broadcastCalendarRefresh();
-  invalidateCalendarCache();
-
-  return {
-    daysCount: days.length,
-    eventsCount: flatRows.length,
-    addedDays: addedDates.size,
-    addedEvents,
-  };
-}
-
 // ═══════════════════════════════════════════════════════════════════════════
 // Admin single-event CRUD
 // ═══════════════════════════════════════════════════════════════════════════
@@ -898,9 +770,9 @@ export async function createCalendarEventGroup(event: unknown): Promise<void> {
     }
 
     await touchCalendarSource(q, 'manual');
-    await rebuildCanonical(q);
   });
 
+  await rewriteCanonicalFromRaw();
   broadcastCalendarRefresh();
   invalidateCalendarCache();
 }
@@ -954,9 +826,9 @@ export async function updateCalendarEventGroup(
     }
 
     await touchCalendarSource(q, 'manual');
-    await rebuildCanonical(q);
   });
 
+  await rewriteCanonicalFromRaw();
   broadcastCalendarRefresh();
   invalidateCalendarCache();
 }
@@ -986,9 +858,9 @@ export async function deleteCalendarEventGroup(
     }
 
     await touchCalendarSource(q, 'manual');
-    await rebuildCanonical(q);
   });
 
+  await rewriteCanonicalFromRaw();
   broadcastCalendarRefresh();
   invalidateCalendarCache();
 }
@@ -1027,11 +899,98 @@ export async function restoreCalendarEventGroup(
     }
 
     await touchCalendarSource(q, 'manual');
-    await rebuildCanonical(q);
   });
 
+  await rewriteCanonicalFromRaw();
   broadcastCalendarRefresh();
   invalidateCalendarCache();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Legacy snapshot helpers (backward compatibility for M1 verify)
+// ═══════════════════════════════════════════════════════════════════════════
+
+function flattenDaysToRawRows(days: CalendarDay[], source: string): CalendarRawRow[] {
+  const rows: CalendarRawRow[] = [];
+  for (const day of days) {
+    for (const group of day.groups) {
+      for (const company of group.companies) {
+        rows.push({
+          source,
+          date: day.date,
+          weekday: day.weekday,
+          title: group.title,
+          kind: group.kind,
+          status: group.status,
+          company: company.name,
+          ticker: (company.ticker || '').toUpperCase(),
+        });
+      }
+    }
+  }
+  return rows;
+}
+
+export async function saveCalendarSnapshot(
+  days: CalendarDay[]
+): Promise<{ daysCount: number; eventsCount: number }> {
+  const validated = validateCalendarDays(days);
+  const rows = flattenDaysToRawRows(validated, 'legacy');
+
+  await withCalendarTransaction(async (q) => {
+    await q(`DELETE FROM calendar_events_raw WHERE source = 'legacy'`);
+    for (const row of rows) {
+      await q(
+        `INSERT INTO calendar_events_raw (source, date, weekday, title, kind, status, company, ticker, uploaded_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, ${nowSql()})`,
+        [row.source, row.date, row.weekday, row.title, row.kind, row.status, row.company, row.ticker]
+      );
+    }
+    await touchCalendarSource(q, 'legacy');
+  });
+
+  await rewriteCanonicalFromRaw();
+  broadcastCalendarRefresh();
+  invalidateCalendarCache();
+
+  return { daysCount: validated.length, eventsCount: rows.length };
+}
+
+export async function mergeCalendarSnapshot(
+  days: CalendarDay[]
+): Promise<{ daysCount: number; eventsCount: number; addedDays: number; addedEvents: number }> {
+  const validated = validateCalendarDays(days);
+  const rows = flattenDaysToRawRows(validated, 'legacy');
+
+  const addedDates = new Set<string>();
+  let addedEvents = 0;
+
+  await withCalendarTransaction(async (q) => {
+    for (const row of rows) {
+      const existing = await q(
+        `SELECT 1 FROM calendar_events_raw
+         WHERE source = 'legacy' AND date = $1 AND title = $2 AND kind = $3 AND ticker = $4
+         LIMIT 1`,
+        [row.date, row.title, row.kind, row.ticker]
+      );
+      if (existing.rows.length === 0) {
+        await q(
+          `INSERT INTO calendar_events_raw (source, date, weekday, title, kind, status, company, ticker, uploaded_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, ${nowSql()})`,
+          [row.source, row.date, row.weekday, row.title, row.kind, row.status, row.company, row.ticker]
+        );
+        addedEvents++;
+        addedDates.add(row.date);
+      }
+    }
+    await touchCalendarSource(q, 'legacy');
+  });
+
+  await rewriteCanonicalFromRaw();
+  broadcastCalendarRefresh();
+  invalidateCalendarCache();
+
+  return { daysCount: validated.length, eventsCount: rows.length, addedDays: addedDates.size, addedEvents };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1584,8 +1543,10 @@ export async function writeCanonicalRows(
   }
 }
 
-export async function rebuildCanonical(q: QueryFn = query): Promise<RebuildCanonicalResult> {
-  const rawResult = await q(
+/** Пересборка канона из raw вне транзакции: чтение → построение → LLM-матчинг → короткая write-tx.
+ *  Используется CRUD, legacy-очисткой и бут-миграцией, чтобы LLM не держал открытую транзакцию. */
+export async function rewriteCanonicalFromRaw(): Promise<RebuildCanonicalResult> {
+  const rawResult = await query(
     `SELECT source, date, weekday, title, kind, status, company, ticker, tombstone_key, original_title
      FROM calendar_events_raw
      ORDER BY date, ticker, title, kind, source`
@@ -1606,7 +1567,10 @@ export async function rebuildCanonical(q: QueryFn = query): Promise<RebuildCanon
 
   const { canonical, duplicateCount } = buildCanonicalRowsWithStats(rawRows);
   const matched = await matchCalendarTags(canonical);
-  await writeCanonicalRows(q, matched);
+
+  await withCalendarTransaction(async (q) => {
+    await writeCanonicalRows(q, matched);
+  });
 
   return {
     rawCount: rawRows.length,
@@ -1614,6 +1578,11 @@ export async function rebuildCanonical(q: QueryFn = query): Promise<RebuildCanon
     duplicateCount,
     canonical: matched,
   };
+}
+
+/** Backward-compatible alias для verify-скриптов и старых вызовов. */
+export async function rebuildCanonical(): Promise<RebuildCanonicalResult> {
+  return rewriteCanonicalFromRaw();
 }
 
 export async function migrateExistingCalendarToRaw(q: QueryFn = query): Promise<void> {
@@ -1764,7 +1733,7 @@ export async function runCalendarV2Migrations(): Promise<void> {
 
   const rawCount = await query('SELECT COUNT(*) as c FROM calendar_events_raw');
   if (Number(rawCount.rows[0]?.c || 0) > 0) {
-    const result = await withCalendarTransaction(async (q) => rebuildCanonical(q));
+    const result = await rewriteCanonicalFromRaw();
     console.log(`[Calendar] Rebuilt canonical: ${result.canonicalCount} rows from ${result.rawCount} raw (duplicates: ${result.duplicateCount})`);
   }
 }

@@ -357,29 +357,38 @@
    ```
 6. Если `stale === true`, запускает `maybeSendProviderStaleAlerts()` (fire-and-forget).
 
+### `rewriteCanonicalFromRaw(): RebuildCanonicalResult`
+
+Пересобирает канонический срез из `calendar_events_raw` **вне транзакции**:
+
+1. Читает все raw-строки.
+2. `buildCanonicalRowsWithStats` — чистая функция.
+3. `matchCalendarTags` — async, может дергать LLM (или нет, см. `getCalendarLlmEnabled`).
+4. Короткая транзакция: `DELETE FROM calendar_events` + `INSERT` канонических строк.
+
+Используется CRUD, legacy-очисткой и бут-миграцией. Благодаря этому LLM не держит открытую транзакцию.
+
+### `getCalendarLlmEnabled(): Promise<boolean>`
+
+Читает рубильник `llm_enabled` из `calendar_settings`.
+
+- Дефолт `true` (если таблица/ключ отсутствуют).
+- Env `CALENDAR_TAGS_LLM=off` — жёсткий аварийный override, возвращает `false` вне зависимости от БД.
+- Влияет только на календарный `matchCalendarTags`; новостной пайплайн не трогается.
+
 ### `saveCalendarSnapshot(days): { daysCount, eventsCount }`
 
+**Legacy-обёртка** для обратной совместимости (M1). Теперь работает через raw-модель:
+
 1. Валидирует вход.
-2. Раскладывает дни в плоские строки.
-3. Выполняет транзакцию:
-   - `DELETE FROM calendar_events`;
-   - `INSERT` каждой строки;
-   - `UPSERT` в `calendar_meta` (`id = 1`).
-4. Транзакция реализована через `pool.connect()` для PostgreSQL и через обычный `query('BEGIN'/'COMMIT'/'ROLLBACK')` для SQLite.
-5. После коммита вызывает `broadcastCalendarRefresh()`.
+2. Раскладывает дни в плоские raw-строки с `source = 'legacy'`.
+3. В транзакции `DELETE FROM calendar_events_raw WHERE source = 'legacy'` и `INSERT` новых строк.
+4. После коммита `rewriteCanonicalFromRaw()`.
+5. `broadcastCalendarRefresh()`.
 
 ### `mergeCalendarSnapshot(days): { daysCount, eventsCount, addedDays, addedEvents }`
 
-Режим "добавить новое":
-
-1. Валидирует вход.
-2. В транзакции для каждой группы `(date, title, kind)`:
-   - проверяет, существует ли такая группа;
-   - если нет — вставляет все строки группы;
-   - если есть — пропускает.
-3. Обновляет `calendar_meta`.
-4. После коммита вызывает `broadcastCalendarRefresh()`.
-5. Возвращает общее количество дней/событий в файле и сколько из них реально добавлено.
+**Legacy-обёртка** (M1). Добавляет только отсутствующие `legacy`-строки, затем `rewriteCanonicalFromRaw()`.
 
 ### `listCalendarEventGroups(filters): { events, total }`
 
@@ -401,31 +410,27 @@
 Создаёт новую группу:
 
 1. Валидирует тело через `validateCalendarAdminEvent()`.
-2. В транзакции проверяет, что группа `(date, title, kind)` ещё не существует.
+2. В транзакции проверяет, что группа `(date, title, kind)` ещё не существует, и вставляет одну raw-строку на каждую компанию (`source = 'manual'`).
 3. Если группа уже есть — бросает `CalendarAdminError('Event group already exists', 409)`.
-4. Вставляет одну строку на каждую компанию.
-5. Обновляет `calendar_meta`.
-6. Рассылает `calendar:refresh` по SSE.
+4. После коммита `rewriteCanonicalFromRaw()` с LLM-матчингом вне транзакции.
+5. Рассылает `calendar:refresh` по SSE.
 
 ### `updateCalendarEventGroup(oldDate, oldTitle, oldKind, event)`
 
 Полностью заменяет группу:
 
 1. Валидирует тело.
-2. В транзакции удаляет старые строки по `(oldDate, oldTitle, oldKind)`.
-3. Если `rowCount === 0` — бросает 404.
-4. Вставляет новые строки с новыми `date`/`title`/`kind`.
-5. Обновляет `calendar_meta`.
-6. Рассылает `calendar:refresh` по SSE.
+2. В транзакции удаляет старые manual-строки, добавляет tombstone-строки для исчезнувших ключей и вставляет новые manual-строки.
+3. После коммита `rewriteCanonicalFromRaw()`.
+4. Рассылает `calendar:refresh` по SSE.
 
 ### `deleteCalendarEventGroup(date, title, kind)`
 
 Удаляет группу:
 
-1. В транзакции удаляет строки по `(date, title, kind)`.
-2. Если `rowCount === 0` — бросает 404.
-3. Обновляет `calendar_meta`.
-4. Рассылает `calendar:refresh` по SSE.
+1. В транзакции вставляет tombstone-строки (`ticker = '__deleted__'`) для всех компаний группы.
+2. После коммита `rewriteCanonicalFromRaw()`.
+3. Рассылает `calendar:refresh` по SSE.
 
 ### `buildCanonicalRows(rawRows): CanonicalRow[]`
 
@@ -556,7 +561,7 @@ npm run verify:calendarAdapters
 - Боевой путь: читает raw, симулирует срез, `buildCanonicalRows` → `matchCalendarTags` вне tx → одна tx: замена raw-среза + `writeCanonicalRows`. Окна «канон без тегов» нет.
 - `dry_run` матчинг **не** вызывает — не тратит LLM-токены.
 
-**CRUD редактора (M5):** `create`/`update`/`delete`/`restore` по-прежнему вызывают `rebuildCanonical(q)` внутри своей tx; матчинг происходит в tx, но детерминирован и попадает в LLM-кэш.
+**CRUD редактора (M5):** `create`/`update`/`delete`/`restore` пишут правки в `calendar_events_raw` внутри короткой транзакции, а матчинг и запись канона выполняют через `rewriteCanonicalFromRaw()` уже после коммита. LLM не держит транзакцию.
 
 **Admin API:**
 

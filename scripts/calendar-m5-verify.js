@@ -9,6 +9,8 @@ process.env.ENCRYPTION_KEY = 'a1b2c3d4e5f6789012345678901234567890abcdef12345678
 process.env.CRON_SECRET_KEY = 'test-cron-secret';
 process.env.JWT_SECRET = 'test-jwt-secret';
 process.env.OPENAI_API_KEY = 'test-openai';
+process.env.KIMI_API_KEY = 'test-kimi-key';
+process.env.KIMI_MODEL = 'moonshot-v1-32k';
 process.env.VAPID_PUBLIC_KEY = 'BJxHf6RkzS4y2p9qQ8v1mN0oL3uT5wY7aB9cD1eF2gH3iJ4kL5mN6oP7qR8sT9uV0wX1yZ2aB3cD4eF5gH6iJ7k';
 process.env.VAPID_PRIVATE_KEY = 'cE0w5k8mX2p9qR4sT7uV0wY3aB6cD9fG1hI4jK7lM0nO3pQ6rS9tV2wX5yZ8aB1c';
 process.env.TELEGRAM_BOT_TOKEN = 'test:token12345';
@@ -21,9 +23,22 @@ const { execSync } = require('child_process');
 
 const distDir = path.join(__dirname, '..', 'dist');
 
-// Подменяем axios.post до загрузки модулей, чтобы Telegram-алерты "отправлялись" без сети.
+let llmCallCount = 0;
+
+// Подменяем axios.post до загрузки модулей: Telegram — ok, Moonshot — мок.
 const axios = require('axios');
-axios.post = async () => ({ data: { ok: true, result: { message_id: 1 } } });
+axios.post = async (url, data, config) => {
+  if (typeof url === 'string' && url.includes('moonshot')) {
+    llmCallCount++;
+    const messages = data && data.messages ? data.messages : [];
+    const prompt = messages.length > 0 ? messages[messages.length - 1].content || '' : '';
+    if (prompt.includes('Лукойл') || prompt.includes('lukoil')) {
+      return { data: { choices: [{ message: { content: '["lkoh"]' } }] } };
+    }
+    return { data: { choices: [{ message: { content: '[]' } }] } };
+  }
+  return { data: { ok: true, result: { message_id: 1 } } };
+};
 
 const { initSQLite, initSQLiteSchema } = require(path.join(distDir, 'config', 'db-sqlite.js'));
 const { query } = require(path.join(distDir, 'config', 'db.js'));
@@ -94,6 +109,35 @@ async function setup() {
   await query(
     `INSERT INTO users (id, email, username, password_hash, is_admin)
      VALUES ('admin1', 'admin@test', 'admin', 'x', 1)`
+  );
+
+  await seedTags();
+}
+
+async function seedTags() {
+  await query(`DELETE FROM user_defined_tags`);
+  await query(`DELETE FROM smart_tag_cache`);
+
+  // Тег «цб» с обогащением: синонимы позволяют матчить без ручного словаря.
+  const cbEnriched = JSON.stringify({
+    tag_type: 'sector',
+    synonyms_ru: ['Центральный банк', 'Банк России'],
+    synonyms_en: ['Central Bank of Russia'],
+    key_products: [],
+    related_entities: [],
+  });
+  await query(
+    `INSERT INTO user_defined_tags (tag_id, tag_name, tag_type, keywords, enriched_data, created_by)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    ['цб', 'Центральный банк', 'sector', '[]', cbEnriched, 'admin1']
+  );
+
+  // Тег «lkoh» без обогащения: только тикер как keyword, поэтому "Лукойл" по имени
+  // не сматчится на keyword и уйдёт в LLM-фолбэк.
+  await query(
+    `INSERT INTO user_defined_tags (tag_id, tag_name, tag_type, keywords, enriched_data, created_by)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    ['lkoh', 'Лукойл', 'company', JSON.stringify(['lkoh']), null, 'admin1']
   );
 }
 
@@ -479,6 +523,64 @@ async function main() {
     assert(remainingTombstones.rows.length === 1, `test8: exactly one tombstone should remain, got ${remainingTombstones.rows.length}`);
     assert(remainingTombstones.rows[0].original_title === bugCTitle2, 'test8: remaining tombstone should be the other event');
     console.log('[m5] test8 passed: restore disambiguates tombstones by original_title');
+
+    // === Test 9: CRUD create calls LLM for new text; tag matched via llm ===
+    await query(`DELETE FROM calendar_events_raw`);
+    await query(`DELETE FROM calendar_events`);
+    await query(`DELETE FROM calendar_sources`);
+    await query(`DELETE FROM calendar_meta`);
+    await query(`DELETE FROM smart_tag_cache`);
+    llmCallCount = 0;
+
+    const uniqueTitle = 'Отчёт LLM Cache Test Лукойла';
+    const uniqueBody = {
+      date: serverDate,
+      weekday: 'пн',
+      title: uniqueTitle,
+      kind: 'МСФО',
+      status: 'expected',
+      companies: [{ name: 'ПАО Лукойл', ticker: 'UNKNOWN' }],
+    };
+    const createUniqueRes = await request(server, 'POST', `${base}/calendar/events`, uniqueBody);
+    assert(createUniqueRes.status === 200, `test9: create unique event should return 200, got ${createUniqueRes.status}`);
+
+    const uniqueRow = await query(`SELECT * FROM calendar_events WHERE title = $1`, [uniqueTitle]);
+    assert(uniqueRow.rows.length === 1, 'test9: unique canonical row should exist');
+    assert(JSON.parse(uniqueRow.rows[0].tag_ids || '[]').includes('lkoh'), `test9: tag_ids should include lkoh, got ${uniqueRow.rows[0].tag_ids}`);
+    assert(uniqueRow.rows[0].matched_via === 'llm', `test9: matched_via should be llm, got ${uniqueRow.rows[0].matched_via}`);
+    assert(llmCallCount === 1, `test9: LLM should be called once for new text, calls=${llmCallCount}`);
+    console.log('[m5] test9 passed: CRUD create triggers LLM for new text');
+
+    // === Test 10: delete then restore same event → LLM not called (cache) ===
+    const deleteUniqueRes = await request(
+      server,
+      'DELETE',
+      `${base}/calendar/events/${encodeURIComponent(serverDate)}/${encodeURIComponent(uniqueTitle)}/${encodeURIComponent('МСФО')}`
+    );
+    assert(deleteUniqueRes.status === 200, `test10: delete unique event should return 200, got ${deleteUniqueRes.status}`);
+
+    // For UNKNOWN-ticker tombstones the list exposes title = company and deleted_ticker = ''.
+    const restoreList = await request(server, 'GET', `${base}/calendar/events?tombstones=true`);
+    assert(restoreList.status === 200, `test10: tombstones list should return 200, got ${restoreList.status}`);
+    const uniqueTombstone = restoreList.body.events.find(
+      (e) => e.date === serverDate && e.original_title === uniqueTitle
+    );
+    assert(uniqueTombstone, 'test10: unique tombstone should appear in list');
+
+    llmCallCount = 0;
+    const restoreUniqueRes = await request(
+      server,
+      'DELETE',
+      `${base}/calendar/events/tombstone?date=${encodeURIComponent(serverDate)}&title=${encodeURIComponent(uniqueTombstone.companies[0].name)}&company=${encodeURIComponent(uniqueTombstone.companies[0].name)}&original_title=${encodeURIComponent(uniqueTitle)}`
+    );
+    assert(restoreUniqueRes.status === 200, `test10: restore unique event should return 200, got ${restoreUniqueRes.status}`);
+
+    const restoreRow = await query(`SELECT * FROM calendar_events WHERE title = $1`, [uniqueTitle]);
+    assert(restoreRow.rows.length === 1, 'test10: restored canonical row should exist');
+    assert(JSON.parse(restoreRow.rows[0].tag_ids || '[]').includes('lkoh'), `test10: tag_ids should include lkoh, got ${restoreRow.rows[0].tag_ids}`);
+    assert(restoreRow.rows[0].matched_via === 'llm', `test10: matched_via should be llm, got ${restoreRow.rows[0].matched_via}`);
+    assert(llmCallCount === 0, `test10: LLM should not be called for cached text, calls=${llmCallCount}`);
+    console.log('[m5] test10 passed: CRUD restore uses LLM cache');
 
     server.close();
 

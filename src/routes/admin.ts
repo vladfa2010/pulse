@@ -45,7 +45,7 @@ import {
   getCanonicalSnapshot,
   computeDiff,
   withCalendarTransaction,
-  rebuildCanonical,
+  rewriteCanonicalFromRaw,
 } from '../services/calendar';
 import {
   detectAdapter,
@@ -1368,13 +1368,12 @@ router.delete('/calendar/sources/:source', adminMiddleware, async (req: AuthRequ
 
     const snapshotBefore = await getCanonicalSnapshot();
 
-    const { canonical } = await withCalendarTransaction(async (q) => {
+    await withCalendarTransaction(async (q) => {
       await q(`DELETE FROM calendar_events_raw WHERE source = $1`, [source]);
       await q(`DELETE FROM calendar_sources WHERE source = $1`, [source]);
-      const result = await rebuildCanonical(q);
-      return { canonical: result.canonical };
     });
 
+    const { canonical } = await rewriteCanonicalFromRaw();
     const diff = computeDiff(snapshotBefore, canonical);
 
     if (diff.nonempty) {
