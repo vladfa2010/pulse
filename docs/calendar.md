@@ -252,6 +252,57 @@
 
 ---
 
+### `GET /api/admin/calendar/events?tombstones=true`
+
+Только для администраторов. Возвращает удалённые (tombstone) события, которые можно восстановить.
+
+**Response 200**:
+
+```json
+{
+  "events": [
+    {
+      "date": "2026-08-29",
+      "weekday": "сб",
+      "title": "Отчёт Лукойла",
+      "kind": "МСФО",
+      "status": "expected",
+      "companies": [{ "name": "Лукойл", "ticker": "__deleted__" }],
+      "companies_count": 1,
+      "sources": ["manual"],
+      "original_title": "Отчёт Лукойла",
+      "deleted_ticker": "LKOH"
+    }
+  ]
+}
+```
+
+| Поле | Описание |
+|------|----------|
+| `title` | Оригинальный title события (`original_title`). |
+| `original_title` | Дубль `title` для однозначности. |
+| `deleted_ticker` | Тикер, по которому строится `tombstone_key` (пустая строка для UNKNOWN-тикера). |
+| `kind` | Оригинальный `kind` удалённого события. |
+
+### `DELETE /api/admin/calendar/events/tombstone`
+
+Восстанавливает удалённое событие, снимая tombstone.
+
+**Query**:
+
+- `date` — дата события.
+- `title` — для известного тикера это `deleted_ticker`; для UNKNOWN-тикера фронт может прислать пустую строку или название компании (restore попробует оба варианта).
+- `company` — название компании.
+- `original_title` (опционально) — дизамбигуатор, если несколько tombstone делят один `tombstone_key`.
+
+**Response 200**:
+
+```json
+{ "success": true }
+```
+
+---
+
 ## Схема данных
 
 ### `calendar_events`

@@ -355,11 +355,13 @@ async function main() {
     assert(dupTombstone.kind === dupEvent.kind, `test6: tombstone kind should be ${dupEvent.kind}`);
     assert(dupTombstone.companies.length === 1, 'test6: tombstone should have one company');
     assert(dupTombstone.companies[0].ticker === '__deleted__', 'test6: tombstone company ticker should be __deleted__');
+    assert(dupTombstone.deleted_ticker === dupTicker, `test6: deleted_ticker should be ${dupTicker}, got ${dupTombstone.deleted_ticker}`);
 
+    // Restore must use the deleted_ticker exposed by the list, not external knowledge.
     const restoreRes = await request(
       server,
       'DELETE',
-      `${base}/calendar/events/tombstone?date=${encodeURIComponent(dupDate)}&title=${encodeURIComponent(dupTicker)}&company=${encodeURIComponent(dupCompany)}&original_title=${encodeURIComponent(dupTitle)}`
+      `${base}/calendar/events/tombstone?date=${encodeURIComponent(dupDate)}&title=${encodeURIComponent(dupTombstone.deleted_ticker)}&company=${encodeURIComponent(dupCompany)}&original_title=${encodeURIComponent(dupTitle)}`
     );
     assert(restoreRes.status === 200, `test6: restore should return 200, got ${restoreRes.status}`);
 

@@ -59,6 +59,8 @@ export interface CalendarAdminEvent {
   possible_duplicate?: boolean;
   /** Tombstone-only: the original event title, if preserved. */
   original_title?: string;
+  /** Tombstone-only: the deleted ticker used for restore (empty for UNKNOWN-ticker events). */
+  deleted_ticker?: string;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -706,6 +708,7 @@ export async function listCalendarEventGroups(
           sources: ['manual'],
           possible_duplicate: false,
           original_title: r.original_title || undefined,
+          deleted_ticker: r.title || '',
         });
       }
       const group = groups.get(key)!;
