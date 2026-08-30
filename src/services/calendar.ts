@@ -935,11 +935,15 @@ function providerRank(source: string): number {
   return idx === -1 ? PROVIDER_PRIORITY.length : idx;
 }
 
+const ORG_PREFIXES = new Set(['пао', 'ао', 'оао', 'зао', 'ооо', 'pao']);
+
 function normalizeCompanyName(name: string): string {
   return name
     .toLowerCase()
     .replace(/[«»"'`]/g, '')
-    .replace(/\b(пao|pao|ао|оао|зао|ооо)\b/g, ' ')
+    .split(/\s+/)
+    .filter((t) => t && !ORG_PREFIXES.has(t))
+    .join(' ')
     .replace(/[^a-zа-яё0-9]+/g, ' ')
     .trim();
 }

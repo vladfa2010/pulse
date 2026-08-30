@@ -641,7 +641,7 @@ export function heuristicTagType(tagName: string): TagType {
   }
 
   // Currency: common currency names/codes
-  const currencyPatterns = [/^(usd|eur|gbp|jpy|rub|cny|btc|eth|bnb|xrp|usdt|bnb|sol|адollar|евро|фунт|йена|рубль|юань|биткоин|эфириум)$/i];
+  const currencyPatterns = [/^(usd|eur|gbp|jpy|rub|cny|btc|eth|bnb|xrp|usdt|bnb|sol|доллар|евро|фунт|йена|рубль|юань|биткоин|эфириум)$/i];
   if (currencyPatterns.some(p => p.test(lower))) {
     return 'currency';
   }

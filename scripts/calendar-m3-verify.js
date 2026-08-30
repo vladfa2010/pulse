@@ -293,6 +293,21 @@ async function main() {
     );
     console.log('[m3] test9 passed: last_warnings persisted');
 
+    // === Test 10: mixed-script company names merge by ticker ===
+    await resetCalendarTables();
+    const rows10 = [
+      { source: 'investmint', date: '2026-09-01', weekday: 'вт', title: 'МСФО 2КВ2026', kind: 'МСФО', status: 'expected', company: 'ПАО «Сбербанк»', ticker: 'SBER' },
+      { source: 'smartlab', date: '2026-09-01', weekday: 'вт', title: 'МСФО 2КВ2026', kind: 'МСФО', status: 'expected', company: 'Сбербанк', ticker: 'SBER' },
+    ];
+    await ingestProviderSlice('investmint', [rows10[0]], false);
+    await ingestProviderSlice('smartlab', [rows10[1]], false);
+    const canonical10 = await query(`SELECT COUNT(*) as c FROM calendar_events WHERE ticker = 'SBER'`);
+    assert(Number(canonical10.rows[0].c) === 1, `test10: expected 1 canonical SBER row, got ${canonical10.rows[0].c}`);
+    const sources10 = await query(`SELECT sources FROM calendar_events WHERE ticker = 'SBER'`);
+    const srcArr = JSON.parse(sources10.rows[0].sources || '[]');
+    assert(srcArr.includes('investmint') && srcArr.includes('smartlab'), 'test10: merged row should contain both sources');
+    console.log('[m3] test10 passed: mixed-script company names merged');
+
     console.log('\n[M3 VERIFY] ALL TESTS PASSED');
     process.exit(0);
   } catch (err) {

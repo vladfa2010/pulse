@@ -38,7 +38,7 @@ const STANDARD_TAGS: Record<string, string[]> = {
   sp500: ['s&p 500', 'sp500', 'spx', 'эс-энд-би'],
   moex: ['moex', 'мосбиржа', 'индекс мосбиржи'],
   rub: ['рубль', 'ruble', 'usdrub', 'eurrub'],
-  fed: ['фрс', 'fed', 'federal reserve', 'пowell'],
+  fed: ['фрс', 'fed', 'federal reserve', 'powell'],
 };
 
 // HMAC helper for secure Telegram linking
