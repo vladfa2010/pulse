@@ -876,7 +876,6 @@ export async function createCalendarEventGroup(event: unknown): Promise<void> {
       );
     }
 
-    await touchCalendarMeta(q);
     await touchCalendarSource(q, 'manual');
     await rebuildCanonical(q);
   });
@@ -933,7 +932,6 @@ export async function updateCalendarEventGroup(
       );
     }
 
-    await touchCalendarMeta(q);
     await touchCalendarSource(q, 'manual');
     await rebuildCanonical(q);
   });
@@ -966,7 +964,6 @@ export async function deleteCalendarEventGroup(
       );
     }
 
-    await touchCalendarMeta(q);
     await touchCalendarSource(q, 'manual');
     await rebuildCanonical(q);
   });
@@ -983,20 +980,31 @@ export async function restoreCalendarEventGroup(
 ): Promise<void> {
   await withCalendarTransaction(async (q) => {
     const titleUpper = (title || '').toUpperCase();
-    // title is the deleted ticker when non-empty; otherwise the company name is the fallback key.
-    // Compute the stable tombstone key so we delete exactly the targeted marker row.
-    const tombstoneKey = titleUpper
-      ? makeCanonicalKey(date, titleUpper, company)
-      : makeCanonicalKey(date, 'UNKNOWN', company);
     const hasOriginalTitle = originalTitle && originalTitle.length > 0;
-    await q(
+
+    // Try the "title as ticker" key first. This handles known-ticker deletions
+    // and UNKNOWN deletions where frontend sent an empty title.
+    const keyAsTicker = makeCanonicalKey(date, titleUpper, company);
+    const result = await q(
       `DELETE FROM calendar_events_raw
        WHERE source = 'manual' AND ticker = '__deleted__' AND tombstone_key = $1
          AND ($2 IS NULL OR original_title = $2)`,
-      [tombstoneKey, hasOriginalTitle ? originalTitle : null]
+      [keyAsTicker, hasOriginalTitle ? originalTitle : null]
     );
 
-    await touchCalendarMeta(q);
+    // Fallback: the frontend may have sent the company name as title for an
+    // UNKNOWN-ticker tombstone whose stored key uses the normalized company.
+    const deleted = typeof result.rowCount === 'number' ? result.rowCount : 0;
+    if (deleted === 0) {
+      const keyAsCompany = makeCanonicalKey(date, 'UNKNOWN', company);
+      await q(
+        `DELETE FROM calendar_events_raw
+         WHERE source = 'manual' AND ticker = '__deleted__' AND tombstone_key = $1
+           AND ($2 IS NULL OR original_title = $2)`,
+        [keyAsCompany, hasOriginalTitle ? originalTitle : null]
+      );
+    }
+
     await touchCalendarSource(q, 'manual');
     await rebuildCanonical(q);
   });

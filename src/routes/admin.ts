@@ -29,8 +29,6 @@ import { broadcastCalendarRefresh } from '../services/sse';
 import { nowSql } from '../utils/nowSql';
 import { getUserId } from '../utils/users';
 import {
-  saveCalendarSnapshot,
-  mergeCalendarSnapshot,
   listCalendarEventGroups,
   getCalendarEventGroup,
   createCalendarEventGroup,
@@ -1154,50 +1152,6 @@ router.get('/promo-codes/:id/stats', adminMiddleware, async (req: AuthRequest, r
 router.get('/features', adminMiddleware, listAllFeatures);
 router.post('/features', adminMiddleware, validate(CreateFeatureSchema), createFeature);
 router.put('/features/:id', adminMiddleware, updateFeature);
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Admin Calendar Upload (DEPRECATED)
-// Body: { days: CalendarDay[], mode?: 'replace' | 'merge' }
-// Query: ?mode=merge
-//
-// Legacy endpoint для ручной загрузки целиком. Новые загрузки провайдеров
-// должны идти через POST /api/admin/calendar/:source (M3/M4).
-// Endpoint остаётся работающим до удаления редактора календаря (М5).
-// ═══════════════════════════════════════════════════════════════════════════
-router.post('/calendar', adminMiddleware, async (req: AuthRequest, res) => {
-  try {
-    const { days } = req.body;
-    const mode = (req.query.mode as string | undefined) || (req.body.mode as string | undefined) || 'replace';
-
-    if (!days || !Array.isArray(days) || days.length === 0) {
-      return res.status(400).json({ error: 'days array is required' });
-    }
-
-    if (mode === 'merge') {
-      const { daysCount, eventsCount, addedDays, addedEvents } = await mergeCalendarSnapshot(days);
-      res.json({
-        success: true,
-        mode: 'merge',
-        days_count: daysCount,
-        events_count: eventsCount,
-        added_days: addedDays,
-        added_events: addedEvents,
-      });
-    } else {
-      const { daysCount, eventsCount } = await saveCalendarSnapshot(days);
-      res.json({
-        success: true,
-        mode: 'replace',
-        days_count: daysCount,
-        events_count: eventsCount,
-      });
-    }
-  } catch (err: any) {
-    console.error('[Admin] Calendar upload error:', err.message);
-    const status = calendarErrorStatus(err);
-    res.status(status).json({ error: status === 500 ? 'Internal error' : err.message || 'Failed to save calendar snapshot' });
-  }
-});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Admin Calendar Events CRUD

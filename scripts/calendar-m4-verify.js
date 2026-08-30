@@ -65,7 +65,9 @@ async function setup() {
     status VARCHAR(10) NOT NULL,
     company VARCHAR(100) NOT NULL,
     ticker VARCHAR(10) NOT NULL,
-    uploaded_at TIMESTAMP DEFAULT (datetime('now'))
+    uploaded_at TIMESTAMP DEFAULT (datetime('now')),
+    tombstone_key TEXT,
+    original_title TEXT
   )`);
   await query(`CREATE INDEX IF NOT EXISTS idx_cal_raw_source ON calendar_events_raw(source)`);
   await query(`CREATE INDEX IF NOT EXISTS idx_cal_raw_key ON calendar_events_raw(date, ticker)`);
@@ -99,6 +101,7 @@ async function request(server, method, path, body) {
       port,
       path,
       method,
+      agent: new http.Agent({ keepAlive: false }),
       headers: {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer ' + createToken('admin1'),

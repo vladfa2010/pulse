@@ -408,7 +408,23 @@ async function main() {
     assert(unknownTombstone.rows.length > 0, 'test7: UNKNOWN tombstone should use empty title + company fallback');
     assert(unknownTombstone.rows[0].tombstone_key === `${unknownDate}|n:${unknownCompany.toLowerCase()}`, 'test7: UNKNOWN tombstone_key should use normalized company fallback');
     assert(unknownTombstone.rows[0].original_title === unknownTitle, 'test7: UNKNOWN original_title should be preserved');
-    console.log('[m5] test7 passed: UNKNOWN-ticker delete uses company fallback key');
+
+    // Frontend sends the company name as title for UNKNOWN tombstones because the
+    // tombstones list displays title = company. Restore must fall back to the
+    // company-keyed tombstone when the title-as-ticker lookup deletes 0 rows.
+    const restoreUnknownRes = await request(
+      server,
+      'DELETE',
+      `${base}/calendar/events/tombstone?date=${encodeURIComponent(unknownDate)}&title=${encodeURIComponent(unknownCompany)}&company=${encodeURIComponent(unknownCompany)}&original_title=${encodeURIComponent(unknownTitle)}`
+    );
+    assert(restoreUnknownRes.status === 200, `test7: UNKNOWN restore should return 200, got ${restoreUnknownRes.status}`);
+
+    const unknownRestored = await query(
+      `SELECT * FROM calendar_events WHERE title = $1 AND company = $2`,
+      [unknownTitle, unknownCompany]
+    );
+    assert(unknownRestored.rows.length > 0, 'test7: UNKNOWN event should be restored to canonical');
+    console.log('[m5] test7 passed: UNKNOWN-ticker delete uses company fallback key and restores correctly');
 
     // === Test 8: Bug C — restore disambiguates multiple tombstones with same key by original_title ===
     await query(`DELETE FROM calendar_events_raw WHERE source = 'manual' AND ticker = '__deleted__'`);
