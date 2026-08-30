@@ -52,6 +52,7 @@ async function setup() {
     sources TEXT,
     possible_duplicate INTEGER DEFAULT 0,
     tag_ids TEXT,
+    matched_via TEXT,
     UNIQUE (date, title, kind, ticker)
   )`);
   await query(`CREATE INDEX IF NOT EXISTS idx_calendar_events_date ON calendar_events(date)`);
@@ -72,6 +73,22 @@ async function setup() {
   await query(`CREATE TABLE IF NOT EXISTS calendar_sources (source VARCHAR(20) PRIMARY KEY, uploaded_at TIMESTAMP, last_stale_alert_at TIMESTAMP, last_warnings TEXT)`);
   await query(`CREATE TABLE IF NOT EXISTS calendar_meta (id INTEGER PRIMARY KEY CHECK (id = 1), uploaded_at TIMESTAMP DEFAULT (datetime('now')), last_stale_alert_at TIMESTAMP)`);
   await runCalendarV2Migrations();
+
+  // Убираем шум из-за отсутствия таблиц тегов в SQLite-harness
+  await query(`CREATE TABLE IF NOT EXISTS user_defined_tags (
+    tag_id TEXT PRIMARY KEY,
+    tag_name TEXT NOT NULL,
+    tag_type TEXT DEFAULT 'company',
+    keywords TEXT,
+    enriched_data TEXT,
+    created_by TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`);
+  await query(`CREATE TABLE IF NOT EXISTS smart_tag_cache (
+    text_hash TEXT PRIMARY KEY,
+    tags TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`);
 
   // admin-пользователь для прохождения adminMiddleware
   await query(

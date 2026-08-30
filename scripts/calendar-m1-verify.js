@@ -43,9 +43,24 @@ async function setup() {
     sources TEXT,
     possible_duplicate INTEGER DEFAULT 0,
     tag_ids TEXT,
+    matched_via TEXT,
     UNIQUE (date, title, kind, ticker)
   )`);
   await query(`CREATE INDEX IF NOT EXISTS idx_calendar_events_date ON calendar_events(date)`);
+  await query(`CREATE TABLE IF NOT EXISTS user_defined_tags (
+    tag_id TEXT PRIMARY KEY,
+    tag_name TEXT NOT NULL,
+    tag_type TEXT DEFAULT 'company',
+    keywords TEXT,
+    enriched_data TEXT,
+    created_by TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`);
+  await query(`CREATE TABLE IF NOT EXISTS smart_tag_cache (
+    text_hash TEXT PRIMARY KEY,
+    tags TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`);
   await query(`CREATE TABLE IF NOT EXISTS calendar_events_raw (
     id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
     source VARCHAR(20) NOT NULL,

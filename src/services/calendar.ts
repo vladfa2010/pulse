@@ -13,6 +13,8 @@ import { nowSql } from '../utils/nowSql';
 import { sendTelegramMessage } from './telegram';
 import { broadcastCalendarRefresh } from './sse';
 import { NormalizedEvent } from './calendarAdapters';
+import { smartMatchTagsWithVia } from './smartTagMatcher';
+import { getAllTagNames } from './tagManager';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Types
@@ -25,6 +27,8 @@ export interface CalendarCompany {
   name: string;
   ticker: string;
   sources?: string[];
+  tag_ids?: string[];
+  matched_via?: string | null;
 }
 
 export interface CalendarEventGroup {
@@ -57,6 +61,8 @@ export interface CalendarAdminEvent {
   companies_count: number;
   sources?: string[];
   possible_duplicate?: boolean;
+  /** Tag ids aggregated from all canonical rows of the group. */
+  tag_ids?: string[];
   /** Tombstone-only: the original event title, if preserved. */
   original_title?: string;
   /** Tombstone-only: the deleted ticker used for restore (empty for UNKNOWN-ticker events). */
@@ -105,6 +111,13 @@ export interface CanonicalRow {
   ticker: string;
   sources: string;
   possible_duplicate: boolean;
+  tag_ids?: string;
+  matched_via?: string | null;
+}
+
+export interface MatchedCanonicalRow extends CanonicalRow {
+  tag_ids: string;
+  matched_via: string | null;
 }
 
 let calendarCache: { data: CalendarResponse; cachedAt: number } | null = null;
@@ -746,7 +759,7 @@ export async function listCalendarEventGroups(
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
   const rowsResult = await query(
-    `SELECT date, weekday, title, kind, status, company, ticker, sources, possible_duplicate
+    `SELECT date, weekday, title, kind, status, company, ticker, sources, possible_duplicate, tag_ids, matched_via
      FROM calendar_events
      ${where}
      ORDER BY date DESC, title`,
@@ -767,14 +780,19 @@ export async function listCalendarEventGroups(
         companies_count: 0,
         sources: [],
         possible_duplicate: false,
+        tag_ids: [],
       });
     }
     const group = groups.get(key)!;
     const rowSources = parseSources(r.sources || '[]');
-    group.companies.push({ name: r.company, ticker: r.ticker, sources: rowSources });
+    const rowTags: string[] = parseSources(r.tag_ids || '[]');
+    group.companies.push({ name: r.company, ticker: r.ticker, sources: rowSources, tag_ids: rowTags });
     group.companies_count++;
     for (const s of rowSources) {
       if (!group.sources!.includes(s)) group.sources!.push(s);
+    }
+    for (const t of rowTags) {
+      if (!group.tag_ids!.includes(t)) group.tag_ids!.push(t);
     }
     if (r.possible_duplicate) group.possible_duplicate = true;
   }
@@ -812,7 +830,7 @@ export async function getCalendarEventGroup(
   kind: string
 ): Promise<CalendarAdminEvent | null> {
   const result = await query(
-    `SELECT date, weekday, title, kind, status, company, ticker, sources
+    `SELECT date, weekday, title, kind, status, company, ticker, sources, tag_ids, matched_via
      FROM calendar_events
      WHERE date = $1 AND title = $2 AND kind = $3
      ORDER BY ticker`,
@@ -832,10 +850,20 @@ export async function getCalendarEventGroup(
     company: r.company,
     ticker: r.ticker,
     sources: parseSources(r.sources || '[]'),
+    tag_ids: parseSources(r.tag_ids || '[]'),
+    matched_via: r.matched_via || null,
   }));
 
   const first = rows[0];
-  const companies = rows.map((r: any) => ({ name: r.company, ticker: r.ticker, sources: r.sources }));
+  const companies = rows.map((r: any) => ({
+    name: r.company,
+    ticker: r.ticker,
+    sources: r.sources,
+    tag_ids: r.tag_ids,
+    matched_via: r.matched_via,
+  }));
+
+  const groupTagIds = [...new Set(rows.flatMap((r: any) => r.tag_ids))];
 
   return {
     date: first.date,
@@ -845,6 +873,7 @@ export async function getCalendarEventGroup(
     status: first.status,
     companies,
     companies_count: companies.length,
+    tag_ids: groupTagIds,
   };
 }
 
@@ -1182,7 +1211,8 @@ interface IngestResult {
 
 /** Заменяет срез провайдера и пересобирает канон. dry_run не пишет в БД.
  *  Снапшот канона снимается внутри single-flight, чтобы diff атрибутировался
- *  корректно при параллельных загрузках. */
+ *  корректно при параллельных загрузках.
+ *  Матчинг тегов выполняется ДО транзакции записи, чтобы LLM не держал БД. */
 export async function ingestProviderSlice(
   source: string,
   flatRows: CalendarRawRow[],
@@ -1192,31 +1222,35 @@ export async function ingestProviderSlice(
   const run = async (): Promise<IngestResult> => {
     const snapshot = await getCanonicalSnapshot();
 
+    const rawResult = await query(
+      `SELECT source, date, weekday, title, kind, status, company, ticker, tombstone_key, original_title
+       FROM calendar_events_raw`
+    );
+    const existingRows: CalendarRawRow[] = rawResult.rows.map((r: any) => ({
+      source: r.source,
+      date: normalizeDbDate(r.date),
+      weekday: r.weekday,
+      title: r.title,
+      kind: r.kind,
+      status: r.status,
+      company: r.company,
+      ticker: r.ticker,
+      tombstone_key: r.tombstone_key || undefined,
+      original_title: r.original_title || undefined,
+    }));
+    const simulated = existingRows.filter((r) => r.source !== source).concat(flatRows);
+
     if (dryRun) {
-      const rawResult = await query(
-        `SELECT source, date, weekday, title, kind, status, company, ticker, tombstone_key, original_title
-         FROM calendar_events_raw`
-      );
-      const existingRows: CalendarRawRow[] = rawResult.rows.map((r: any) => ({
-        source: r.source,
-        date: normalizeDbDate(r.date),
-        weekday: r.weekday,
-        title: r.title,
-        kind: r.kind,
-        status: r.status,
-        company: r.company,
-        ticker: r.ticker,
-        tombstone_key: r.tombstone_key || undefined,
-        original_title: r.original_title || undefined,
-      }));
-      const simulated = existingRows.filter((r) => r.source !== source).concat(flatRows);
       const canonical = buildCanonicalRows(simulated);
       const generatedAt = await getGeneratedAt();
       const diff = computeDiff(snapshot, canonical);
       return { canonical, generatedAt, diff };
     }
 
-    const { canonical } = await withCalendarTransaction(async (q) => {
+    const canonical = buildCanonicalRows(simulated);
+    const matched = await matchCalendarTags(canonical);
+
+    await withCalendarTransaction(async (q) => {
       await q(`DELETE FROM calendar_events_raw WHERE source = $1`, [source]);
 
       for (const row of flatRows) {
@@ -1234,13 +1268,12 @@ export async function ingestProviderSlice(
         [source, JSON.stringify(warnings)]
       );
 
-      const { canonical } = await rebuildCanonical(q);
-      return { canonical, generatedAt: null };
+      await writeCanonicalRows(q, matched);
     });
 
     const generatedAt = await getGeneratedAt();
-    const diff = computeDiff(snapshot, canonical);
-    return { canonical, generatedAt, diff };
+    const diff = computeDiff(snapshot, matched);
+    return { canonical: matched, generatedAt, diff };
   };
 
   const p = ingestFlight.then(run, run);
@@ -1478,7 +1511,77 @@ export interface RebuildCanonicalResult {
   rawCount: number;
   canonicalCount: number;
   duplicateCount: number;
-  canonical: CanonicalRow[];
+  canonical: MatchedCanonicalRow[];
+}
+
+export async function matchCalendarTags(canonical: CanonicalRow[]): Promise<MatchedCanonicalRow[]> {
+  const availableTags = await getAllTagNames();
+  const cache = new Map<string, { tag_ids: string; matched_via: string | null }>();
+
+  let keywordCount = 0;
+  let llmCount = 0;
+  let unmatchedCount = 0;
+
+  const result: MatchedCanonicalRow[] = [];
+
+  for (const row of canonical) {
+    const textKey = `${row.title}|${row.company}|${row.ticker}`;
+    let resolved = cache.get(textKey);
+
+    if (!resolved) {
+      const summary = `${row.company} ${row.ticker}`;
+      const match = await smartMatchTagsWithVia(row.title, summary, { availableTags, useLLM: true });
+      resolved = {
+        tag_ids: JSON.stringify(match.tag_ids),
+        matched_via: match.matched_via,
+      };
+      cache.set(textKey, resolved);
+
+      if (match.matched_via === 'keyword') keywordCount++;
+      else if (match.matched_via === 'llm') llmCount++;
+      else unmatchedCount++;
+    }
+
+    result.push({
+      ...row,
+      tag_ids: resolved.tag_ids,
+      matched_via: resolved.matched_via,
+    });
+  }
+
+  if (canonical.length > 0) {
+    console.log(
+      `[CalendarTags] matched ${canonical.length} rows: keyword=${keywordCount}, llm=${llmCount}, unmatched=${unmatchedCount}`
+    );
+  }
+
+  return result;
+}
+
+export async function writeCanonicalRows(
+  q: QueryFn,
+  rows: MatchedCanonicalRow[]
+): Promise<void> {
+  await q('DELETE FROM calendar_events');
+  for (const row of rows) {
+    await q(
+      `INSERT INTO calendar_events (date, weekday, title, kind, status, company, ticker, uploaded_at, sources, possible_duplicate, tag_ids, matched_via)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, ${nowSql()}, $8, $9, $10, $11)`,
+      [
+        row.date,
+        row.weekday,
+        row.title,
+        row.kind,
+        row.status,
+        row.company,
+        row.ticker,
+        row.sources,
+        row.possible_duplicate,
+        row.tag_ids,
+        row.matched_via,
+      ]
+    );
+  }
 }
 
 export async function rebuildCanonical(q: QueryFn = query): Promise<RebuildCanonicalResult> {
@@ -1502,21 +1605,14 @@ export async function rebuildCanonical(q: QueryFn = query): Promise<RebuildCanon
   }));
 
   const { canonical, duplicateCount } = buildCanonicalRowsWithStats(rawRows);
-
-  await q('DELETE FROM calendar_events');
-  for (const row of canonical) {
-    await q(
-      `INSERT INTO calendar_events (date, weekday, title, kind, status, company, ticker, uploaded_at, sources, possible_duplicate, tag_ids)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, ${nowSql()}, $8, $9, NULL)`,
-      [row.date, row.weekday, row.title, row.kind, row.status, row.company, row.ticker, row.sources, row.possible_duplicate]
-    );
-  }
+  const matched = await matchCalendarTags(canonical);
+  await writeCanonicalRows(q, matched);
 
   return {
     rawCount: rawRows.length,
-    canonicalCount: canonical.length,
+    canonicalCount: matched.length,
     duplicateCount,
-    canonical,
+    canonical: matched,
   };
 }
 
@@ -1582,6 +1678,7 @@ async function ensureCalendarEventsColumnsPostgres(q: QueryFn): Promise<void> {
   await q(`ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS sources TEXT`);
   await q(`ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS possible_duplicate BOOLEAN DEFAULT FALSE`);
   await q(`ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS tag_ids TEXT`);
+  await q(`ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS matched_via TEXT`);
   await q(`ALTER TABLE calendar_sources ADD COLUMN IF NOT EXISTS last_warnings TEXT`);
 }
 
@@ -1591,6 +1688,7 @@ async function ensureCalendarEventsColumnsSQLite(q: QueryFn): Promise<void> {
   if (!existing.has('sources')) await q(`ALTER TABLE calendar_events ADD COLUMN sources TEXT`);
   if (!existing.has('possible_duplicate')) await q(`ALTER TABLE calendar_events ADD COLUMN possible_duplicate INTEGER DEFAULT 0`);
   if (!existing.has('tag_ids')) await q(`ALTER TABLE calendar_events ADD COLUMN tag_ids TEXT`);
+  if (!existing.has('matched_via')) await q(`ALTER TABLE calendar_events ADD COLUMN matched_via TEXT`);
 }
 
 async function ensureCalendarSourcesColumnsPostgres(q: QueryFn): Promise<void> {
@@ -1635,12 +1733,13 @@ async function ensureCalendarEventsUniqueSQLite(q: QueryFn): Promise<void> {
     sources TEXT,
     possible_duplicate INTEGER DEFAULT 0,
     tag_ids TEXT,
+    matched_via TEXT,
     UNIQUE (date, title, kind, ticker)
   )`);
 
   await q(
-    `INSERT INTO calendar_events_new (id, date, weekday, title, kind, status, company, ticker, uploaded_at, sources, possible_duplicate, tag_ids)
-     SELECT id, date, weekday, title, kind, status, company, ticker, uploaded_at, NULL, NULL, NULL FROM calendar_events`
+    `INSERT INTO calendar_events_new (id, date, weekday, title, kind, status, company, ticker, uploaded_at, sources, possible_duplicate, tag_ids, matched_via)
+     SELECT id, date, weekday, title, kind, status, company, ticker, uploaded_at, NULL, NULL, NULL, NULL FROM calendar_events`
   );
 
   await q(`DROP TABLE calendar_events`);

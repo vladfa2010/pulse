@@ -774,6 +774,7 @@ CREATE TABLE IF NOT EXISTS calendar_events (
   sources     TEXT,                      -- JSON ["investmint",...]
   possible_duplicate BOOLEAN DEFAULT FALSE,
   tag_ids     TEXT,                      -- заполняется в М6
+  matched_via TEXT,                      -- keyword | llm | NULL
   UNIQUE (date, title, kind, ticker)
 );
 

@@ -1053,7 +1053,20 @@ export async function getAllUserDefinedTags(): Promise<Record<string, string[]>>
           // JSON parse failed, fall through to stored keywords
         }
       }
-      tags[row.tag_id] = row.keywords || [row.tag_id];
+      let keywords: string[];
+      if (Array.isArray(row.keywords)) {
+        keywords = row.keywords;
+      } else if (typeof row.keywords === 'string' && row.keywords.length > 0) {
+        try {
+          const parsed = JSON.parse(row.keywords);
+          keywords = Array.isArray(parsed) ? parsed : [row.tag_id];
+        } catch {
+          keywords = [row.tag_id];
+        }
+      } else {
+        keywords = [row.tag_id];
+      }
+      tags[row.tag_id] = keywords;
     }
     return tags;
   } catch {

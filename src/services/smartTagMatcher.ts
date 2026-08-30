@@ -25,6 +25,11 @@ import { getAllUserDefinedTags, getAllTagNames } from './tagManager';
 
 const KIMI_API_KEY = process.env.KIMI_API_KEY;
 const KIMI_MODEL = process.env.KIMI_MODEL || 'moonshot-v1-32k';
+const USE_SQLITE = process.env.USE_SQLITE === 'true';
+
+const CACHE_WINDOW_SQL = USE_SQLITE
+  ? "created_at > datetime('now', '-7 days')"
+  : "created_at > NOW() - INTERVAL '7 days'";
 
 // Debug: store last LLM raw response for diagnostics
 let lastLlmRawContent = '';
@@ -117,14 +122,26 @@ interface LLMTagResult {
 }
 
 // Cache for LLM results (hash of text → tags)
+function normalizeCachedTags(raw: unknown): string[] {
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    } catch { /* ignore */ }
+  }
+  return [];
+}
+
 async function getLLMCache(textHash: string): Promise<string[] | null> {
   try {
     const result = await query(
-      `SELECT tags FROM smart_tag_cache WHERE text_hash = $1 AND created_at > NOW() - INTERVAL '7 days'`,
+      `SELECT tags FROM smart_tag_cache WHERE text_hash = $1 AND ${CACHE_WINDOW_SQL}`,
       [textHash]
     );
     if (result.rows.length > 0) {
-      return result.rows[0].tags;
+      const tags = normalizeCachedTags(result.rows[0].tags);
+      return tags.length > 0 ? tags : null;
     }
   } catch { /* ignore */ }
   return null;
@@ -163,11 +180,14 @@ async function getLLMCacheBatch(textHashes: string[]): Promise<Map<string, strin
   if (textHashes.length === 0) return result;
   try {
     const res = await query(
-      `SELECT text_hash, tags FROM smart_tag_cache WHERE text_hash = ANY($1::text[]) AND created_at > NOW() - INTERVAL '7 days'`,
+      `SELECT text_hash, tags FROM smart_tag_cache WHERE text_hash = ANY($1::text[]) AND ${CACHE_WINDOW_SQL}`,
       [textHashes]
     );
     for (const row of res.rows) {
-      result.set(row.text_hash, row.tags || []);
+      const tags = normalizeCachedTags(row.tags);
+      if (tags.length > 0) {
+        result.set(row.text_hash, tags);
+      }
     }
   } catch { /* ignore */ }
   return result;
@@ -258,7 +278,7 @@ async function callLLMForTags(title: string, summary: string, availableTags: str
     const content = response.data?.choices?.[0]?.message?.content || '';
 
     // Extract JSON array from response
-    const jsonMatch = content.match(/\[\s\S]*?\]/);
+    const jsonMatch = content.match(/\[[\s\S]*?\]/);
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0]);
       if (Array.isArray(parsed)) {
@@ -514,7 +534,7 @@ Response format: ["tag1", "tag2"] or []`;
     );
 
     const content = response.data?.choices?.[0]?.message?.content || '';
-    const jsonMatch = content.match(/\[\s\S]*?\]/);
+    const jsonMatch = content.match(/\[[\s\S]*?\]/);
 
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0]);
@@ -568,6 +588,45 @@ export async function smartMatchTags(
   }
 
   return allTags;
+}
+
+export interface SmartMatchTagsWithViaResult {
+  tag_ids: string[];
+  matched_via: 'keyword' | 'llm' | null;
+}
+
+/**
+ * Same as smartMatchTags but exposes the matching source:
+ *   - 'keyword' if Layer 1 found at least one tag
+ *   - 'llm'     if Layer 1 found nothing and LLM returned tags
+ *   - null      if nothing matched
+ */
+export async function smartMatchTagsWithVia(
+  title: string,
+  summary: string,
+  options: { useLLM?: boolean; availableTags?: string[] } = {}
+): Promise<SmartMatchTagsWithViaResult> {
+  const fullText = `${title} ${summary}`;
+  const keywordTags = await matchTagsByKeywords(fullText);
+
+  if (keywordTags.length > 0) {
+    return { tag_ids: [...new Set(keywordTags)], matched_via: 'keyword' };
+  }
+
+  if (options.useLLM === false || !KIMI_API_KEY) {
+    return { tag_ids: [], matched_via: null };
+  }
+
+  const availableTags = options.availableTags ?? await getAllTagNames();
+  if (availableTags.length === 0) {
+    return { tag_ids: [], matched_via: null };
+  }
+
+  const llmTags = await callLLMForTags(title, summary, availableTags);
+  return {
+    tag_ids: [...new Set(llmTags)],
+    matched_via: llmTags.length > 0 ? 'llm' : null,
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
