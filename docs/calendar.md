@@ -530,6 +530,59 @@ npm run verify:calendarAdapters
 
 ---
 
+## Матчинг событий к тегам (M6)
+
+Файл: `src/services/calendar.ts` + `src/services/smartTagMatcher.ts`.
+
+Каждая каноническая строка `calendar_events` теперь хранит привязанные теги:
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `tag_ids` | `TEXT` (JSON `string[]`) | Список `tag_id` из `user_defined_tags`. |
+| `matched_via` | `TEXT` | `'keyword'`, `'llm'` или `NULL` (не сматчилось). |
+
+**Конвейер:**
+
+1. `buildCanonicalRows(rawRows)` — чистая функция, строит канон (как раньше, без тегов).
+2. `matchCalendarTags(canonical)` — async, вызывается **до** записи в транзакцию:
+   - текст для матчинга = `${title} ${company} ${ticker}`;
+   - сначала `smartMatchTagsWithVia(...)` keyword-слой (`Layer 1`);
+   - если keyword не дал тегов — LLM-фолбэк (`Layer 2`) с кэшем `smart_tag_cache`;
+   - повторные одинаковые тексты дедуплицируются внутри пересборки.
+3. `writeCanonicalRows(q, rows)` — DELETE/INSERT `calendar_events` уже с `tag_ids`/`matched_via`.
+
+**Ingest:**
+
+- Боевой путь: читает raw, симулирует срез, `buildCanonicalRows` → `matchCalendarTags` вне tx → одна tx: замена raw-среза + `writeCanonicalRows`. Окна «канон без тегов» нет.
+- `dry_run` матчинг **не** вызывает — не тратит LLM-токены.
+
+**CRUD редактора (M5):** `create`/`update`/`delete`/`restore` по-прежнему вызывают `rebuildCanonical(q)` внутри своей tx; матчинг происходит в tx, но детерминирован и попадает в LLM-кэш.
+
+**Admin API:**
+
+- `GET /api/admin/calendar/events` — в группе добавляется `tag_ids` (объединение тегов всех строк группы).
+- `GET /api/admin/calendar/events/:date/:title/:kind` — в `companies[]` добавляется `tag_ids` и `matched_via`; в группе — `tag_ids`.
+- Публичный `GET /api/calendar` **не изменился**.
+
+**Верификация:**
+
+```bash
+npm run verify:calendarM6
+```
+
+Скрипт `scripts/calendar-m6-verify.js` проверяет:
+
+- событие «Заседание ЦБ РФ» → тег `цб`, `matched_via = 'keyword'`;
+- событие Лукойла → тег `lkoh`, `matched_via = 'llm'`;
+- повторная пересборка не дергает LLM (кэш);
+- `dry_run` не дергает LLM;
+- tombstone-события не матчатся;
+- admin GET отдаёт `tag_ids`/`matched_via`;
+- после боевого ingest нет строк с `matched_via IS NULL`;
+- регрессии M1–M5 зелёные.
+
+---
+
 ## SSE
 
 Файл: `services/sse.ts`.
@@ -595,5 +648,6 @@ Boot-миграция использует `USE_SQLITE` для выбора ме
 | `src/index.ts` | Boot-миграции, mount роута `/api/calendar`. |
 | `scripts/calendar-m2-verify.js` | Verify-скрипт для адаптеров. |
 | `scripts/calendar-m3-verify.js` | Verify-скрипт для Ingest API и диффа. |
+| `scripts/calendar-m6-verify.js` | Verify-скрипт для матчинга событий к тегам. |
 | `tests/calendarAdapters/` | Fixtures и reference-парсеры для verify. |
 | `docs/ingest.md` | Документация endpoint'а загрузки срезов. |
