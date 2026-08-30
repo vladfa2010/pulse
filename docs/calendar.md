@@ -1,21 +1,48 @@
 # Календарь инвестора
 
-> Бэкенд блока «Календарь инвестора». Хранит снапшот корпоративных событий, отдаёт его клиентам, позволяет админу загружать новый снапшот.
+> Бэкенд блока «Календарь инвестора». Хранит корпоративные события, отдаёт клиентам сгруппированный снапшот, позволяет админам загружать срезы провайдеров и редактировать события вручную.
 
 ---
 
 ## Обзор
 
-- Двухслойная модель: `calendar_events_raw` (срезы по источникам) + `calendar_events` (canonical, дедуплицированная картина).
-- Источники: `legacy`, `manual`, `investmint`, `smartlab`, `bcs` (заглушка), `global`.
-- Приоритет источников: `manual > investmint > smartlab > bcs > global > legacy`.
-- Загрузка провайдерского среза: `POST /api/admin/calendar/:source` с `?dry_run=1`.
-- CRUD событий в админке пишет в `calendar_events_raw` с `source = 'manual'` и пересобирает canonical.
-- Удалённые/изменённые события оставляют tombstone-строки в `calendar_events_raw` (`ticker = '__deleted__'` + `tombstone_key` + `original_title`), чтобы provider-срезы не воскрешали их.
-- Чтение публичное: `GET /api/calendar` отдаёт `calendar_events`.
-- После успешной загрузки бэкенд рассылает `event: calendar:refresh` по SSE.
-- Telegram-алерты о протухании — per-provider, cooldown 24 ч через `calendar_sources.last_stale_alert_at`.
-- Сырые данные провайдеров проходят через `src/services/calendarAdapters/` (M2).
+### Двухслойная модель данных
+
+| Слой | Таблица | Назначение |
+|------|---------|------------|
+| Raw | `calendar_events_raw` | Сырые срезы по источникам (`investmint`, `smartlab`, `manual`, `legacy`, …) + tombstone-строки. |
+| Canonical | `calendar_events` | Дедуплицированная, приоритизированная картина, которую видят пользователи. |
+
+### Источники и приоритет
+
+Приоритет источников (от высшего к низшему):
+
+```
+manual > investmint > smartlab > bcs > global > legacy
+```
+
+- `manual` — ручные правки админа через CRUD.
+- `investmint`, `smartlab` — провайдерские фиды, загружаемые JSON-файлами.
+- `bcs`, `global` — зарезервированные слоты под будущие провайдеры (заглушки).
+- `legacy` — данные, перенесённые из старой однослойной схемы (`saveCalendarSnapshot` / `mergeCalendarSnapshot`).
+
+### Жизненный цикл события
+
+1. Админ загружает сырой JSON через `POST /api/admin/calendar/:source`.
+2. Бэкенд выбирает адаптер (`auto` или явный `:source`), парсит файл в `NormalizedEvent[]`.
+3. `toRawRows()` разворачивает события в плоские строки `calendar_events_raw` (одна строка на компанию).
+4. `buildCanonicalRows()` строит канонический срез с учётом приоритетов и tombstone.
+5. `matchCalendarTags()` сопоставляет каждую строку с тегами (keyword + LLM-фолбэк).
+6. В короткой транзакции заменяется срез провайдера и перезаписывается `calendar_events`.
+7. Бэкенд шлёт `event: calendar:refresh` по SSE.
+
+### Ключевые свойства
+
+- **CRUD вне транзакции LLM**: редактор пишет правки в `calendar_events_raw` внутри короткой транзакции, а матчинг тегов и пересборка канона выполняются уже после коммита (`rewriteCanonicalFromRaw`). LLM не держит открытую транзакцию.
+- **Single-flight для загрузок**: параллельные `POST /api/admin/calendar/:source` сериализуются через `ingestFlight`, чтобы не гонялись за одним источником.
+- **Tombstone-строки**: удалённые/изменённые вручную события оставляют suppressor-записи в `calendar_events_raw`, чтобы провайдерские срезы не воскрешали старые данные.
+- **Per-provider stale alerts**: Telegram-уведомления об устаревании фида отправляются раз в сутки для каждого провайдера отдельно.
+- **Рубильник LLM-матчинга**: `calendar_settings.llm_enabled` позволяет админу отключать LLM-фолбэк при сопоставлении тегов.
 
 ---
 
@@ -31,13 +58,13 @@
 
 ```json
 {
-  "server_date": "2026-08-29",
-  "generated_at": "2026-08-29T09:15:00.000Z",
+  "server_date": "2026-08-30",
+  "generated_at": "2026-08-30T09:15:00.000Z",
   "stale": false,
   "days": [
     {
-      "date": "2026-08-29",
-      "weekday": "сб",
+      "date": "2026-08-30",
+      "weekday": "вс",
       "groups": [
         {
           "title": "Годовой отчёт",
@@ -56,9 +83,9 @@
 | Поле | Тип | Описание |
 |------|-----|----------|
 | `server_date` | `YYYY-MM-DD` | Текущая дата по Europe/Moscow. |
-| `generated_at` | ISO string \| null | Время последней загрузки любого провайдерского среза (`MAX(uploaded_at)` из `calendar_sources`). |
-| `stale` | boolean | `true`, если последняя дата в БД меньше `server_date - 2`. |
-| `days` | array | Список дней с группами событий. |
+| `generated_at` | ISO string \| null | `MAX(uploaded_at)` из `calendar_sources` (null, если источников ещё нет). |
+| `stale` | boolean | `true`, если последняя дата в каноне меньше `server_date - 2`. |
+| `days` | array | Дни с группами событий, отсортированные по дате. |
 
 **Response 503** — снапшот ещё не загружен:
 
@@ -70,7 +97,13 @@
 
 ### `POST /api/admin/calendar/:source`
 
-Загрузка сырого среза провайдера (M3). `:source` — `auto` или один из зарегистрированных адаптеров (`investmint`, `smartlab`). Query `?dry_run=1` выполняет конвейер без записи в БД.
+Загрузка сырого среза провайдера (M3). `:source` — `auto` или один из зарегистрированных адаптеров (`investmint`, `smartlab`).
+
+Query-параметры:
+
+| Параметр | Описание |
+|----------|----------|
+| `dry_run=1` | Не пишет в БД, возвращает `parsed`, `diff`, `samples` и симулированный канон. |
 
 **Request body** — сырое JSON провайдера.
 
@@ -91,11 +124,11 @@
     "removed_events": 0
   },
   "samples": {
-    "new": ["2026-08-29|SBER|МСФО", "..."],
+    "new": ["2026-08-30|SBER|МСФО", "..."],
     "removed": [],
     "upgraded": []
   },
-  "generated_at": "2026-08-29T10:00:00.000Z"
+  "generated_at": "2026-08-30T10:00:00.000Z"
 }
 ```
 
@@ -113,6 +146,8 @@
 { "error": "слишком короткий срез", "warnings": [] }
 ```
 
+---
+
 ### `GET /api/admin/calendar/sources`
 
 Возвращает массив источников в порядке `PROVIDER_PRIORITY`.
@@ -124,6 +159,26 @@
   { "source": "manual", "uploaded_at": "...", "events_count": 0, "last_stale_alert_at": null, "stale": false },
   { "source": "investmint", "uploaded_at": "...", "events_count": 120, "last_stale_alert_at": null, "stale": false }
 ]
+```
+
+Поля:
+
+- `events_count` — число строк в `calendar_events_raw` для этого источника.
+- `days_count` — число уникальных дат у источника.
+- `max_date` — максимальная дата события источника.
+- `stale` — `true`, если `max_date < server_date - 2`.
+- `last_warnings` — JSON-массив варнингов последней загрузки (или `null`).
+
+---
+
+### `DELETE /api/admin/calendar/sources/:source`
+
+Удаляет весь raw-срез провайдера (`DELETE FROM calendar_events_raw WHERE source = $source`), пересобирает канон и рассылает SSE-событие.
+
+**Response 200**:
+
+```json
+{ "success": true }
 ```
 
 ---
@@ -139,6 +194,8 @@
 | `search` | string | Поиск по `title`, `company` или `ticker` (case-insensitive). |
 | `kind` | string | Точное совпадение по `kind`. |
 | `status` | string | Точное совпадение по `status`. |
+| `possible_duplicate` | `true` | Показать только группы с флагом `possible_duplicate`. |
+| `tombstones` | `true` | Показать удалённые (tombstone) события вместо живых. |
 | `limit` | number | Размер страницы (по умолчанию `50`). |
 | `offset` | number | Смещение (по умолчанию `0`). |
 
@@ -148,13 +205,16 @@
 {
   "events": [
     {
-      "date": "2026-08-29",
-      "weekday": "сб",
+      "date": "2026-08-30",
+      "weekday": "вс",
       "title": "Годовой отчёт",
       "kind": "МСФО",
       "status": "confirmed",
       "companies": [],
-      "companies_count": 1
+      "companies_count": 1,
+      "sources": ["investmint"],
+      "tag_ids": ["sber"],
+      "possible_duplicate": false
     }
   ],
   "total": 1
@@ -174,15 +234,18 @@
 ```json
 {
   "event": {
-    "date": "2026-08-29",
-    "weekday": "сб",
+    "date": "2026-08-30",
+    "weekday": "вс",
     "title": "Годовой отчёт",
     "kind": "МСФО",
     "status": "confirmed",
     "companies": [
-      { "name": "Сбербанк", "ticker": "SBER" }
+      { "name": "Сбербанк", "ticker": "SBER", "tag_ids": ["sber"], "matched_via": "keyword" }
     ],
-    "companies_count": 1
+    "companies_count": 1,
+    "sources": ["investmint"],
+    "tag_ids": ["sber"],
+    "possible_duplicate": false
   }
 }
 ```
@@ -193,14 +256,14 @@
 
 ### `POST /api/admin/calendar/events`
 
-Только для администраторов. Создаёт новую группу событий.
+Только для администраторов. Создаёт новую группу событий в `source = 'manual'`.
 
 **Request body** (`CalendarAdminEvent`):
 
 ```json
 {
-  "date": "2026-08-29",
-  "weekday": "сб",
+  "date": "2026-08-30",
+  "weekday": "вс",
   "title": "Годовой отчёт",
   "kind": "МСФО",
   "status": "confirmed",
@@ -216,7 +279,7 @@
 { "success": true }
 ```
 
-**Response 400** — ошибка валидации (все те же правила, что и для снапшота).
+**Response 400** — ошибка валидации.
 
 **Response 409** — группа с такой парой `date + title + kind` уже существует (`Event group already exists`).
 
@@ -224,7 +287,7 @@
 
 ### `PUT /api/admin/calendar/events/:date/:title/:kind`
 
-Только для администраторов. Полностью заменяет существующую группу. Параметры пути — старый ключ группы; тело — новое состояние (при этом `date`/`title`/`kind` в теле могут отличаться, т.е. можно перенести событие на другую дату или сменить тип).
+Только для администраторов. Полностью заменяет существующую группу. Параметры пути — старый ключ группы; тело — новое состояние (можно сменить дату, заголовок или тип).
 
 **Request body** — то же, что и для `POST`.
 
@@ -240,7 +303,7 @@
 
 ### `DELETE /api/admin/calendar/events/:date/:title/:kind`
 
-Только для администраторов. Удаляет группу событий целиком.
+Только для администраторов. Удаляет группу событий целиком, оставляя tombstone-строки.
 
 **Response 200**:
 
@@ -262,8 +325,8 @@
 {
   "events": [
     {
-      "date": "2026-08-29",
-      "weekday": "сб",
+      "date": "2026-08-30",
+      "weekday": "вс",
       "title": "Отчёт Лукойла",
       "kind": "МСФО",
       "status": "expected",
@@ -335,7 +398,7 @@
 { "error": "llm_enabled must be a boolean" }
 ```
 
-> При выключении Layer 1 (keyword) продолжает работать. Следующий rebuild при включении автоматически догонит ранее unmatched-события через LLM.
+> При выключении keyword-слой (Layer 1) продолжает работать. Следующий rebuild при включении автоматически догонит ранее unmatched-события через LLM.
 
 ---
 
@@ -343,41 +406,77 @@
 
 ### `calendar_events`
 
-Плоское хранилище всех событий.
+Каноническое хранилище всех событий.
 
 | Поле | Тип | Описание |
 |------|-----|----------|
-| `id` | UUID / TEXT PK | Авто-ID. |
+| `id` | UUID PK | Авто-ID. |
 | `date` | DATE NOT NULL | Дата события. |
 | `weekday` | VARCHAR(2) NOT NULL | День недели. |
 | `title` | TEXT NOT NULL | Название события. |
-| `kind` | VARCHAR(10) NOT NULL | Тип события. |
-| `status` | VARCHAR(10) NOT NULL | `confirmed` / `expected`. |
+| `kind` | VARCHAR(10) NOT NULL | `МСФО` \| `РСБУ` \| `СД` \| `СА` \| `Дивиденды` \| `Другое`. |
+| `status` | VARCHAR(10) NOT NULL | `confirmed` \| `expected`. |
 | `company` | VARCHAR(100) NOT NULL | Название компании. |
 | `ticker` | VARCHAR(10) NOT NULL | Тикер. |
-| `uploaded_at` | TIMESTAMP | Время загрузки снапшота. |
-| | UNIQUE(date, title, ticker) | Защита от дубликатов одной компании в одном событии. |
+| `uploaded_at` | TIMESTAMP | Время загрузки/пересборки. |
+| `sources` | TEXT (JSON `string[]`) | Источники, подтвердившие это событие. |
+| `possible_duplicate` | BOOLEAN | `true`, если несколько источников дали одинаковый ключ с разными деталями. |
+| `tag_ids` | TEXT (JSON `string[]`) | Привязанные теги (М6). |
+| `matched_via` | TEXT | `keyword` \| `llm` \| `NULL`. |
 
 Индекс: `idx_calendar_events_date` по полю `date`.
+UNIQUE: `(date, title, kind, ticker)`.
+
+### `calendar_events_raw`
+
+Сырые срезы провайдеров и ручные правки.
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `id` | UUID PK | Авто-ID. |
+| `source` | VARCHAR(20) NOT NULL | `manual` \| `investmint` \| `smartlab` \| `legacy` \| `bcs` \| `global`. |
+| `date` | DATE NOT NULL | Дата события. |
+| `weekday` | VARCHAR(2) NOT NULL | День недели (значение парсера). |
+| `title` | TEXT NOT NULL | Название события. |
+| `kind` | VARCHAR(10) NOT NULL | Тип события. |
+| `status` | VARCHAR(10) NOT NULL | `confirmed` \| `expected`. |
+| `company` | VARCHAR(100) NOT NULL | Название компании. |
+| `ticker` | VARCHAR(10) NOT NULL | Тикер; может быть `UNKNOWN`. |
+| `uploaded_at` | TIMESTAMP | Время загрузки/правки. |
+| `tombstone_key` | TEXT | Ключ подавления для tombstone-строк. |
+| `original_title` | TEXT | Оригинальный title события в tombstone. |
+
+Индексы: `idx_cal_raw_source`, `idx_cal_raw_key(date, ticker)`.
+
+### `calendar_sources`
+
+Per-source метаданные.
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `source` | VARCHAR(20) PK | Источник. |
+| `uploaded_at` | TIMESTAMP | Время последней успешной загрузки/изменения. |
+| `last_stale_alert_at` | TIMESTAMP | Время последнего Telegram-алерта об устаревании. |
+| `last_warnings` | TEXT | JSON-массив варнингов последней загрузки. |
+
+### `calendar_settings`
+
+Runtime-настройки календаря.
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `key` | TEXT PK | Ключ настройки. |
+| `value` | TEXT | `'true'` \| `'false'` для `llm_enabled`. |
 
 ### `calendar_meta`
 
-Одна строка с метаданными снапшота.
+Одна строка с метаданными снапшота. **Legacy/не используется** после перехода на `calendar_sources`, но остаётся для обратной совместимости и boot-миграции.
 
 | Поле | Тип | Описание |
 |------|-----|----------|
 | `id` | INTEGER PK CHECK(id = 1) | Только одна строка. |
-| `uploaded_at` | TIMESTAMP | Время последней успешной загрузки. |
-| `last_stale_alert_at` | TIMESTAMP | Время последнего Telegram-алерта об устаревании. |
-
-### `calendar_settings`
-
-Runtime-настройки календаря. Пока одна: `llm_enabled`.
-
-| Поле | Тип | Описание |
-|------|-----|----------|
-| `key` | TEXT PRIMARY KEY | Ключ настройки. |
-| `value` | TEXT | `'true'` / `'false'`. |
+| `uploaded_at` | TIMESTAMP | Время последней успешной загрузки (legacy). |
+| `last_stale_alert_at` | TIMESTAMP | Время последнего Telegram-алерта (legacy). |
 
 ---
 
@@ -385,7 +484,7 @@ Runtime-настройки календаря. Пока одна: `llm_enabled`.
 
 ### `validateCalendarDays(days): CalendarDay[]`
 
-Проверяет снапшот по правилам выше. Бросает `Error` с понятным сообщением.
+Проверяет снапшот по правилам: обязательные поля, валидные `kind`/`status`, даты и т.п. Бросает `Error` с понятным сообщением.
 
 ### `getCalendarData(): CalendarResponse`
 
@@ -407,11 +506,13 @@ Runtime-настройки календаря. Пока одна: `llm_enabled`.
 Пересобирает канонический срез из `calendar_events_raw` **вне транзакции**:
 
 1. Читает все raw-строки.
-2. `buildCanonicalRowsWithStats` — чистая функция.
+2. `buildCanonicalRowsWithStats` — чистая функция, строит канон + считает `possible_duplicate`.
 3. `matchCalendarTags` — async, может дергать LLM (или нет, см. `getCalendarLlmEnabled`).
 4. Короткая транзакция: `DELETE FROM calendar_events` + `INSERT` канонических строк.
 
 Используется CRUD, legacy-очисткой и бут-миграцией. Благодаря этому LLM не держит открытую транзакцию.
+
+**Backward-совместимый alias:** `rebuildCanonical()` просто делегирует `rewriteCanonicalFromRaw()`.
 
 ### `getCalendarLlmEnabled(): Promise<boolean>`
 
@@ -442,6 +543,8 @@ Runtime-настройки календаря. Пока одна: `llm_enabled`.
 - `search` — ищет по `title` и по компаниям внутри группы;
 - `kind` — точное совпадение;
 - `status` — точное совпадение;
+- `possible_duplicate` — только группы с флагом дубля;
+- `tombstones` — только удалённые события;
 - `limit`/`offset` — пагинация.
 
 Сортировка: `date DESC, title ASC`. В списке `companies` всегда пустой, `companies_count` — количество строк в группе.
@@ -479,7 +582,11 @@ Runtime-настройки календаря. Пока одна: `llm_enabled`.
 
 ### `buildCanonicalRows(rawRows): CanonicalRow[]`
 
-Чистая функция, строит канонический срез из сырых строк без обращения к БД. Используется в `rebuildCanonical` и в `dry_run`.
+Чистая функция, строит канонический срез из сырых строк без обращения к БД. Используется в `rewriteCanonicalFromRaw` и в `dry_run`.
+
+### `buildCanonicalRowsWithStats(rawRows): { canonical, duplicateCount }`
+
+То же, что и `buildCanonicalRows`, но дополнительно считает `possible_duplicate` — группы, где несколько источников дали одинаковый ключ, но различаются в `title`/`company`/`status`.
 
 ### `validateProviderSlice(source, events, serverDate): { reject?, warnings }`
 
@@ -490,13 +597,18 @@ Sanity-проверки перед записью среза:
 - `max_date < server_date - 2` → warning;
 - событий без тикера > 20% → warning.
 
-### `ingestProviderSlice(source, flatRows, dryRun): { canonical, generatedAt }`
+### `ingestProviderSlice(source, flatRows, dryRun, warnings): IngestResult`
 
 Заменяет срез провайдера и пересобирает канон.
 
-- Работает под in-memory single-flight (promise-цепочка), параллельные загрузки сериализуются.
-- В обычном режиме: транзакция `DELETE raw → INSERT flatRows → UPSERT calendar_sources → rebuildCanonical`.
-- В `dry_run`: без транзакции и записи, симуляция в памяти через `buildCanonicalRows`.
+- Работает под in-memory single-flight (promise-цепочка `ingestFlight`), параллельные загрузки сериализуются.
+- **Вне транзакции**: читает текущий канон (`getCanonicalSnapshot`), читает raw, симулирует новый срез, `buildCanonicalRows`, `matchCalendarTags` (может дергать LLM).
+- **Короткая транзакция**: `DELETE raw WHERE source = $source` → `INSERT flatRows` → `UPSERT calendar_sources` → `writeCanonicalRows(matched)`.
+- В `dry_run`: без транзакции и записи, матчинг тегов **не** вызывается (экономия токенов).
+
+### `writeCanonicalRows(q, rows)`
+
+Внутри транзакции полностью перезаписывает `calendar_events`: `DELETE` + `INSERT` строк с `tag_ids`/`matched_via`.
 
 ### `computeDiff(snapshot, newCanonical): DiffResult`
 
@@ -545,6 +657,7 @@ Sanity-проверки перед записью среза:
 ```typescript
 export interface CalendarAdapter {
   source: string
+  stub?: boolean
   detect(raw: unknown): number   // 0..1
   parse(raw: unknown): { events: NormalizedEvent[]; warnings: ParseWarnings }
 }
@@ -554,13 +667,14 @@ export interface CalendarAdapter {
 
 | Файл | Назначение |
 |------|-----------|
-| `types.ts` | `CalendarAdapter`, `NormalizedEvent`, `ParseWarnings` |
+| `types.ts` | `CalendarAdapter`, `NormalizedEvent`, `ParseWarnings`, `NormalizedCompany` |
 | `classify.ts` | Единые `detectKind` / `detectStatus` для бэка и фронта |
 | `dateUtils.ts` | `pad`, `inferYear`, `inferYearWithWeekday`, `getWeekday`, `toDateString` |
 | `investmint.ts` | Адаптер для `investmint_calendar.json` (date + events[]) |
 | `smartlab.ts` | Адаптер для smartlab-массива `{ date, title }` |
 | `bcs.ts` | Заглушка под будущий BCS-источник |
-| `index.ts` | Registry, `detectAdapter()`, `toRawRows()` |
+| `global.ts` | Заглушка под будущий global-источник |
+| `index.ts` | Реестр, `detectAdapter()`, `toRawRows()` |
 
 **`detectAdapter(raw)`** выбирает адаптер с максимальным `score >= 0.5`. Если два лидера отличаются менее чем на `0.001`, файл считается неоднозначным и отклоняется.
 
@@ -570,7 +684,7 @@ export interface CalendarAdapter {
 
 **Фрагменты investmint.** Провайдер дублирует события фрагментами (только title, только компания и т.п.). Если нераспознанная строка является подстрокой уже распознанного события того же дня — она игнорируется молча, не засчитываясь в `warnings.skipped`.
 
-**Верификация:
+**Верификация:**
 
 ```bash
 npm run verify:calendarAdapters
@@ -588,16 +702,17 @@ npm run verify:calendarAdapters
 
 | Поле | Тип | Описание |
 |------|-----|----------|
-| `tag_ids` | `TEXT` (JSON `string[]`) | Список `tag_id` из `user_defined_tags`. |
-| `matched_via` | `TEXT` | `'keyword'`, `'llm'` или `NULL` (не сматчилось). |
+| `tag_ids` | TEXT (JSON `string[]`) | Список `tag_id` из `user_defined_tags`. |
+| `matched_via` | TEXT | `keyword`, `llm` или `NULL` (не сматчилось). |
 
 **Конвейер:**
 
-1. `buildCanonicalRows(rawRows)` — чистая функция, строит канон (как раньше, без тегов).
+1. `buildCanonicalRows(rawRows)` / `buildCanonicalRowsWithStats(rawRows)` — чистая функция, строит канон (без тегов).
 2. `matchCalendarTags(canonical)` — async, вызывается **до** записи в транзакцию:
-   - текст для матчинга = `${title} ${company} ${ticker}`;
+   - текст для матчинга = `title + company + ticker`;
    - сначала `smartMatchTagsWithVia(...)` keyword-слой (`Layer 1`);
    - если keyword не дал тегов — LLM-фолбэк (`Layer 2`) с кэшем `smart_tag_cache`;
+   - LLM-фолбэк управляется `getCalendarLlmEnabled()` (рубильник + env `CALENDAR_TAGS_LLM`);
    - повторные одинаковые тексты дедуплицируются внутри пересборки.
 3. `writeCanonicalRows(q, rows)` — DELETE/INSERT `calendar_events` уже с `tag_ids`/`matched_via`.
 
@@ -612,7 +727,7 @@ npm run verify:calendarAdapters
 
 - `GET /api/admin/calendar/events` — в группе добавляется `tag_ids` (объединение тегов всех строк группы).
 - `GET /api/admin/calendar/events/:date/:title/:kind` — в `companies[]` добавляется `tag_ids` и `matched_via`; в группе — `tag_ids`.
-- Публичный `GET /api/calendar` **не изменился**.
+- Публичный `GET /api/calendar` **не изменился** (теги не отдаются в публичном API).
 
 **Верификация:**
 
@@ -660,6 +775,12 @@ data: {}
 
 Boot-миграция использует `USE_SQLITE` для выбора между `UUID DEFAULT uuid_generate_v4()` (Postgres) и `TEXT DEFAULT lower(hex(randomblob(16)))` (SQLite), а также `NOW()` vs `datetime('now')`.
 
+Boot-миграция также:
+
+- переносит старые `calendar_events` в `calendar_events_raw` с `source = 'legacy'` (`migrateExistingCalendarToRaw`);
+- добавляет отсутствующие колонки (`sources`, `possible_duplicate`, `tag_ids`, `matched_via`, `last_warnings`);
+- обновляет UNIQUE-констрейнт на `(date, title, kind, ticker)`.
+
 ---
 
 ## Дата по Москве
@@ -677,7 +798,7 @@ Boot-миграция использует `USE_SQLITE` для выбора ме
 ## TODO / Известные ограничения
 
 > **Год в raw-формате `investmint_calendar.json` не передаётся.**
-> Фронтендная эвристика (`CalendarTab.tsx` → `inferYear`) решает, относить дату к текущему или следующему году, по правилу: месяц < текущего → следующий год. Это работает для "future-looking" снапшотов, но может ошибаться на исторических или нестандартных файлах.
+> `inferYearWithWeekday` выбирает год по совпадению дня недели, но если в файле weekday отсутствует или некорректен, используется эвристика «месяц < текущего → следующий год». Это работает для "future-looking" снапшотов, но может ошибаться на исторических или нестандартных файлах.
 >
 > **Рекомендуемое улучшение:**
 > 1. Поддержать год явно в строке даты (`"1 января 2027 пн"`), с fallback на эвристику.
@@ -690,14 +811,16 @@ Boot-миграция использует `USE_SQLITE` для выбора ме
 | Файл | Назначение |
 |------|-----------|
 | `src/routes/calendar.ts` | Публичный роут `GET /api/calendar`. |
-| `src/routes/admin.ts` | Админские роуты календаря: загрузка снапшота и CRUD событий. |
+| `src/routes/admin.ts` | Админские роуты календаря: загрузка срезов, CRUD событий, настройки. |
 | `src/services/calendar.ts` | Вся бизнес-логика календаря. |
 | `src/services/sse.ts` | `broadcastCalendarRefresh()`. |
 | `src/services/calendarAdapters/` | Адаптеры провайдеров (M2). |
+| `src/services/smartTagMatcher.ts` | Keyword + LLM матчинг тегов. |
 | `src/models/schema.sql` | SQL-схема таблиц. |
 | `src/index.ts` | Boot-миграции, mount роута `/api/calendar`. |
 | `scripts/calendar-m2-verify.js` | Verify-скрипт для адаптеров. |
 | `scripts/calendar-m3-verify.js` | Verify-скрипт для Ingest API и диффа. |
+| `scripts/calendar-m5-verify.js` | Verify-скрипт для CRUD и tombstones. |
 | `scripts/calendar-m6-verify.js` | Verify-скрипт для матчинга событий к тегам. |
 | `tests/calendarAdapters/` | Fixtures и reference-парсеры для verify. |
 | `docs/ingest.md` | Документация endpoint'а загрузки срезов. |
