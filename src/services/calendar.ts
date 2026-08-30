@@ -993,6 +993,18 @@ export async function mergeCalendarSnapshot(
   return { daysCount: validated.length, eventsCount: rows.length, addedDays: addedDates.size, addedEvents };
 }
 
+export async function getCalendarLlmEnabled(): Promise<boolean> {
+  if (process.env.CALENDAR_TAGS_LLM === 'off') return false;
+  try {
+    const result = await query(`SELECT value FROM calendar_settings WHERE key = 'llm_enabled'`);
+    if (result.rows.length === 0) return true;
+    return result.rows[0].value !== 'false';
+  } catch (err: any) {
+    console.error('[Calendar] getCalendarLlmEnabled error:', err.message);
+    return true;
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Stale alert (throttled)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1475,6 +1487,7 @@ export interface RebuildCanonicalResult {
 
 export async function matchCalendarTags(canonical: CanonicalRow[]): Promise<MatchedCanonicalRow[]> {
   const availableTags = await getAllTagNames();
+  const llmEnabled = await getCalendarLlmEnabled();
   const cache = new Map<string, { tag_ids: string; matched_via: string | null }>();
 
   let keywordCount = 0;
@@ -1489,7 +1502,7 @@ export async function matchCalendarTags(canonical: CanonicalRow[]): Promise<Matc
 
     if (!resolved) {
       const summary = `${row.company} ${row.ticker}`;
-      const match = await smartMatchTagsWithVia(row.title, summary, { availableTags, useLLM: true });
+      const match = await smartMatchTagsWithVia(row.title, summary, { availableTags, useLLM: llmEnabled });
       resolved = {
         tag_ids: JSON.stringify(match.tag_ids),
         matched_via: match.matched_via,
@@ -1510,7 +1523,7 @@ export async function matchCalendarTags(canonical: CanonicalRow[]): Promise<Matc
 
   if (canonical.length > 0) {
     console.log(
-      `[CalendarTags] matched ${canonical.length} rows: keyword=${keywordCount}, llm=${llmCount}, unmatched=${unmatchedCount}`
+      `[CalendarTags] matched ${canonical.length} rows: keyword=${keywordCount}, llm=${llmCount}, unmatched=${unmatchedCount} (llmEnabled=${llmEnabled})`
     );
   }
 
@@ -1682,6 +1695,20 @@ async function ensureCalendarEventsRawColumnsSQLite(q: QueryFn): Promise<void> {
   if (!existing.has('original_title')) await q(`ALTER TABLE calendar_events_raw ADD COLUMN original_title TEXT`);
 }
 
+async function ensureCalendarSettingsTablePostgres(q: QueryFn): Promise<void> {
+  await q(`CREATE TABLE IF NOT EXISTS calendar_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+  )`);
+}
+
+async function ensureCalendarSettingsTableSQLite(q: QueryFn): Promise<void> {
+  await q(`CREATE TABLE IF NOT EXISTS calendar_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+  )`);
+}
+
 async function ensureCalendarEventsUniqueSQLite(q: QueryFn): Promise<void> {
   const info = await q(`SELECT sql FROM sqlite_master WHERE type='table' AND name='calendar_events'`);
   const createSql: string = info.rows[0]?.sql || '';
@@ -1722,11 +1749,13 @@ export async function runCalendarV2Migrations(): Promise<void> {
     await ensureCalendarEventsColumnsSQLite(query);
     await ensureCalendarSourcesColumnsSQLite(query);
     await ensureCalendarEventsRawColumnsSQLite(query);
+    await ensureCalendarSettingsTableSQLite(query);
   } else {
     await ensureCalendarEventsColumnsPostgres(query);
     await ensureCalendarSourcesColumnsPostgres(query);
     await ensureCalendarEventsUniquePostgres(query);
     await ensureCalendarEventsRawColumnsPostgres(query);
+    await ensureCalendarSettingsTablePostgres(query);
   }
 
   await migrateExistingCalendarToRaw(query);

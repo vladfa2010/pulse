@@ -812,6 +812,14 @@ CREATE TABLE IF NOT EXISTS calendar_sources (
 );
 
 -- ============================================================
+-- 21c. calendar_settings — runtime-настройки календаря
+-- ============================================================
+CREATE TABLE IF NOT EXISTS calendar_settings (
+  key   TEXT PRIMARY KEY,
+  value TEXT
+);
+
+-- ============================================================
 -- 22. calendar_meta — snapshot metadata (single row, id = 1)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS calendar_meta (

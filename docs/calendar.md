@@ -303,6 +303,42 @@
 
 ---
 
+### `GET /api/admin/calendar/settings`
+
+Только для администраторов. Возвращает состояние рубильника LLM-матчинга тегов.
+
+**Response 200**:
+
+```json
+{ "llm_enabled": true }
+```
+
+### `PUT /api/admin/calendar/settings`
+
+Только для администраторов. Включает или выключает LLM-матчинг тегов для календаря.
+
+**Request body**:
+
+```json
+{ "llm_enabled": false }
+```
+
+**Response 200**:
+
+```json
+{ "llm_enabled": false }
+```
+
+**Response 400**:
+
+```json
+{ "error": "llm_enabled must be a boolean" }
+```
+
+> При выключении Layer 1 (keyword) продолжает работать. Следующий rebuild при включении автоматически догонит ранее unmatched-события через LLM.
+
+---
+
 ## Схема данных
 
 ### `calendar_events`
@@ -333,6 +369,15 @@
 | `id` | INTEGER PK CHECK(id = 1) | Только одна строка. |
 | `uploaded_at` | TIMESTAMP | Время последней успешной загрузки. |
 | `last_stale_alert_at` | TIMESTAMP | Время последнего Telegram-алерта об устаревании. |
+
+### `calendar_settings`
+
+Runtime-настройки календаря. Пока одна: `llm_enabled`.
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `key` | TEXT PRIMARY KEY | Ключ настройки. |
+| `value` | TEXT | `'true'` / `'false'`. |
 
 ---
 

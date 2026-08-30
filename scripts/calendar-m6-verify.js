@@ -42,7 +42,7 @@ axios.post = async (url, data, config) => {
 
 const { initSQLite, initSQLiteSchema } = require(path.join(distDir, 'config', 'db-sqlite.js'));
 const { query } = require(path.join(distDir, 'config', 'db.js'));
-const { runCalendarV2Migrations, getMskDateString, rebuildCanonical, ingestProviderSlice } = require(
+const { runCalendarV2Migrations, getMskDateString, rebuildCanonical, rewriteCanonicalFromRaw, ingestProviderSlice } = require(
   path.join(distDir, 'services', 'calendar.js')
 );
 const adminRouter = require(path.join(distDir, 'routes', 'admin.js')).default;
@@ -204,6 +204,7 @@ async function resetCalendarTables() {
   await query(`DELETE FROM calendar_events`);
   await query(`DELETE FROM calendar_sources`);
   await query(`DELETE FROM calendar_meta`);
+  await query(`DELETE FROM calendar_settings`);
   await query(`DELETE FROM smart_tag_cache`);
   llmCallCount = 0;
 }
@@ -382,9 +383,85 @@ async function main() {
     );
     console.log('[m6] test7 passed: live ingest writes tags atomically, no NULL matched_via');
 
+    // === Test 8: GET settings returns default true on empty table ===
+    await resetCalendarTables();
+    const settingsDefaultRes = await request(server, 'GET', `${base}/calendar/settings`);
+    assert(settingsDefaultRes.status === 200, `test8: GET settings should return 200, got ${settingsDefaultRes.status}`);
+    assert(settingsDefaultRes.body.llm_enabled === true, `test8: default llm_enabled should be true, got ${settingsDefaultRes.body.llm_enabled}`);
+    console.log('[m6] test8 passed: default llm_enabled is true');
+
+    // === Test 9: LLM off — keyword still works, non-keyword gets no tags, no LLM calls ===
+    await resetCalendarTables();
+    const putOffRes = await request(server, 'PUT', `${base}/calendar/settings`, { llm_enabled: false });
+    assert(putOffRes.status === 200, `test9: PUT settings off should return 200, got ${putOffRes.status}`);
+    assert(putOffRes.body.llm_enabled === false, `test9: PUT should return false, got ${putOffRes.body.llm_enabled}`);
+
+    const offRows = [
+      {
+        source: 'global',
+        date: serverDate,
+        weekday: 'ср',
+        title: 'Заседание ЦБ РФ',
+        kind: 'Другое',
+        status: 'expected',
+        company: 'ПАО ЦБ РФ',
+        ticker: 'UNKNOWN',
+      },
+      {
+        source: 'global',
+        date: serverDate,
+        weekday: 'ср',
+        title: 'Отчёт Лукойла',
+        kind: 'МСФО',
+        status: 'expected',
+        company: 'ПАО Лукойл',
+        ticker: 'UNKNOWN',
+      },
+    ];
+    llmCallCount = 0;
+    await ingestProviderSlice('global', offRows, false);
+    const cbOff = await query(`SELECT * FROM calendar_events WHERE title = 'Заседание ЦБ РФ'`);
+    assert(cbOff.rows.length === 1, 'test9: CB row should exist');
+    assert(cbOff.rows[0].matched_via === 'keyword', `test9: CB should be keyword, got ${cbOff.rows[0].matched_via}`);
+    assert(JSON.parse(cbOff.rows[0].tag_ids || '[]').includes('цб'), 'test9: CB tag_ids should include "цб"');
+    const lkohOff = await query(`SELECT * FROM calendar_events WHERE title = 'Отчёт Лукойла'`);
+    assert(lkohOff.rows.length === 1, 'test9: LUKOIL row should exist');
+    assert(lkohOff.rows[0].matched_via === null, `test9: LUKOIL matched_via should be null when LLM off, got ${lkohOff.rows[0].matched_via}`);
+    assert(JSON.parse(lkohOff.rows[0].tag_ids || '[]').length === 0, 'test9: LUKOIL tag_ids should be empty when LLM off');
+    assert(llmCallCount === 0, `test9: LLM should not be called when off, calls=${llmCallCount}`);
+    console.log('[m6] test9 passed: LLM off disables Layer 2, Layer 1 keyword works');
+
+    // === Test 10: LLM on again — retro-fill previously unmatched events ===
+    llmCallCount = 0;
+    const putOnRes = await request(server, 'PUT', `${base}/calendar/settings`, { llm_enabled: true });
+    assert(putOnRes.status === 200, `test10: PUT settings on should return 200, got ${putOnRes.status}`);
+    assert(putOnRes.body.llm_enabled === true, `test10: PUT should return true, got ${putOnRes.body.llm_enabled}`);
+
+    await query(`DELETE FROM smart_tag_cache`); // clear cache so rebuild has to call LLM
+    await query(`DELETE FROM calendar_events`); // drop canonical to force rewrite
+    await rewriteCanonicalFromRaw();
+
+    const lkohOn = await query(`SELECT * FROM calendar_events WHERE title = 'Отчёт Лукойла'`);
+    assert(lkohOn.rows.length === 1, 'test10: LUKOIL row should exist after rebuild');
+    assert(lkohOn.rows[0].matched_via === 'llm', `test10: LUKOIL matched_via should be llm after retro-fill, got ${lkohOn.rows[0].matched_via}`);
+    assert(JSON.parse(lkohOn.rows[0].tag_ids || '[]').includes('lkoh'), 'test10: LUKOIL tag_ids should include lkoh after retro-fill');
+    assert(llmCallCount === 1, `test10: LLM should be called once for previously unmatched text, calls=${llmCallCount}`);
+    console.log('[m6] test10 passed: LLM on retro-fills unmatched events');
+
+    // === Test 11: persistence — value stored in DB ===
+    const dbValue = await query(`SELECT value FROM calendar_settings WHERE key = 'llm_enabled'`);
+    assert(dbValue.rows.length === 1, 'test11: llm_enabled setting should persist in DB');
+    assert(dbValue.rows[0].value === 'true', `test11: persisted value should be 'true', got ${dbValue.rows[0].value}`);
+    console.log('[m6] test11 passed: llm_enabled persists in calendar_settings');
+
+    // === Test 12: invalid PUT rejected ===
+    const putInvalidRes = await request(server, 'PUT', `${base}/calendar/settings`, { llm_enabled: 'maybe' });
+    assert(putInvalidRes.status === 400, `test12: invalid PUT should return 400, got ${putInvalidRes.status}`);
+    console.log('[m6] test12 passed: invalid llm_enabled rejected');
+
     server.close();
 
-    // === Test 8: регрессии M1–M5 ===
+    // === Test 13: регрессии M1–M5 ===
     console.log('[m6] regression M1...');
     execSync('node scripts/calendar-m1-verify.js', { stdio: 'inherit' });
     console.log('[m6] regression M2...');

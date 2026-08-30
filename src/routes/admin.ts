@@ -46,6 +46,7 @@ import {
   computeDiff,
   withCalendarTransaction,
   rewriteCanonicalFromRaw,
+  getCalendarLlmEnabled,
 } from '../services/calendar';
 import {
   detectAdapter,
@@ -1386,6 +1387,47 @@ router.delete('/calendar/sources/:source', adminMiddleware, async (req: AuthRequ
     console.error('[Admin] Calendar source delete error:', err.message);
     const status = calendarErrorStatus(err);
     res.status(status).json({ error: status === 500 ? 'Internal error' : err.message || 'Failed to delete calendar source' });
+  }
+});
+
+// GET /api/admin/calendar/settings — текущее состояние рубильника LLM.
+router.get('/calendar/settings', adminMiddleware, async (_req: AuthRequest, res) => {
+  try {
+    const llm_enabled = await getCalendarLlmEnabled();
+    res.json({ llm_enabled });
+  } catch (err: any) {
+    console.error('[Admin] Calendar settings get error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch calendar settings' });
+  }
+});
+
+// PUT /api/admin/calendar/settings — включить/выключить LLM-матчинг тегов.
+router.put('/calendar/settings', adminMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const { llm_enabled } = req.body;
+    if (typeof llm_enabled !== 'boolean') {
+      return res.status(400).json({ error: 'llm_enabled must be a boolean' });
+    }
+
+    const value = llm_enabled ? 'true' : 'false';
+    if (USE_SQLITE) {
+      await query(
+        `INSERT OR REPLACE INTO calendar_settings (key, value) VALUES (?, ?)`,
+        ['llm_enabled', value]
+      );
+    } else {
+      await query(
+        `INSERT INTO calendar_settings (key, value) VALUES ($1, $2)
+         ON CONFLICT (key) DO UPDATE SET value = $2`,
+        ['llm_enabled', value]
+      );
+    }
+
+    const enabled = await getCalendarLlmEnabled();
+    res.json({ llm_enabled: enabled });
+  } catch (err: any) {
+    console.error('[Admin] Calendar settings put error:', err.message);
+    res.status(500).json({ error: 'Failed to update calendar settings' });
   }
 });
 
