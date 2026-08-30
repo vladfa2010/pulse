@@ -57,6 +57,8 @@ export interface CalendarAdminEvent {
   companies_count: number;
   sources?: string[];
   possible_duplicate?: boolean;
+  /** Tombstone-only: the original event title, if preserved. */
+  original_title?: string;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -85,6 +87,10 @@ export interface CalendarRawRow {
   company: string;
   ticker: string;
   uploaded_at?: string;
+  /** Tombstone-only: suppressed canonical key (date|ticker or date|n:<company>). */
+  tombstone_key?: string;
+  /** Tombstone-only: original event title for display/restore. */
+  original_title?: string;
 }
 
 export interface CanonicalRow {
@@ -688,7 +694,7 @@ export async function listCalendarEventGroups(
 
   if (tombstones) {
     const rowsResult = await query(
-      `SELECT date, weekday, title, company
+      `SELECT date, weekday, title, company, original_title
        FROM calendar_events_raw
        WHERE source = 'manual' AND ticker = '__deleted__'
        ORDER BY date DESC, title, company`
@@ -697,7 +703,7 @@ export async function listCalendarEventGroups(
     const groups = new Map<string, CalendarAdminEvent>();
     for (const r of rowsResult.rows) {
       const date = normalizeDbDate(r.date);
-      const displayTitle = r.title || r.company;
+      const displayTitle = r.original_title || r.title || r.company;
       const key = `${date}|${displayTitle}|${r.company}`;
       if (!groups.has(key)) {
         groups.set(key, {
@@ -710,6 +716,7 @@ export async function listCalendarEventGroups(
           companies_count: 0,
           sources: ['manual'],
           possible_duplicate: false,
+          original_title: r.original_title || undefined,
         });
       }
       const group = groups.get(key)!;
@@ -911,9 +918,9 @@ export async function updateCalendarEventGroup(
           ? company.ticker.toUpperCase()
           : '';
         await q(
-          `INSERT INTO calendar_events_raw (source, date, weekday, title, kind, status, company, ticker, uploaded_at)
-           VALUES ('manual', $1, $2, $3, 'Другое', 'expected', $4, '__deleted__', ${nowSql()})`,
-          [oldDate, oldGroup.weekday, tombstoneTitle, company.name]
+          `INSERT INTO calendar_events_raw (source, date, weekday, title, kind, status, company, ticker, uploaded_at, tombstone_key, original_title)
+           VALUES ('manual', $1, $2, $3, 'Другое', 'expected', $4, '__deleted__', ${nowSql()}, $5, $6)`,
+          [oldDate, oldGroup.weekday, tombstoneTitle, company.name, oldKey, oldTitle]
         );
       }
     }
@@ -951,10 +958,11 @@ export async function deleteCalendarEventGroup(
       const tombstoneTitle = company.ticker && company.ticker.toUpperCase() !== 'UNKNOWN'
         ? company.ticker.toUpperCase()
         : '';
+      const tombstoneKey = makeCanonicalKey(date, company.ticker, company.name);
       await q(
-        `INSERT INTO calendar_events_raw (source, date, weekday, title, kind, status, company, ticker, uploaded_at)
-         VALUES ('manual', $1, $2, $3, 'Другое', 'expected', $4, '__deleted__', ${nowSql()})`,
-        [date, group.weekday, tombstoneTitle, company.name]
+        `INSERT INTO calendar_events_raw (source, date, weekday, title, kind, status, company, ticker, uploaded_at, tombstone_key, original_title)
+         VALUES ('manual', $1, $2, $3, 'Другое', 'expected', $4, '__deleted__', ${nowSql()}, $5, $6)`,
+        [date, group.weekday, tombstoneTitle, company.name, tombstoneKey, title]
       );
     }
 
@@ -970,24 +978,23 @@ export async function deleteCalendarEventGroup(
 export async function restoreCalendarEventGroup(
   date: string,
   title: string,
-  company: string
+  company: string,
+  originalTitle?: string
 ): Promise<void> {
   await withCalendarTransaction(async (q) => {
     const titleUpper = (title || '').toUpperCase();
     // title is the deleted ticker when non-empty; otherwise the company name is the fallback key.
-    if (titleUpper) {
-      await q(
-        `DELETE FROM calendar_events_raw
-         WHERE source = 'manual' AND ticker = '__deleted__' AND date = $1 AND title = $2`,
-        [date, titleUpper]
-      );
-    } else {
-      await q(
-        `DELETE FROM calendar_events_raw
-         WHERE source = 'manual' AND ticker = '__deleted__' AND date = $1 AND title = '' AND company = $2`,
-        [date, company]
-      );
-    }
+    // Compute the stable tombstone key so we delete exactly the targeted marker row.
+    const tombstoneKey = titleUpper
+      ? makeCanonicalKey(date, titleUpper, company)
+      : makeCanonicalKey(date, 'UNKNOWN', company);
+    const hasOriginalTitle = originalTitle && originalTitle.length > 0;
+    await q(
+      `DELETE FROM calendar_events_raw
+       WHERE source = 'manual' AND ticker = '__deleted__' AND tombstone_key = $1
+         AND ($2 IS NULL OR original_title = $2)`,
+      [tombstoneKey, hasOriginalTitle ? originalTitle : null]
+    );
 
     await touchCalendarMeta(q);
     await touchCalendarSource(q, 'manual');
@@ -1187,7 +1194,7 @@ export async function ingestProviderSlice(
 
     if (dryRun) {
       const rawResult = await query(
-        `SELECT source, date, weekday, title, kind, status, company, ticker
+        `SELECT source, date, weekday, title, kind, status, company, ticker, tombstone_key, original_title
          FROM calendar_events_raw`
       );
       const existingRows: CalendarRawRow[] = rawResult.rows.map((r: any) => ({
@@ -1199,6 +1206,8 @@ export async function ingestProviderSlice(
         status: r.status,
         company: r.company,
         ticker: r.ticker,
+        tombstone_key: r.tombstone_key || undefined,
+        original_title: r.original_title || undefined,
       }));
       const simulated = existingRows.filter((r) => r.source !== source).concat(flatRows);
       const canonical = buildCanonicalRows(simulated);
@@ -1385,18 +1394,25 @@ function buildCanonicalRowsWithStats(rawRows: CalendarRawRow[]): { canonical: Ca
     ...r,
     kind: assertValidKind(r.kind),
     status: assertValidStatus(r.status),
+    tombstone_key: r.tombstone_key,
+    original_title: r.original_title,
   }));
 
   // Tombstones are manual marker rows that suppress any canonical group with the same merge key.
+  // Prefer the persisted tombstone_key; fall back to deriving it from legacy rows for backwards compatibility.
   const tombstoneKeys = new Set<string>();
   const regularRows: typeof rows = [];
   for (const row of rows) {
     if (row.source === 'manual' && row.ticker === '__deleted__') {
-      const titleUpper = (row.title || '').toUpperCase();
-      if (titleUpper) {
-        tombstoneKeys.add(`${row.date}|${titleUpper}`);
+      if (row.tombstone_key) {
+        tombstoneKeys.add(row.tombstone_key);
       } else {
-        tombstoneKeys.add(`${row.date}|n:${normalizeCompanyName(row.company)}`);
+        const titleUpper = (row.title || '').toUpperCase();
+        if (titleUpper) {
+          tombstoneKeys.add(`${row.date}|${titleUpper}`);
+        } else {
+          tombstoneKeys.add(`${row.date}|n:${normalizeCompanyName(row.company)}`);
+        }
       }
       continue;
     }
@@ -1467,7 +1483,7 @@ export interface RebuildCanonicalResult {
 
 export async function rebuildCanonical(q: QueryFn = query): Promise<RebuildCanonicalResult> {
   const rawResult = await q(
-    `SELECT source, date, weekday, title, kind, status, company, ticker
+    `SELECT source, date, weekday, title, kind, status, company, ticker, tombstone_key, original_title
      FROM calendar_events_raw
      ORDER BY date, ticker, title, kind, source`
   );
@@ -1481,6 +1497,8 @@ export async function rebuildCanonical(q: QueryFn = query): Promise<RebuildCanon
     status: r.status,
     company: r.company,
     ticker: r.ticker,
+    tombstone_key: r.tombstone_key || undefined,
+    original_title: r.original_title || undefined,
   }));
 
   const { canonical, duplicateCount } = buildCanonicalRowsWithStats(rawRows);
@@ -1585,6 +1603,18 @@ async function ensureCalendarSourcesColumnsSQLite(q: QueryFn): Promise<void> {
   if (!existing.has('last_warnings')) await q(`ALTER TABLE calendar_sources ADD COLUMN last_warnings TEXT`);
 }
 
+async function ensureCalendarEventsRawColumnsPostgres(q: QueryFn): Promise<void> {
+  await q(`ALTER TABLE calendar_events_raw ADD COLUMN IF NOT EXISTS tombstone_key TEXT`);
+  await q(`ALTER TABLE calendar_events_raw ADD COLUMN IF NOT EXISTS original_title TEXT`);
+}
+
+async function ensureCalendarEventsRawColumnsSQLite(q: QueryFn): Promise<void> {
+  const info = await q(`PRAGMA table_info(calendar_events_raw)`);
+  const existing = new Set(info.rows.map((r: any) => r.name));
+  if (!existing.has('tombstone_key')) await q(`ALTER TABLE calendar_events_raw ADD COLUMN tombstone_key TEXT`);
+  if (!existing.has('original_title')) await q(`ALTER TABLE calendar_events_raw ADD COLUMN original_title TEXT`);
+}
+
 async function ensureCalendarEventsUniqueSQLite(q: QueryFn): Promise<void> {
   const info = await q(`SELECT sql FROM sqlite_master WHERE type='table' AND name='calendar_events'`);
   const createSql: string = info.rows[0]?.sql || '';
@@ -1623,10 +1653,12 @@ export async function runCalendarV2Migrations(): Promise<void> {
     await ensureCalendarEventsUniqueSQLite(query);
     await ensureCalendarEventsColumnsSQLite(query);
     await ensureCalendarSourcesColumnsSQLite(query);
+    await ensureCalendarEventsRawColumnsSQLite(query);
   } else {
     await ensureCalendarEventsColumnsPostgres(query);
     await ensureCalendarSourcesColumnsPostgres(query);
     await ensureCalendarEventsUniquePostgres(query);
+    await ensureCalendarEventsRawColumnsPostgres(query);
   }
 
   await migrateExistingCalendarToRaw(query);

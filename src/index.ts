@@ -3457,16 +3457,18 @@ async function start() {
     { sql: `CREATE INDEX IF NOT EXISTS idx_calendar_events_date ON calendar_events(date)`, name: 'idx_calendar_events_date' },
     {
       sql: `CREATE TABLE IF NOT EXISTS calendar_events_raw (
-        id          ${USE_SQLITE ? 'TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16))))' : 'UUID PRIMARY KEY DEFAULT gen_random_uuid()'},
-        source      VARCHAR(20) NOT NULL,
-        date        DATE NOT NULL,
-        weekday     VARCHAR(2) NOT NULL,
-        title       TEXT NOT NULL,
-        kind        VARCHAR(10) NOT NULL,
-        status      VARCHAR(10) NOT NULL,
-        company     VARCHAR(100) NOT NULL,
-        ticker      VARCHAR(10) NOT NULL,
-        uploaded_at TIMESTAMP DEFAULT ${_SQL_NOW}
+        id              ${USE_SQLITE ? 'TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16))))' : 'UUID PRIMARY KEY DEFAULT gen_random_uuid()'},
+        source          VARCHAR(20) NOT NULL,
+        date            DATE NOT NULL,
+        weekday         VARCHAR(2) NOT NULL,
+        title           TEXT NOT NULL,
+        kind            VARCHAR(10) NOT NULL,
+        status          VARCHAR(10) NOT NULL,
+        company         VARCHAR(100) NOT NULL,
+        ticker          VARCHAR(10) NOT NULL,
+        uploaded_at     TIMESTAMP DEFAULT ${_SQL_NOW},
+        tombstone_key   TEXT,
+        original_title  TEXT
       )`,
       name: 'calendar_events_raw'
     },

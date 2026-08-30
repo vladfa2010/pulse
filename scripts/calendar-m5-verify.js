@@ -27,7 +27,7 @@ axios.post = async () => ({ data: { ok: true, result: { message_id: 1 } } });
 
 const { initSQLite, initSQLiteSchema } = require(path.join(distDir, 'config', 'db-sqlite.js'));
 const { query } = require(path.join(distDir, 'config', 'db.js'));
-const { runCalendarV2Migrations, getMskDateString } = require(path.join(distDir, 'services', 'calendar.js'));
+const { runCalendarV2Migrations, getMskDateString, rebuildCanonical } = require(path.join(distDir, 'services', 'calendar.js'));
 const adminRouter = require(path.join(distDir, 'routes', 'admin.js')).default;
 const express = require('express');
 
@@ -264,6 +264,8 @@ async function main() {
       [oldDate, oldTicker]
     );
     assert(tombstones.rows.length > 0, 'test3: tombstone row should exist for old key');
+    assert(tombstones.rows[0].tombstone_key === `${oldDate}|${oldTicker.toUpperCase()}`, 'test3: tombstone_key should match stable canonical key');
+    assert(tombstones.rows[0].original_title === oldTitle, 'test3: original_title should be preserved');
     console.log('[m5] test3 passed: key change creates tombstone, canonical has only new event');
 
     // === Test 4: delete event; it disappears from canonical; reloading provider file does NOT resurrect it ===
@@ -347,7 +349,7 @@ async function main() {
     assert(tombstonesList.status === 200, `test6: tombstones list should return 200, got ${tombstonesList.status}`);
     assert(Array.isArray(tombstonesList.body.events), 'test6: tombstones events should be array');
     const dupTombstone = tombstonesList.body.events.find(
-      (e) => e.date === dupDate && e.title === dupTicker
+      (e) => e.date === dupDate && e.title === dupTitle
     );
     assert(dupTombstone, 'test6: tombstone should appear in tombstones list');
     assert(dupTombstone.kind === 'Другое', 'test6: tombstone kind should be Другое');
@@ -357,7 +359,7 @@ async function main() {
     const restoreRes = await request(
       server,
       'DELETE',
-      `${base}/calendar/events/tombstone?date=${encodeURIComponent(dupDate)}&title=${encodeURIComponent(dupTicker)}&company=${encodeURIComponent(dupCompany)}`
+      `${base}/calendar/events/tombstone?date=${encodeURIComponent(dupDate)}&title=${encodeURIComponent(dupTicker)}&company=${encodeURIComponent(dupCompany)}&original_title=${encodeURIComponent(dupTitle)}`
     );
     assert(restoreRes.status === 200, `test6: restore should return 200, got ${restoreRes.status}`);
 
@@ -404,7 +406,44 @@ async function main() {
       [unknownDate, unknownCompany]
     );
     assert(unknownTombstone.rows.length > 0, 'test7: UNKNOWN tombstone should use empty title + company fallback');
+    assert(unknownTombstone.rows[0].tombstone_key === `${unknownDate}|n:${unknownCompany.toLowerCase()}`, 'test7: UNKNOWN tombstone_key should use normalized company fallback');
+    assert(unknownTombstone.rows[0].original_title === unknownTitle, 'test7: UNKNOWN original_title should be preserved');
     console.log('[m5] test7 passed: UNKNOWN-ticker delete uses company fallback key');
+
+    // === Test 8: Bug C — restore disambiguates multiple tombstones with same key by original_title ===
+    await query(`DELETE FROM calendar_events_raw WHERE source = 'manual' AND ticker = '__deleted__'`);
+    const bugCDate = serverDate;
+    const bugCWeekday = 'пн';
+    const bugCCompany = 'Shared Co';
+    const bugCTitle1 = 'Event One';
+    const bugCTitle2 = 'Event Two';
+    const bugCKey = `${bugCDate}|n:${bugCCompany.toLowerCase()}`;
+    await query(
+      `INSERT INTO calendar_events_raw (source, date, weekday, title, kind, status, company, ticker, uploaded_at, tombstone_key, original_title)
+       VALUES ('manual', $1, $2, '', 'Другое', 'expected', $3, '__deleted__', datetime('now'), $4, $5)`,
+      [bugCDate, bugCWeekday, bugCCompany, bugCKey, bugCTitle1]
+    );
+    await query(
+      `INSERT INTO calendar_events_raw (source, date, weekday, title, kind, status, company, ticker, uploaded_at, tombstone_key, original_title)
+       VALUES ('manual', $1, $2, '', 'Другое', 'expected', $3, '__deleted__', datetime('now'), $4, $5)`,
+      [bugCDate, bugCWeekday, bugCCompany, bugCKey, bugCTitle2]
+    );
+    await rebuildCanonical();
+
+    const restoreBugC = await request(
+      server,
+      'DELETE',
+      `${base}/calendar/events/tombstone?date=${encodeURIComponent(bugCDate)}&title=&company=${encodeURIComponent(bugCCompany)}&original_title=${encodeURIComponent(bugCTitle1)}`
+    );
+    assert(restoreBugC.status === 200, `test8: restore by original_title should return 200, got ${restoreBugC.status}`);
+
+    const remainingTombstones = await query(
+      `SELECT * FROM calendar_events_raw WHERE source = 'manual' AND ticker = '__deleted__' AND tombstone_key = $1 ORDER BY original_title`,
+      [bugCKey]
+    );
+    assert(remainingTombstones.rows.length === 1, `test8: exactly one tombstone should remain, got ${remainingTombstones.rows.length}`);
+    assert(remainingTombstones.rows[0].original_title === bugCTitle2, 'test8: remaining tombstone should be the other event');
+    console.log('[m5] test8 passed: restore disambiguates tombstones by original_title');
 
     server.close();
 

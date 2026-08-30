@@ -1266,8 +1266,11 @@ router.delete('/calendar/events/tombstone', adminMiddleware, async (req: AuthReq
     const date = decodeURIComponent(req.query.date as string);
     const title = decodeURIComponent(req.query.title as string);
     const company = decodeURIComponent(req.query.company as string);
+    const originalTitle = typeof req.query.original_title === 'string'
+      ? decodeURIComponent(req.query.original_title)
+      : undefined;
 
-    await restoreCalendarEventGroup(date, title, company);
+    await restoreCalendarEventGroup(date, title, company, originalTitle);
     res.json({ success: true });
   } catch (err: any) {
     console.error('[Admin] Calendar event restore error:', err.message);

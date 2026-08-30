@@ -61,6 +61,10 @@ export interface CalendarRawRow {
   status: EventStatus
   company: string
   ticker: string
+  /** Tombstone-only: suppressed canonical key (date|ticker or date|n:<company>). */
+  tombstone_key?: string
+  /** Tombstone-only: original event title for display/restore. */
+  original_title?: string
 }
 
 /** Превращает нормализованные события в плоские raw-строки (1 строка = 1 компания).

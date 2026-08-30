@@ -783,16 +783,18 @@ CREATE INDEX IF NOT EXISTS idx_calendar_events_date ON calendar_events(date);
 -- 21a. calendar_events_raw — сырые срезы провайдеров
 -- ============================================================
 CREATE TABLE IF NOT EXISTS calendar_events_raw (
-  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  source      VARCHAR(20) NOT NULL,        -- 'investmint' | 'smartlab' | 'legacy' | 'manual'
-  date        DATE NOT NULL,
-  weekday     VARCHAR(2) NOT NULL,        -- значение парсера, sanity-check в М2
-  title       TEXT NOT NULL,
-  kind        VARCHAR(10) NOT NULL,
-  status      VARCHAR(10) NOT NULL,
-  company     VARCHAR(100) NOT NULL,
-  ticker      VARCHAR(10) NOT NULL,        -- может быть 'UNKNOWN'
-  uploaded_at TIMESTAMP DEFAULT NOW()
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  source          VARCHAR(20) NOT NULL,        -- 'investmint' | 'smartlab' | 'legacy' | 'manual'
+  date            DATE NOT NULL,
+  weekday         VARCHAR(2) NOT NULL,        -- значение парсера, sanity-check в М2
+  title           TEXT NOT NULL,
+  kind            VARCHAR(10) NOT NULL,
+  status          VARCHAR(10) NOT NULL,
+  company         VARCHAR(100) NOT NULL,
+  ticker          VARCHAR(10) NOT NULL,        -- может быть 'UNKNOWN'
+  uploaded_at     TIMESTAMP DEFAULT NOW(),
+  tombstone_key   TEXT,                       -- ключ подавления для tombstone-строк
+  original_title  TEXT                        -- оригинальный title события в tombstone
 );
 
 CREATE INDEX IF NOT EXISTS idx_cal_raw_source ON calendar_events_raw(source);
