@@ -36,6 +36,7 @@ import {
   createCalendarEventGroup,
   updateCalendarEventGroup,
   deleteCalendarEventGroup,
+  restoreCalendarEventGroup,
   validateProviderSlice,
   ingestProviderSlice,
   getMskDateString,
@@ -1245,6 +1246,7 @@ router.get('/calendar/events', adminMiddleware, async (req: AuthRequest, res) =>
       kind: req.query.kind as string | undefined,
       status: req.query.status as string | undefined,
       possible_duplicate: req.query.possible_duplicate === 'true' ? true : undefined,
+      tombstones: req.query.tombstones === 'true' ? true : undefined,
       limit: req.query.limit ? Number(req.query.limit) : undefined,
       offset: req.query.offset ? Number(req.query.offset) : undefined,
     };
@@ -1255,6 +1257,22 @@ router.get('/calendar/events', adminMiddleware, async (req: AuthRequest, res) =>
     console.error('[Admin] Calendar events list error:', err.message);
     const status = calendarErrorStatus(err);
     res.status(status).json({ error: status === 500 ? 'Internal error' : err.message || 'Failed to list calendar events' });
+  }
+});
+
+// DELETE /api/admin/calendar/events/tombstone — restore a previously deleted event
+router.delete('/calendar/events/tombstone', adminMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const date = decodeURIComponent(req.query.date as string);
+    const title = decodeURIComponent(req.query.title as string);
+    const company = decodeURIComponent(req.query.company as string);
+
+    await restoreCalendarEventGroup(date, title, company);
+    res.json({ success: true });
+  } catch (err: any) {
+    console.error('[Admin] Calendar event restore error:', err.message);
+    const status = calendarErrorStatus(err);
+    res.status(status).json({ error: status === 500 ? 'Internal error' : err.message || 'Failed to restore calendar event' });
   }
 });
 

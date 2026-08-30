@@ -656,11 +656,21 @@ async function touchCalendarMeta(q: QueryFn): Promise<void> {
   );
 }
 
+async function touchCalendarSource(q: QueryFn, source: string, warnings: string[] = []): Promise<void> {
+  await q(
+    `INSERT INTO calendar_sources (source, uploaded_at, last_stale_alert_at, last_warnings)
+     VALUES ($1, ${nowSql()}, NULL, $2)
+     ON CONFLICT (source) DO UPDATE SET uploaded_at = ${nowSql()}, last_stale_alert_at = NULL, last_warnings = $2`,
+    [source, JSON.stringify(warnings)]
+  );
+}
+
 export interface CalendarAdminFilters {
   search?: string;
   kind?: string;
   status?: string;
   possible_duplicate?: boolean;
+  tombstones?: boolean;
   limit?: number;
   offset?: number;
 }
@@ -672,8 +682,52 @@ export async function listCalendarEventGroups(
   const kind = typeof filters.kind === 'string' && filters.kind.length > 0 ? filters.kind : undefined;
   const status = typeof filters.status === 'string' && filters.status.length > 0 ? filters.status : undefined;
   const possibleDuplicate = filters.possible_duplicate === true;
+  const tombstones = filters.tombstones === true;
   const limit = Number.isFinite(Number(filters.limit)) && Number(filters.limit) > 0 ? Number(filters.limit) : 50;
   const offset = Number.isFinite(Number(filters.offset)) && Number(filters.offset) >= 0 ? Number(filters.offset) : 0;
+
+  if (tombstones) {
+    const rowsResult = await query(
+      `SELECT date, weekday, title, company
+       FROM calendar_events_raw
+       WHERE source = 'manual' AND ticker = '__deleted__'
+       ORDER BY date DESC, title, company`
+    );
+
+    const groups = new Map<string, CalendarAdminEvent>();
+    for (const r of rowsResult.rows) {
+      const date = normalizeDbDate(r.date);
+      const displayTitle = r.title || r.company;
+      const key = `${date}|${displayTitle}|${r.company}`;
+      if (!groups.has(key)) {
+        groups.set(key, {
+          date,
+          weekday: r.weekday,
+          title: displayTitle,
+          kind: 'Другое',
+          status: 'expected',
+          companies: [],
+          companies_count: 0,
+          sources: ['manual'],
+          possible_duplicate: false,
+        });
+      }
+      const group = groups.get(key)!;
+      group.companies.push({ name: r.company, ticker: '__deleted__', sources: [] });
+      group.companies_count++;
+    }
+
+    let events = Array.from(groups.values());
+    events.sort((a, b) => {
+      if (a.date !== b.date) return b.date.localeCompare(a.date);
+      return a.title.localeCompare(b.title, 'ru');
+    });
+
+    const total = events.length;
+    events = events.slice(offset, offset + limit);
+
+    return { events, total };
+  }
 
   const conditions: string[] = [];
   const params: any[] = [];
@@ -800,7 +854,7 @@ export async function createCalendarEventGroup(event: unknown): Promise<void> {
 
   await withCalendarTransaction(async (q) => {
     const existing = await q(
-      `SELECT 1 FROM calendar_events_raw WHERE date = $1 AND title = $2 AND kind = $3 LIMIT 1`,
+      `SELECT 1 FROM calendar_events_raw WHERE source = 'manual' AND date = $1 AND title = $2 AND kind = $3 LIMIT 1`,
       [validated.date, validated.title, validated.kind]
     );
     if (existing.rows.length > 0) {
@@ -816,6 +870,7 @@ export async function createCalendarEventGroup(event: unknown): Promise<void> {
     }
 
     await touchCalendarMeta(q);
+    await touchCalendarSource(q, 'manual');
     await rebuildCanonical(q);
   });
 
@@ -831,14 +886,36 @@ export async function updateCalendarEventGroup(
 ): Promise<void> {
   const validated = validateCalendarAdminEvent(event);
 
+  const oldGroup = await getCalendarEventGroup(oldDate, oldTitle, oldKind);
+  if (!oldGroup) {
+    throw new CalendarAdminError('Event group not found', 404);
+  }
+
+  const newMergeKeys = new Set(
+    validated.companies.map((c) => mergeKey(validated.date, c.ticker, c.name))
+  );
+
   await withCalendarTransaction(async (q) => {
-    const del = await q(
-      `DELETE FROM calendar_events_raw WHERE date = $1 AND title = $2 AND kind = $3`,
+    // Only delete manual rows for the old key; provider raw rows must stay untouched.
+    await q(
+      `DELETE FROM calendar_events_raw WHERE source = 'manual' AND date = $1 AND title = $2 AND kind = $3`,
       [oldDate, oldTitle, oldKind]
     );
 
-    if (!del.rowCount) {
-      throw new CalendarAdminError('Event group not found', 404);
+    // Tombstone old merge keys that are no longer represented in the updated event
+    // so provider data cannot resurrect a removed/changed company or date.
+    for (const company of oldGroup.companies) {
+      const oldKey = mergeKey(oldDate, company.ticker, company.name);
+      if (!newMergeKeys.has(oldKey)) {
+        const tombstoneTitle = company.ticker && company.ticker.toUpperCase() !== 'UNKNOWN'
+          ? company.ticker.toUpperCase()
+          : '';
+        await q(
+          `INSERT INTO calendar_events_raw (source, date, weekday, title, kind, status, company, ticker, uploaded_at)
+           VALUES ('manual', $1, $2, $3, 'Другое', 'expected', $4, '__deleted__', ${nowSql()})`,
+          [oldDate, oldGroup.weekday, tombstoneTitle, company.name]
+        );
+      }
     }
 
     for (const company of validated.companies) {
@@ -850,6 +927,7 @@ export async function updateCalendarEventGroup(
     }
 
     await touchCalendarMeta(q);
+    await touchCalendarSource(q, 'manual');
     await rebuildCanonical(q);
   });
 
@@ -862,17 +940,57 @@ export async function deleteCalendarEventGroup(
   title: string,
   kind: string
 ): Promise<void> {
-  await withCalendarTransaction(async (q) => {
-    const del = await q(
-      `DELETE FROM calendar_events_raw WHERE date = $1 AND title = $2 AND kind = $3`,
-      [date, title, kind]
-    );
+  const group = await getCalendarEventGroup(date, title, kind);
+  if (!group) {
+    throw new CalendarAdminError('Event group not found', 404);
+  }
 
-    if (!del.rowCount) {
-      throw new CalendarAdminError('Event group not found', 404);
+  await withCalendarTransaction(async (q) => {
+    // Do not delete provider raw rows; insert tombstones to suppress the merge keys.
+    for (const company of group.companies) {
+      const tombstoneTitle = company.ticker && company.ticker.toUpperCase() !== 'UNKNOWN'
+        ? company.ticker.toUpperCase()
+        : '';
+      await q(
+        `INSERT INTO calendar_events_raw (source, date, weekday, title, kind, status, company, ticker, uploaded_at)
+         VALUES ('manual', $1, $2, $3, 'Другое', 'expected', $4, '__deleted__', ${nowSql()})`,
+        [date, group.weekday, tombstoneTitle, company.name]
+      );
     }
 
     await touchCalendarMeta(q);
+    await touchCalendarSource(q, 'manual');
+    await rebuildCanonical(q);
+  });
+
+  broadcastCalendarRefresh();
+  invalidateCalendarCache();
+}
+
+export async function restoreCalendarEventGroup(
+  date: string,
+  title: string,
+  company: string
+): Promise<void> {
+  await withCalendarTransaction(async (q) => {
+    const titleUpper = (title || '').toUpperCase();
+    // title is the deleted ticker when non-empty; otherwise the company name is the fallback key.
+    if (titleUpper) {
+      await q(
+        `DELETE FROM calendar_events_raw
+         WHERE source = 'manual' AND ticker = '__deleted__' AND date = $1 AND title = $2`,
+        [date, titleUpper]
+      );
+    } else {
+      await q(
+        `DELETE FROM calendar_events_raw
+         WHERE source = 'manual' AND ticker = '__deleted__' AND date = $1 AND title = '' AND company = $2`,
+        [date, company]
+      );
+    }
+
+    await touchCalendarMeta(q);
+    await touchCalendarSource(q, 'manual');
     await rebuildCanonical(q);
   });
 
@@ -973,6 +1091,10 @@ function makeCanonicalKey(date: string, ticker: string, company: string): string
     return `${date}|${tickerUpper}`;
   }
   return `${date}|n:${normalizeCompanyName(company)}`;
+}
+
+function mergeKey(date: string, ticker: string, company: string): string {
+  return makeCanonicalKey(date, ticker, company);
 }
 
 function pickRepresentative(rows: CalendarRawRow[]): CalendarRawRow {
@@ -1265,8 +1387,24 @@ function buildCanonicalRowsWithStats(rawRows: CalendarRawRow[]): { canonical: Ca
     status: assertValidStatus(r.status),
   }));
 
-  const groups = new Map<string, CalendarRawRow[]>();
+  // Tombstones are manual marker rows that suppress any canonical group with the same merge key.
+  const tombstoneKeys = new Set<string>();
+  const regularRows: typeof rows = [];
   for (const row of rows) {
+    if (row.source === 'manual' && row.ticker === '__deleted__') {
+      const titleUpper = (row.title || '').toUpperCase();
+      if (titleUpper) {
+        tombstoneKeys.add(`${row.date}|${titleUpper}`);
+      } else {
+        tombstoneKeys.add(`${row.date}|n:${normalizeCompanyName(row.company)}`);
+      }
+      continue;
+    }
+    regularRows.push(row);
+  }
+
+  const groups = new Map<string, CalendarRawRow[]>();
+  for (const row of regularRows) {
     const key = makeCanonicalKey(row.date, row.ticker, row.company);
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key)!.push(row);
@@ -1275,7 +1413,8 @@ function buildCanonicalRowsWithStats(rawRows: CalendarRawRow[]): { canonical: Ca
   const canonical: CanonicalRow[] = [];
   let duplicateCount = 0;
 
-  for (const [, groupRows] of groups) {
+  for (const [groupKey, groupRows] of groups) {
+    if (tombstoneKeys.has(groupKey)) continue;
     const allSources = dedupeSources(groupRows.map((r) => r.source));
 
     const kindMap = new Map<EventKind, CalendarRawRow[]>();

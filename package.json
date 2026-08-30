@@ -12,7 +12,8 @@
     "verify:calendar": "npm run build && node scripts/calendar-m1-verify.js",
     "verify:calendarAdapters": "npm run build && node scripts/calendar-m2-verify.js",
     "verify:calendarM3": "npm run build && node scripts/calendar-m3-verify.js",
-    "verify:calendarM4": "npm run build && node scripts/calendar-m4-verify.js"
+    "verify:calendarM4": "npm run build && node scripts/calendar-m4-verify.js",
+    "verify:calendarM5": "npm run build && node scripts/calendar-m5-verify.js"
   },
   "keywords": [
     "news",
