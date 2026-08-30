@@ -15,10 +15,8 @@
 - Query: `?dry_run=1` — пробный прогон без записи в БД.
 - Body: сырое JSON провайдера (Content-Type: `application/json`).
 
-> **DEPRECATED:** старый `POST /api/admin/calendar` (загрузка `days[]` целиком)
-> больше не рекомендуется. Новые провайдерские срезы загружаются через
-> `POST /api/admin/calendar/:source`. Legacy endpoint остаётся работающим до
-> удаления редактора календаря (М5).
+> Старый `POST /api/admin/calendar` (загрузка `days[]` целиком) удалён в М5.
+> Все провайдерские срезы загружаются через `POST /api/admin/calendar/:source`.
 
 #### Пример
 
@@ -191,3 +189,26 @@ curl "https://api.example.com/api/admin/calendar/sources" \
 7. `computeDiff` сравнивает snapshot и новый канон.
 8. Если не `dry_run` и diff непустой — `broadcastCalendarRefresh()` + `invalidateCalendarCache()`.
 9. Ответ формируется из parsed/diff/samples/generated_at.
+
+---
+
+## Схема raw-таблицы
+
+`calendar_events_raw` хранит плоские строки, по одной на компанию в событии:
+
+```text
+source, date, weekday, title, kind, status, company, ticker, uploaded_at
+```
+
+Дополнительные поля, используемые ручным CRUD и tombstone-механизмом (М5):
+
+- `tombstone_key TEXT` — канонический ключ `date|ticker` или `date|n:<company>`,
+  который tombstone-строка подавляет. Позволяет стабильно матчить tombstone
+  независимо от будущих изменений в fallback-логике.
+- `original_title TEXT` — оригинальный `title` удалённого события. Сохраняется
+  для отображения в списке tombstones и для дизамбигуации restore, когда
+  несколько tombstone делят один `tombstone_key`.
+
+Tombstone-строки — это строки с `source = 'manual'` и `ticker = '__deleted__'`.
+Они не отображаются в публичном календаре, но подавляют canonical-события
+с совпадающим `tombstone_key` при пересборке канона.

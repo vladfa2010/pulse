@@ -352,7 +352,7 @@ async function main() {
       (e) => e.date === dupDate && e.title === dupTitle
     );
     assert(dupTombstone, 'test6: tombstone should appear in tombstones list');
-    assert(dupTombstone.kind === 'Другое', 'test6: tombstone kind should be Другое');
+    assert(dupTombstone.kind === dupEvent.kind, `test6: tombstone kind should be ${dupEvent.kind}`);
     assert(dupTombstone.companies.length === 1, 'test6: tombstone should have one company');
     assert(dupTombstone.companies[0].ticker === '__deleted__', 'test6: tombstone company ticker should be __deleted__');
 

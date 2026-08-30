@@ -433,12 +433,6 @@ export async function saveCalendarSnapshot(days: CalendarDay[]): Promise<{ daysC
     }
 
     await q(
-      `INSERT INTO calendar_meta (id, uploaded_at, last_stale_alert_at)
-       VALUES (1, ${nowSql()}, NULL)
-       ON CONFLICT (id) DO UPDATE SET uploaded_at = ${nowSql()}, last_stale_alert_at = NULL`
-    );
-
-    await q(
       `INSERT INTO calendar_sources (source, uploaded_at, last_stale_alert_at)
        VALUES ('legacy', ${nowSql()}, NULL)
        ON CONFLICT (source) DO UPDATE SET uploaded_at = ${nowSql()}, last_stale_alert_at = NULL`
@@ -513,12 +507,6 @@ export async function mergeCalendarSnapshot(
         [row.date, row.weekday, row.title, row.kind, row.status, row.company, row.ticker]
       );
     }
-
-    await q(
-      `INSERT INTO calendar_meta (id, uploaded_at, last_stale_alert_at)
-       VALUES (1, ${nowSql()}, NULL)
-       ON CONFLICT (id) DO UPDATE SET uploaded_at = ${nowSql()}, last_stale_alert_at = NULL`
-    );
 
     await q(
       `INSERT INTO calendar_sources (source, uploaded_at, last_stale_alert_at)
@@ -694,7 +682,7 @@ export async function listCalendarEventGroups(
 
   if (tombstones) {
     const rowsResult = await query(
-      `SELECT date, weekday, title, company, original_title
+      `SELECT date, weekday, title, kind, company, original_title
        FROM calendar_events_raw
        WHERE source = 'manual' AND ticker = '__deleted__'
        ORDER BY date DESC, title, company`
@@ -704,13 +692,14 @@ export async function listCalendarEventGroups(
     for (const r of rowsResult.rows) {
       const date = normalizeDbDate(r.date);
       const displayTitle = r.original_title || r.title || r.company;
-      const key = `${date}|${displayTitle}|${r.company}`;
+      const kind = assertValidKind(r.kind);
+      const key = `${date}|${displayTitle}|${r.company}|${kind}`;
       if (!groups.has(key)) {
         groups.set(key, {
           date,
           weekday: r.weekday,
           title: displayTitle,
-          kind: 'Другое',
+          kind,
           status: 'expected',
           companies: [],
           companies_count: 0,
@@ -918,8 +907,8 @@ export async function updateCalendarEventGroup(
           : '';
         await q(
           `INSERT INTO calendar_events_raw (source, date, weekday, title, kind, status, company, ticker, uploaded_at, tombstone_key, original_title)
-           VALUES ('manual', $1, $2, $3, 'Другое', 'expected', $4, '__deleted__', ${nowSql()}, $5, $6)`,
-          [oldDate, oldGroup.weekday, tombstoneTitle, company.name, oldKey, oldTitle]
+           VALUES ('manual', $1, $2, $3, $4, 'expected', $5, '__deleted__', ${nowSql()}, $6, $7)`,
+          [oldDate, oldGroup.weekday, tombstoneTitle, oldKind, company.name, oldKey, oldTitle]
         );
       }
     }
@@ -959,8 +948,8 @@ export async function deleteCalendarEventGroup(
       const tombstoneKey = makeCanonicalKey(date, company.ticker, company.name);
       await q(
         `INSERT INTO calendar_events_raw (source, date, weekday, title, kind, status, company, ticker, uploaded_at, tombstone_key, original_title)
-         VALUES ('manual', $1, $2, $3, 'Другое', 'expected', $4, '__deleted__', ${nowSql()}, $5, $6)`,
-        [date, group.weekday, tombstoneTitle, company.name, tombstoneKey, title]
+         VALUES ('manual', $1, $2, $3, $4, 'expected', $5, '__deleted__', ${nowSql()}, $6, $7)`,
+        [date, group.weekday, tombstoneTitle, kind, company.name, tombstoneKey, title]
       );
     }
 
