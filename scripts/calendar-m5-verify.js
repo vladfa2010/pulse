@@ -99,6 +99,7 @@ async function request(server, method, path, body) {
       port,
       path,
       method,
+      agent: new http.Agent({ keepAlive: false }),
       headers: {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer ' + createToken('admin1'),
