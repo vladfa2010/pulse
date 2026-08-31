@@ -42,15 +42,15 @@ Use when: cron speed is critical, budget secondary.
 
 ---
 
-### 0.3 kimi-k2.5 (cheaper, slower, 262K context)
+### 0.3 kimi-k2.6 (cheaper, slower, 262K context)
 
 Use when: need large context window, ok with slower cron.
 
-**⚠️ CRITICAL:** `kimi-k2.5` runs in **Thinking mode** by default. Thinking mode requires `temperature: 1.0` and returns output in `reasoning_content` field (NOT `content`). **For API calls with JSON/text parsing, ALWAYS disable thinking:**
+**⚠️ CRITICAL:** `kimi-k2.6` (и ранее `kimi-k2.5`) работает в **Thinking mode** по умолчанию. Thinking mode требует `temperature: 1.0` и возвращает вывод в `reasoning_content` (НЕ в `content`). **Для API-вызовов с парсингом JSON/text ВСЕГДА отключайте thinking:**
 
 ```typescript
 {
-  model: 'kimi-k2.5',
+  model: 'kimi-k2.6',
   temperature: 0.6,
   thinking: { type: 'disabled' },                // ← ALWAYS for API parsing!
   response_format: { type: 'json_object' },
@@ -79,7 +79,7 @@ Use when: need large context window, ok with slower cron.
 #### Option A: Env var (no code change, no deploy)
 ```bash
 # Render Dashboard → Environment → Add:
-KIMI_MODEL = moonshot-v1-32k   # or kimi-k2.5
+KIMI_MODEL = moonshot-v1-32k   # or kimi-k2.6
 # Save → auto-redeploy in 30 sec
 ```
 
@@ -96,17 +96,17 @@ curl https://pulse-api-bsov.onrender.com/health | jq .kimi_model
 ### 0.6 FINAL CONFIG (2026-06-05)
 
 ```
-smartTagMatcher.ts  →  moonshot-v1-32k  (cron speed)
-translate.ts        →  moonshot-v1-32k  (cron speed)
-tagManager.ts       →  moonshot-v1-32k  (cron speed)
-user.ts (summary)   →  kimi-k2.5        (cheaper, 10-min cache)
-index.ts (/health)  →  moonshot-v1-32k  (default display)
+smartTagMatcher.ts  →  kimi-k2.6        (cost + context)
+translate.ts        →  kimi-k2.6        (cost + context)
+tagManager.ts       →  kimi-k2.6        (cost + context)
+user.ts (summary)   →  kimi-k2.6        (cost + context)
+index.ts (/health)  →  kimi-k2.6        (default display)
 ```
 
 | Service | Model | Temperature | Thinking |
 |---------|-------|-------------|----------|
-| Cron (sentiment/tags/translate) | `moonshot-v1-32k` | 0.1 / 0.3 | n/a |
-| Summary | `kimi-k2.5` | 0.6 | `{ type: 'disabled' }` |
+| Cron (sentiment/tags/translate) | `kimi-k2.6` | 0.6 | `{ type: 'disabled' }` |
+| Summary | `kimi-k2.6` | 0.6 | `{ type: 'disabled' }` |
 
 **Why:** Cron speed is critical — 2-4 min cycles. Summary has 10-min cache — speed doesn't matter, cost does.
 
@@ -374,9 +374,11 @@ const matchedTags = mapHashtagsToTags(hashtags);  // ["сбер", "россия"
 - Это увеличивает время ответа, но не критично для cron-процессора.
 - Пользователь видит обоснование сентимента и влияния тегов на русском.
 
-### LLM Model: `kimi-k2.5` (since 2026-06-05)
+### LLM Model: `kimi-k2.6` (since 2026-08-31)
 
-| Параметр | `moonshot-v1-32k` (legacy) | `kimi-k2.5` (default) |
+> Историческая заметка: с 2026-06-05 по 2026-08-30 дефолтом был `kimi-k2.5`; 31 августа 2026 Moonshot вывела k2.5 из эксплуатации, проект мигрировал на `kimi-k2.6`.
+
+| Параметр | `moonshot-v1-32k` (legacy) | `kimi-k2.6` (default) |
 |----------|---------------------------|----------------------|
 | Input цена | $1.00 / 1M tokens | **$0.60** (−40%) |
 | Output цена | $3.00 / 1M tokens | **$2.50** (−17%) |

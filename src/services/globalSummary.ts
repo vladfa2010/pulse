@@ -7,7 +7,7 @@ const KIMI_MODEL = process.env.KIMI_MODEL || 'kimi-k2.6';
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
-const TTL_MS = 6 * 3600 * 1000 + 60 * 1000; // 6 часов + 1 минута
+const TTL_MS = 6 * 3600 * 1000 + 600 * 1000; // 6 часов + 10 минут
 const LOCK_TTL_MINUTES = 10;
 const INSTANCE_ID = `${process.env.RENDER_INSTANCE_ID || 'local'}-${process.pid}-${Date.now()}`;
 

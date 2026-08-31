@@ -787,7 +787,7 @@ ALTER TABLE news DROP CONSTRAINT IF EXISTS news_url_norm_unique;
 ### 6.1 translateBatch
 
 1. **Фильтрует** тексты: только EN (`hasLatin && !hasCyrillic && length > 5`).
-2. **Отправляет batch** в Kimi (5 текстов для `moonshot-v1-32k`, 3 для `kimi-k2.5`).
+2. **Отправляет batch** в Kimi (5 текстов для `moonshot-v1-32k`, 3 для `kimi-k2.6`).
 3. **Парсит ответ** — поддерживает 3 формата:
    - JSON-array: `["Перевод 1", "Перевод 2"]`
    - JSON-object с числовыми ключами: `{"0": "Перевод 1", "1": "Перевод 2"}`
@@ -826,7 +826,7 @@ WHERE needs_translation = TRUE
 
 ### 6.4 Параметры
 
-| Параметр | `moonshot-v1-32k` | `kimi-k2.5` |
+| Параметр | `moonshot-v1-32k` | `kimi-k2.6` |
 |----------|-------------------|-------------|
 | Batch size | 5 | 3 |
 | Temperature | 0.3 | 0.6 |
