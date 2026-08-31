@@ -17,7 +17,7 @@ import { getPlanById } from './subscription';
 import { getUserPlanId } from '../utils/users';
 
 const KIMI_API_KEY = process.env.KIMI_API_KEY;
-const KIMI_MODEL = process.env.KIMI_MODEL || 'moonshot-v1-32k';
+const KIMI_MODEL = process.env.KIMI_MODEL || 'kimi-k2.6';
 
 // Допустимые типы тегов
 export const TAG_TYPES = [

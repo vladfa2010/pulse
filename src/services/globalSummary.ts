@@ -3,7 +3,7 @@ import { query } from '../config/db';
 import { nowSql } from '../utils/nowSql';
 
 const KIMI_API_KEY = process.env.KIMI_API_KEY;
-const KIMI_MODEL = process.env.KIMI_MODEL || 'kimi-k2.5';
+const KIMI_MODEL = process.env.KIMI_MODEL || 'kimi-k2.6';
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 

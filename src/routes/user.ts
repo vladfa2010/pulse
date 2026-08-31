@@ -660,7 +660,7 @@ router.post('/email-settings', authMiddleware, async (req: AuthRequest, res) => 
 // ═══════════════════════════════════════════════════════════════════════════
 
 const KIMI_API_KEY_SUMMARY = process.env.KIMI_API_KEY;
-const KIMI_MODEL_SUMMARY = process.env.KIMI_MODEL || 'kimi-k2.5';
+const KIMI_MODEL_SUMMARY = process.env.KIMI_MODEL || 'kimi-k2.6';
 
 interface SummaryCacheEntry {
   text: string;

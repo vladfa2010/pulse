@@ -424,7 +424,7 @@ app.get('/debug/verify-delete/:userId', async (req, res) => {
 // Test model availability — checks if a specific model is accessible
 // ═══════════════════════════════════════════════════════════════════════════
 app.get('/test-model', async (req, res) => {
-  const testModel = (req.query.model as string) || 'kimi-k2.5';
+  const testModel = (req.query.model as string) || 'kimi-k2.6';
   const apiKey = process.env.KIMI_API_KEY;
 
   if (!apiKey) {
@@ -1386,7 +1386,7 @@ app.get('/debug-env', async (req, res) => {
     kimi_key_set: !!process.env.KIMI_API_KEY,
     kimi_key_length: process.env.KIMI_API_KEY ? process.env.KIMI_API_KEY.length : 0,
     kimi_key_prefix: process.env.KIMI_API_KEY ? process.env.KIMI_API_KEY.slice(0, 12) + '...' : null,
-    kimi_model: process.env.KIMI_MODEL || 'moonshot-v1-32k (default)',
+    kimi_model: process.env.KIMI_MODEL || 'kimi-k2.6 (default)',
     cron_secret_set: !!CRON_SECRET_KEY,
     telegram_bot_set: !!process.env.TELEGRAM_BOT_TOKEN,
     telegram_bot_prefix: process.env.TELEGRAM_BOT_TOKEN ? process.env.TELEGRAM_BOT_TOKEN.split(':')[0] + ':...' : null,
