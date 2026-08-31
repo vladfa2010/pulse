@@ -78,7 +78,7 @@ async function fetchGlobalArticles(): Promise<{
      FROM news
      WHERE published_at > ${timeFilter}
      ORDER BY published_at DESC
-     LIMIT 50`,
+     LIMIT 200`,
     []
   );
 
@@ -247,7 +247,7 @@ export async function generateGlobalSummary(
           Authorization: `Bearer ${KIMI_API_KEY}`,
           'Content-Type': 'application/json',
         },
-        timeout: 60000,
+        timeout: 180000,
       }
     );
 
