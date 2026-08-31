@@ -253,7 +253,6 @@ Return ONLY JSON. If not found, use null for optional fields.`;
         {
           model: KIMI_MODEL,
           messages,
-          temperature: 0.1,
           max_tokens: 2000,
           response_format: { type: 'json_object' },
           thinking: isKimiK ? { type: 'disabled' } : undefined,
@@ -308,7 +307,6 @@ Return ONLY JSON. If not found, use null for optional fields.`;
           {
             model: KIMI_MODEL,
             messages,
-            temperature: 0.1,
             max_tokens: 2000,
             response_format: { type: 'json_object' },
             thinking: isKimiK ? { type: 'disabled' } : undefined,
@@ -589,8 +587,8 @@ Response format: company (or ticker, sector, trend, person, commodity, index, cu
       {
         model: KIMI_MODEL,
         messages: [{ role: 'user', content: prompt }],
-        temperature: KIMI_MODEL.startsWith('kimi-k') ? 1 : 0.1,
         max_tokens: 10,
+        thinking: KIMI_MODEL.startsWith('kimi-k') ? { type: 'disabled' } : undefined,
       },
       {
         headers: {
