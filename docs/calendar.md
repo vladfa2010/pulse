@@ -210,7 +210,9 @@ Query-параметры:
       "title": "Годовой отчёт",
       "kind": "МСФО",
       "status": "confirmed",
-      "companies": [],
+      "companies": [
+        { "name": "Сбербанк", "ticker": "SBER", "sources": ["investmint"], "tag_ids": ["sber"] }
+      ],
       "companies_count": 1,
       "sources": ["investmint"],
       "tag_ids": ["sber"],
@@ -221,7 +223,7 @@ Query-параметры:
 }
 ```
 
-> Поле `companies` в списке пустое намеренно, чтобы не раздувать payload. Полный состав группы запрашивается отдельным `GET /api/admin/calendar/events/:date/:title/:kind`.
+> Поле `companies` заполнено для каждой группы: админская таблица отображает список компаний прямо в строке. Полный состав с `matched_via` для каждой компании по-прежнему доступен через `GET /api/admin/calendar/events/:date/:title/:kind`.
 
 ---
 
