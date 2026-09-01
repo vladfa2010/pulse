@@ -61,8 +61,13 @@ docker-compose up
 | GET | `/api/news/:id` | Детальная новость |
 | GET | `/api/news/by-tag/:tag` | Новости по тегу |
 | GET | `/api/news/tags/popular` | Популярные теги сообщества (24h/7d/30d) |
+| GET | `/api/news_heatmap` | Тепловая карта активности (year/day/day_hours) |
+| GET | `/api/news_heatmap/candles` | Недельные свечи IMOEX/SPY/инструмента тега |
+| GET | `/api/news_heatmap/mini-grids` | Мини-сетки по списку тегов |
 
-Подробнее: [`docs/news/popular-tags.md`](./docs/news/popular-tags.md)
+Подробнее:
+- [`docs/news/popular-tags.md`](./docs/news/popular-tags.md)
+- [`docs/news/heatmap.md`](./docs/news/heatmap.md)
 
 ### User
 | Method | Endpoint | Описание |
