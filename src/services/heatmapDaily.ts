@@ -4,7 +4,7 @@
  * Timezone: Europe/Moscow for all day boundaries.
  */
 
-import { query } from '../config/db';
+import { query, pool } from '../config/db';
 import {
   DEFAULT_TZ,
   HOURS_DAYS,
@@ -469,66 +469,97 @@ export async function getTagMiniGrids(userId: string, tagIds: string[]): Promise
 
 export async function ensurePortfolioHistoryFresh(userId: string, tags: string[]): Promise<void> {
   const currentHash = portfolioKey(tags);
-  const meta = await query(
-    USE_SQLITE
-      ? `SELECT tags_hash FROM user_portfolio_daily_meta WHERE user_id = ?`
-      : `SELECT tags_hash FROM user_portfolio_daily_meta WHERE user_id = $1::uuid`,
-    [userId]
-  );
-  if (meta.rows[0]?.tags_hash === currentHash) return;
 
-  const t0 = Date.now();
-  console.info(`[NewsHeatmap] portfolio rebuild: start user=${userId}`);
-  // Полная перестройка: сначала чистим старый состав, иначе дни,
-  // отсутствующие в новом SELECT, сохранят устаревшие значения.
-  await query(
-    USE_SQLITE
-      ? `DELETE FROM user_portfolio_daily WHERE user_id = ?1`
-      : `DELETE FROM user_portfolio_daily WHERE user_id = $1::uuid`,
-    [userId]
-  );
-  const s = {
-    pg: `
-      INSERT INTO user_portfolio_daily (user_id, day_msk, stories, pos, neg, resonance)
-      SELECT $1::uuid,
-             (n.published_at AT TIME ZONE 'UTC' AT TIME ZONE '${DEFAULT_TZ}')::date,
-             COUNT(DISTINCT n.id),
-             SUM(CASE WHEN n.sentiment='positive' THEN 1 ELSE 0 END),
-             SUM(CASE WHEN n.sentiment='negative' THEN 1 ELSE 0 END),
-             COALESCE(SUM(n.source_count), 0)
-      FROM news n
-      WHERE n.published_at >= NOW() - interval '${WEEKS * 7} days'
-        AND n.matched_tags && (SELECT array_agg(tag_id) FROM portfolios WHERE user_id = $1::uuid AND NOT is_frozen)
-      GROUP BY 1
-      ON CONFLICT (user_id, day_msk) DO UPDATE SET
-        stories = EXCLUDED.stories, pos = EXCLUDED.pos,
-        neg = EXCLUDED.neg, resonance = EXCLUDED.resonance`,
-    lite: `
-      INSERT INTO user_portfolio_daily (user_id, day_msk, stories, pos, neg, resonance)
-      SELECT ?1,
-             date(datetime(n.published_at, '${sqliteOffset(DEFAULT_TZ)}')),
-             COUNT(DISTINCT n.id),
-             SUM(CASE WHEN n.sentiment='positive' THEN 1 ELSE 0 END),
-             SUM(CASE WHEN n.sentiment='negative' THEN 1 ELSE 0 END),
-             COALESCE(SUM(n.source_count), 0)
-      FROM news n
-      WHERE n.published_at >= datetime('now', '-${WEEKS * 7} days')
-        AND EXISTS (SELECT 1 FROM json_each(n.matched_tags) je WHERE je.value IN
-          (SELECT tag_id FROM portfolios WHERE user_id = ?1 AND NOT is_frozen))
-      GROUP BY 2
-      ON CONFLICT (user_id, day_msk) DO UPDATE SET
-        stories = EXCLUDED.stories, pos = EXCLUDED.pos,
-        neg = EXCLUDED.neg, resonance = EXCLUDED.resonance`,
-  };
-  await query(USE_SQLITE ? s.lite : s.pg, [userId]);
-  await query(
-    USE_SQLITE
-      ? `INSERT OR REPLACE INTO user_portfolio_daily_meta (user_id, tags_hash, rebuilt_at) VALUES (?, ?, datetime('now'))`
-      : `INSERT INTO user_portfolio_daily_meta (user_id, tags_hash, rebuilt_at) VALUES ($1::uuid, $2, NOW())
-         ON CONFLICT (user_id) DO UPDATE SET tags_hash = EXCLUDED.tags_hash, rebuilt_at = EXCLUDED.rebuilt_at`,
-    [userId, currentHash]
-  );
-  console.info(`[NewsHeatmap] portfolio rebuild: done duration_ms=${Date.now() - t0}`);
+  // SQLite (dev): no pool.connect(), keep sequential autocommit queries.
+  // Concurrent writes here are single-threaded in-process, so a transaction wrapper is not needed.
+  if (USE_SQLITE || !pool) {
+    const meta = await query(
+      `SELECT tags_hash FROM user_portfolio_daily_meta WHERE user_id = ?`,
+      [userId]
+    );
+    if (meta.rows[0]?.tags_hash === currentHash) return;
+
+    const t0 = Date.now();
+    console.info(`[NewsHeatmap] portfolio rebuild: start user=${userId}`);
+    await query(`DELETE FROM user_portfolio_daily WHERE user_id = ?1`, [userId]);
+    await query(
+      `
+        INSERT INTO user_portfolio_daily (user_id, day_msk, stories, pos, neg, resonance)
+        SELECT ?1,
+               date(datetime(n.published_at, '${sqliteOffset(DEFAULT_TZ)}')),
+               COUNT(DISTINCT n.id),
+               SUM(CASE WHEN n.sentiment='positive' THEN 1 ELSE 0 END),
+               SUM(CASE WHEN n.sentiment='negative' THEN 1 ELSE 0 END),
+               COALESCE(SUM(n.source_count), 0)
+        FROM news n
+        WHERE n.published_at >= datetime('now', '-${WEEKS * 7} days')
+          AND EXISTS (SELECT 1 FROM json_each(n.matched_tags) je WHERE je.value IN
+            (SELECT tag_id FROM portfolios WHERE user_id = ?1 AND NOT is_frozen))
+        GROUP BY 2
+        ON CONFLICT (user_id, day_msk) DO UPDATE SET
+          stories = EXCLUDED.stories, pos = EXCLUDED.pos,
+          neg = EXCLUDED.neg, resonance = EXCLUDED.resonance
+      `,
+      [userId]
+    );
+    await query(
+      `INSERT OR REPLACE INTO user_portfolio_daily_meta (user_id, tags_hash, rebuilt_at) VALUES (?, ?, datetime('now'))`,
+      [userId, currentHash]
+    );
+    console.info(`[NewsHeatmap] portfolio rebuild: done duration_ms=${Date.now() - t0}`);
+    return;
+  }
+
+  // PostgreSQL: wrap the whole rebuild in one transaction and lock the meta row.
+  // This prevents two concurrent requests for the same user from running DELETE/INSERT
+  // in parallel and removes the theoretical deadlock with the daily freeze job.
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const meta = await client.query(
+      'SELECT tags_hash FROM user_portfolio_daily_meta WHERE user_id = $1::uuid FOR UPDATE',
+      [userId]
+    );
+    if (meta.rows[0]?.tags_hash === currentHash) {
+      await client.query('COMMIT');
+      return;
+    }
+
+    const t0 = Date.now();
+    console.info(`[NewsHeatmap] portfolio rebuild: start user=${userId}`);
+    await client.query('DELETE FROM user_portfolio_daily WHERE user_id = $1::uuid', [userId]);
+    await client.query(
+      `
+        INSERT INTO user_portfolio_daily (user_id, day_msk, stories, pos, neg, resonance)
+        SELECT $1::uuid,
+               (n.published_at AT TIME ZONE 'UTC' AT TIME ZONE '${DEFAULT_TZ}')::date,
+               COUNT(DISTINCT n.id),
+               SUM(CASE WHEN n.sentiment='positive' THEN 1 ELSE 0 END),
+               SUM(CASE WHEN n.sentiment='negative' THEN 1 ELSE 0 END),
+               COALESCE(SUM(n.source_count), 0)
+        FROM news n
+        WHERE n.published_at >= NOW() - interval '${WEEKS * 7} days'
+          AND n.matched_tags && (SELECT array_agg(tag_id) FROM portfolios WHERE user_id = $1::uuid AND NOT is_frozen)
+        GROUP BY 1
+        ON CONFLICT (user_id, day_msk) DO UPDATE SET
+          stories = EXCLUDED.stories, pos = EXCLUDED.pos,
+          neg = EXCLUDED.neg, resonance = EXCLUDED.resonance
+      `,
+      [userId]
+    );
+    await client.query(
+      `INSERT INTO user_portfolio_daily_meta (user_id, tags_hash, rebuilt_at) VALUES ($1::uuid, $2, NOW())
+       ON CONFLICT (user_id) DO UPDATE SET tags_hash = EXCLUDED.tags_hash, rebuilt_at = EXCLUDED.rebuilt_at`,
+      [userId, currentHash]
+    );
+    await client.query('COMMIT');
+    console.info(`[NewsHeatmap] portfolio rebuild: done duration_ms=${Date.now() - t0}`);
+  } catch (err: any) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 // ─── Freeze (cron 00:05 MSK) ────────────────────────────────────────────────
