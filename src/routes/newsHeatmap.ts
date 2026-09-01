@@ -93,9 +93,11 @@ async function resolveTagInstrument(tagId: string): Promise<Instrument | null> {
   return null;
 }
 
-// scope=all is public; other scopes require authentication.
+// scope=all публичен только в годовом масштабе (для мини-блока на главной);
+// дневной дайджест и почасовая сетка — только после входа.
 function maybeAuth(req: AuthRequest, res: Response, next: NextFunction): void {
-  if (req.query.scope === 'all') {
+  const scale = (req.query.scale as string) || 'year';
+  if (req.query.scope === 'all' && scale === 'year') {
     next();
     return;
   }
@@ -139,6 +141,21 @@ router.get('/', maybeAuth, async (req: AuthRequest, res) => {
     let payload: any;
 
     if (scale === 'year') {
+      // Портфель: ленивая перестройка истории при смене состава (TZ 11.11 п.5.4).
+      // Проверка дешёвая (1 SELECT в meta); rebuild — только при mismatch хеша.
+      if (scope === 'portfolio') {
+        try {
+          const pr = await query(
+            `SELECT tag_id FROM portfolios WHERE user_id = $1::uuid AND NOT is_frozen`,
+            [userId]
+          );
+          const tags = (pr.rows || []).map((r: any) => r.tag_id);
+          await ensurePortfolioHistoryFresh(userId, tags);
+        } catch (e: any) {
+          console.warn('[NewsHeatmap] portfolio freshness check failed:', e.message);
+        }
+      }
+
       const { cells, frozenThrough } = await getYearCells(scope, userId, tagId, tz);
 
       const nonzero = cells.filter((c) => c.stories > 0).map((c) => c.stories).sort((a, b) => a - b);
@@ -160,7 +177,7 @@ router.get('/', maybeAuth, async (req: AuthRequest, res) => {
           generated_at: new Date().toISOString(),
           stale: false,
           tz,
-          empty: cells.length === 0,
+          empty: !cells.some((c) => c.stories > 0),
           frozen_through: frozenThrough,
         },
       };

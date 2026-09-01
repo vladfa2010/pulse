@@ -72,18 +72,18 @@ function yearHistoryParams(scope: Scope, userId: string, tagId: string): any[] {
 function sqlYearHistory(scope: Scope): { pg: string; lite: string } {
   if (scope === 'all') {
     return {
-      pg: `SELECT day_msk, stories, pos, neg, resonance FROM news_all_daily WHERE day_msk >= (NOW() AT TIME ZONE 'UTC' AT TIME ZONE '${DEFAULT_TZ}'::date - interval '${WEEKS * 7} days') ORDER BY day_msk`,
+      pg: `SELECT to_char(day_msk, 'YYYY-MM-DD') AS day_msk, stories, pos, neg, resonance FROM news_all_daily WHERE day_msk >= (NOW() AT TIME ZONE 'UTC' AT TIME ZONE '${DEFAULT_TZ}'::date - interval '${WEEKS * 7} days') ORDER BY day_msk`,
       lite: `SELECT day_msk, stories, pos, neg, resonance FROM news_all_daily WHERE day_msk >= date(datetime('now', '${sqliteOffset(DEFAULT_TZ)}', '-${WEEKS * 7} days')) ORDER BY day_msk`,
     };
   }
   if (scope === 'tag') {
     return {
-      pg: `SELECT day_msk, stories, pos, neg, resonance FROM news_tag_daily WHERE tag_id = $1 AND day_msk >= (NOW() AT TIME ZONE 'UTC' AT TIME ZONE '${DEFAULT_TZ}'::date - interval '${WEEKS * 7} days') ORDER BY day_msk`,
+      pg: `SELECT to_char(day_msk, 'YYYY-MM-DD') AS day_msk, stories, pos, neg, resonance FROM news_tag_daily WHERE tag_id = $1 AND day_msk >= (NOW() AT TIME ZONE 'UTC' AT TIME ZONE '${DEFAULT_TZ}'::date - interval '${WEEKS * 7} days') ORDER BY day_msk`,
       lite: `SELECT day_msk, stories, pos, neg, resonance FROM news_tag_daily WHERE tag_id = ?1 AND day_msk >= date(datetime('now', '${sqliteOffset(DEFAULT_TZ)}', '-${WEEKS * 7} days')) ORDER BY day_msk`,
     };
   }
   return {
-    pg: `SELECT day_msk, stories, pos, neg, resonance FROM user_portfolio_daily WHERE user_id = $1::uuid AND day_msk >= (NOW() AT TIME ZONE 'UTC' AT TIME ZONE '${DEFAULT_TZ}'::date - interval '${WEEKS * 7} days') ORDER BY day_msk`,
+    pg: `SELECT to_char(day_msk, 'YYYY-MM-DD') AS day_msk, stories, pos, neg, resonance FROM user_portfolio_daily WHERE user_id = $1::uuid AND day_msk >= (NOW() AT TIME ZONE 'UTC' AT TIME ZONE '${DEFAULT_TZ}'::date - interval '${WEEKS * 7} days') ORDER BY day_msk`,
     lite: `SELECT day_msk, stories, pos, neg, resonance FROM user_portfolio_daily WHERE user_id = ?1 AND day_msk >= date(datetime('now', '${sqliteOffset(DEFAULT_TZ)}', '-${WEEKS * 7} days')) ORDER BY day_msk`,
   };
 }
@@ -141,6 +141,103 @@ function sqlYearToday(scope: Scope): { pg: string; lite: string } {
          WHERE date(datetime(n.published_at, '${sqliteOffset(DEFAULT_TZ)}')) = date(datetime('now', '${sqliteOffset(DEFAULT_TZ)}'))
            AND EXISTS (SELECT 1 FROM json_each(n.matched_tags) je WHERE je.value IN
                (SELECT tag_id FROM portfolios WHERE user_id = ?1 AND NOT is_frozen))`,
+  };
+}
+
+// Live per-day aggregates from news for an arbitrary [from; to] MSK date range.
+// Params: tag → [tagId, from, to]; portfolio → [userId, from, to]; all → [from, to].
+function sqlLiveRange(scope: Scope): { pg: string; lite: string } {
+  if (scope === 'tag') {
+    return {
+      pg: `
+        SELECT to_char((n.published_at AT TIME ZONE 'UTC' AT TIME ZONE '${DEFAULT_TZ}')::date, 'YYYY-MM-DD') AS day_msk,
+               COUNT(*)::int AS stories,
+               SUM(CASE WHEN n.sentiment='positive' THEN 1 ELSE 0 END)::int AS pos,
+               SUM(CASE WHEN n.sentiment='negative' THEN 1 ELSE 0 END)::int AS neg,
+               COALESCE(SUM(n.source_count),0)::int AS resonance
+        FROM news n, LATERAL unnest(n.matched_tags) AS t(tag_id)
+        WHERE t.tag_id = $1
+          AND (n.published_at AT TIME ZONE 'UTC' AT TIME ZONE '${DEFAULT_TZ}')::date >= $2::date
+          AND (n.published_at AT TIME ZONE 'UTC' AT TIME ZONE '${DEFAULT_TZ}')::date <= $3::date
+        GROUP BY 1`,
+      lite: `
+        SELECT date(datetime(n.published_at, '${sqliteOffset(DEFAULT_TZ)}')) AS day_msk,
+               COUNT(*) AS stories,
+               SUM(CASE WHEN n.sentiment='positive' THEN 1 ELSE 0 END) AS pos,
+               SUM(CASE WHEN n.sentiment='negative' THEN 1 ELSE 0 END) AS neg,
+               COALESCE(SUM(n.source_count),0) AS resonance
+        FROM news n, json_each(n.matched_tags) je
+        WHERE je.value = ?1
+          AND date(datetime(n.published_at, '${sqliteOffset(DEFAULT_TZ)}')) >= ?2
+          AND date(datetime(n.published_at, '${sqliteOffset(DEFAULT_TZ)}')) <= ?3
+        GROUP BY 1`,
+    };
+  }
+  if (scope === 'portfolio') {
+    return {
+      pg: `
+        SELECT s.day_msk,
+               COUNT(*)::int AS stories,
+               SUM(s.pos)::int AS pos,
+               SUM(s.neg)::int AS neg,
+               COALESCE(SUM(s.resonance),0)::int AS resonance
+        FROM (
+          SELECT DISTINCT to_char((n.published_at AT TIME ZONE 'UTC' AT TIME ZONE '${DEFAULT_TZ}')::date, 'YYYY-MM-DD') AS day_msk,
+                 n.id,
+                 CASE WHEN n.sentiment='positive' THEN 1 ELSE 0 END AS pos,
+                 CASE WHEN n.sentiment='negative' THEN 1 ELSE 0 END AS neg,
+                 n.source_count AS resonance
+          FROM portfolios p
+          JOIN news n ON n.matched_tags @> ARRAY[p.tag_id]::text[]
+          WHERE p.user_id = $1::uuid AND NOT p.is_frozen
+            AND (n.published_at AT TIME ZONE 'UTC' AT TIME ZONE '${DEFAULT_TZ}')::date >= $2::date
+            AND (n.published_at AT TIME ZONE 'UTC' AT TIME ZONE '${DEFAULT_TZ}')::date <= $3::date
+        ) s
+        GROUP BY 1`,
+      lite: `
+        SELECT s.day_msk,
+               COUNT(*) AS stories,
+               SUM(s.pos) AS pos,
+               SUM(s.neg) AS neg,
+               COALESCE(SUM(s.resonance),0) AS resonance
+        FROM (
+          SELECT DISTINCT date(datetime(n.published_at, '${sqliteOffset(DEFAULT_TZ)}')) AS day_msk,
+                 n.id,
+                 CASE WHEN n.sentiment='positive' THEN 1 ELSE 0 END AS pos,
+                 CASE WHEN n.sentiment='negative' THEN 1 ELSE 0 END AS neg,
+                 n.source_count AS resonance
+          FROM portfolios p
+          JOIN news n ON EXISTS (SELECT 1 FROM json_each(n.matched_tags) je WHERE je.value = p.tag_id)
+          WHERE p.user_id = ?1 AND NOT p.is_frozen
+            AND date(datetime(n.published_at, '${sqliteOffset(DEFAULT_TZ)}')) >= ?2
+            AND date(datetime(n.published_at, '${sqliteOffset(DEFAULT_TZ)}')) <= ?3
+        ) s
+        GROUP BY 1`,
+    };
+  }
+  return {
+    pg: `
+      SELECT to_char((published_at AT TIME ZONE 'UTC' AT TIME ZONE '${DEFAULT_TZ}')::date, 'YYYY-MM-DD') AS day_msk,
+             COUNT(*)::int AS stories,
+             SUM(CASE WHEN sentiment='positive' THEN 1 ELSE 0 END)::int AS pos,
+             SUM(CASE WHEN sentiment='negative' THEN 1 ELSE 0 END)::int AS neg,
+             COALESCE(SUM(source_count),0)::int AS resonance
+      FROM news
+      WHERE (published_at AT TIME ZONE 'UTC' AT TIME ZONE '${DEFAULT_TZ}')::date >= $1::date
+        AND (published_at AT TIME ZONE 'UTC' AT TIME ZONE '${DEFAULT_TZ}')::date <= $2::date
+        AND cardinality(matched_tags) > 0
+      GROUP BY 1`,
+    lite: `
+      SELECT date(datetime(published_at, '${sqliteOffset(DEFAULT_TZ)}')) AS day_msk,
+             COUNT(*) AS stories,
+             SUM(CASE WHEN sentiment='positive' THEN 1 ELSE 0 END) AS pos,
+             SUM(CASE WHEN sentiment='negative' THEN 1 ELSE 0 END) AS neg,
+             COALESCE(SUM(source_count),0) AS resonance
+      FROM news
+      WHERE date(datetime(published_at, '${sqliteOffset(DEFAULT_TZ)}')) >= ?1
+        AND date(datetime(published_at, '${sqliteOffset(DEFAULT_TZ)}')) <= ?2
+        AND json_array_length(matched_tags) > 0
+      GROUP BY 1`,
   };
 }
 
@@ -242,7 +339,7 @@ async function aggregateTablesExist(): Promise<boolean> {
   }
 }
 
-// ─── Year cells: frozen history + live today ─────────────────────────────────
+// ─── Year cells: frozen history + live gap-fill + live today ─────────────────
 
 export async function getYearCells(
   scope: Scope,
@@ -251,8 +348,8 @@ export async function getYearCells(
   tz: string
 ): Promise<{ cells: HeatmapCell[]; frozenThrough: string | null }> {
   const today = toMskDateString(new Date());
+  const yesterday = addDays(today, -1);
   const allDates = buildYearDates();
-  const dateSet = new Set(allDates);
 
   let historyRows: any[] = [];
   let frozenThrough: string | null = null;
@@ -272,14 +369,33 @@ export async function getYearCells(
     byDate.set(row.day_msk, row);
   }
 
-  // If today not in history (freeze only covers through yesterday), compute live today.
-  if (!byDate.has(today) && useAggregates) {
+  // Gap-fallback: окно (frozenThrough; вчера] дочитываем живьём из news.
+  // Покрывает: отставание freeze, пустую историю после миграции,
+  // а при useAggregates === false (42P01) — весь год целиком (fully-live).
+  const gapFrom = frozenThrough ? addDays(frozenThrough, 1) : allDates[0];
+  if (gapFrom <= yesterday) {
+    const s = sqlLiveRange(scope);
+    const params = scope === 'tag'
+      ? [tagId, gapFrom, yesterday]
+      : scope === 'portfolio'
+        ? [userId, gapFrom, yesterday]
+        : [gapFrom, yesterday];
+    try {
+      const r = await query(USE_SQLITE ? s.lite : s.pg, params);
+      for (const row of r.rows || []) byDate.set(row.day_msk, row);
+    } catch (e: any) {
+      console.warn('[NewsHeatmap] gap live fill failed:', e.message);
+    }
+  }
+
+  // «Сегодня» — всегда live, независимо от наличия агрегатных таблиц.
+  if (!byDate.has(today)) {
     const s = sqlYearToday(scope);
     const params = scope === 'tag' ? [tagId] : scope === 'portfolio' ? [userId] : [];
     try {
       const r = await query(USE_SQLITE ? s.lite : s.pg, params);
       const row = r.rows[0];
-      if (row && row.stories > 0) {
+      if (row && Number(row.stories) > 0) {
         byDate.set(today, row);
       }
     } catch (e: any) {
@@ -363,6 +479,14 @@ export async function ensurePortfolioHistoryFresh(userId: string, tags: string[]
 
   const t0 = Date.now();
   console.info(`[NewsHeatmap] portfolio rebuild: start user=${userId}`);
+  // Полная перестройка: сначала чистим старый состав, иначе дни,
+  // отсутствующие в новом SELECT, сохранят устаревшие значения.
+  await query(
+    USE_SQLITE
+      ? `DELETE FROM user_portfolio_daily WHERE user_id = ?1`
+      : `DELETE FROM user_portfolio_daily WHERE user_id = $1::uuid`,
+    [userId]
+  );
   const s = {
     pg: `
       INSERT INTO user_portfolio_daily (user_id, day_msk, stories, pos, neg, resonance)
@@ -425,6 +549,7 @@ export async function freezeHeatmapRecentDays(): Promise<void> {
                COALESCE(SUM(n.source_count), 0)
         FROM news n, json_each(n.matched_tags) je
         WHERE date(datetime(n.published_at, '${sqliteOffset(DEFAULT_TZ)}')) >= date(datetime('now', '${sqliteOffset(DEFAULT_TZ)}', '-3 days'))
+          AND date(datetime(n.published_at, '${sqliteOffset(DEFAULT_TZ)}')) < date(datetime('now', '${sqliteOffset(DEFAULT_TZ)}'))
         GROUP BY 1, 2
         ON CONFLICT (tag_id, day_msk) DO UPDATE SET
           stories = EXCLUDED.stories, pos = EXCLUDED.pos,
@@ -439,6 +564,7 @@ export async function freezeHeatmapRecentDays(): Promise<void> {
                COALESCE(SUM(n.source_count), 0)
         FROM news n, LATERAL unnest(n.matched_tags) AS t(tag_id)
         WHERE (n.published_at AT TIME ZONE 'UTC' AT TIME ZONE '${DEFAULT_TZ}')::date >= (NOW() AT TIME ZONE 'UTC' AT TIME ZONE '${DEFAULT_TZ}')::date - 3
+          AND (n.published_at AT TIME ZONE 'UTC' AT TIME ZONE '${DEFAULT_TZ}')::date < (NOW() AT TIME ZONE 'UTC' AT TIME ZONE '${DEFAULT_TZ}')::date
         GROUP BY 1, 2
         ON CONFLICT (tag_id, day_msk) DO UPDATE SET
           stories = EXCLUDED.stories, pos = EXCLUDED.pos,
@@ -461,6 +587,7 @@ export async function freezeHeatmapRecentDays(): Promise<void> {
           JOIN news n ON EXISTS (SELECT 1 FROM json_each(n.matched_tags) je WHERE je.value = p.tag_id)
           WHERE NOT p.is_frozen
             AND date(datetime(n.published_at, '${sqliteOffset(DEFAULT_TZ)}')) >= date(datetime('now', '${sqliteOffset(DEFAULT_TZ)}', '-3 days'))
+            AND date(datetime(n.published_at, '${sqliteOffset(DEFAULT_TZ)}')) < date(datetime('now', '${sqliteOffset(DEFAULT_TZ)}'))
         ) s
         GROUP BY 1, 2
         ON CONFLICT (user_id, day_msk) DO UPDATE SET
@@ -480,6 +607,7 @@ export async function freezeHeatmapRecentDays(): Promise<void> {
           JOIN news n ON n.matched_tags @> ARRAY[p.tag_id]::text[]
           WHERE NOT p.is_frozen
             AND (n.published_at AT TIME ZONE 'UTC' AT TIME ZONE '${DEFAULT_TZ}')::date >= (NOW() AT TIME ZONE 'UTC' AT TIME ZONE '${DEFAULT_TZ}')::date - 3
+            AND (n.published_at AT TIME ZONE 'UTC' AT TIME ZONE '${DEFAULT_TZ}')::date < (NOW() AT TIME ZONE 'UTC' AT TIME ZONE '${DEFAULT_TZ}')::date
         ) s
         GROUP BY 1, 2
         ON CONFLICT (user_id, day_msk) DO UPDATE SET
@@ -498,6 +626,7 @@ export async function freezeHeatmapRecentDays(): Promise<void> {
                COALESCE(SUM(source_count), 0)
         FROM news
         WHERE date(datetime(published_at, '${sqliteOffset(DEFAULT_TZ)}')) >= date(datetime('now', '${sqliteOffset(DEFAULT_TZ)}', '-3 days'))
+          AND date(datetime(published_at, '${sqliteOffset(DEFAULT_TZ)}')) < date(datetime('now', '${sqliteOffset(DEFAULT_TZ)}'))
           AND json_array_length(matched_tags) > 0
         GROUP BY 1
         ON CONFLICT (day_msk) DO UPDATE SET
@@ -512,6 +641,7 @@ export async function freezeHeatmapRecentDays(): Promise<void> {
                COALESCE(SUM(source_count), 0)
         FROM news
         WHERE (published_at AT TIME ZONE 'UTC' AT TIME ZONE '${DEFAULT_TZ}')::date >= (NOW() AT TIME ZONE 'UTC' AT TIME ZONE '${DEFAULT_TZ}')::date - 3
+          AND (published_at AT TIME ZONE 'UTC' AT TIME ZONE '${DEFAULT_TZ}')::date < (NOW() AT TIME ZONE 'UTC' AT TIME ZONE '${DEFAULT_TZ}')::date
           AND cardinality(matched_tags) > 0
         GROUP BY 1
         ON CONFLICT (day_msk) DO UPDATE SET

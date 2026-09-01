@@ -14,6 +14,7 @@ import {
   DEFAULT_TZ,
   WEEKS,
   sqliteOffset,
+  portfolioKey,
 } from '../services/heatmap/utils';
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
@@ -104,20 +105,21 @@ async function backfillPG(): Promise<void> {
   `);
   console.log(`[Backfill] user_portfolio_daily rows: ${portfolioRes.rowCount}`);
 
-  // Update meta hashes for all users
+  // Update meta hashes for all users (SHA-256 в Node — формат совпадает с portfolioKey()).
   console.log('[Backfill] Updating portfolio meta hashes...');
-  await query(`
-    INSERT INTO user_portfolio_daily_meta (user_id, tags_hash, rebuilt_at)
-    SELECT user_id,
-           encode(digest(array_to_string(array_agg(tag_id ORDER BY tag_id), '|'), 'sha256'), 'hex'),
-           NOW()
-    FROM portfolios
-    WHERE NOT is_frozen
-    GROUP BY user_id
-    ON CONFLICT (user_id) DO UPDATE SET
-      tags_hash = EXCLUDED.tags_hash,
-      rebuilt_at = EXCLUDED.rebuilt_at
-  `);
+  const users = await query(`SELECT DISTINCT user_id FROM portfolios WHERE NOT is_frozen`);
+  for (const row of users.rows) {
+    const tags = await query(
+      `SELECT tag_id FROM portfolios WHERE user_id = $1 AND NOT is_frozen ORDER BY tag_id`,
+      [row.user_id]
+    );
+    const hash = portfolioKey(tags.rows.map((r: any) => r.tag_id));
+    await query(
+      `INSERT INTO user_portfolio_daily_meta (user_id, tags_hash, rebuilt_at) VALUES ($1::uuid, $2, NOW())
+       ON CONFLICT (user_id) DO UPDATE SET tags_hash = EXCLUDED.tags_hash, rebuilt_at = EXCLUDED.rebuilt_at`,
+      [row.user_id, hash]
+    );
+  }
   console.log('[Backfill] Portfolio meta hashes updated');
 }
 
@@ -194,16 +196,12 @@ async function backfillSQLite(): Promise<void> {
   `);
   console.log(`[Backfill] user_portfolio_daily rows: ${portfolioRes.rowCount}`);
 
-  // Update meta hashes for all users (SHA-256 in Node, SQLite has no digest).
+  // Update meta hashes for all users (SHA-256 в Node — формат совпадает с portfolioKey()).
   console.log('[Backfill] Updating portfolio meta hashes...');
   const users = await query(`SELECT DISTINCT user_id FROM portfolios WHERE NOT is_frozen`);
   for (const row of users.rows) {
     const tags = await query(`SELECT tag_id FROM portfolios WHERE user_id = ? AND NOT is_frozen ORDER BY tag_id`, [row.user_id]);
-    const hash = require('crypto')
-      .createHash('sha256')
-      .update(tags.rows.map((r: any) => r.tag_id).join('|'))
-      .digest('hex')
-      .slice(0, 16);
+    const hash = portfolioKey(tags.rows.map((r: any) => r.tag_id));
     await query(
       `INSERT OR REPLACE INTO user_portfolio_daily_meta (user_id, tags_hash, rebuilt_at) VALUES (?, ?, datetime('now'))`,
       [row.user_id, hash]
