@@ -216,7 +216,7 @@ CREATE TABLE IF NOT EXISTS news_all_daily (
 
 | Параметр | Описание |
 |----------|----------|
-| `index=IMOEX` или `index=SPY` | Индексная свеча |
+| `index=IMOEX` или `index=SPY` | Индексная свеча. SPY листингуется на NYSE Arca → MIC `ARCX`. |
 | `tag_id=SBER` | Свеча по инструменту тега |
 
 **Response:**

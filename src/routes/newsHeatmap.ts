@@ -45,7 +45,7 @@ interface Instrument {
 
 const INDEX_SYMBOLS: Record<string, Instrument> = {
   IMOEX: { ticker: 'IMOEX', mic: 'MISX', symbol: 'IMOEX@MISX' },
-  SPY: { ticker: 'SPY', mic: 'XNGS', symbol: 'SPY@XNGS' },
+  SPY: { ticker: 'SPY', mic: 'ARCX', symbol: 'SPY@ARCX' },
 };
 
 async function resolveTagInstrument(tagId: string): Promise<Instrument | null> {
