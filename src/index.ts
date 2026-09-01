@@ -43,6 +43,7 @@ import adminMetricsRoutes from './routes/adminMetrics';
 import adminLegacyRoutes from './routes/adminLegacy';
 import marketRoutes from './routes/market';
 import marketPublicRoutes from './routes/marketPublic';
+import newsHeatmapRoutes from './routes/newsHeatmap';
 import tagMarketRoutes from './routes/tagMarket';
 import sentimentRoutes from './routes/sentiment';
 import calendarRoutes from './routes/calendar';
@@ -2318,6 +2319,7 @@ app.use('/api/auth', authLimiter, authRoutes);  // Строгий лимит (15
 app.use('/api/news', newsRoutes);       // GET /api/news, /api/news/:tag (должен быть первым, т.к. содержит публичные маршруты)
 app.use('/api/news', factCheckRoutes);  // POST/GET /api/news/:id/fact-check
 app.use('/api/market', marketPublicRoutes); // Public market data: /api/market/news-chart (TZ-3)
+app.use('/api/news_heatmap', newsHeatmapRoutes); // News heatmap (TZ 11.11)
 app.use('/api/calendar', calendarRoutes); // Public investor calendar
 app.use('/api/payment', paymentRoutes); // POST /api/payment/create, /confirm
 app.use('/api/plans', plansRoutes);     // GET /api/plans
@@ -3489,6 +3491,49 @@ async function start() {
         last_stale_alert_at TIMESTAMP
       )`,
       name: 'calendar_meta'
+    },
+    // TZ 11.11 / v3.0: news heatmap daily aggregate tables (read-only contour)
+    {
+      sql: `CREATE TABLE IF NOT EXISTS news_tag_daily (
+        tag_id    TEXT NOT NULL,
+        day_msk   DATE NOT NULL,
+        stories   INT NOT NULL DEFAULT 0,
+        pos       INT NOT NULL DEFAULT 0,
+        neg       INT NOT NULL DEFAULT 0,
+        resonance INT NOT NULL DEFAULT 0,
+        PRIMARY KEY (tag_id, day_msk)
+      )`,
+      name: 'news_tag_daily'
+    },
+    {
+      sql: `CREATE TABLE IF NOT EXISTS user_portfolio_daily (
+        user_id   ${USE_SQLITE ? 'TEXT' : 'UUID'} NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        day_msk   DATE NOT NULL,
+        stories   INT NOT NULL DEFAULT 0,
+        pos       INT NOT NULL DEFAULT 0,
+        neg       INT NOT NULL DEFAULT 0,
+        resonance INT NOT NULL DEFAULT 0,
+        PRIMARY KEY (user_id, day_msk)
+      )`,
+      name: 'user_portfolio_daily'
+    },
+    {
+      sql: `CREATE TABLE IF NOT EXISTS user_portfolio_daily_meta (
+        user_id    ${USE_SQLITE ? 'TEXT PRIMARY KEY' : 'UUID PRIMARY KEY'} REFERENCES users(id) ON DELETE CASCADE,
+        tags_hash  TEXT NOT NULL,
+        rebuilt_at ${USE_SQLITE ? 'TIMESTAMP' : 'TIMESTAMPTZ'} NOT NULL DEFAULT ${_SQL_NOW}
+      )`,
+      name: 'user_portfolio_daily_meta'
+    },
+    {
+      sql: `CREATE TABLE IF NOT EXISTS news_all_daily (
+        day_msk   DATE PRIMARY KEY,
+        stories   INT NOT NULL DEFAULT 0,
+        pos       INT NOT NULL DEFAULT 0,
+        neg       INT NOT NULL DEFAULT 0,
+        resonance INT NOT NULL DEFAULT 0
+      )`,
+      name: 'news_all_daily'
     },
   ];
   for (const m of migrations) {

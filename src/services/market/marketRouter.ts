@@ -18,6 +18,7 @@ export const SUPPORTED_EXCHANGES = ['MOEX', 'NASDAQ', 'NYSE'];
 
 export interface MarketProvider {
   getDailyCandles(ticker: string, exchange: string, days?: number): Promise<MarketCandle[]>;
+  getWeeklyCandles?(ticker: string, exchange: string, weeks?: number): Promise<MarketCandle[]>;
   getIntraday5min(ticker: string, exchange: string, date: string): Promise<MarketCandle[]>;
   getCurrentPrice(ticker: string, exchange: string): Promise<number | null>;
 }
@@ -56,6 +57,19 @@ export async function getIntraday5min(
 ): Promise<{ candles: MarketCandle[]; provider: ServedBy }> {
   const provider = await resolveProvider(exchange);
   const candles = await provider.getIntraday5min(ticker.toUpperCase(), exchange.toUpperCase(), date);
+  return { candles, provider: 'finam' };
+}
+
+export async function getWeeklyCandles(
+  exchange: string,
+  ticker: string,
+  weeks?: number
+): Promise<{ candles: MarketCandle[]; provider: ServedBy }> {
+  const provider = await resolveProvider(exchange);
+  if (!provider.getWeeklyCandles) {
+    throw Object.assign(new Error(`Weekly candles not supported: ${exchange}`), { code: 'finam_bad_exchange' });
+  }
+  const candles = await provider.getWeeklyCandles(ticker.toUpperCase(), exchange.toUpperCase(), weeks);
   return { candles, provider: 'finam' };
 }
 

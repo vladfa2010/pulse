@@ -49,6 +49,7 @@ export async function resolveMic(exchange: string): Promise<string | null> {
 
 // --- TTL caches (pattern from moexIssAdapter; mandatory — Finam limit is 200 req/min) ---
 const TTL_DAILY_MS = 15 * 60 * 1000;               // daily candles
+const TTL_WEEKLY_MS = 15 * 60 * 1000;              // weekly candles
 const TTL_INTRADAY_TODAY_MS = 60 * 1000;           // 5-min for the current day
 const TTL_INTRADAY_PAST_MS = 365 * 24 * 3600 * 1000; // 5-min for past days (immutable)
 const TTL_PRICE_MS = 60 * 1000;                    // latest quote
@@ -60,6 +61,7 @@ interface CacheEntry<T> {
 }
 
 const dailyCache = new Map<string, CacheEntry<MarketCandle[]>>();
+const weeklyCache = new Map<string, CacheEntry<MarketCandle[]>>();
 const intradayCache = new Map<string, CacheEntry<MarketCandle[]>>();
 const priceCache = new Map<string, CacheEntry<number | null>>();
 
@@ -148,6 +150,24 @@ export async function getDailyCandles(ticker: string, exchange: string, days = 9
   const start = new Date(end.getTime() - days * 24 * 3600 * 1000);
   const candles = await fetchBars(`${ticker}@${mic}`, 'TIME_FRAME_D', start.toISOString(), end.toISOString());
   dailyCache.set(key, { data: candles, expiresAt: Date.now() + (candles.length ? TTL_DAILY_MS : TTL_EMPTY_MS) });
+  return candles;
+}
+
+export async function getWeeklyCandles(ticker: string, exchange: string, weeks = 53): Promise<MarketCandle[]> {
+  assertReady();
+  const mic = await resolveMic(exchange);
+  if (!mic) {
+    throw Object.assign(new Error(`Exchange not supported by Finam: ${exchange}`), { code: 'finam_bad_exchange' });
+  }
+  weeks = Math.min(Math.max(weeks, 1), 260);
+  const key = cacheKey(ticker, exchange, `w${weeks}`);
+  const hit = fromCache(weeklyCache, key);
+  if (hit) return hit;
+
+  const end = new Date();
+  const start = new Date(end.getTime() - weeks * 7 * 24 * 3600 * 1000);
+  const candles = await fetchBars(`${ticker}@${mic}`, 'TIME_FRAME_W', start.toISOString(), end.toISOString());
+  weeklyCache.set(key, { data: candles, expiresAt: Date.now() + (candles.length ? TTL_WEEKLY_MS : TTL_EMPTY_MS) });
   return candles;
 }
 

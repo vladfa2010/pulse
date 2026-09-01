@@ -30,6 +30,7 @@ import { populateNewsTagLinksBatch, EnrichmentTask } from './enrichment';
 import { sendSubscriptionReminders } from './subscription';
 import { broadcastNews } from './sse';
 import { analyzeUnifiedBatch, UnifiedResult } from './smartTagMatcher';
+import { freezeHeatmapRecentDays } from './heatmapDaily';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // analyzeSentiment — простой анализ на основе ключевых слов
@@ -452,6 +453,23 @@ export function startCron() {
       console.error('[Cron] Initial RSS fetch failed:', err.message);
     });
   }, 2 * 60 * 1000);
+
+  // News heatmap freeze: recalculate the last 3 days of aggregates at 00:05 MSK.
+  console.log('[Cron] News heatmap freeze scheduled daily at 00:05 Europe/Moscow');
+  cron.schedule('5 0 * * *', async () => {
+    const acquired = await acquireCronLock('news_heatmap_freeze');
+    if (!acquired) {
+      console.log('[CronLock] news_heatmap_freeze already running, skipping');
+      return;
+    }
+    try {
+      await freezeHeatmapRecentDays();
+    } catch (err: any) {
+      console.error('[Cron] News heatmap freeze failed:', err.message);
+    } finally {
+      await releaseCronLock('news_heatmap_freeze');
+    }
+  }, { timezone: 'Europe/Moscow' });
 
   // DEFERRED PROCESSOR: retry failed articles every 10 minutes
   console.log('[Cron] Deferred processor scheduled every 10 minutes');
