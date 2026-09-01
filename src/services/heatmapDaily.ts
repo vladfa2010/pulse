@@ -72,18 +72,18 @@ function yearHistoryParams(scope: Scope, userId: string, tagId: string): any[] {
 function sqlYearHistory(scope: Scope): { pg: string; lite: string } {
   if (scope === 'all') {
     return {
-      pg: `SELECT to_char(day_msk, 'YYYY-MM-DD') AS day_msk, stories, pos, neg, resonance FROM news_all_daily WHERE day_msk >= (NOW() AT TIME ZONE 'UTC' AT TIME ZONE '${DEFAULT_TZ}'::date - interval '${WEEKS * 7} days') ORDER BY day_msk`,
+      pg: `SELECT to_char(day_msk, 'YYYY-MM-DD') AS day_msk, stories, pos, neg, resonance FROM news_all_daily WHERE day_msk >= (NOW() AT TIME ZONE 'UTC' AT TIME ZONE '${DEFAULT_TZ}')::date - interval '${WEEKS * 7} days' ORDER BY day_msk`,
       lite: `SELECT day_msk, stories, pos, neg, resonance FROM news_all_daily WHERE day_msk >= date(datetime('now', '${sqliteOffset(DEFAULT_TZ)}', '-${WEEKS * 7} days')) ORDER BY day_msk`,
     };
   }
   if (scope === 'tag') {
     return {
-      pg: `SELECT to_char(day_msk, 'YYYY-MM-DD') AS day_msk, stories, pos, neg, resonance FROM news_tag_daily WHERE tag_id = $1 AND day_msk >= (NOW() AT TIME ZONE 'UTC' AT TIME ZONE '${DEFAULT_TZ}'::date - interval '${WEEKS * 7} days') ORDER BY day_msk`,
+      pg: `SELECT to_char(day_msk, 'YYYY-MM-DD') AS day_msk, stories, pos, neg, resonance FROM news_tag_daily WHERE tag_id = $1 AND day_msk >= (NOW() AT TIME ZONE 'UTC' AT TIME ZONE '${DEFAULT_TZ}')::date - interval '${WEEKS * 7} days' ORDER BY day_msk`,
       lite: `SELECT day_msk, stories, pos, neg, resonance FROM news_tag_daily WHERE tag_id = ?1 AND day_msk >= date(datetime('now', '${sqliteOffset(DEFAULT_TZ)}', '-${WEEKS * 7} days')) ORDER BY day_msk`,
     };
   }
   return {
-    pg: `SELECT to_char(day_msk, 'YYYY-MM-DD') AS day_msk, stories, pos, neg, resonance FROM user_portfolio_daily WHERE user_id = $1::uuid AND day_msk >= (NOW() AT TIME ZONE 'UTC' AT TIME ZONE '${DEFAULT_TZ}'::date - interval '${WEEKS * 7} days') ORDER BY day_msk`,
+    pg: `SELECT to_char(day_msk, 'YYYY-MM-DD') AS day_msk, stories, pos, neg, resonance FROM user_portfolio_daily WHERE user_id = $1::uuid AND day_msk >= (NOW() AT TIME ZONE 'UTC' AT TIME ZONE '${DEFAULT_TZ}')::date - interval '${WEEKS * 7} days' ORDER BY day_msk`,
     lite: `SELECT day_msk, stories, pos, neg, resonance FROM user_portfolio_daily WHERE user_id = ?1 AND day_msk >= date(datetime('now', '${sqliteOffset(DEFAULT_TZ)}', '-${WEEKS * 7} days')) ORDER BY day_msk`,
   };
 }
@@ -357,10 +357,17 @@ export async function getYearCells(
 
   if (useAggregates) {
     const s = sqlYearHistory(scope);
-    const r = await query(USE_SQLITE ? s.lite : s.pg, yearHistoryParams(scope, userId, tagId));
-    historyRows = r.rows || [];
-    if (historyRows.length > 0) {
-      frozenThrough = historyRows[historyRows.length - 1].day_msk;
+    try {
+      const r = await query(USE_SQLITE ? s.lite : s.pg, yearHistoryParams(scope, userId, tagId));
+      historyRows = r.rows || [];
+      if (historyRows.length > 0) {
+        frozenThrough = historyRows[historyRows.length - 1].day_msk;
+      }
+    } catch (e: any) {
+      // Деградация в fully-live: gap-fill ниже дочитает год из news.
+      console.warn('[NewsHeatmap] history query failed, falling back to live:', e.message);
+      historyRows = [];
+      frozenThrough = null;
     }
   }
 
