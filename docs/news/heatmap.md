@@ -403,3 +403,4 @@ psql $DATABASE_URL -c "SELECT length(tags_hash), tags_hash FROM user_portfolio_d
 | 2026-09-01 | v1.0 | Базовая реализация ТЗ 11.11: роуты, freeze, backfill, frontend. |
 | 2026-09-02 | v1.1 | Правки по ревью: `to_char(day_msk)` для PG, freeze не захватывает «сегодня», gap-fallback, fully-live при 42P01, portfolio freshness, унификация хеша в Node, `meta.empty`, ограничение публичного `scope=all` годовым масштабом. |
 | 2026-09-02 | v1.2 | Hotfix 22007: корректные скобки `(AT TIME ZONE tz)::date` в `sqlYearHistory`, fallback на fully-live при любом сбое history-запроса. |
+| 2026-09-02 | v1.3 | Hotfix day digest: параметры PG для `scale=day` и `scale=day_hours` приведены в соответствие плейсхолдерам SQL; `tz` больше не передаётся как значение параметра. |

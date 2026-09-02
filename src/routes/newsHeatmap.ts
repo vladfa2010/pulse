@@ -190,12 +190,15 @@ router.get('/', maybeAuth, async (req: AuthRequest, res) => {
       const USE_SQLITE = process.env.USE_SQLITE === 'true';
       const scopeParam = scope === 'tag' ? tagId : userId;
 
+      // Параметры PG строго по плейсхолдерам SQL (fix6):
+      //   sqlDay:      $1 = date, $2 = scopeParam (tz зашит в SQL литералом);
+      //   sqlDayHours: без плейсхолдеров (all) или $2 = scopeParam (tag/portfolio).
       const params = scale === 'day'
         ? (scope === 'all'
-            ? (USE_SQLITE ? [date] : [tz, date])
-            : (USE_SQLITE ? [date, scopeParam] : [tz, date, scopeParam]))
+            ? [date]
+            : [date, scopeParam])
         : (scope === 'all'
-            ? (USE_SQLITE ? [] : [tz])
+            ? []
             : (USE_SQLITE ? [scopeParam] : [tz, scopeParam]));
 
       const r = await query(USE_SQLITE ? s.lite : s.pg, params);
