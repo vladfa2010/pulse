@@ -306,11 +306,13 @@ npx ts-node --transpile-only src/scripts/backfillNewsHeatmap.ts
 Логика:
 
 1. Считает текущий хеш портфеля.
-2. Сравнивает с `user_portfolio_daily_meta.tags_hash`.
-3. При mismatch:
+2. В PostgreSQL хэш читается из `user_portfolio_daily_meta` с `FOR UPDATE`, чтобы два параллельных запроса для одного пользователя не гнали rebuild одновременно.
+3. При mismatch вся операция выполняется в одной транзакции:
    - `DELETE FROM user_portfolio_daily WHERE user_id = $1` (очистка старого состава).
    - Пересчёт за 12 месяцев из `news`.
    - Запись нового хеша и `rebuilt_at`.
+   - `COMMIT`.
+4. SQLite-режим (локальная разработка) остаётся последовательным автокоммитом, так как `pool.connect()` там недоступен.
 
 Частота ограничена роут-кэшем: проверка не чаще одного раза в 5 минут на пользователя.
 
@@ -404,3 +406,4 @@ psql $DATABASE_URL -c "SELECT length(tags_hash), tags_hash FROM user_portfolio_d
 | 2026-09-02 | v1.1 | Правки по ревью: `to_char(day_msk)` для PG, freeze не захватывает «сегодня», gap-fallback, fully-live при 42P01, portfolio freshness, унификация хеша в Node, `meta.empty`, ограничение публичного `scope=all` годовым масштабом. |
 | 2026-09-02 | v1.2 | Hotfix 22007: корректные скобки `(AT TIME ZONE tz)::date` в `sqlYearHistory`, fallback на fully-live при любом сбое history-запроса. |
 | 2026-09-02 | v1.3 | Hotfix day digest: параметры PG для `scale=day` и `scale=day_hours` приведены в соответствие плейсхолдерам SQL; `tz` больше не передаётся как значение параметра. |
+| 2026-09-02 | v1.4 | `ensurePortfolioHistoryFresh` обёрнута в транзакцию с `SELECT ... FOR UPDATE` по хешу портфеля; SQLite-путь оставлен автокоммитным. |
