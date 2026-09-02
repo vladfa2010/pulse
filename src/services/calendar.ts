@@ -1709,6 +1709,13 @@ async function ensureCalendarEventsRawColumnsPostgres(q: QueryFn): Promise<void>
   await q(`ALTER TABLE calendar_events_raw ADD COLUMN IF NOT EXISTS original_title TEXT`);
 }
 
+async function ensureCalendarTextColumnsPostgres(q: QueryFn): Promise<void> {
+  await q(`ALTER TABLE calendar_events_raw ALTER COLUMN ticker TYPE TEXT`);
+  await q(`ALTER TABLE calendar_events     ALTER COLUMN ticker TYPE TEXT`);
+  await q(`ALTER TABLE calendar_events_raw ALTER COLUMN company TYPE TEXT`);
+  await q(`ALTER TABLE calendar_events     ALTER COLUMN company TYPE TEXT`);
+}
+
 async function ensureCalendarEventsRawColumnsSQLite(q: QueryFn): Promise<void> {
   const info = await q(`PRAGMA table_info(calendar_events_raw)`);
   const existing = new Set(info.rows.map((r: any) => r.name));
@@ -1744,8 +1751,8 @@ async function ensureCalendarEventsUniqueSQLite(q: QueryFn): Promise<void> {
     title TEXT NOT NULL,
     kind VARCHAR(10) NOT NULL,
     status VARCHAR(10) NOT NULL,
-    company VARCHAR(100) NOT NULL,
-    ticker VARCHAR(10) NOT NULL,
+    company TEXT NOT NULL,
+    ticker TEXT NOT NULL,
     uploaded_at TIMESTAMP DEFAULT (datetime('now')),
     sources TEXT,
     possible_duplicate INTEGER DEFAULT 0,
@@ -1776,6 +1783,7 @@ export async function runCalendarV2Migrations(): Promise<void> {
     await ensureCalendarSourcesColumnsPostgres(query);
     await ensureCalendarEventsUniquePostgres(query);
     await ensureCalendarEventsRawColumnsPostgres(query);
+    await ensureCalendarTextColumnsPostgres(query);
     await ensureCalendarSettingsTablePostgres(query);
   }
 

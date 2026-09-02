@@ -768,8 +768,8 @@ CREATE TABLE IF NOT EXISTS calendar_events (
   title       TEXT NOT NULL,
   kind        VARCHAR(10) NOT NULL,      -- МСФО | РСБУ | СД | СА | Дивиденды | Другое
   status      VARCHAR(10) NOT NULL,      -- expected | confirmed
-  company     VARCHAR(100) NOT NULL,
-  ticker      VARCHAR(10) NOT NULL,
+  company     TEXT NOT NULL,
+  ticker      TEXT NOT NULL,
   uploaded_at TIMESTAMP DEFAULT NOW(),
   sources     TEXT,                      -- JSON ["investmint",...]
   possible_duplicate BOOLEAN DEFAULT FALSE,
@@ -791,8 +791,8 @@ CREATE TABLE IF NOT EXISTS calendar_events_raw (
   title           TEXT NOT NULL,
   kind            VARCHAR(10) NOT NULL,
   status          VARCHAR(10) NOT NULL,
-  company         VARCHAR(100) NOT NULL,
-  ticker          VARCHAR(10) NOT NULL,        -- может быть 'UNKNOWN'
+  company         TEXT NOT NULL,
+  ticker          TEXT NOT NULL,        -- может быть 'UNKNOWN' или tombstone '__deleted__'
   uploaded_at     TIMESTAMP DEFAULT NOW(),
   tombstone_key   TEXT,                       -- ключ подавления для tombstone-строк
   original_title  TEXT                        -- оригинальный title события в tombstone
