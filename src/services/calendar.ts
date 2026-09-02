@@ -141,6 +141,35 @@ export function invalidateCalendarCache(): void {
   calendarCacheGeneration++;
 }
 
+let rewriteFlight: Promise<void> | null = null;
+let rewriteQueued = false;
+
+/** Фоновая пересборка канона с коалесцингом: одна идёт, максимум одна в очереди. */
+export function scheduleCanonicalRewrite(): void {
+  if (rewriteFlight) {
+    rewriteQueued = true;
+    console.info('[Calendar] Background rewrite already running; request coalesced');
+    return;
+  }
+  rewriteFlight = (async () => {
+    try {
+      do {
+        rewriteQueued = false;
+        try {
+          await rewriteCanonicalFromRaw();
+          broadcastCalendarRefresh();
+          invalidateCalendarCache();
+        } catch (err: any) {
+          console.error('[Calendar] Background rewrite failed:', err.message);
+          // не пробрасываем: процесс жив, следующий вызов пересоберёт
+        }
+      } while (rewriteQueued);
+    } finally {
+      rewriteFlight = null;
+    }
+  })();
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Date helpers
 // ═══════════════════════════════════════════════════════════════════════════
@@ -772,9 +801,7 @@ export async function createCalendarEventGroup(event: unknown): Promise<void> {
     await touchCalendarSource(q, 'manual');
   });
 
-  await rewriteCanonicalFromRaw();
-  broadcastCalendarRefresh();
-  invalidateCalendarCache();
+  scheduleCanonicalRewrite();
 }
 
 export async function updateCalendarEventGroup(
@@ -828,9 +855,7 @@ export async function updateCalendarEventGroup(
     await touchCalendarSource(q, 'manual');
   });
 
-  await rewriteCanonicalFromRaw();
-  broadcastCalendarRefresh();
-  invalidateCalendarCache();
+  scheduleCanonicalRewrite();
 }
 
 export async function deleteCalendarEventGroup(
@@ -860,9 +885,7 @@ export async function deleteCalendarEventGroup(
     await touchCalendarSource(q, 'manual');
   });
 
-  await rewriteCanonicalFromRaw();
-  broadcastCalendarRefresh();
-  invalidateCalendarCache();
+  scheduleCanonicalRewrite();
 }
 
 export async function restoreCalendarEventGroup(
@@ -901,9 +924,7 @@ export async function restoreCalendarEventGroup(
     await touchCalendarSource(q, 'manual');
   });
 
-  await rewriteCanonicalFromRaw();
-  broadcastCalendarRefresh();
-  invalidateCalendarCache();
+  scheduleCanonicalRewrite();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
