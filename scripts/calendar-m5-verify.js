@@ -3,17 +3,8 @@
  * Запуск: npm run verify:calendarM5
  */
 
-process.env.USE_SQLITE = 'true';
-process.env.SQLITE_FILE = '/tmp/calendar_m5_verify.db';
-process.env.ENCRYPTION_KEY = 'a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef12345678';
-process.env.CRON_SECRET_KEY = 'test-cron-secret';
-process.env.JWT_SECRET = 'test-jwt-secret';
-process.env.OPENAI_API_KEY = 'test-openai';
-process.env.KIMI_API_KEY = 'test-kimi-key';
-process.env.KIMI_MODEL = 'moonshot-v1-32k';
-process.env.VAPID_PUBLIC_KEY = 'BJxHf6RkzS4y2p9qQ8v1mN0oL3uT5wY7aB9cD1eF2gH3iJ4kL5mN6oP7qR8sT9uV0wX1yZ2aB3cD4eF5gH6iJ7k';
-process.env.VAPID_PRIVATE_KEY = 'cE0w5k8mX2p9qR4sT7uV0wY3aB6cD9fG1hI4jK7lM0nO3pQ6rS9tV2wX5yZ8aB1c';
-process.env.TELEGRAM_BOT_TOKEN = 'test:token12345';
+const { setCommonEnv, setup: bootstrapSetup } = require('./lib/calendar-verify-env');
+setCommonEnv();
 
 const fs = require('fs');
 const path = require('path');
@@ -40,10 +31,12 @@ axios.post = async (url, data, config) => {
   return { data: { ok: true, result: { message_id: 1 } } };
 };
 
-const { initSQLite, initSQLiteSchema } = require(path.join(distDir, 'config', 'db-sqlite.js'));
-const { query } = require(path.join(distDir, 'config', 'db.js'));
-const { runCalendarV2Migrations, getMskDateString, rebuildCanonical } = require(path.join(distDir, 'services', 'calendar.js'));
-const adminRouter = require(path.join(distDir, 'routes', 'admin.js')).default;
+let query;
+let getMskDateString;
+let rebuildCanonical;
+let flushCanonicalRewrites;
+let adminRouter;
+
 const express = require('express');
 
 function assert(cond, msg) {
@@ -51,54 +44,12 @@ function assert(cond, msg) {
 }
 
 async function setup() {
-  if (fs.existsSync('/tmp/calendar_m5_verify.db')) fs.unlinkSync('/tmp/calendar_m5_verify.db');
-  await initSQLite();
-  await initSQLiteSchema();
-  await query(`CREATE TABLE IF NOT EXISTS calendar_events (
-    id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-    date DATE NOT NULL,
-    weekday VARCHAR(2) NOT NULL,
-    title TEXT NOT NULL,
-    kind VARCHAR(10) NOT NULL,
-    status VARCHAR(10) NOT NULL,
-    company VARCHAR(100) NOT NULL,
-    ticker VARCHAR(10) NOT NULL,
-    uploaded_at TIMESTAMP DEFAULT (datetime('now')),
-    sources TEXT,
-    possible_duplicate INTEGER DEFAULT 0,
-    tag_ids TEXT,
-    matched_via TEXT,
-    UNIQUE (date, title, kind, ticker)
-  )`);
-  await query(`CREATE INDEX IF NOT EXISTS idx_calendar_events_date ON calendar_events(date)`);
-  await query(`CREATE TABLE IF NOT EXISTS calendar_events_raw (
-    id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-    source VARCHAR(20) NOT NULL,
-    date DATE NOT NULL,
-    weekday VARCHAR(2) NOT NULL,
-    title TEXT NOT NULL,
-    kind VARCHAR(10) NOT NULL,
-    status VARCHAR(10) NOT NULL,
-    company VARCHAR(100) NOT NULL,
-    ticker VARCHAR(10) NOT NULL,
-    uploaded_at TIMESTAMP DEFAULT (datetime('now'))
-  )`);
-  await query(`CREATE INDEX IF NOT EXISTS idx_cal_raw_source ON calendar_events_raw(source)`);
-  await query(`CREATE INDEX IF NOT EXISTS idx_cal_raw_key ON calendar_events_raw(date, ticker)`);
-  await query(`CREATE TABLE IF NOT EXISTS calendar_sources (source VARCHAR(20) PRIMARY KEY, uploaded_at TIMESTAMP, last_stale_alert_at TIMESTAMP, last_warnings TEXT)`);
-  await query(`CREATE TABLE IF NOT EXISTS calendar_meta (id INTEGER PRIMARY KEY CHECK (id = 1), uploaded_at TIMESTAMP DEFAULT (datetime('now')), last_stale_alert_at TIMESTAMP)`);
-  await runCalendarV2Migrations();
+  await bootstrapSetup();
 
-  // Убираем шум из-за отсутствия таблиц тегов в SQLite-harness
-  await query(`CREATE TABLE IF NOT EXISTS user_defined_tags (
-    tag_id TEXT PRIMARY KEY,
-    tag_name TEXT NOT NULL,
-    tag_type TEXT DEFAULT 'company',
-    keywords TEXT,
-    enriched_data TEXT,
-    created_by TEXT,
-    created_at TEXT DEFAULT (datetime('now'))
-  )`);
+  ({ query } = require(path.join(distDir, 'config', 'db.js')));
+  ({ getMskDateString, rebuildCanonical, flushCanonicalRewrites } = require(path.join(distDir, 'services', 'calendar.js')));
+  adminRouter = require(path.join(distDir, 'routes', 'admin.js')).default;
+
   await query(`CREATE TABLE IF NOT EXISTS smart_tag_cache (
     text_hash TEXT PRIMARY KEY,
     tags TEXT,
@@ -244,6 +195,7 @@ async function main() {
     };
     const createRes = await request(server, 'POST', `${base}/calendar/events`, overrideBody);
     assert(createRes.status === 200, `test1: create override should return 200, got ${createRes.status}`);
+    await flushCanonicalRewrites();
 
     const providerRawAfter = await query(
       `SELECT COUNT(*) as c FROM calendar_events_raw WHERE source = 'investmint' AND ticker = $1 AND title = $2`,
@@ -280,6 +232,7 @@ async function main() {
       updateStatusBody
     );
     assert(updateStatusRes.status === 200, `test2: status update should return 200, got ${updateStatusRes.status}`);
+    await flushCanonicalRewrites();
 
     const providerRawAfter2 = await query(
       `SELECT COUNT(*) as c FROM calendar_events_raw WHERE source = 'investmint' AND ticker = $1 AND title = $2`,
@@ -313,6 +266,7 @@ async function main() {
       updateKeyBody
     );
     assert(updateKeyRes.status === 200, `test3: key change update should return 200, got ${updateKeyRes.status}`);
+    await flushCanonicalRewrites();
 
     const oldCanonical = await findCanonicalEvent(oldTicker, oldTitle, oldKind);
     assert(!oldCanonical, 'test3: old key should be removed from canonical');
@@ -337,6 +291,7 @@ async function main() {
       `${base}/calendar/events/${encodeURIComponent(deleteTarget.date)}/${encodeURIComponent(deleteTarget.title)}/${encodeURIComponent(deleteTarget.kind)}`
     );
     assert(deleteRes.status === 200, `test4: delete should return 200, got ${deleteRes.status}`);
+    await flushCanonicalRewrites();
 
     const canonicalAfterDelete = await findCanonicalEvent(newTicker, newTitle, oldKind);
     assert(!canonicalAfterDelete, 'test4: deleted event should disappear from canonical');
@@ -374,7 +329,6 @@ async function main() {
        VALUES ('investmint', datetime('now'), NULL, '[]')
        ON CONFLICT (source) DO UPDATE SET uploaded_at = datetime('now')`
     );
-    const { rebuildCanonical } = require(path.join(distDir, 'services', 'calendar.js'));
     await rebuildCanonical();
 
     const dupRowsBefore = await query(
@@ -396,6 +350,7 @@ async function main() {
       `${base}/calendar/events/${encodeURIComponent(dupEvent.date)}/${encodeURIComponent(dupEvent.title)}/${encodeURIComponent(dupEvent.kind)}`
     );
     assert(deleteDupRes.status === 200, `test5: delete possible_duplicate should return 200, got ${deleteDupRes.status}`);
+    await flushCanonicalRewrites();
 
     const dupRowsAfter = await query(
       `SELECT COUNT(*) as c FROM calendar_events WHERE ticker = $1`,
@@ -406,6 +361,8 @@ async function main() {
 
     // === Test 6: ?tombstones=true returns tombstone; restore brings event back ===
     // After test5 we have a tombstone for DUPTK. List tombstones and restore it.
+    await flushCanonicalRewrites();
+
     const tombstonesList = await request(server, 'GET', `${base}/calendar/events?tombstones=true`);
     assert(tombstonesList.status === 200, `test6: tombstones list should return 200, got ${tombstonesList.status}`);
     assert(Array.isArray(tombstonesList.body.events), 'test6: tombstones events should be array');
@@ -425,6 +382,7 @@ async function main() {
       `${base}/calendar/events/tombstone?date=${encodeURIComponent(dupDate)}&title=${encodeURIComponent(dupTombstone.deleted_ticker)}&company=${encodeURIComponent(dupCompany)}&original_title=${encodeURIComponent(dupTitle)}`
     );
     assert(restoreRes.status === 200, `test6: restore should return 200, got ${restoreRes.status}`);
+    await flushCanonicalRewrites();
 
     const dupRowsAfterRestore = await query(
       `SELECT COUNT(*) as c FROM calendar_events WHERE ticker = $1`,
@@ -457,6 +415,7 @@ async function main() {
       `${base}/calendar/events/${encodeURIComponent(unknownDate)}/${encodeURIComponent(unknownTitle)}/${encodeURIComponent('Другое')}`
     );
     assert(deleteUnknownRes.status === 200, `test7: delete UNKNOWN should return 200, got ${deleteUnknownRes.status}`);
+    await flushCanonicalRewrites();
 
     const unknownAfter = await query(
       `SELECT * FROM calendar_events WHERE title = $1 AND company = $2`,
@@ -481,6 +440,7 @@ async function main() {
       `${base}/calendar/events/tombstone?date=${encodeURIComponent(unknownDate)}&title=${encodeURIComponent(unknownCompany)}&company=${encodeURIComponent(unknownCompany)}&original_title=${encodeURIComponent(unknownTitle)}`
     );
     assert(restoreUnknownRes.status === 200, `test7: UNKNOWN restore should return 200, got ${restoreUnknownRes.status}`);
+    await flushCanonicalRewrites();
 
     const unknownRestored = await query(
       `SELECT * FROM calendar_events WHERE title = $1 AND company = $2`,
@@ -515,6 +475,7 @@ async function main() {
       `${base}/calendar/events/tombstone?date=${encodeURIComponent(bugCDate)}&title=&company=${encodeURIComponent(bugCCompany)}&original_title=${encodeURIComponent(bugCTitle1)}`
     );
     assert(restoreBugC.status === 200, `test8: restore by original_title should return 200, got ${restoreBugC.status}`);
+    await flushCanonicalRewrites();
 
     const remainingTombstones = await query(
       `SELECT * FROM calendar_events_raw WHERE source = 'manual' AND ticker = '__deleted__' AND tombstone_key = $1 ORDER BY original_title`,
@@ -543,6 +504,7 @@ async function main() {
     };
     const createUniqueRes = await request(server, 'POST', `${base}/calendar/events`, uniqueBody);
     assert(createUniqueRes.status === 200, `test9: create unique event should return 200, got ${createUniqueRes.status}`);
+    await flushCanonicalRewrites();
 
     const uniqueRow = await query(`SELECT * FROM calendar_events WHERE title = $1`, [uniqueTitle]);
     assert(uniqueRow.rows.length === 1, 'test9: unique canonical row should exist');
@@ -558,6 +520,7 @@ async function main() {
       `${base}/calendar/events/${encodeURIComponent(serverDate)}/${encodeURIComponent(uniqueTitle)}/${encodeURIComponent('МСФО')}`
     );
     assert(deleteUniqueRes.status === 200, `test10: delete unique event should return 200, got ${deleteUniqueRes.status}`);
+    await flushCanonicalRewrites();
 
     // For UNKNOWN-ticker tombstones the list exposes title = company and deleted_ticker = ''.
     const restoreList = await request(server, 'GET', `${base}/calendar/events?tombstones=true`);
@@ -574,6 +537,7 @@ async function main() {
       `${base}/calendar/events/tombstone?date=${encodeURIComponent(serverDate)}&title=${encodeURIComponent(uniqueTombstone.companies[0].name)}&company=${encodeURIComponent(uniqueTombstone.companies[0].name)}&original_title=${encodeURIComponent(uniqueTitle)}`
     );
     assert(restoreUniqueRes.status === 200, `test10: restore unique event should return 200, got ${restoreUniqueRes.status}`);
+    await flushCanonicalRewrites();
 
     const restoreRow = await query(`SELECT * FROM calendar_events WHERE title = $1`, [uniqueTitle]);
     assert(restoreRow.rows.length === 1, 'test10: restored canonical row should exist');

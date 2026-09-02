@@ -3,6 +3,9 @@
  * Запуск: npm run verify:calendarAdapters
  */
 
+const { setCommonEnv, setup } = require('./lib/calendar-verify-env');
+setCommonEnv();
+
 const fs = require('fs');
 const path = require('path');
 const {

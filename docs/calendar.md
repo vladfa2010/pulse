@@ -696,6 +696,43 @@ npm run verify:calendarAdapters
 
 ---
 
+## Верификация в режиме PostgreSQL
+
+Календарь активно использует диалектно-зависимые конструкции (`text[]`, `NOW()`, транзакции, DDL-ограничения). SQLite-режим остаётся для быстрой локальной итерации, но **перед каждым деплоем backend обязателен прогон в PG-режиме**.
+
+### Локальный Postgres
+
+```bash
+docker run -d --name pulse-pg-test -p 5433:5432 \
+  -e POSTGRES_PASSWORD=test -e POSTGRES_DB=pulse_test postgres:16
+export DATABASE_URL_TEST=postgres://postgres:test@localhost:5433/pulse_test
+```
+
+### Запуск
+
+```bash
+# один модуль
+npm run verify:calendarM5:pg
+
+# вся цепочка M1–M6
+npm run verify:calendar:pg
+```
+
+### Как это работает
+
+- `CALENDAR_VERIFY_PG=1` активирует bootstrap `scripts/lib/calendar-verify-env.js`.
+- Bootstrap подключается к `DATABASE_URL_TEST`, **предварительно дропая и пересоздавая схему `public`**.
+- Гвард безопасности: если `DATABASE_URL_TEST` не содержит `test` в имени БД — сьют падает до первого запроса.
+- Применяется `src/models/schema.sql` + `uuid-ossp`/`pgcrypto`, затем `runCalendarV2Migrations()`.
+
+### Известный fallout (чинить при первом прогоне PG)
+
+- Скрипты вставляют тестового администратора как строку `admin1`; реальная схема ожидает `UUID`. Нужно либо заменить на фиксированный UUID, либо в PG-тестах ALTER типа admin-колонок на TEXT.
+- SQLite-специфичные литералы `datetime('now')` в verify-скриптах не работают в PG — заменить на `NOW()`/параметры.
+- Фоновая пересборка канона после CRUD требует `await flushCanonicalRewrites()` в тестах перед чтением `calendar_events`.
+
+---
+
 ## Матчинг событий к тегам (M6)
 
 Файл: `src/services/calendar.ts` + `src/services/smartTagMatcher.ts`.

@@ -3,17 +3,8 @@
  * Запуск: npm run verify:calendarM6
  */
 
-process.env.USE_SQLITE = 'true';
-process.env.SQLITE_FILE = '/tmp/calendar_m6_verify.db';
-process.env.ENCRYPTION_KEY = 'a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef12345678';
-process.env.CRON_SECRET_KEY = 'test-cron-secret';
-process.env.JWT_SECRET = 'test-jwt-secret';
-process.env.OPENAI_API_KEY = 'test-openai';
-process.env.KIMI_API_KEY = 'test-kimi-key';
-process.env.KIMI_MODEL = 'moonshot-v1-32k';
-process.env.VAPID_PUBLIC_KEY = 'BJxHf6RkzS4y2p9qQ8v1mN0oL3uT5wY7aB9cD1eF2gH3iJ4kL5mN6oP7qR8sT9uV0wX1yZ2aB3cD4eF5gH6iJ7k';
-process.env.VAPID_PRIVATE_KEY = 'cE0w5k8mX2p9qR4sT7uV0wY3aB6cD9fG1hI4jK7lM0nO3pQ6rS9tV2wX5yZ8aB1c';
-process.env.TELEGRAM_BOT_TOKEN = 'test:token12345';
+const { setCommonEnv, setup: setupEnv } = require('./lib/calendar-verify-env');
+setCommonEnv();
 
 const fs = require('fs');
 const path = require('path');
@@ -40,69 +31,34 @@ axios.post = async (url, data, config) => {
   return { data: { ok: true, result: { message_id: 1 } } };
 };
 
-const { initSQLite, initSQLiteSchema } = require(path.join(distDir, 'config', 'db-sqlite.js'));
-const { query } = require(path.join(distDir, 'config', 'db.js'));
-const { runCalendarV2Migrations, getMskDateString, rebuildCanonical, rewriteCanonicalFromRaw, ingestProviderSlice } = require(
-  path.join(distDir, 'services', 'calendar.js')
-);
-const adminRouter = require(path.join(distDir, 'routes', 'admin.js')).default;
-const express = require('express');
+// DB-зависимые модули загружаются после bootstrap в setup().
+let query;
+let getMskDateString;
+let rebuildCanonical;
+let rewriteCanonicalFromRaw;
+let ingestProviderSlice;
+let adminRouter;
+let express;
 
 function assert(cond, msg) {
   if (!cond) throw new Error('ASSERT: ' + msg);
 }
 
 async function setup() {
-  if (fs.existsSync('/tmp/calendar_m6_verify.db')) fs.unlinkSync('/tmp/calendar_m6_verify.db');
-  await initSQLite();
-  await initSQLiteSchema();
-  await query(`CREATE TABLE IF NOT EXISTS calendar_events (
-    id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-    date DATE NOT NULL,
-    weekday VARCHAR(2) NOT NULL,
-    title TEXT NOT NULL,
-    kind VARCHAR(10) NOT NULL,
-    status VARCHAR(10) NOT NULL,
-    company VARCHAR(100) NOT NULL,
-    ticker VARCHAR(10) NOT NULL,
-    uploaded_at TIMESTAMP DEFAULT (datetime('now')),
-    sources TEXT,
-    possible_duplicate INTEGER DEFAULT 0,
-    tag_ids TEXT,
-    matched_via TEXT,
-    UNIQUE (date, title, kind, ticker)
-  )`);
-  await query(`CREATE INDEX IF NOT EXISTS idx_calendar_events_date ON calendar_events(date)`);
-  await query(`CREATE TABLE IF NOT EXISTS calendar_events_raw (
-    id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-    source VARCHAR(20) NOT NULL,
-    date DATE NOT NULL,
-    weekday VARCHAR(2) NOT NULL,
-    title TEXT NOT NULL,
-    kind VARCHAR(10) NOT NULL,
-    status VARCHAR(10) NOT NULL,
-    company VARCHAR(100) NOT NULL,
-    ticker VARCHAR(10) NOT NULL,
-    uploaded_at TIMESTAMP DEFAULT (datetime('now')),
-    tombstone_key TEXT,
-    original_title TEXT
-  )`);
-  await query(`CREATE INDEX IF NOT EXISTS idx_cal_raw_source ON calendar_events_raw(source)`);
-  await query(`CREATE INDEX IF NOT EXISTS idx_cal_raw_key ON calendar_events_raw(date, ticker)`);
-  await query(`CREATE TABLE IF NOT EXISTS calendar_sources (source VARCHAR(20) PRIMARY KEY, uploaded_at TIMESTAMP, last_stale_alert_at TIMESTAMP, last_warnings TEXT)`);
-  await query(`CREATE TABLE IF NOT EXISTS calendar_meta (id INTEGER PRIMARY KEY CHECK (id = 1), uploaded_at TIMESTAMP DEFAULT (datetime('now')), last_stale_alert_at TIMESTAMP)`);
-  await runCalendarV2Migrations();
+  await setupEnv();
 
-  // Таблицы тегов могут отсутствовать в SQLite-схеме календаря
-  await query(`CREATE TABLE IF NOT EXISTS user_defined_tags (
-    tag_id TEXT PRIMARY KEY,
-    tag_name TEXT NOT NULL,
-    tag_type TEXT DEFAULT 'company',
-    keywords TEXT,
-    enriched_data TEXT,
-    created_by TEXT,
-    created_at TEXT DEFAULT (datetime('now'))
-  )`);
+  // DB-зависимые модули загружаются после инициализации окружения.
+  require(path.join(distDir, 'config', 'db-sqlite.js'));
+  const db = require(path.join(distDir, 'config', 'db.js'));
+  query = db.query;
+
+  const calendarModule = require(path.join(distDir, 'services', 'calendar.js'));
+  ({ getMskDateString, rebuildCanonical, rewriteCanonicalFromRaw, ingestProviderSlice, flushCanonicalRewrites } = calendarModule);
+
+  adminRouter = require(path.join(distDir, 'routes', 'admin.js')).default;
+  express = require('express');
+
+  // Дополнительная таблица, специфичная для M6.
   await query(`CREATE TABLE IF NOT EXISTS smart_tag_cache (
     text_hash TEXT PRIMARY KEY,
     tags TEXT,
@@ -304,6 +260,7 @@ async function main() {
     );
     assert(deleteRes.status === 200, `test5: delete should return 200, got ${deleteRes.status}`);
 
+    await flushCanonicalRewrites();
     llmCallCount = 0;
     // deleteCalendarEventGroup уже вызвал rebuildCanonical внутри tx; дополнительный rebuild — для проверки.
     await rebuildCanonical();

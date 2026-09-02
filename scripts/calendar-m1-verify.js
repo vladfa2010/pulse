@@ -1,83 +1,42 @@
-process.env.USE_SQLITE = 'true';
-process.env.SQLITE_FILE = '/tmp/calendar_m1_verify.db';
-process.env.ENCRYPTION_KEY = 'a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef12345678';
-process.env.CRON_SECRET_KEY = 'test-cron-secret';
-process.env.JWT_SECRET = 'test-jwt-secret';
-process.env.OPENAI_API_KEY = 'test-openai';
-process.env.VAPID_PUBLIC_KEY = 'BJxHf6RkzS4y2p9qQ8v1mN0oL3uT5wY7aB9cD1eF2gH3iJ4kL5mN6oP7qR8sT9uV0wX1yZ2aB3cD4eF5gH6iJ7k';
-process.env.VAPID_PRIVATE_KEY = 'cE0w5k8mX2p9qR4sT7uV0wY3aB6cD9fG1hI4jK7lM0nO3pQ6rS9tV2wX5yZ8aB1c';
+const { setCommonEnv, setup: setupCalendarEnv } = require('./lib/calendar-verify-env');
+setCommonEnv();
 
-const fs = require('fs');
 const path = require('path');
 const distDir = path.join(__dirname, '..', 'dist');
-const { initSQLite, initSQLiteSchema } = require(path.join(distDir, 'config', 'db-sqlite.js'));
-const { query } = require(path.join(distDir, 'config', 'db.js'));
-const {
-  runCalendarV2Migrations,
-  saveCalendarSnapshot,
+
+let query;
+let saveCalendarSnapshot,
   mergeCalendarSnapshot,
   createCalendarEventGroup,
   updateCalendarEventGroup,
   deleteCalendarEventGroup,
   getCalendarEventGroup,
-} = require(path.join(distDir, 'services', 'calendar.js'));
+  flushCanonicalRewrites;
 
 function assert(cond, msg) {
   if (!cond) throw new Error('ASSERT: ' + msg);
 }
 
 async function setup() {
-  if (fs.existsSync('/tmp/calendar_m1_verify.db')) fs.unlinkSync('/tmp/calendar_m1_verify.db');
-  await initSQLite();
-  await initSQLiteSchema();
-  await query(`CREATE TABLE IF NOT EXISTS calendar_events (
-    id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-    date DATE NOT NULL,
-    weekday VARCHAR(2) NOT NULL,
-    title TEXT NOT NULL,
-    kind VARCHAR(10) NOT NULL,
-    status VARCHAR(10) NOT NULL,
-    company VARCHAR(100) NOT NULL,
-    ticker VARCHAR(10) NOT NULL,
-    uploaded_at TIMESTAMP DEFAULT (datetime('now')),
-    sources TEXT,
-    possible_duplicate INTEGER DEFAULT 0,
-    tag_ids TEXT,
-    matched_via TEXT,
-    UNIQUE (date, title, kind, ticker)
-  )`);
-  await query(`CREATE INDEX IF NOT EXISTS idx_calendar_events_date ON calendar_events(date)`);
-  await query(`CREATE TABLE IF NOT EXISTS user_defined_tags (
-    tag_id TEXT PRIMARY KEY,
-    tag_name TEXT NOT NULL,
-    tag_type TEXT DEFAULT 'company',
-    keywords TEXT,
-    enriched_data TEXT,
-    created_by TEXT,
-    created_at TEXT DEFAULT (datetime('now'))
-  )`);
+  await setupCalendarEnv();
+
+  const dbModule = require(path.join(distDir, 'config', 'db.js'));
+  query = dbModule.query;
+
+  const calendarModule = require(path.join(distDir, 'services', 'calendar.js'));
+  saveCalendarSnapshot = calendarModule.saveCalendarSnapshot;
+  mergeCalendarSnapshot = calendarModule.mergeCalendarSnapshot;
+  createCalendarEventGroup = calendarModule.createCalendarEventGroup;
+  updateCalendarEventGroup = calendarModule.updateCalendarEventGroup;
+  deleteCalendarEventGroup = calendarModule.deleteCalendarEventGroup;
+  getCalendarEventGroup = calendarModule.getCalendarEventGroup;
+  flushCanonicalRewrites = calendarModule.flushCanonicalRewrites;
+
   await query(`CREATE TABLE IF NOT EXISTS smart_tag_cache (
     text_hash TEXT PRIMARY KEY,
     tags TEXT,
     created_at TEXT DEFAULT (datetime('now'))
   )`);
-  await query(`CREATE TABLE IF NOT EXISTS calendar_events_raw (
-    id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-    source VARCHAR(20) NOT NULL,
-    date DATE NOT NULL,
-    weekday VARCHAR(2) NOT NULL,
-    title TEXT NOT NULL,
-    kind VARCHAR(10) NOT NULL,
-    status VARCHAR(10) NOT NULL,
-    company VARCHAR(100) NOT NULL,
-    ticker VARCHAR(10) NOT NULL,
-    uploaded_at TIMESTAMP DEFAULT (datetime('now'))
-  )`);
-  await query(`CREATE INDEX IF NOT EXISTS idx_cal_raw_source ON calendar_events_raw(source)`);
-  await query(`CREATE INDEX IF NOT EXISTS idx_cal_raw_key ON calendar_events_raw(date, ticker)`);
-  await query(`CREATE TABLE IF NOT EXISTS calendar_sources (source VARCHAR(20) PRIMARY KEY, uploaded_at TIMESTAMP, last_stale_alert_at TIMESTAMP)`);
-  await query(`CREATE TABLE IF NOT EXISTS calendar_meta (id INTEGER PRIMARY KEY CHECK (id = 1), uploaded_at TIMESTAMP DEFAULT (datetime('now')), last_stale_alert_at TIMESTAMP)`);
-  await runCalendarV2Migrations();
 }
 
 async function main() {
@@ -130,6 +89,7 @@ async function main() {
       status: 'expected',
       companies: [{ name: 'Яндекс', ticker: 'YDEX' }],
     });
+    await flushCanonicalRewrites();
     let manual = await getCalendarEventGroup('2026-09-02', 'Ручное событие', 'СД');
     assert(manual && manual.companies.some(c => c.ticker === 'YDEX'), 'manual event should exist');
 
@@ -142,11 +102,13 @@ async function main() {
       status: 'confirmed',
       companies: [{ name: 'Яндекс', ticker: 'YDEX' }, { name: 'Тинькофф', ticker: 'TCSG' }],
     });
+    await flushCanonicalRewrites();
     let updated = await getCalendarEventGroup('2026-09-02', 'Ручное событие обновл', 'СД');
     assert(updated && updated.companies.length === 2, 'updated manual event should have 2 companies');
 
     // Test 6: delete raw group removes from canonical and does not resurrect on next merge/rebuild
     await deleteCalendarEventGroup('2026-09-02', 'Ручное событие обновл', 'СД');
+    await flushCanonicalRewrites();
     const afterDelete = await getCalendarEventGroup('2026-09-02', 'Ручное событие обновл', 'СД');
     assert(!afterDelete, 'deleted event should not exist');
     await mergeCalendarSnapshot([{ date: '2026-09-03', weekday: 'чт', groups: [

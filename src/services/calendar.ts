@@ -170,6 +170,13 @@ export function scheduleCanonicalRewrite(): void {
   })();
 }
 
+/** Для тестов: дождаться завершения текущей фоновой пересборки. */
+export async function flushCanonicalRewrites(): Promise<void> {
+  while (rewriteFlight) {
+    await rewriteFlight.catch(() => {});
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Date helpers
 // ═══════════════════════════════════════════════════════════════════════════
