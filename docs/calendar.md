@@ -43,6 +43,7 @@ manual > investmint > smartlab > bcs > global > legacy
 - **Tombstone-строки**: удалённые/изменённые вручную события оставляют suppressor-записи в `calendar_events_raw`, чтобы провайдерские срезы не воскрешали старые данные.
 - **Per-provider stale alerts**: Telegram-уведомления об устаревании фида отправляются раз в сутки для каждого провайдера отдельно.
 - **Рубильник LLM-матчинга**: `calendar_settings.llm_enabled` позволяет админу отключать LLM-фолбэк при сопоставлении тегов.
+- **Grace-окно и архив**: сырые срезы провайдеров заменяются только внутри «живого» окна `server_date − 14` дней. Строки старше окна сохраняются (архив) и дедуплицируются по ключу `(source, date, title, kind, ticker)` — повторные загрузки не создают дубликатов в архиве. Админка может просматривать архив отдельно через `GET /api/admin/calendar/history`.
 
 ---
 
@@ -194,10 +195,15 @@ Query-параметры:
 | `search` | string | Поиск по `title`, `company` или `ticker` (case-insensitive). |
 | `kind` | string | Точное совпадение по `kind`. |
 | `status` | string | Точное совпадение по `status`. |
-| `possible_duplicate` | `true` | Показать только группы с флагом `possible_duplicate`. |
+| `date_from` | string | Нижняя граница даты (YYYY-MM-DD). |
+| `date_to` | string | Верхняя граница даты (YYYY-MM-DD). |
+| `past` | `true` | Показать события из архива (`date < server_date − 14`). При `past=true` сортировка `date ASC`, иначе `date DESC`. |
 | `tombstones` | `true` | Показать удалённые (tombstone) события вместо живых. |
 | `limit` | number | Размер страницы (по умолчанию `50`). |
 | `offset` | number | Смещение (по умолчанию `0`). |
+
+По умолчанию (без `past` и без явных `date_from`/`date_to`) возвращаются только события из «живого» окна: `date >= server_date − 14`.
+
 
 **Response 200**:
 
@@ -224,6 +230,49 @@ Query-параметры:
 ```
 
 > Поле `companies` заполнено для каждой группы: админская таблица отображает список компаний прямо в строке. Полный состав с `matched_via` для каждой компании по-прежнему доступен через `GET /api/admin/calendar/events/:date/:title/:kind`.
+
+---
+
+### `GET /api/admin/calendar/history`
+
+Только для администраторов. Возвращает архивные события — канонические строки с `date < server_date − 14` (вне «живого» окна). Используется для просмотра прошедших/замороженных событий без смешивания с активным календарём.
+
+**Query-параметры:**
+
+| Параметр | Тип | Описание |
+|----------|-----|----------|
+| `ticker` | string | Фильтр по тикеру (case-insensitive, LIKE). |
+| `from` | string | Нижняя граница даты (YYYY-MM-DD). |
+| `to` | string | Верхняя граница даты (YYYY-MM-DD). |
+| `search` | string | Поиск по `title`, `company` или `ticker`. |
+| `limit` | number | Размер страницы (по умолчанию `50`). |
+| `offset` | number | Смещение (по умолчанию `0`). |
+
+**Response 200**:
+
+```json
+{
+  "events": [
+    {
+      "date": "2026-07-30",
+      "weekday": "чт",
+      "title": "МСФО 2КВ2026",
+      "kind": "МСФО",
+      "status": "confirmed",
+      "companies": [
+        { "name": "Сбербанк", "ticker": "SBER", "sources": ["investmint"], "tag_ids": ["sber"] }
+      ],
+      "companies_count": 1,
+      "sources": ["investmint"],
+      "tag_ids": ["sber"],
+      "possible_duplicate": false
+    }
+  ],
+  "total": 1
+}
+```
+
+Сортировка: `date DESC, title ASC`.
 
 ---
 
@@ -551,6 +600,17 @@ Runtime-настройки календаря.
 
 Сортировка: `date DESC, title ASC`. В списке `companies` всегда пустой, `companies_count` — количество строк в группе.
 
+### `listCalendarHistory(filters): { events, total }`
+
+Возвращает страницу архивных групп событий (`date < server_date − 14`). Поддерживает фильтры:
+
+- `ticker` — поиск по тикеру (ILIKE);
+- `from` / `to` — диапазон дат;
+- `search` — поиск по `title` и компаниям внутри группы;
+- `limit` / `offset` — пагинация.
+
+Сортировка: `date DESC, title ASC`.
+
 ### `getCalendarEventGroup(date, title, kind): CalendarAdminEvent | null`
 
 Возвращает одну группу со списком компаний, отсортированным по тикеру. Если группа не найдена — `null`.
@@ -601,11 +661,14 @@ Sanity-проверки перед записью среза:
 
 ### `ingestProviderSlice(source, flatRows, dryRun, warnings): IngestResult`
 
-Заменяет срез провайдера и пересобирает канон.
+Заменяет срез провайдера внутри «живого» окна и пересобирает канон.
 
-- Работает под in-memory single-flight (promise-цепочка `ingestFlight`), параллельные загрузки сериализуются.
+- Работает под in-memory single-flight (promise-цепочка `ingestFlight`), параллельные загрузки сериализуются (для строк внутри «живого» окна).
 - **Вне транзакции**: читает текущий канон (`getCanonicalSnapshot`), читает raw, симулирует новый срез, `buildCanonicalRows`, `matchCalendarTags` (может дергать LLM).
-- **Короткая транзакция**: `DELETE raw WHERE source = $source` → `INSERT flatRows` → `UPSERT calendar_sources` → `writeCanonicalRows(matched)`.
+- **Короткая транзакция**:
+  - `DELETE raw WHERE source = $source AND date >= server_date − 14` — заменяем только «живые» строки.
+  - Замороженные строки (`date < server_date − 14`) не удаляются; входящие архивные строки дедуплицируются по ключу `(source, date, title, kind, ticker)`.
+  - `INSERT flatRows` (с учётом пропущенных дубликатов) → `UPSERT calendar_sources` → `writeCanonicalRows(matched)`.
 - В `dry_run`: без транзакции и записи, матчинг тегов **не** вызывается (экономия токенов).
 
 ### `writeCanonicalRows(q, rows)`
@@ -695,6 +758,26 @@ npm run verify:calendarAdapters
 Скрипт `scripts/calendar-m2-verify.js` проверяет detect, parse, shape и parity с замороженными фронтовыми парсерами.
 
 ---
+
+## Архив событий (M7)
+
+Файл: `src/services/calendar.ts` + `src/routes/admin.ts`.
+
+### Grace-окно
+
+`ARCHIVE_GRACE_DAYS = 14`. Все события с `date >= server_date − 14` считаются «живыми» и заменяются при загрузке провайдера. События старше границы попадают в архив и не удаляются при обычном инжесте.
+
+### Дедупликация архивных строк
+
+При загрузке провайдерского среза для каждой архивной строки вычисляется ключ `(source, date, title, kind, ticker)`. Если строка с таким ключом уже есть в `calendar_events_raw` — она пропускается, в `warnings` добавляется запись `пропущено замороженных дубликатов: N`.
+
+### Endpoint `GET /api/admin/calendar/history`
+
+Возвращает канонические группы с `date < server_date − 14`. Поддерживает фильтры по тикеру, дате и поиску. Сортировка `date DESC`.
+
+### Endpoint `GET /api/admin/calendar/events` — архивный режим
+
+Query-параметр `past=true` переключает выдачу на архив (`date < server_date − 14`) и меняет сортировку на `date ASC`. Параметры `date_from`/`date_to` позволяют задать произвольный диапазон без привязки к grace-окну.
 
 ## Верификация в режиме PostgreSQL
 

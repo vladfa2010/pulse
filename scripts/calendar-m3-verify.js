@@ -45,6 +45,7 @@ async function setup() {
   } = require(path.join(distDir, 'services', 'calendarAdapters', 'index.js')));
   ({
     ingestProviderSlice,
+    addDays,
     computeDiff,
     getCanonicalSnapshot,
     validateProviderSlice,
@@ -229,26 +230,43 @@ async function main() {
     assert(!legacyMeta.rows[0].last_stale_alert_at, 'test7: legacy should not be alerted');
     console.log('[m3] test7 passed: per-provider stale alerts');
 
-    // === Test 8: две параллельные загрузки сериализуются ===
+    // === Test 8: две параллельные загрузки live-окна сериализуются ===
     await resetCalendarTables();
-    const rawA = readFixture('investmint.json').slice(0, 10);
-    const rawB = readFixture('investmint.json').slice(10, 20);
-    const eventsA = investmintAdapter.parse(rawA).events;
-    const eventsB = investmintAdapter.parse(rawB).events;
-    const rowsA = toRawRows(eventsA, 'investmint');
-    const rowsB = toRawRows(eventsB, 'investmint');
-    const [resA, resB] = await Promise.all([
-      ingestProviderSlice('investmint', rowsA, false),
-      ingestProviderSlice('investmint', rowsB, false),
+    const serverDate8 = await getMskDateString();
+    const liveDateBase = new Date(serverDate8 + 'T00:00:00Z');
+    const makeLiveRows = (prefix, count) => {
+      const rows = [];
+      for (let i = 0; i < count; i++) {
+        const d = new Date(liveDateBase);
+        d.setUTCDate(d.getUTCDate() + i);
+        const date = d.toISOString().slice(0, 10);
+        rows.push({
+          source: 'investmint',
+          date,
+          weekday: 'вт',
+          title: `${prefix} event ${i}`,
+          kind: 'МСФО',
+          status: 'expected',
+          company: 'X',
+          ticker: 'X',
+        });
+      }
+      return rows;
+    };
+    const rowsA8 = makeLiveRows('A', 5);
+    const rowsB8 = makeLiveRows('B', 5);
+    const [resA8, resB8] = await Promise.all([
+      ingestProviderSlice('investmint', rowsA8, false),
+      ingestProviderSlice('investmint', rowsB8, false),
     ]);
     const rawCount8 = await query(`SELECT COUNT(*) as c FROM calendar_events_raw WHERE source = 'investmint'`);
     const canonicalCount8 = await query(`SELECT COUNT(*) as c FROM calendar_events`);
     assert(
-      Number(rawCount8.rows[0].c) === rowsA.length || Number(rawCount8.rows[0].c) === rowsB.length,
+      Number(rawCount8.rows[0].c) === rowsA8.length || Number(rawCount8.rows[0].c) === rowsB8.length,
       'test8: parallel ingests should serialize, leaving one slice'
     );
     assert(
-      Number(canonicalCount8.rows[0].c) === resA.canonical.length || Number(canonicalCount8.rows[0].c) === resB.canonical.length,
+      Number(canonicalCount8.rows[0].c) === resA8.canonical.length || Number(canonicalCount8.rows[0].c) === resB8.canonical.length,
       'test8: canonical should be consistent with final slice'
     );
     console.log('[m3] test8 passed: parallel ingests serialized, final raw rows=', rawCount8.rows[0].c);

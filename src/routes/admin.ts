@@ -29,6 +29,7 @@ import { broadcastCalendarRefresh } from '../services/sse';
 import { nowSql } from '../utils/nowSql';
 import { getUserId } from '../utils/users';
 import {
+  listCalendarHistory,
   listCalendarEventGroups,
   getCalendarEventGroup,
   createCalendarEventGroup,
@@ -1193,10 +1194,34 @@ router.get('/calendar/events/:date/:title/:kind', adminMiddleware, async (req: A
   }
 });
 
+// GET /api/admin/calendar/history — архивные события (date < server_date − 14)
+router.get('/calendar/history', adminMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const filters = {
+      ticker: req.query.ticker as string | undefined,
+      from: req.query.from as string | undefined,
+      to: req.query.to as string | undefined,
+      search: req.query.search as string | undefined,
+      limit: req.query.limit ? Number(req.query.limit) : undefined,
+      offset: req.query.offset ? Number(req.query.offset) : undefined,
+    };
+
+    const { events, total } = await listCalendarHistory(filters);
+    res.json({ events, total });
+  } catch (err: any) {
+    console.error('[Admin] Calendar history error:', err.message);
+    const status = calendarErrorStatus(err);
+    res.status(status).json({ error: status === 500 ? 'Internal error' : err.message || 'Failed to fetch calendar history' });
+  }
+});
+
 // GET /api/admin/calendar/events
 router.get('/calendar/events', adminMiddleware, async (req: AuthRequest, res) => {
   try {
     const filters = {
+      date_from: req.query.date_from as string | undefined,
+      date_to: req.query.date_to as string | undefined,
+      past: req.query.past === '1' || req.query.past === 'true' ? true : undefined,
       search: req.query.search as string | undefined,
       kind: req.query.kind as string | undefined,
       status: req.query.status as string | undefined,

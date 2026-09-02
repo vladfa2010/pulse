@@ -77,6 +77,7 @@ const VALID_KINDS: EventKind[] = ['МСФО', 'РСБУ', 'СД', 'СА', 'Ди�
 const VALID_STATUSES: EventStatus[] = ['confirmed', 'expected'];
 
 const MSK_OFFSET_MS = 3 * 60 * 60 * 1000;
+const ARCHIVE_GRACE_DAYS = 14;
 const STALE_ALERT_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 const CALENDAR_CACHE_TTL_MS = 60 * 1000;
 
@@ -588,9 +589,13 @@ export interface CalendarAdminFilters {
   status?: string;
   possible_duplicate?: boolean;
   tombstones?: boolean;
+  date_from?: string;
+  date_to?: string;
+  past?: boolean;
   limit?: number;
   offset?: number;
 }
+
 
 export async function listCalendarEventGroups(
   filters: CalendarAdminFilters
@@ -649,6 +654,13 @@ export async function listCalendarEventGroups(
     return { events, total };
   }
 
+  const serverDate = await getMskDateString();
+  const windowStart = addDays(serverDate, -ARCHIVE_GRACE_DAYS);
+
+  const dateFrom = typeof filters.date_from === 'string' && filters.date_from.length > 0 ? filters.date_from : undefined;
+  const dateTo = typeof filters.date_to === 'string' && filters.date_to.length > 0 ? filters.date_to : undefined;
+  const past = filters.past === true;
+
   const conditions: string[] = [];
   const params: any[] = [];
   let idx = 1;
@@ -658,6 +670,21 @@ export async function listCalendarEventGroups(
     params.push(kind);
     idx++;
   }
+  if (!past && !dateFrom) {
+    conditions.push(`date >= $${idx}`);
+    params.push(windowStart);
+    idx++;
+  }
+  if (dateFrom) {
+    conditions.push(`date >= $${idx}`);
+    params.push(dateFrom);
+    idx++;
+  }
+  if (dateTo) {
+    conditions.push(`date <= $${idx}`);
+    params.push(dateTo);
+    idx++;
+  }
   if (status) {
     conditions.push(`status = $${idx}`);
     params.push(status);
@@ -665,11 +692,122 @@ export async function listCalendarEventGroups(
   }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+  const orderDirection = past ? 'ASC' : 'DESC';
 
   const rowsResult = await query(
     `SELECT date, weekday, title, kind, status, company, ticker, sources, possible_duplicate, tag_ids, matched_via
      FROM calendar_events
      ${where}
+     ORDER BY date ${orderDirection}, title`,
+    params
+  );
+
+  const groups = new Map<string, CalendarAdminEvent>();
+  for (const r of rowsResult.rows) {
+    const key = `${normalizeDbDate(r.date)}|${r.title}|${r.kind}|${r.status}`;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        date: normalizeDbDate(r.date),
+        weekday: r.weekday,
+        title: r.title,
+        kind: assertValidKind(r.kind),
+        status: assertValidStatus(r.status),
+        companies: [],
+        companies_count: 0,
+        sources: [],
+        possible_duplicate: false,
+        tag_ids: [],
+      });
+    }
+    const group = groups.get(key)!;
+    const rowSources = parseSources(r.sources || '[]');
+    const rowTags: string[] = parseSources(r.tag_ids || '[]');
+    group.companies.push({ name: r.company, ticker: r.ticker, sources: rowSources, tag_ids: rowTags });
+    group.companies_count++;
+    for (const s of rowSources) {
+      if (!group.sources!.includes(s)) group.sources!.push(s);
+    }
+    for (const t of rowTags) {
+      if (!group.tag_ids!.includes(t)) group.tag_ids!.push(t);
+    }
+    if (r.possible_duplicate) group.possible_duplicate = true;
+  }
+
+  let events = Array.from(groups.values());
+  events.sort((a, b) => {
+    if (a.date !== b.date) return past ? a.date.localeCompare(b.date) : b.date.localeCompare(a.date);
+    return a.title.localeCompare(b.title, 'ru');
+  });
+
+  if (search) {
+    const pat = search.toLowerCase();
+    events = events.filter(
+      (e) =>
+        e.title.toLowerCase().includes(pat) ||
+        e.companies.some(
+          (c) => c.name.toLowerCase().includes(pat) || c.ticker.toLowerCase().includes(pat)
+        )
+    );
+  }
+
+  if (possibleDuplicate) {
+    events = events.filter((e) => e.possible_duplicate);
+  }
+
+  const total = events.length;
+  events = events.slice(offset, offset + limit);
+
+  return { events, total };
+}
+
+export interface CalendarHistoryFilters {
+  ticker?: string;
+  from?: string;
+  to?: string;
+  search?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export async function listCalendarHistory(
+  filters: CalendarHistoryFilters
+): Promise<{ events: CalendarAdminEvent[]; total: number }> {
+  const serverDate = await getMskDateString();
+  const windowStart = addDays(serverDate, -ARCHIVE_GRACE_DAYS);
+
+  const ticker = typeof filters.ticker === 'string' && filters.ticker.length > 0 ? filters.ticker.toUpperCase() : undefined;
+  const fromDate = typeof filters.from === 'string' && filters.from.length > 0 ? filters.from : undefined;
+  const toDate = typeof filters.to === 'string' && filters.to.length > 0 ? filters.to : undefined;
+  const search = typeof filters.search === 'string' && filters.search.length > 0 ? filters.search : undefined;
+  const limit = Number.isFinite(Number(filters.limit)) && Number(filters.limit) > 0 ? Number(filters.limit) : 50;
+  const offset = Number.isFinite(Number(filters.offset)) && Number(filters.offset) >= 0 ? Number(filters.offset) : 0;
+
+  const conditions: string[] = ['date < $1'];
+  const params: any[] = [windowStart];
+  let idx = 2;
+
+  if (ticker) {
+    conditions.push(`ticker = $${idx}`);
+    params.push(ticker);
+    idx++;
+  }
+  if (fromDate) {
+    conditions.push(`date >= $${idx}`);
+    params.push(fromDate);
+    idx++;
+  }
+  if (toDate) {
+    conditions.push(`date <= $${idx}`);
+    params.push(toDate);
+    idx++;
+  }
+
+  const where = conditions.join(' AND ');
+
+  const rowsResult = await query(
+    `SELECT date, weekday, title, kind, status, company, ticker, sources, possible_duplicate, tag_ids, matched_via
+     FROM calendar_events
+     WHERE ${where}
      ORDER BY date DESC, title`,
     params
   );
@@ -720,10 +858,6 @@ export async function listCalendarEventGroups(
           (c) => c.name.toLowerCase().includes(pat) || c.ticker.toLowerCase().includes(pat)
         )
     );
-  }
-
-  if (possibleDuplicate) {
-    events = events.filter((e) => e.possible_duplicate);
   }
 
   const total = events.length;
@@ -1212,6 +1346,10 @@ interface IngestResult {
  *  Снапшот канона снимается внутри single-flight, чтобы diff атрибутировался
  *  корректно при параллельных загрузках.
  *  Матчинг тегов выполняется ДО транзакции записи, чтобы LLM не держал БД. */
+function rawRowKey(row: { source: string; date: string; title: string; kind: string; ticker: string }): string {
+  return `${row.source}|${row.date}|${row.title}|${row.kind}|${row.ticker}`;
+}
+
 export async function ingestProviderSlice(
   source: string,
   flatRows: CalendarRawRow[],
@@ -1219,6 +1357,9 @@ export async function ingestProviderSlice(
   warnings: string[] = []
 ): Promise<IngestResult> {
   const run = async (): Promise<IngestResult> => {
+    const serverDate = await getMskDateString();
+    const windowStart = addDays(serverDate, -ARCHIVE_GRACE_DAYS);
+
     const snapshot = await getCanonicalSnapshot();
 
     const rawResult = await query(
@@ -1239,6 +1380,12 @@ export async function ingestProviderSlice(
     }));
     const simulated = existingRows.filter((r) => r.source !== source).concat(flatRows);
 
+    const frozenKeys = new Set(
+      existingRows
+        .filter((r) => r.source === source && r.date < windowStart)
+        .map((r) => rawRowKey({ source: r.source, date: r.date, title: r.title, kind: r.kind, ticker: r.ticker }))
+    );
+
     if (dryRun) {
       const canonical = buildCanonicalRows(simulated);
       const generatedAt = await getGeneratedAt();
@@ -1249,15 +1396,29 @@ export async function ingestProviderSlice(
     const canonical = buildCanonicalRows(simulated);
     const matched = await matchCalendarTags(canonical);
 
+    let skippedFrozen = 0;
+
     await withCalendarTransaction(async (q) => {
-      await q(`DELETE FROM calendar_events_raw WHERE source = $1`, [source]);
+      await q(`DELETE FROM calendar_events_raw WHERE source = $1 AND date >= $2`, [source, windowStart]);
 
       for (const row of flatRows) {
+        // Замороженные строки (date < windowStart) дедуплицируем по (source, date, title, kind, ticker)
+        if (row.date < windowStart) {
+          const key = rawRowKey({ source, date: row.date, title: row.title, kind: row.kind, ticker: row.ticker });
+          if (frozenKeys.has(key)) {
+            skippedFrozen++;
+            continue;
+          }
+        }
         await q(
           `INSERT INTO calendar_events_raw (source, date, weekday, title, kind, status, company, ticker, uploaded_at)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, ${nowSql()})`,
           [source, row.date, row.weekday, row.title, row.kind, row.status, row.company, row.ticker]
         );
+      }
+
+      if (skippedFrozen > 0) {
+        warnings.push(`пропущено замороженных дубликатов: ${skippedFrozen}`);
       }
 
       await q(
@@ -1269,7 +1430,6 @@ export async function ingestProviderSlice(
 
       await writeCanonicalRows(q, matched);
     });
-
     const generatedAt = await getGeneratedAt();
     const diff = computeDiff(snapshot, matched);
     return { canonical: matched, generatedAt, diff };
