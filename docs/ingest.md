@@ -38,6 +38,30 @@ curl -X POST "https://api.example.com/api/admin/calendar/investmint?dry_run=1" \
 
 ## Response 200
 
+### Live (без `dry_run`) — быстрый ответ
+
+Канон пересобирается в фоне (`scheduleCanonicalRewrite` с коалесцингом), LLM-матчинг
+не блокирует ответ. Тело — только parse-статистика:
+
+```json
+{
+  "parsed": {
+    "days": 5,
+    "events": 12,
+    "no_ticker": 0,
+    "skipped": 0,
+    "date_from": "2026-09-05",
+    "date_to": "2026-09-12",
+    "warnings": []
+  },
+  "queued": true
+}
+```
+
+Полей `diff`, `samples`, `generated_at` в live-ответе нет.
+
+### dry_run (`?dry_run=1`) — полное превью
+
 ```json
 {
   "parsed": {
@@ -70,13 +94,14 @@ curl -X POST "https://api.example.com/api/admin/calendar/investmint?dry_run=1" \
 | `parsed.no_ticker` | Количество событий без тикера (из `ParseWarnings.noTicker`). |
 | `parsed.skipped` | Количество пропущенных строк (из `ParseWarnings.skipped`). |
 | `parsed.warnings` | Массив warning'ов адаптера и sanity-проверок. |
-| `diff.new_events` | Новые ключи в каноне. |
-| `diff.updated_events` | Ключ сохранился, изменился `title` или `company`. |
-| `diff.confirmed_upgrades` | `expected → confirmed`. |
-| `diff.confirmations` | `sources` вырос без появления нового ключа (склейка провайдеров). |
-| `diff.removed_events` | Ключ полностью ушёл из канона. |
-| `samples` | До 20 ключей на категорию для превью. |
-| `generated_at` | `MAX(uploaded_at)` из `calendar_sources` (null, если источников нет). |
+| `queued` | Только live-ответ: канон пересобирается в фоне. |
+| `diff.new_events` | Новые ключи в каноне (только dry_run). |
+| `diff.updated_events` | Ключ сохранился, изменился `title` или `company` (только dry_run). |
+| `diff.confirmed_upgrades` | `expected → confirmed` (только dry_run). |
+| `diff.confirmations` | `sources` вырос без появления нового ключа (склейка провайдеров; только dry_run). |
+| `diff.removed_events` | Ключ полностью ушёл из канона (только dry_run). |
+| `samples` | До 20 ключей на категорию для превью (только dry_run). |
+| `generated_at` | `MAX(uploaded_at)` из `calendar_sources` (только dry_run). |
 
 ---
 
@@ -131,12 +156,20 @@ curl -X POST "https://api.example.com/api/admin/calendar/investmint?dry_run=1" \
 
 ---
 
+## Поведение live (без dry_run)
+
+- Транзакция: date-scoped `DELETE` raw-среза → `INSERT` новых строк → `UPSERT calendar_sources` (в т.ч. `last_warnings`).
+- После commit — `scheduleCanonicalRewrite()`: LLM-матчинг, пересборка канона, SSE-broadcast и инвалидация кэша — всё в фоне с коалесцингом (одна пересборка идёт, максимум одна в очереди).
+- Ответ уходит сразу после транзакции: `{ parsed, queued: true }`.
+- Замороженные строки (`date < server_date − 14`) не удаляются; входящие архивные строки дедуплицируются по ключу `(source, date, title, kind, ticker)`.
+
 ## Поведение dry_run
 
 - Транзакция не открывается, таблицы не изменяются.
-- Текущий raw читается из БД, срез `:source` заменяется в памяти.
+- Текущий raw читается из БД, срез `:source` заменяется в памяти (включая замороженные строки текущего источника).
 - `buildCanonicalRows` строит новый канон на симулированном наборе.
 - `computeDiff` возвращает счётчики и samples — это наполнение превью-модалки админки.
+- LLM-матчинг **не** вызывается (экономия токенов).
 
 ---
 
@@ -184,11 +217,10 @@ curl "https://api.example.com/api/admin/calendar/sources" \
 2. Адаптер парсит файл → `NormalizedEvent[]` + warnings.
 3. `validateProviderSlice` проверяет reject/warnings.
 4. `toRawRows` превращает события в `CalendarRawRow[]`.
-5. Делается snapshot текущего канона.
-6. `ingestProviderSlice` выполняется под in-memory single-flight.
-7. `computeDiff` сравнивает snapshot и новый канон.
-8. Если не `dry_run` и diff непустой — `broadcastCalendarRefresh()` + `invalidateCalendarCache()`.
-9. Ответ формируется из parsed/diff/samples/generated_at.
+5. `ingestProviderSlice` выполняется под in-memory single-flight:
+   - live: транзакция (date-scoped DELETE + INSERT + UPSERT sources) → `scheduleCanonicalRewrite()` в фоне → возврат `{queued: true}`;
+   - dry_run: симуляция канона на замороженных строках + новом срезе → `computeDiff` → возврат полного контракта без записи в БД.
+6. Фоновая пересборка (`rewriteCanonicalFromRaw` + `matchCalendarTags` + `writeCanonicalRows` в транзакции) сама делает `broadcastCalendarRefresh()` + `invalidateCalendarCache()` после успешной записи канона.
 
 ---
 

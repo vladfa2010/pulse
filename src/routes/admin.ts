@@ -25,7 +25,6 @@ import {
 import { listAllFeatures, createFeature, updateFeature } from './features';
 import { getPromoByCode } from '../services/promo';
 import { logAdminChangedPlan, logAdminExtendedSubscription } from '../services/activityLog';
-import { broadcastCalendarRefresh } from '../services/sse';
 import { nowSql } from '../utils/nowSql';
 import { getUserId } from '../utils/users';
 import {
@@ -42,12 +41,9 @@ import {
   addDays,
   normalizeDbDate,
   PROVIDER_PRIORITY,
-  invalidateCalendarCache,
-  getCanonicalSnapshot,
-  computeDiff,
   withCalendarTransaction,
-  rewriteCanonicalFromRaw,
   getCalendarLlmEnabled,
+  scheduleCanonicalRewrite,
 } from '../services/calendar';
 import {
   detectAdapter,
@@ -1392,22 +1388,15 @@ router.delete('/calendar/sources/:source', adminMiddleware, async (req: AuthRequ
       return res.status(400).json({ error: 'чистка поддерживается только для legacy' });
     }
 
-    const snapshotBefore = await getCanonicalSnapshot();
-
     await withCalendarTransaction(async (q) => {
       await q(`DELETE FROM calendar_events_raw WHERE source = $1`, [source]);
       await q(`DELETE FROM calendar_sources WHERE source = $1`, [source]);
     });
 
-    const { canonical } = await rewriteCanonicalFromRaw();
-    const diff = computeDiff(snapshotBefore, canonical);
+    // Канон пересобирается в фоне (коалесцинг внутри scheduleCanonicalRewrite)
+    scheduleCanonicalRewrite();
 
-    if (diff.nonempty) {
-      broadcastCalendarRefresh();
-      invalidateCalendarCache();
-    }
-
-    res.json({ removed_events: diff.counts.removed_events });
+    res.json({ success: true });
   } catch (err: any) {
     console.error('[Admin] Calendar source delete error:', err.message);
     const status = calendarErrorStatus(err);
@@ -1501,34 +1490,37 @@ router.post('/calendar/:source', adminMiddleware, async (req: AuthRequest, res) 
 
     const flatRows = toRawRows(events, source);
     const allWarnings = [...parseWarnings.details, ...validation.warnings];
-    const { diff, generatedAt } = await ingestProviderSlice(source, flatRows, dryRun, allWarnings);
-
-    if (!dryRun && diff.nonempty) {
-      broadcastCalendarRefresh();
-      invalidateCalendarCache();
-    }
+    const result = await ingestProviderSlice(source, flatRows, dryRun, allWarnings);
 
     const uniqueDates = new Set(events.map((e) => e.date));
     const sortedDates = Array.from(uniqueDates).sort();
 
+    const parsed = {
+      days: uniqueDates.size,
+      events: events.length,
+      no_ticker: parseWarnings.noTicker || 0,
+      skipped: parseWarnings.skipped || 0,
+      date_from: sortedDates.length > 0 ? sortedDates[0] : null,
+      date_to: sortedDates.length > 0 ? sortedDates[sortedDates.length - 1] : null,
+      warnings: allWarnings,
+    };
+
+    // Live: канон пересобирается в фоне, отвечаем сразу после записи raw.
+    // Синхронные broadcast/invalidate убраны — их делает scheduleCanonicalRewrite.
+    if (result.queued) {
+      return res.json({ parsed, queued: true });
+    }
+
     res.json({
-      parsed: {
-        days: uniqueDates.size,
-        events: events.length,
-        no_ticker: parseWarnings.noTicker || 0,
-        skipped: parseWarnings.skipped || 0,
-        date_from: sortedDates.length > 0 ? sortedDates[0] : null,
-        date_to: sortedDates.length > 0 ? sortedDates[sortedDates.length - 1] : null,
-        warnings: allWarnings,
-      },
-      diff: diff.counts,
+      parsed,
+      diff: result.diff.counts,
       samples: {
-        new: diff.samples.new,
-        removed: diff.samples.removed,
-        upgraded: diff.samples.upgraded,
-        updated: diff.samples.updated,
+        new: result.diff.samples.new,
+        removed: result.diff.samples.removed,
+        upgraded: result.diff.samples.upgraded,
+        updated: result.diff.samples.updated,
       },
-      generated_at: generatedAt,
+      generated_at: result.generatedAt,
     });
   } catch (err: any) {
     console.error('[Admin] Calendar provider upload error:', err.message);

@@ -1340,7 +1340,15 @@ interface IngestResult {
   canonical: CanonicalRow[];
   generatedAt: string | null;
   diff: DiffResult;
+  /** Live-загрузка: канон пересобирается в фоне, canonical/diff пустые. */
+  queued?: boolean;
 }
+
+const EMPTY_DIFF: DiffResult = {
+  counts: { new_events: 0, updated_events: 0, confirmed_upgrades: 0, confirmations: 0, removed_events: 0 },
+  samples: { new: [], removed: [], upgraded: [] },
+  nonempty: false,
+};
 
 /** Заменяет срез провайдера и пересобирает канон. dry_run не пишет в БД.
  *  Снапшот канона снимается внутри single-flight, чтобы diff атрибутировался
@@ -1398,9 +1406,9 @@ export async function ingestProviderSlice(
       return { canonical, generatedAt, diff };
     }
 
-    const canonical = buildCanonicalRows(simulated);
-    const matched = await matchCalendarTags(canonical);
-
+    // Live: LLM-матчинг и пересборка канона уходят в фон (scheduleCanonicalRewrite
+    // после commit). В транзакции — только date-scoped DELETE + INSERT raw +
+    // UPSERT calendar_sources. Ответ возвращается быстро, админ не ждёт LLM.
     let skippedFrozen = 0;
 
     await withCalendarTransaction(async (q) => {
@@ -1432,12 +1440,10 @@ export async function ingestProviderSlice(
          ON CONFLICT (source) DO UPDATE SET uploaded_at = ${nowSql()}, last_stale_alert_at = NULL, last_warnings = $2`,
         [source, JSON.stringify(warnings)]
       );
-
-      await writeCanonicalRows(q, matched);
     });
-    const generatedAt = await getGeneratedAt();
-    const diff = computeDiff(snapshot, matched);
-    return { canonical: matched, generatedAt, diff };
+
+    scheduleCanonicalRewrite();
+    return { canonical: [], generatedAt: null, diff: EMPTY_DIFF, queued: true };
   };
 
   const p = ingestFlight.then(run, run);

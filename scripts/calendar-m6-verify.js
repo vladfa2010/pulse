@@ -330,13 +330,16 @@ async function main() {
       },
     ];
     llmCallCount = 0;
-    const { canonical: liveCanonical } = await ingestProviderSlice('global', liveRows, false);
+    const liveRes = await ingestProviderSlice('global', liveRows, false);
+    assert(liveRes.queued === true, 'test7: live ingest should return queued=true');
+    await flushCanonicalRewrites();
+    const liveCanonical = (await query(`SELECT tag_ids FROM calendar_events`)).rows;
     assert(liveCanonical.length === 2, `test7: expected 2 canonical rows, got ${liveCanonical.length}`);
     const nullCount = await query(`SELECT COUNT(*) as c FROM calendar_events WHERE matched_via IS NULL`);
     assert(Number(nullCount.rows[0].c) === 0, `test7: expected 0 rows with matched_via IS NULL, got ${nullCount.rows[0].c}`);
     assert(
       liveCanonical.every((r) => r.tag_ids && JSON.parse(r.tag_ids).length > 0),
-      'test7: all returned canonical rows should carry non-empty tag_ids'
+      'test7: all canonical rows should carry non-empty tag_ids'
     );
     console.log('[m6] test7 passed: live ingest writes tags atomically, no NULL matched_via');
 
@@ -377,6 +380,7 @@ async function main() {
     ];
     llmCallCount = 0;
     await ingestProviderSlice('global', offRows, false);
+    await flushCanonicalRewrites();
     const cbOff = await query(`SELECT * FROM calendar_events WHERE title = 'Заседание ЦБ РФ'`);
     assert(cbOff.rows.length === 1, 'test9: CB row should exist');
     assert(cbOff.rows[0].matched_via === 'keyword', `test9: CB should be keyword, got ${cbOff.rows[0].matched_via}`);

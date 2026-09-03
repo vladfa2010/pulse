@@ -127,6 +127,9 @@ async function request(server, method, pathName, body, { auth = true } = {}) {
 async function postSlice(server, base, source, payload, dryRun = false) {
   const qs = dryRun ? '?dry_run=1' : '';
   const res = await request(server, 'POST', `${base}/calendar/${encodeURIComponent(source)}${qs}`, payload);
+  // Live-ответ приходит до фоновой пересборки канона — дожидаемся её здесь,
+  // чтобы последующие проверки канона были детерминированы.
+  if (!dryRun) await flushCanonicalRewrites();
   return res;
 }
 

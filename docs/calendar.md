@@ -104,11 +104,33 @@ Query-параметры:
 
 | Параметр | Описание |
 |----------|----------|
-| `dry_run=1` | Не пишет в БД, возвращает `parsed`, `diff`, `samples` и симулированный канон. |
+| `dry_run=1` | Не пишет в БД, возвращает полный контракт: `parsed`, `diff`, `samples`, `generated_at`. |
 
 **Request body** — сырое JSON провайдера.
 
-**Response 200**:
+**Live-ответ 200** (без `dry_run`) — быстрый: канон пересобирается в фоне
+(`scheduleCanonicalRewrite` с коалесцингом, SSE-broadcast и инвалидация кэша
+внутри пересборки), LLM-матчинг не блокирует ответ:
+
+```json
+{
+  "parsed": {
+    "days": 5,
+    "events": 12,
+    "no_ticker": 1,
+    "skipped": 0,
+    "date_from": "2026-09-05",
+    "date_to": "2026-09-12",
+    "warnings": []
+  },
+  "queued": true
+}
+```
+
+Полей `diff`, `samples`, `generated_at` в live-ответе нет — diff для админки
+считается только в `dry_run`-превью.
+
+**Response 200 dry_run**:
 
 ```json
 {
@@ -174,7 +196,7 @@ Query-параметры:
 
 ### `DELETE /api/admin/calendar/sources/:source`
 
-Удаляет весь raw-срез провайдера (`DELETE FROM calendar_events_raw WHERE source = $source`), пересобирает канон и рассылает SSE-событие.
+Удаляет весь raw-срез провайдера (`DELETE FROM calendar_events_raw WHERE source = $source` + запись из `calendar_sources`) в транзакции и сразу отвечает. Канон пересобирается в фоне (`scheduleCanonicalRewrite`, SSE-broadcast — внутри пересборки). Поддерживается только `legacy`; остальные источники перезаписываются через POST ingest.
 
 **Response 200**:
 
@@ -661,15 +683,14 @@ Sanity-проверки перед записью среза:
 
 ### `ingestProviderSlice(source, flatRows, dryRun, warnings): IngestResult`
 
-Заменяет срез провайдера внутри «живого» окна и пересобирает канон.
+Заменяет срез провайдера внутри «живого» окна; канон пересобирается в фоне.
 
 - Работает под in-memory single-flight (promise-цепочка `ingestFlight`), параллельные загрузки сериализуются (для строк внутри «живого» окна).
-- **Вне транзакции**: читает текущий канон (`getCanonicalSnapshot`), читает raw, симулирует новый срез, `buildCanonicalRows`, `matchCalendarTags` (может дергать LLM).
-- **Короткая транзакция**:
-  - `DELETE raw WHERE source = $source AND date >= server_date − 14` — заменяем только «живые» строки.
-  - Замороженные строки (`date < server_date − 14`) не удаляются; входящие архивные строки дедуплицируются по ключу `(source, date, title, kind, ticker)`.
-  - `INSERT flatRows` (с учётом пропущенных дубликатов) → `UPSERT calendar_sources` → `writeCanonicalRows(matched)`.
-- В `dry_run`: без транзакции и записи, матчинг тегов **не** вызывается (экономия токенов).
+- **Live (dryRun=false)**:
+  - **Короткая транзакция**: `DELETE raw WHERE source = $source AND date >= server_date − 14` → `INSERT flatRows` (замороженные строки `date < server_date − 14` не удаляются; входящие архивные строки дедуплицируются по ключу `(source, date, title, kind, ticker)`) → `UPSERT calendar_sources` (в т.ч. `last_warnings`).
+  - После commit — `scheduleCanonicalRewrite()`: LLM-матчинг, пересборка канона, SSE-broadcast и инвалидация кэша уходят в фон, ответ не блокируется.
+  - Возвращает `{ canonical: [], generatedAt: null, diff: EMPTY_DIFF, queued: true }` — дискриминатор `queued` используется роутом для выбора короткого контракта ответа.
+- **dry_run**: без транзакции и записи. Симулирует канон (`buildCanonicalRows` на симуляции с замороженными строками), считает `computeDiff`, матчинг тегов **не** вызывается (экономия токенов). Возвращает полный `{ canonical, generatedAt, diff }`.
 
 ### `writeCanonicalRows(q, rows)`
 

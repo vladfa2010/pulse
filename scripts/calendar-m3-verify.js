@@ -51,6 +51,7 @@ async function setup() {
     validateProviderSlice,
     getMskDateString,
     maybeSendProviderStaleAlerts,
+    flushCanonicalRewrites,
   } = require(path.join(distDir, 'services', 'calendar.js')));
 
   // Дополнительные таблицы, специфичные для этого verify-скрипта.
@@ -80,6 +81,18 @@ function readFixture(name) {
   return JSON.parse(fs.readFileSync(path.join(fixturesDir, name), 'utf8'));
 }
 
+// Live-ingest: записывает raw, ждёт фоновую пересборку канона, возвращает
+// канон + снапшот до загрузки (для diff) + готовый diff.
+async function ingestLive(source, rows, warnings) {
+  const snapshot = await getCanonicalSnapshot();
+  const res = await ingestProviderSlice(source, rows, false, warnings);
+  assert(res.queued === true, `ingestLive(${source}): expected queued=true, got ${JSON.stringify(res)}`);
+  await flushCanonicalRewrites();
+  const snapMap = await getCanonicalSnapshot();
+  const canonical = [...snapMap.values()].flat();
+  return { canonical, snapshot, diff: computeDiff(snapshot, canonical) };
+}
+
 async function loadProviderFixture(source, fixtureName) {
   const raw = readFixture(fixtureName);
   let adapter;
@@ -88,10 +101,8 @@ async function loadProviderFixture(source, fixtureName) {
   else throw new Error('unsupported source');
   const { events } = adapter.parse(raw);
   const rows = toRawRows(events, source);
-  const snapshot = await getCanonicalSnapshot();
-  const { canonical } = await ingestProviderSlice(source, rows, false);
-  const diff = computeDiff(snapshot, canonical);
-  return { events, rows, canonical, diff };
+  const { canonical, snapshot, diff } = await ingestLive(source, rows);
+  return { events, rows, canonical, snapshot, diff };
 }
 
 async function main() {
@@ -115,7 +126,7 @@ async function main() {
     const { events: events2 } = investmintAdapter.parse(raw2);
     const rows2 = toRawRows(events2, 'investmint');
     const snapshot2 = await getCanonicalSnapshot();
-    const { canonical: canonical2 } = await ingestProviderSlice('investmint', rows2, false);
+    const { canonical: canonical2 } = await ingestLive('investmint', rows2);
     const diff2 = computeDiff(snapshot2, canonical2);
     assert(
       diff2.counts.new_events === 0 &&
@@ -156,10 +167,10 @@ async function main() {
       return rows;
     };
     const rows4full = makeT4Rows(5);
-    await ingestProviderSlice('investmint', rows4full, false);
+    await ingestLive('investmint', rows4full);
     // Срез без первого события.
     const snapshot4 = await getCanonicalSnapshot();
-    const { canonical: canonical4 } = await ingestProviderSlice('investmint', rows4full.slice(1), false);
+    const { canonical: canonical4 } = await ingestLive('investmint', rows4full.slice(1));
     const diff4 = computeDiff(snapshot4, canonical4);
     assert(diff4.counts.removed_events > 0, `test4: expected removed_events > 0, got ${diff4.counts.removed_events}`);
     console.log('[m3] test4 passed: removed_events=', diff4.counts.removed_events);
@@ -274,6 +285,8 @@ async function main() {
       ingestProviderSlice('investmint', rowsA8, false),
       ingestProviderSlice('investmint', rowsB8, false),
     ]);
+    assert(resA8.queued === true && resB8.queued === true, 'test8: live ingest should return queued=true');
+    await flushCanonicalRewrites();
     const rawCount8 = await query(`SELECT COUNT(*) as c FROM calendar_events_raw WHERE source = 'investmint'`);
     const canonicalCount8 = await query(`SELECT COUNT(*) as c FROM calendar_events`);
     assert(
@@ -281,7 +294,7 @@ async function main() {
       'test8: parallel ingests should serialize, leaving one slice'
     );
     assert(
-      Number(canonicalCount8.rows[0].c) === resA8.canonical.length || Number(canonicalCount8.rows[0].c) === resB8.canonical.length,
+      Number(canonicalCount8.rows[0].c) === rowsA8.length || Number(canonicalCount8.rows[0].c) === rowsB8.length,
       'test8: canonical should be consistent with final slice'
     );
     console.log('[m3] test8 passed: parallel ingests serialized, final raw rows=', rawCount8.rows[0].c);
@@ -292,6 +305,7 @@ async function main() {
     const events9 = investmintAdapter.parse(investRaw9).events;
     const rows9 = toRawRows(events9, 'investmint');
     await ingestProviderSlice('investmint', rows9, false, ['warning one', 'warning two']);
+    await flushCanonicalRewrites();
     const meta9 = await query(`SELECT last_warnings FROM calendar_sources WHERE source = 'investmint'`);
     const savedWarnings = JSON.parse(meta9.rows[0].last_warnings || '[]');
     assert(
@@ -308,6 +322,7 @@ async function main() {
     ];
     await ingestProviderSlice('investmint', [rows10[0]], false);
     await ingestProviderSlice('smartlab', [rows10[1]], false);
+    await flushCanonicalRewrites();
     const canonical10 = await query(`SELECT COUNT(*) as c FROM calendar_events WHERE ticker = 'SBER'`);
     assert(Number(canonical10.rows[0].c) === 1, `test10: expected 1 canonical SBER row, got ${canonical10.rows[0].c}`);
     const sources10 = await query(`SELECT sources FROM calendar_events WHERE ticker = 'SBER'`);

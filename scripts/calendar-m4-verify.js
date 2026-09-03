@@ -12,7 +12,20 @@ const http = require('http');
 const jwt = require('jsonwebtoken');
 const { execSync } = require('child_process');
 const axios = require('axios');
-axios.post = async () => ({ data: { ok: true, result: { message_id: 1 } } });
+// Мок с настраиваемой задержкой: Telegram — ok, Moonshot — мок с llmDelayMs.
+let llmDelayMs = 0;
+axios.post = async (url, data) => {
+  if (typeof url === 'string' && url.includes('moonshot')) {
+    if (llmDelayMs > 0) await new Promise((r) => setTimeout(r, llmDelayMs));
+    const messages = data && data.messages ? data.messages : [];
+    const prompt = messages.length > 0 ? messages[messages.length - 1].content || '' : '';
+    if (prompt.toLowerCase().includes('быстрый ответ')) {
+      return { data: { choices: [{ message: { content: '["fast"]' } }] } };
+    }
+    return { data: { choices: [{ message: { content: '[]' } }] } };
+  }
+  return { data: { ok: true, result: { message_id: 1 } } };
+};
 
 const distDir = path.join(__dirname, '..', 'dist');
 
@@ -106,6 +119,18 @@ function readFixture(name) {
   return JSON.parse(fs.readFileSync(path.join(fixturesDir, name), 'utf8'));
 }
 
+function toSmartlabDate(ymd) {
+  const [y, m, d] = ymd.split('-');
+  return `${d}.${m}.${y}`;
+}
+
+function makeSmartlabFile(items) {
+  return items.map((it) => ({
+    date: toSmartlabDate(it.date),
+    title: `${it.ticker}: ${it.title}`,
+  }));
+}
+
 async function main() {
   try {
     await setup();
@@ -150,6 +175,9 @@ async function main() {
     assert(typeof investPost.body.parsed.skipped === 'number', 'test2: parsed.skipped should be number');
     assert(investPost.body.parsed.days > 0, 'test2: parsed.days > 0');
     assert(investPost.body.parsed.events > 0, 'test2: parsed.events > 0');
+    assert(investPost.body.queued === true, 'test2: live ingest should return queued=true');
+    assert(!('diff' in investPost.body) && !('samples' in investPost.body), 'test2: live response should not include diff/samples');
+    await flushCanonicalRewrites();
     console.log('[m4] test2 passed: investmint POST parsed fields', investPost.body.parsed);
 
     // === Test 3: GET /sources после investmint ===
@@ -277,8 +305,11 @@ async function main() {
 
     const deleteLegacy = await request(server, 'DELETE', `${base}/calendar/sources/legacy`);
     assert(deleteLegacy.status === 200, 'test9: DELETE legacy should return 200');
-    assert(typeof deleteLegacy.body.removed_events === 'number', 'test9: removed_events should be number');
-    assert(deleteLegacy.body.removed_events === 1, `test9: expected removed_events=1, got ${deleteLegacy.body.removed_events}`);
+    assert(deleteLegacy.body.success === true, `test9: expected {success: true}, got ${JSON.stringify(deleteLegacy.body)}`);
+    assert(!('removed_events' in deleteLegacy.body), 'test9: removed_events should be removed from contract');
+
+    // Канон пересобирается в фоне — дожидаемся и проверяем результат
+    await flushCanonicalRewrites();
 
     const legacyCountAfter = await query(`SELECT COUNT(*) as c FROM calendar_events_raw WHERE source = 'legacy'`);
     assert(Number(legacyCountAfter.rows[0].c) === 0, 'test9: legacy raw rows should be removed');
@@ -301,9 +332,93 @@ async function main() {
 
     console.log('[m4] test9 passed: DELETE legacy works correctly');
 
+    // === Test 10: live ingest < 500 мс при медленном LLM (1500 мс/вызов) ===
+    await flushCanonicalRewrites(); // drain фоновых пересборок от прошлых тестов
+    // Тег «fast» нужен, чтобы LLM-ответ прошёл фильтр по availableTags
+    await query(
+      `INSERT INTO user_defined_tags (tag_id, tag_name, tag_type, keywords, enriched_data, created_by)
+       VALUES ('fast', 'Fast Co', 'company', '["fast"]', NULL, 'admin1')`
+    );
+    const t10dates = [0, 1, 2, 3, 4].map((i) => {
+      const d = new Date(serverDate + 'T00:00:00Z');
+      d.setUTCDate(d.getUTCDate() + 5 + i);
+      return d.toISOString().slice(0, 10);
+    });
+    const file10 = makeSmartlabFile(t10dates.map((d, i) => ({ date: d, ticker: 'FAST', title: `Быстрый ответ ${i}` })));
+    llmDelayMs = 1500;
+    const t0 = Date.now();
+    const livePost10 = await request(server, 'POST', `${base}/calendar/smartlab`, file10);
+    const elapsed10 = Date.now() - t0;
+    llmDelayMs = 0;
+    assert(livePost10.status === 200, `test10: live ingest should return 200, got ${livePost10.status}: ${JSON.stringify(livePost10.body)}`);
+    assert(elapsed10 < 500, `test10: live ingest took ${elapsed10}ms, expected < 500ms despite slow LLM`);
+    assert(livePost10.body.queued === true, 'test10: live response should have queued=true');
+    assert(livePost10.body.parsed && typeof livePost10.body.parsed.events === 'number', 'test10: parsed should be present');
+    assert(
+      !('diff' in livePost10.body) && !('samples' in livePost10.body) && !('generated_at' in livePost10.body),
+      'test10: live response should not include diff/samples/generated_at'
+    );
+    console.log(`[m4] test10 passed: live ingest answered in ${elapsed10}ms with 1500ms LLM mock`);
+
+    // === Test 11: после flush канон содержит события с matched_via ===
+    await flushCanonicalRewrites();
+    const canon11 = await query(`SELECT COUNT(*) as c FROM calendar_events WHERE ticker = 'FAST'`);
+    assert(Number(canon11.rows[0].c) === 5, `test11: expected 5 FAST canonical rows, got ${canon11.rows[0].c}`);
+    const matched11 = await query(`SELECT COUNT(*) as c FROM calendar_events WHERE ticker = 'FAST' AND matched_via IS NOT NULL`);
+    assert(Number(matched11.rows[0].c) === 5, `test11: all FAST rows should have matched_via, got ${matched11.rows[0].c}`);
+    console.log('[m4] test11 passed: canonical rows carry matched_via after flush');
+
+    // === Test 12: коалесцинг — 3 create подряд → flush → все в каноне ===
+    const mkCreate = (i) => ({
+      date: t10dates[i],
+      weekday: 'чт',
+      title: `Коалесцинг ${i}`,
+      kind: 'Другое',
+      status: 'confirmed',
+      companies: [{ name: `Coal Co ${i}`, ticker: `COAL${i}` }],
+    });
+    for (let i = 0; i < 3; i++) {
+      const createRes = await request(server, 'POST', `${base}/calendar/events`, mkCreate(i));
+      assert(createRes.status === 200, `test12: create ${i} should return 200, got ${createRes.status}: ${JSON.stringify(createRes.body)}`);
+    }
+    await flushCanonicalRewrites();
+    for (let i = 0; i < 3; i++) {
+      const coal = await query(`SELECT COUNT(*) as c FROM calendar_events WHERE ticker = $1`, [`COAL${i}`]);
+      assert(Number(coal.rows[0].c) === 1, `test12: COAL${i} should be in canonical after coalesced flush`);
+    }
+    console.log('[m4] test12 passed: 3 creates coalesced into background rewrite, all in canonical');
+
+    // === Test 13: DELETE legacy < 500 мс, после flush legacy нет в каноне ===
+    // Сбрасываем таблицы календаря: sync-запись SQLite в dev-режиме замедляет
+    // DELETE на большом файле — замер делаем на компактной БД (в проде Postgres).
+    await query(`DELETE FROM calendar_events`);
+    await query(`DELETE FROM calendar_events_raw`);
+    for (const row of legacyRows) {
+      await query(
+        `INSERT INTO calendar_events_raw (source, date, weekday, title, kind, status, company, ticker, uploaded_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, datetime('now'))`,
+        [row.source, row.date, row.weekday, row.title, row.kind, row.status, row.company, row.ticker]
+      );
+    }
+    await query(
+      `INSERT INTO calendar_sources (source, uploaded_at, last_stale_alert_at, last_warnings)
+       VALUES ('legacy', datetime('now'), NULL, '[]')
+       ON CONFLICT (source) DO UPDATE SET uploaded_at = datetime('now')`
+    );
+    const t13 = Date.now();
+    const delete13 = await request(server, 'DELETE', `${base}/calendar/sources/legacy`);
+    const elapsed13 = Date.now() - t13;
+    assert(delete13.status === 200, `test13: DELETE legacy should return 200, got ${delete13.status}`);
+    assert(delete13.body.success === true, 'test13: DELETE legacy should return {success: true}');
+    assert(elapsed13 < 500, `test13: DELETE legacy took ${elapsed13}ms, expected < 500ms`);
+    await flushCanonicalRewrites();
+    const legacyCanon13 = await query(`SELECT COUNT(*) as c FROM calendar_events WHERE ticker = 'LEGACY'`);
+    assert(Number(legacyCanon13.rows[0].c) === 0, 'test13: legacy should be absent from canonical after flush');
+    console.log(`[m4] test13 passed: DELETE legacy answered in ${elapsed13}ms, canonical clean after flush`);
+
     server.close();
 
-    // === Test 10: регрессия M1/M2/M3 ===
+    // === Регрессия M1/M2/M3 ===
     console.log('[m4] regression M1...');
     execSync('node scripts/calendar-m1-verify.js', { stdio: 'inherit' });
     console.log('[m4] regression M2...');
