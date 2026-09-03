@@ -228,82 +228,6 @@ function isValidDate(str: unknown): str is string {
   return /^\d{4}-\d{2}-\d{2}$/.test(str) && !isNaN(new Date(`${str}T00:00:00Z`).getTime());
 }
 
-export function validateCalendarDays(days: unknown): CalendarDay[] {
-  if (!Array.isArray(days) || days.length === 0) {
-    throw new Error('days must be a non-empty array');
-  }
-
-  const seen = new Set<string>();
-
-  for (const day of days) {
-    if (!day || typeof day !== 'object') {
-      throw new Error('each day must be an object');
-    }
-
-    if (!isValidDate(day.date)) {
-      throw new Error(`invalid day date: ${day.date}`);
-    }
-    if (typeof day.weekday !== 'string' || day.weekday.length === 0) {
-      throw new Error(`invalid weekday for ${day.date}`);
-    }
-    if (!Array.isArray(day.groups) || day.groups.length === 0) {
-      throw new Error(`groups must be a non-empty array for ${day.date}`);
-    }
-
-    const dayKey = day.date;
-    if (seen.has(dayKey)) {
-      throw new Error(`duplicate day: ${day.date}`);
-    }
-    seen.add(dayKey);
-
-    const groupKeys = new Set<string>();
-
-    for (const group of day.groups) {
-      if (!group || typeof group !== 'object') {
-        throw new Error(`group must be an object for ${day.date}`);
-      }
-      if (typeof group.title !== 'string' || group.title.length === 0) {
-        throw new Error(`group title required for ${day.date}`);
-      }
-      if (!VALID_KINDS.includes(group.kind)) {
-        throw new Error(`invalid kind "${group.kind}" for ${day.date}`);
-      }
-      if (!VALID_STATUSES.includes(group.status)) {
-        throw new Error(`invalid status "${group.status}" for ${day.date}`);
-      }
-      if (!Array.isArray(group.companies) || group.companies.length === 0) {
-        throw new Error(`companies must be a non-empty array for ${day.date}`);
-      }
-
-      const groupKey = `${group.title}|${group.kind}`;
-      if (groupKeys.has(groupKey)) {
-        throw new Error(`duplicate group "${group.title}" (${group.kind}) for ${day.date}`);
-      }
-      groupKeys.add(groupKey);
-
-      const tickers = new Set<string>();
-      for (const company of group.companies) {
-        if (!company || typeof company !== 'object') {
-          throw new Error(`company must be an object for ${day.date}`);
-        }
-        if (typeof company.name !== 'string' || company.name.length === 0) {
-          throw new Error(`company name required for ${day.date}`);
-        }
-        if (typeof company.ticker !== 'string' || company.ticker.length === 0) {
-          throw new Error(`company ticker required for ${day.date}`);
-        }
-        const tickerUpper = company.ticker.toUpperCase();
-        if (tickers.has(tickerUpper)) {
-          throw new Error(`duplicate ticker ${tickerUpper} in group "${group.title}" for ${day.date}`);
-        }
-        tickers.add(tickerUpper);
-      }
-    }
-  }
-
-  return days as CalendarDay[];
-}
-
 // ═══════════════════════════════════════════════════════════════════════════
 // DB helpers
 // ═══════════════════════════════════════════════════════════════════════════
@@ -567,13 +491,6 @@ export async function withCalendarTransaction<T>(fn: (q: QueryFn) => Promise<T>)
     // so explicit BEGIN/COMMIT cannot be safely used here. Writes run in autocommit mode on dev SQLite.
     return await fn(query);
   }
-}
-
-async function touchCalendarMeta(q: QueryFn): Promise<void> {
-  await q(
-    `INSERT INTO calendar_meta (id, uploaded_at, last_stale_alert_at) VALUES (1, ${nowSql()}, NULL)
-     ON CONFLICT (id) DO UPDATE SET uploaded_at = ${nowSql()}, last_stale_alert_at = NULL`
-  );
 }
 
 async function touchCalendarSource(q: QueryFn, source: string, warnings: string[] = []): Promise<void> {
@@ -1070,93 +987,6 @@ export async function restoreCalendarEventGroup(
   scheduleCanonicalRewrite();
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Legacy snapshot helpers (backward compatibility for M1 verify)
-// ═══════════════════════════════════════════════════════════════════════════
-
-function flattenDaysToRawRows(days: CalendarDay[], source: string): CalendarRawRow[] {
-  const rows: CalendarRawRow[] = [];
-  for (const day of days) {
-    for (const group of day.groups) {
-      for (const company of group.companies) {
-        rows.push({
-          source,
-          date: day.date,
-          weekday: day.weekday,
-          title: group.title,
-          kind: group.kind,
-          status: group.status,
-          company: company.name,
-          ticker: (company.ticker || '').toUpperCase(),
-        });
-      }
-    }
-  }
-  return rows;
-}
-
-export async function saveCalendarSnapshot(
-  days: CalendarDay[]
-): Promise<{ daysCount: number; eventsCount: number }> {
-  const validated = validateCalendarDays(days);
-  const rows = flattenDaysToRawRows(validated, 'legacy');
-
-  await withCalendarTransaction(async (q) => {
-    await q(`DELETE FROM calendar_events_raw WHERE source = 'legacy'`);
-    for (const row of rows) {
-      await q(
-        `INSERT INTO calendar_events_raw (source, date, weekday, title, kind, status, company, ticker, uploaded_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, ${nowSql()})`,
-        [row.source, row.date, row.weekday, row.title, row.kind, row.status, row.company, row.ticker]
-      );
-    }
-    await touchCalendarSource(q, 'legacy');
-  });
-
-  await rewriteCanonicalFromRaw();
-  broadcastCalendarRefresh();
-  invalidateCalendarCache();
-
-  return { daysCount: validated.length, eventsCount: rows.length };
-}
-
-export async function mergeCalendarSnapshot(
-  days: CalendarDay[]
-): Promise<{ daysCount: number; eventsCount: number; addedDays: number; addedEvents: number }> {
-  const validated = validateCalendarDays(days);
-  const rows = flattenDaysToRawRows(validated, 'legacy');
-
-  const addedDates = new Set<string>();
-  let addedEvents = 0;
-
-  await withCalendarTransaction(async (q) => {
-    for (const row of rows) {
-      const existing = await q(
-        `SELECT 1 FROM calendar_events_raw
-         WHERE source = 'legacy' AND date = $1 AND title = $2 AND kind = $3 AND ticker = $4
-         LIMIT 1`,
-        [row.date, row.title, row.kind, row.ticker]
-      );
-      if (existing.rows.length === 0) {
-        await q(
-          `INSERT INTO calendar_events_raw (source, date, weekday, title, kind, status, company, ticker, uploaded_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, ${nowSql()})`,
-          [row.source, row.date, row.weekday, row.title, row.kind, row.status, row.company, row.ticker]
-        );
-        addedEvents++;
-        addedDates.add(row.date);
-      }
-    }
-    await touchCalendarSource(q, 'legacy');
-  });
-
-  await rewriteCanonicalFromRaw();
-  broadcastCalendarRefresh();
-  invalidateCalendarCache();
-
-  return { daysCount: validated.length, eventsCount: rows.length, addedDays: addedDates.size, addedEvents };
-}
-
 export async function getCalendarLlmEnabled(): Promise<boolean> {
   if (process.env.CALENDAR_TAGS_LLM === 'off') return false;
   try {
@@ -1370,8 +1200,6 @@ export async function ingestProviderSlice(
     const serverDate = await getMskDateString();
     const windowStart = addDays(serverDate, -ARCHIVE_GRACE_DAYS);
 
-    const snapshot = await getCanonicalSnapshot();
-
     const rawResult = await query(
       `SELECT source, date, weekday, title, kind, status, company, ticker, tombstone_key, original_title
        FROM calendar_events_raw`
@@ -1402,6 +1230,9 @@ export async function ingestProviderSlice(
     );
 
     if (dryRun) {
+      // Снапшот канона нужен только здесь — для diff превью. В live-ветке
+      // канон пересобирается в фоне, читать его до транзакции незачем.
+      const snapshot = await getCanonicalSnapshot();
       const canonical = buildCanonicalRows(simulated);
       const generatedAt = await getGeneratedAt();
       const diff = computeDiff(snapshot, canonical);

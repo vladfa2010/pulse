@@ -24,7 +24,7 @@ manual > investmint > smartlab > bcs > global > legacy
 - `manual` — ручные правки админа через CRUD.
 - `investmint`, `smartlab` — провайдерские фиды, загружаемые JSON-файлами.
 - `bcs`, `global` — зарезервированные слоты под будущие провайдеры (заглушки).
-- `legacy` — данные, перенесённые из старой однослойной схемы (`saveCalendarSnapshot` / `mergeCalendarSnapshot`).
+- `legacy` — данные, перенесённые из старой однослойной схемы (бывшие `saveCalendarSnapshot` / `mergeCalendarSnapshot`, удалены в пользу ingest-путей).
 
 ### Жизненный цикл события
 
@@ -555,10 +555,6 @@ Runtime-настройки календаря.
 
 ## Сервис `services/calendar.ts`
 
-### `validateCalendarDays(days): CalendarDay[]`
-
-Проверяет снапшот по правилам: обязательные поля, валидные `kind`/`status`, даты и т.п. Бросает `Error` с понятным сообщением.
-
 ### `getCalendarData(): CalendarResponse`
 
 1. Получает `server_date` по Europe/Moscow.
@@ -594,20 +590,6 @@ Runtime-настройки календаря.
 - Дефолт `true` (если таблица/ключ отсутствуют).
 - Env `CALENDAR_TAGS_LLM=off` — жёсткий аварийный override, возвращает `false` вне зависимости от БД.
 - Влияет только на календарный `matchCalendarTags`; новостной пайплайн не трогается.
-
-### `saveCalendarSnapshot(days): { daysCount, eventsCount }`
-
-**Legacy-обёртка** для обратной совместимости (M1). Теперь работает через raw-модель:
-
-1. Валидирует вход.
-2. Раскладывает дни в плоские raw-строки с `source = 'legacy'`.
-3. В транзакции `DELETE FROM calendar_events_raw WHERE source = 'legacy'` и `INSERT` новых строк.
-4. После коммита `rewriteCanonicalFromRaw()`.
-5. `broadcastCalendarRefresh()`.
-
-### `mergeCalendarSnapshot(days): { daysCount, eventsCount, addedDays, addedEvents }`
-
-**Legacy-обёртка** (M1). Добавляет только отсутствующие `legacy`-строки, затем `rewriteCanonicalFromRaw()`.
 
 ### `listCalendarEventGroups(filters): { events, total }`
 
