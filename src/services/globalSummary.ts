@@ -30,13 +30,18 @@ let inflight: Promise<GlobalSummaryCache> | null = null;
 // Prompt builder
 // ═══════════════════════════════════════════════════════════════════════════
 function buildGlobalSummaryPrompt(
-  articles: { title: string; summary: string; tags: string[]; sentiment: string }[]
+  articles: { title: string; summary: string; tags: string[]; sentiment: string }[],
+  opts: { compact?: boolean } = {}
 ): string {
+  const compact = opts.compact ?? false;
   const articlesText = articles
     .map((a, i) => {
       const tagStr = a.tags?.join(', ') || '';
       const emoji = a.sentiment === 'positive' ? '🟢' : a.sentiment === 'negative' ? '🔴' : '⚪';
-      return `${i + 1}. ${emoji} ${a.title}\n   ${a.summary.slice(0, 200)}${tagStr ? `\n   Теги: ${tagStr}` : ''}`;
+      const title = compact ? a.title.slice(0, 120) : a.title;
+      const summary = compact ? a.summary.slice(0, 120) : a.summary.slice(0, 200);
+      // compact-режим (ТЗ-50): без строки «Теги:» — теги заметная доля объёма и для обзора тем не нужны
+      return `${i + 1}. ${emoji} ${title}\n   ${summary}${!compact && tagStr ? `\n   Теги: ${tagStr}` : ''}`;
     })
     .join('\n\n');
 
@@ -187,6 +192,8 @@ export interface GlobalSummaryResult {
   cached: boolean;
   generatedAt: string | null;
   articlesCount: number;
+  /** ТЗ-50: true, если отдан запись из кэша после неудачной генерации (stale-fallback) */
+  stale?: boolean;
 }
 
 export async function generateGlobalSummary(
@@ -233,23 +240,63 @@ export async function generateGlobalSummary(
     const prompt = buildGlobalSummaryPrompt(articles);
     console.log(`[GlobalSummary] Generating, articles: ${count}`);
 
-    const llmResponse = await axios.post(
-      'https://api.moonshot.ai/v1/chat/completions',
-      {
-        model: KIMI_MODEL,
-        messages: [{ role: 'user', content: prompt }],
-        temperature: KIMI_MODEL.startsWith('kimi-k') ? 0.6 : 0.3,
-        max_tokens: 600,
-        thinking: KIMI_MODEL.startsWith('kimi-k') ? { type: 'disabled' } : undefined,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${KIMI_API_KEY}`,
-          'Content-Type': 'application/json',
+    let llmResponse: any;
+    try {
+      llmResponse = await axios.post(
+        'https://api.moonshot.ai/v1/chat/completions',
+        {
+          model: KIMI_MODEL,
+          messages: [{ role: 'user', content: prompt }],
+          temperature: KIMI_MODEL.startsWith('kimi-k') ? 0.6 : 0.3,
+          max_tokens: 600,
+          thinking: KIMI_MODEL.startsWith('kimi-k') ? { type: 'disabled' } : undefined,
         },
-        timeout: 180000,
+        {
+          headers: {
+            Authorization: `Bearer ${KIMI_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 180000,
+        }
+      );
+    } catch (err: any) {
+      // ТЗ-50: тело ответа Moonshot с причиной отказа раньше терялось — логируем
+      console.error('[GlobalSummary] LLM error:', err.message,
+        'status:', err.response?.status,
+        'body:', JSON.stringify(err.response?.data ?? null).slice(0, 500));
+      // ТЗ-50: авто-деградация — один ретрай с ужатым промптом из уже выбранных статей
+      if (err.response?.status === 400 && articles.length > 40) {
+        console.warn('[GlobalSummary] 400 on full prompt, retrying with reduced (80 articles, compact)');
+        const reduced = articles.slice(0, 80);
+        try {
+          llmResponse = await axios.post(
+            'https://api.moonshot.ai/v1/chat/completions',
+            {
+              model: KIMI_MODEL,
+              messages: [{ role: 'user', content: buildGlobalSummaryPrompt(reduced, { compact: true }) }],
+              temperature: KIMI_MODEL.startsWith('kimi-k') ? 0.6 : 0.3,
+              max_tokens: 600,
+              thinking: KIMI_MODEL.startsWith('kimi-k') ? { type: 'disabled' } : undefined,
+            },
+            {
+              headers: {
+                Authorization: `Bearer ${KIMI_API_KEY}`,
+                'Content-Type': 'application/json',
+              },
+              timeout: 180000,
+            }
+          );
+        } catch (retryErr: any) {
+          // Тело второго отказа тоже логируем — по двум body видно, та ли причина (размер vs содержимое/параметры)
+          console.error('[GlobalSummary] LLM retry error:', retryErr.message,
+            'status:', retryErr.response?.status,
+            'body:', JSON.stringify(retryErr.response?.data ?? null).slice(0, 500));
+          throw retryErr;
+        }
+      } else {
+        throw err;
       }
-    );
+    }
 
     const summaryText =
       llmResponse.data?.choices?.[0]?.message?.content?.trim() ||
@@ -276,6 +323,19 @@ export async function generateGlobalSummary(
       generatedAt: result.generatedAt || null,
       articlesCount: result.articlesCount,
     };
+  } catch (err: any) {
+    // ТЗ-50: stale-fallback — старый обзор лучше, чем 500 всем пользователям
+    if (cache) {
+      console.warn('[GlobalSummary] generation failed, serving stale cache from', cache.generatedAt);
+      return {
+        summary: cache.summary,
+        cached: true,
+        generatedAt: cache.generatedAt,
+        articlesCount: cache.articlesCount,
+        stale: true,
+      };
+    }
+    throw err;
   } finally {
     inflight = null;
   }

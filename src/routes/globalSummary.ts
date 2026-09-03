@@ -19,6 +19,7 @@ router.get(
         cached: result.cached,
         generated_at: result.generatedAt || undefined,
         articles_count: result.articlesCount,
+        stale: result.stale || undefined, // ТЗ-50: true при отдаче старого кэша после неудачной генерации
       });
     } catch (err: any) {
       console.error('[GlobalSummaryRoute] Error:', err.message);

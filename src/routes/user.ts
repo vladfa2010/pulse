@@ -836,23 +836,32 @@ router.get('/summary', authMiddleware, async (req: AuthRequest, res) => {
 
       console.log(`[Summary] Generating for user ${userId.slice(0, 8)}, hours=${hours}, tags: ${tagNames.join(', ')}, articles: ${articles.length}`);
 
-      const llmResponse = await axios.post(
-        'https://api.moonshot.ai/v1/chat/completions',
-        {
-          model: KIMI_MODEL_SUMMARY,
-          messages: [{ role: 'user', content: prompt }],
-          temperature: KIMI_MODEL_SUMMARY.startsWith('kimi-k') ? 0.6 : 0.3,
-          max_tokens: 600,
-          thinking: KIMI_MODEL_SUMMARY.startsWith('kimi-k') ? { type: 'disabled' } : undefined,
-        },
-        {
-          headers: {
-            'Authorization': `Bearer ${KIMI_API_KEY_SUMMARY}`,
-            'Content-Type': 'application/json',
+      let llmResponse: any;
+      try {
+        llmResponse = await axios.post(
+          'https://api.moonshot.ai/v1/chat/completions',
+          {
+            model: KIMI_MODEL_SUMMARY,
+            messages: [{ role: 'user', content: prompt }],
+            temperature: KIMI_MODEL_SUMMARY.startsWith('kimi-k') ? 0.6 : 0.3,
+            max_tokens: 600,
+            thinking: KIMI_MODEL_SUMMARY.startsWith('kimi-k') ? { type: 'disabled' } : undefined,
           },
-          timeout: 30000,
-        }
-      );
+          {
+            headers: {
+              'Authorization': `Bearer ${KIMI_API_KEY_SUMMARY}`,
+              'Content-Type': 'application/json',
+            },
+            timeout: 30000,
+          }
+        );
+      } catch (err: any) {
+        // ТЗ-50 (п.4): body ответа Moonshot логируем для диагностики; поведение не меняется
+        console.error('[Summary] LLM error:', err.message,
+          'status:', err.response?.status,
+          'body:', JSON.stringify(err.response?.data ?? null).slice(0, 500));
+        throw err;
+      }
 
       const summaryText = llmResponse.data?.choices?.[0]?.message?.content?.trim()
         || 'Не удалось сгенерировать саммари. Попробуйте обновить позже.';
