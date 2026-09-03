@@ -1509,6 +1509,7 @@ router.post('/calendar/:source', adminMiddleware, async (req: AuthRequest, res) 
     }
 
     const uniqueDates = new Set(events.map((e) => e.date));
+    const sortedDates = Array.from(uniqueDates).sort();
 
     res.json({
       parsed: {
@@ -1516,6 +1517,8 @@ router.post('/calendar/:source', adminMiddleware, async (req: AuthRequest, res) 
         events: events.length,
         no_ticker: parseWarnings.noTicker || 0,
         skipped: parseWarnings.skipped || 0,
+        date_from: sortedDates.length > 0 ? sortedDates[0] : null,
+        date_to: sortedDates.length > 0 ? sortedDates[sortedDates.length - 1] : null,
         warnings: allWarnings,
       },
       diff: diff.counts,
