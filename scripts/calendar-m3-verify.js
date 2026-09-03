@@ -132,19 +132,34 @@ async function main() {
     assert(diff3.counts.confirmations > 0, 'test3: expected confirmations > 0 from cross-provider overlap');
     console.log('[m3] test3 passed: smartlab confirmations=', diff3.counts.confirmations);
 
-    // === Test 4: файл без одного события (legacy очищен) → removed_events > 0 ===
+    // === Test 4: файл без одного события → removed_events > 0 ===
+    // М7: ingest не удаляет архив (date < server_date − 14) — поэтому тест
+    // строим на синтетических живых датах внутри окна.
     await resetCalendarTables();
-    // Загружаем investmint целиком.
-    const fullRaw = readFixture('investmint.json');
-    const fullEvents = investmintAdapter.parse(fullRaw).events;
-    const fullRows = toRawRows(fullEvents, 'investmint');
-    await ingestProviderSlice('investmint', fullRows, false);
-    // Создаём срез investmint без первого дня (30 июля).
-    const withoutFirstDay = fullEvents.filter((e) => e.date !== '2026-07-30');
-    assert(withoutFirstDay.length < fullEvents.length, 'test4: expected to remove at least one event');
-    const subsetRows = toRawRows(withoutFirstDay, 'investmint');
+    const t4base = new Date(serverDate + 'T00:00:00Z');
+    const makeT4Rows = (count) => {
+      const rows = [];
+      for (let i = 0; i < count; i++) {
+        const d = new Date(t4base);
+        d.setUTCDate(d.getUTCDate() + i);
+        rows.push({
+          source: 'investmint',
+          date: d.toISOString().slice(0, 10),
+          weekday: 'вт',
+          title: `T4 event ${i}`,
+          kind: 'МСФО',
+          status: 'expected',
+          company: 'X',
+          ticker: 'X',
+        });
+      }
+      return rows;
+    };
+    const rows4full = makeT4Rows(5);
+    await ingestProviderSlice('investmint', rows4full, false);
+    // Срез без первого события.
     const snapshot4 = await getCanonicalSnapshot();
-    const { canonical: canonical4 } = await ingestProviderSlice('investmint', subsetRows, false);
+    const { canonical: canonical4 } = await ingestProviderSlice('investmint', rows4full.slice(1), false);
     const diff4 = computeDiff(snapshot4, canonical4);
     assert(diff4.counts.removed_events > 0, `test4: expected removed_events > 0, got ${diff4.counts.removed_events}`);
     console.log('[m3] test4 passed: removed_events=', diff4.counts.removed_events);

@@ -1378,7 +1378,12 @@ export async function ingestProviderSlice(
       tombstone_key: r.tombstone_key || undefined,
       original_title: r.original_title || undefined,
     }));
-    const simulated = existingRows.filter((r) => r.source !== source).concat(flatRows);
+    // Симуляция должна включать замороженные строки текущего источника
+    // (date < windowStart): date-scoped DELETE их не удаляет, и они обязаны
+    // остаться в каноне. Без этого архив «мигал»: терялся после каждого ingest.
+    const simulated = existingRows
+      .filter((r) => r.source !== source || r.date < windowStart)
+      .concat(flatRows);
 
     const frozenKeys = new Set(
       existingRows

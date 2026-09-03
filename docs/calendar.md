@@ -779,6 +779,23 @@ npm run verify:calendarAdapters
 
 Query-параметр `past=true` переключает выдачу на архив (`date < server_date − 14`) и меняет сортировку на `date ASC`. Параметры `date_from`/`date_to` позволяют задать произвольный диапазон без привязки к grace-окну.
 
+### Симуляция канона в ingest (фикс М7-Б.1)
+
+`ingestProviderSlice` симулирует канон до записи. После перехода на date-scoped DELETE фильтр симуляции обязан включать **замороженные строки текущего источника** (`r.source !== source || r.date < windowStart`) — иначе архив выпадал из канона при каждом инжесте («мигание»: фоновая `rewriteCanonicalFromRaw` возвращала архив, следующий ingest снова его терял). Без фикса dry_run-превью показывало ложные `removed_events` по архиву.
+
+### Verify M7
+
+`scripts/calendar-m7-verify.js` (6 тестов, все через HTTP-роуты):
+
+1. Накопление архива: второй ingest без архивной даты не теряет её из raw и канала
+2. Корректировка в grace: событие `server_date − 1` перезаписывается replace-режимом (статус обновляется)
+3. Годовой файл дважды: raw count стабилен, warning `пропущено замороженных дубликатов: N`
+4. Томбстоун на архивном: delete/restore через CRUD работают, ingest не воскрешает удалённое
+5. Публичное окно: архив не отдаётся в `GET /api/calendar` (−2…+120), отдаётся в `GET /api/admin/calendar/history`
+6. dry_run: превью без ложных `removed_events` по архиву, таблицы не изменяются
+
+Запуск: `npm run verify:calendarM7` (SQLite) / `npm run verify:calendarM7:pg` (PostgreSQL).
+
 ## Верификация в режиме PostgreSQL
 
 Календарь активно использует диалектно-зависимые конструкции (`text[]`, `NOW()`, транзакции, DDL-ограничения). SQLite-режим остаётся для быстрой локальной итерации, но **перед каждым деплоем backend обязателен прогон в PG-режиме**.
@@ -797,7 +814,7 @@ export DATABASE_URL_TEST=postgres://postgres:test@localhost:5433/pulse_test
 # один модуль
 npm run verify:calendarM5:pg
 
-# вся цепочка M1–M6
+# вся цепочка M1–M7
 npm run verify:calendar:pg
 ```
 
