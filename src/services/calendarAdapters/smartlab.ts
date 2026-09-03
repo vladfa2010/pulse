@@ -113,7 +113,7 @@ function parseDate(str: string): { date: string; weekday: string } | null {
   return { date, weekday }
 }
 
-function parseTickerTitle(fullTitle: string): { ticker: string; title: string } {
+export function parseTickerTitle(fullTitle: string): { ticker: string; title: string } {
   const m = fullTitle.match(/^([A-Z][A-Z0-9]{1,5})(?:\s*[:\-]\s*)(.+)$/)
   if (m) {
     return { ticker: m[1].trim().toUpperCase(), title: m[2].trim() }

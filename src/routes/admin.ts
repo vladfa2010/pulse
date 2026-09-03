@@ -44,6 +44,7 @@ import {
   withCalendarTransaction,
   getCalendarLlmEnabled,
   scheduleCanonicalRewrite,
+  uploadManualSlice,
 } from '../services/calendar';
 import {
   detectAdapter,
@@ -1442,6 +1443,25 @@ router.put('/calendar/settings', adminMiddleware, async (req: AuthRequest, res) 
   } catch (err: any) {
     console.error('[Admin] Calendar settings put error:', err.message);
     res.status(500).json({ error: 'Failed to update calendar settings' });
+  }
+});
+
+// POST /api/admin/calendar/manual/upload — свободная загрузка событий в ручной срез.
+// Объявлен ДО /calendar/:source, иначе Express съест «manual» как :source.
+// Merge-only: только добавляет, ничего не удаляет, лимит дат не действует.
+router.post('/calendar/manual/upload', adminMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const dryRun = req.query.dry_run === '1' || req.query.dry_run === 'true';
+    const raw = req.body;
+    if (!Array.isArray(raw) || raw.length === 0) {
+      return res.status(400).json({ error: 'тело запроса должно быть непустым массивом событий' });
+    }
+    const result = await uploadManualSlice(raw, dryRun);
+    res.json(result);
+  } catch (err: any) {
+    console.error('[Admin] Calendar manual upload error:', err.message);
+    const status = calendarErrorStatus(err);
+    res.status(status).json({ error: status === 500 ? 'Internal error' : err.message || 'Failed to upload manual events' });
   }
 });
 

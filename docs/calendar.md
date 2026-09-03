@@ -692,6 +692,26 @@ Sanity-проверки перед записью среза:
   - Возвращает `{ canonical: [], generatedAt: null, diff: EMPTY_DIFF, queued: true }` — дискриминатор `queued` используется роутом для выбора короткого контракта ответа.
 - **dry_run**: без транзакции и записи. Симулирует канон (`buildCanonicalRows` на симуляции с замороженными строками), считает `computeDiff`, матчинг тегов **не** вызывается (экономия токенов). Возвращает полный `{ canonical, generatedAt, diff }`.
 
+### `uploadManualSlice(items, dryRun): ManualUploadResult`
+
+Свободная загрузка событий в ручной срез (роут `POST /api/admin/calendar/manual/upload`,
+объявлен ДО `/calendar/:source`). **Merge-only**: только добавляет, ничего не
+удаляет, лимит дат фидов не действует. Свободный формат item'ов: `date` + `title`
+(с опциональным префиксом `ТИКЕР:`), опционально `ticker`/`company`/`kind`/`status`.
+
+- Парсинг item'ов: `parseTickerTitle` (общий хелпер из smartlab-адаптера),
+  `detectKind`/`detectStatus` из classify, fallback company → ticker → title.
+- Дедуп по ВСЕМ manual-строкам (включая архивные) по `(date, title, kind, ticker)`
+  + дубли внутри файла → `duplicates`.
+- Томбстоун на merge-ключ (`makeCanonicalKey`) → tombstone удаляется, событие
+  «воскресает» → `resurrected` (live-строка, пережившая delete, не дублируется).
+- Одна tx: tombstone-DELETE + INSERT + `touchCalendarSource('manual')`; после
+  commit — `scheduleCanonicalRewrite()`.
+- Ответ: `{ total, added, duplicates, resurrected, invalid: [{index, reason}], dry_run }`.
+  Ошибки по элементам не фатальны. Пустое/не-массив тело → 400.
+
+
+
 ### `writeCanonicalRows(q, rows)`
 
 Внутри транзакции полностью перезаписывает `calendar_events`: `DELETE` + `INSERT` строк с `tag_ids`/`matched_via`.

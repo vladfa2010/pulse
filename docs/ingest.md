@@ -1,6 +1,85 @@
 # Ingest API провайдерских срезов
 
 > M3/M4 календаря. Единая точка загрузки сырых файлов провайдеров, их парсинга, замены среза, пересборки канона и получения дифф-сводки.
+>
+> Дополнительно: свободная загрузка событий в ручной срез — [`POST /api/admin/calendar/manual/upload`](#post-apicalendarmanualupload).
+
+---
+
+## Endpoint
+
+### `POST /api/admin/calendar/manual/upload`
+
+Свободная загрузка событий в ручной срез (`manual-upload`). **Merge-only**: только
+добавляет, ничего не удаляет и не затирает; лимит 5 дат фидов не действует
+(нечего затирать). Хоть 1 событие на 1 дату. Формат — свободный JSON-массив,
+а не шаблон провайдера. Роут объявлен ДО `/calendar/:source`, чтобы Express
+не съел `manual` как `:source`.
+
+```bash
+# Превью (без записи)
+curl -X POST "https://api.example.com/api/admin/calendar/manual/upload?dry_run=1" \
+  -H "Authorization: Bearer <admin-token>" \
+  -H "Content-Type: application/json" \
+  -d @events.json
+
+# Загрузка
+curl -X POST "https://api.example.com/api/admin/calendar/manual/upload" ...
+```
+
+**Формат элемента** (`events.json`):
+
+```json
+[
+  { "date": "2026-09-02", "title": "HNFG: День инвестора по итогам II кв 2026", "ticker": "HNFG" },
+  { "date": "2026-09-02", "title": "Минфин: аукцион ОФЗ-ПК 29031" },
+  { "date": "2026-09-03", "title": "LKOH: Дивиденды за 9М 2026" }
+]
+```
+
+| Поле | Обязательность | Правила |
+|------|----------------|---------|
+| `date` | да | ISO `YYYY-MM-DD`; невалидная → item в `invalid` |
+| `title` | да | непустой; поддержан префикс `ТИКЕР: ...` (общий хелпер `parseTickerTitle`) |
+| `ticker` | нет | uppercase; если нет — из префикса title; если и там нет — `UNKNOWN` |
+| `company` | нет | fallback-цепочка: `company` → `ticker` → `title` |
+| `kind` | нет | из `detectKind(title)`; если задан — валидируется по списку kind'ов |
+| `status` | нет | из `detectStatus(title)`: «Ожидается/предварительно» → `expected`, иначе `confirmed` |
+
+Body — непустой массив, иначе 400. Ошибки по элементам не фатальны: собираются
+в `invalid` с причиной, валидные обрабатываются.
+
+**Семантика записи** (`uploadManualSlice`, одна tx):
+
+1. **Дубликат** — в raw `manual` уже есть строка с тем же `(date, title, kind, ticker)`
+   → пропуск, в `duplicates`. Проверка по ВСЕМ manual-строкам, включая архивные
+   (без date-ограничения) и по дублям внутри файла.
+2. **Томбстоун** — на merge-ключ (`makeCanonicalKey`) события есть tombstone →
+   tombstone удаляется («загрузил = воскресил»), в `resurrected`. Live-строка
+   могла пережить delete (томбстоуны подавляют ключ, не удаляя строки) —
+   повторный INSERT тогда не выполняется.
+3. Иначе — `INSERT` в `calendar_events_raw` с `source = 'manual'`.
+
+В tx же `touchCalendarSource('manual')`; после commit — `scheduleCanonicalRewrite()`
+(фоновая пересборка, SSE сам придёт в календарь).
+
+Валидации фидов (`validateProviderSlice`, лимит 5 дат) НЕ применяются.
+Canonical-diff не нужен: merge-only, удалений нет по определению.
+
+**Response 200**:
+
+```json
+{
+  "total": 5,
+  "added": 3,
+  "duplicates": 1,
+  "resurrected": 1,
+  "invalid": [{ "index": 4, "reason": "invalid date: 32.13.2026" }],
+  "dry_run": false
+}
+```
+
+`dry_run=1` — тот же ответ без единой записи.
 
 ---
 

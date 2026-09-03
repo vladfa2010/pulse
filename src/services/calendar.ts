@@ -13,6 +13,8 @@ import { nowSql } from '../utils/nowSql';
 import { sendTelegramMessage } from './telegram';
 import { broadcastCalendarRefresh } from './sse';
 import { NormalizedEvent } from './calendarAdapters';
+import { parseTickerTitle } from './calendarAdapters/smartlab';
+import { detectKind, detectStatus } from './calendarAdapters/classify';
 import { smartMatchTagsWithVia } from './smartTagMatcher';
 import { getAllTagNames } from './tagManager';
 
@@ -1453,6 +1455,191 @@ export async function ingestProviderSlice(
   } finally {
     // не сбрасываем ingestFlight = null, чтобы последовательность оставалась корректной
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Свободная загрузка в ручной срез (manual-upload): merge-only, без лимита дат
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface ManualUploadInvalidItem {
+  index: number;
+  reason: string;
+}
+
+export interface ManualUploadResult {
+  total: number;
+  added: number;
+  duplicates: number;
+  resurrected: number;
+  invalid: ManualUploadInvalidItem[];
+  dry_run: boolean;
+}
+
+interface ManualUploadParsedItem {
+  date: string;
+  weekday: string;
+  title: string;
+  kind: EventKind;
+  status: EventStatus;
+  company: string;
+  ticker: string;
+}
+
+function parseManualUploadItem(raw: unknown, index: number): { item?: ManualUploadParsedItem; reason?: string } {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { reason: 'item must be an object' };
+  }
+  const it = raw as Record<string, unknown>;
+
+  const dateRaw = typeof it.date === 'string' ? it.date.trim() : '';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateRaw)) {
+    return { reason: `invalid date: ${dateRaw || '(empty)'}` };
+  }
+  const d = new Date(`${dateRaw}T00:00:00Z`);
+  const [y, m, day] = dateRaw.split('-').map(Number);
+  if (isNaN(d.getTime()) || d.getUTCFullYear() !== y || d.getUTCMonth() + 1 !== m || d.getUTCDate() !== day) {
+    return { reason: `invalid date: ${dateRaw}` };
+  }
+
+  const fullTitle = typeof it.title === 'string' ? it.title.trim() : '';
+  if (!fullTitle) {
+    return { reason: 'empty title' };
+  }
+
+  const parsedTitle = parseTickerTitle(fullTitle);
+  const ticker = (typeof it.ticker === 'string' && it.ticker.trim()
+    ? it.ticker.trim()
+    : parsedTitle.ticker
+  ).toUpperCase() || 'UNKNOWN';
+
+  const title = parsedTitle.title;
+
+  let kind: EventKind;
+  if (it.kind !== undefined) {
+    if (!isValidKind(it.kind)) {
+      return { reason: `unknown kind: ${String(it.kind)}` };
+    }
+    kind = it.kind;
+  } else {
+    kind = detectKind(title);
+  }
+
+  let status: EventStatus;
+  if (it.status !== undefined) {
+    if (!isValidStatus(it.status)) {
+      return { reason: `unknown status: ${String(it.status)}` };
+    }
+    status = it.status;
+  } else {
+    status = detectStatus(title);
+  }
+
+  // Fallback-цепочка как в smartlab-адаптере: company → ticker → title
+  const company = (typeof it.company === 'string' && it.company.trim()
+    ? it.company.trim()
+    : ticker !== 'UNKNOWN'
+      ? ticker
+      : fullTitle);
+
+  return { item: { date: dateRaw, weekday: getWeekday(dateRaw), title, kind, status, company, ticker } };
+}
+
+/** Свободная загрузка событий в ручной срез: только добавляет, не удаляет.
+ *  Дедуп по всем manual-строкам (включая архивные). Томбстоун на merge-ключ —
+ *  удаляется («загрузил = воскресил»). После commit — фоновая пересборка канона. */
+export async function uploadManualSlice(items: unknown[], dryRun: boolean): Promise<ManualUploadResult> {
+  const result: ManualUploadResult = { total: items.length, added: 0, duplicates: 0, resurrected: 0, invalid: [], dry_run: dryRun };
+  const parsed: ManualUploadParsedItem[] = [];
+
+  for (let i = 0; i < items.length; i++) {
+    const { item, reason } = parseManualUploadItem(items[i], i);
+    if (!item) {
+      result.invalid.push({ index: i, reason: reason! });
+    } else {
+      parsed.push(item);
+    }
+  }
+
+  if (parsed.length === 0) {
+    return result;
+  }
+
+  // Дедуп: читаем ВСЕ manual-строки (включая архивные, без date-ограничения)
+  const existing = await query(
+    `SELECT date, title, kind, ticker, tombstone_key
+     FROM calendar_events_raw
+     WHERE source = 'manual'`
+  );
+  const liveKeys = new Set<string>();
+  const tombstoneKeys = new Set<string>();
+  for (const r of existing.rows as any[]) {
+    if (r.ticker === '__deleted__') {
+      if (r.tombstone_key) tombstoneKeys.add(r.tombstone_key);
+    } else {
+      liveKeys.add(`${normalizeDbDate(r.date)}|${r.title}|${r.kind}|${r.ticker}`);
+    }
+  }
+
+  const toAdd: { item: ManualUploadParsedItem; tombstoneKey: string | null }[] = [];
+  const seenInFile = new Set<string>();
+  for (const item of parsed) {
+    const liveKey = `${item.date}|${item.title}|${item.kind}|${item.ticker}`;
+    const tombstoneKey = makeCanonicalKey(item.date, item.ticker, item.company);
+
+    // Томбстоун на merge-ключ: загрузка воскрешает событие («загрузил = воскресил»).
+    // Tombstone удаляем всегда; live-строка могла остаться в raw (delete у нас
+    // подавляет ключ, не удаляя строки) — тогда повторный INSERT не нужен.
+    if (tombstoneKeys.has(tombstoneKey)) {
+      result.resurrected++;
+      tombstoneKeys.delete(tombstoneKey); // один томбстоун гасит одну загрузку
+      toAdd.push({ item, tombstoneKey });
+      seenInFile.add(liveKey);
+      continue;
+    }
+
+    if (liveKeys.has(liveKey) || seenInFile.has(liveKey)) {
+      result.duplicates++;
+      continue;
+    }
+    seenInFile.add(liveKey);
+    toAdd.push({ item, tombstoneKey: null });
+  }
+
+  if (!dryRun && toAdd.length > 0) {
+    await withCalendarTransaction(async (q) => {
+      for (const { item, tombstoneKey } of toAdd) {
+        if (tombstoneKey) {
+          await q(
+            `DELETE FROM calendar_events_raw
+             WHERE source = 'manual' AND ticker = '__deleted__' AND tombstone_key = $1`,
+            [tombstoneKey]
+          );
+          // Live-строка с тем же ключом могла пережить delete — не дублируем
+          const existing = await q(
+            `SELECT COUNT(*) as c FROM calendar_events_raw
+             WHERE source = 'manual' AND date = $1 AND title = $2 AND kind = $3 AND ticker = $4`,
+            [item.date, item.title, item.kind, item.ticker]
+          );
+          if (Number(existing.rows[0].c) > 0) continue;
+        }
+        await q(
+          `INSERT INTO calendar_events_raw (source, date, weekday, title, kind, status, company, ticker, uploaded_at)
+           VALUES ('manual', $1, $2, $3, $4, $5, $6, $7, ${nowSql()})`,
+          [item.date, item.weekday, item.title, item.kind, item.status, item.company, item.ticker]
+        );
+        result.added++;
+      }
+      await touchCalendarSource(q, 'manual');
+    });
+    scheduleCanonicalRewrite();
+  } else if (dryRun) {
+    // dry_run: added = число строк, которые были бы вставлены (без учёта
+    // переживших delete live-строк — для простоты превью считаем их insert'ами)
+    result.added = toAdd.filter((x) => !x.tombstoneKey).length +
+      toAdd.filter((x) => !!x.tombstoneKey && !liveKeys.has(`${x.item.date}|${x.item.title}|${x.item.kind}|${x.item.ticker}`)).length;
+  }
+
+  return result;
 }
 
 export interface DiffResult {
