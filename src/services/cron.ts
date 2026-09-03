@@ -454,9 +454,24 @@ export function startCron() {
     });
   }, 2 * 60 * 1000);
 
-  // News heatmap freeze: recalculate the last 3 days of aggregates at 00:05 MSK.
+  // DEFERRED PROCESSOR: retry failed articles every 10 minutes
+  console.log('[Cron] Deferred processor scheduled every 10 minutes');
+  cron.schedule('*/10 * * * *', async () => {
+    try {
+      await processDeferredArticles();
+    } catch (err: any) {
+      console.error('[Cron] Deferred processor failed:', err.message);
+    }
+  });
+}
+
+// News heatmap freeze: recalculate the last 3 days of aggregates at 00:05 MSK.
+// TZ-49: вынесено из отключённого startCron() — иначе freeze не запускался никогда.
+// Идемпотентно (ON CONFLICT DO UPDATE), под cron-локом news_heatmap_freeze (TTL 10 мин).
+export function startHeatmapFreezeCron(opts?: { isShuttingDown?: () => boolean }) {
   console.log('[Cron] News heatmap freeze scheduled daily at 00:05 Europe/Moscow');
   cron.schedule('5 0 * * *', async () => {
+    if (opts?.isShuttingDown?.()) return;
     const acquired = await acquireCronLock('news_heatmap_freeze');
     if (!acquired) {
       console.log('[CronLock] news_heatmap_freeze already running, skipping');
@@ -470,14 +485,4 @@ export function startCron() {
       await releaseCronLock('news_heatmap_freeze');
     }
   }, { timezone: 'Europe/Moscow' });
-
-  // DEFERRED PROCESSOR: retry failed articles every 10 minutes
-  console.log('[Cron] Deferred processor scheduled every 10 minutes');
-  cron.schedule('*/10 * * * *', async () => {
-    try {
-      await processDeferredArticles();
-    } catch (err: any) {
-      console.error('[Cron] Deferred processor failed:', err.message);
-    }
-  });
 }

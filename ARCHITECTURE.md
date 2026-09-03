@@ -479,7 +479,7 @@ Result: needs_translation = TRUE, matched_tags = ['nvidia', ...]
 | **News Processor** | **10 мин** | **`news-processor`** | **Translate + sentiment + tags для EN + RU** |
 
 **v9.3 изменения:**
-- ❌ `cron.ts` отключён (`startCron()` закомментирован)
+- ⚠️ `startCron()` в `cron.ts` отключён (RSS переехал в NSM, `TZ_REMOVE_DUPLICATE_RSS_CRON`), но модуль жив: `startHeatmapFreezeCron()` (freeze тепловой карты, ежедневно 00:05 МСК, `TZ-49`) регистрируется из boot-секции `index.ts`
 - ✅ RSS + Finnhub = один процесс `nsm.run()`
 - ✅ News Processor обрабатывает EN + RU (раньше только EN)
 - ✅ Маркер обработки: `sentiment_source IS NOT NULL`

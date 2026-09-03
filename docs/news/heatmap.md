@@ -51,7 +51,7 @@
 | `src/services/market/finamMarketAdapter.ts` | Недельные свечи (`TIME_FRAME_W`) |
 | `src/services/market/marketRouter.ts` | Провайдер-слой для свечей |
 | `src/migrations/news_heatmap_v1.sql` | SQL-схема (также продублирована в boot-миграциях `src/index.ts`) |
-| `src/services/cron.ts` | Регистрация freeze-крона на 00:05 МСК |
+| `src/services/cron.ts` | Регистрация freeze-крона на 00:05 МСК — `startHeatmapFreezeCron()` (TZ-49) |
 
 ---
 
@@ -263,21 +263,35 @@ CREATE TABLE IF NOT EXISTS news_all_daily (
 
 ## Freeze-крон
 
-Регистрируется в `src/services/cron.ts`:
+Регистрируется как отдельная экспортируемая функция `startHeatmapFreezeCron()` в `src/services/cron.ts`, вызов — в boot-секции `src/index.ts` рядом с `startDigestCron`/`startGlobalSummaryCron`:
 
 ```ts
-cron.schedule('5 0 * * *', () => withCronLock('news_heatmap_freeze', freezeHeatmapRecentDays),
-  { timezone: 'Europe/Moscow' });
+export function startHeatmapFreezeCron(opts?: { isShuttingDown?: () => boolean }) {
+  cron.schedule('5 0 * * *', async () => {
+    if (opts?.isShuttingDown?.()) return;
+    const acquired = await acquireCronLock('news_heatmap_freeze');
+    if (!acquired) return;  // другой инстанс уже выполняет
+    try {
+      await freezeHeatmapRecentDays();
+    } finally {
+      await releaseCronLock('news_heatmap_freeze');
+    }
+  }, { timezone: 'Europe/Moscow' });
+}
 ```
+
+> **История (TZ-49):** изначально блок жил внутри `startCron()`. Когда RSS переехал в NewsSourceManager (`TZ_REMOVE_DUPLICATE_RSS_CRON`), `startCron()` закомментировали вместе с freeze — и freeze не запускался никогда: gap-fallback досчитывал всё большее окно живьём из `news`. Фикс TZ-49: freeze вынесен в отдельную функцию, вызывается из boot-секции; блок удалён из `startCron()`, чтобы при его гипотетическом включении не было двойного расписания.
 
 **Что делает:**
 
 1. Пересчитывает окно `сегодня−3 ≤ день < сегодня` (вчера + два предыдущих) для трёх таблиц.
 2. Использует честный `COUNT`/`SUM` из `news`, не инкременты.
-3. Upsert в агрегатные таблицы.
+3. Upsert в агрегатные таблицы (`ON CONFLICT DO UPDATE` — идемпотентно).
 4. Лог: `[NewsHeatmap] freeze: done tag=N portfolio=N all=N duration_ms=N`.
 
 **Почему окно не включает «сегодня»:** «сегодня» всегда live; заморозка включала бы почти пустую половину дня и залипала бы до следующего крона.
+
+**Доказательства запуска:** лог регистрации `[Cron] News heatmap freeze scheduled daily at 00:05 Europe/Moscow` при старте; после 00:05 МСК — логи `[CronLock] ✅/🔓 news_heatmap_freeze` и `[NewsHeatmap] freeze: done ...`. Строка в `cron_locks` существует только во время выполнения (10-минутный TTL, удаляется в `finally`) — искать её после завершения бессмысленно. Главный индикатор здоровья: `SELECT max(day_msk) FROM news_all_daily;` = вчерашний день по МСК.
 
 ---
 
@@ -389,8 +403,11 @@ psql $DATABASE_URL -c "SELECT stories FROM news_tag_daily WHERE tag_id='SBER' AN
 # SELECT COUNT(*) FROM news WHERE (published_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Moscow')::date = '2026-08-15'
 #   AND matched_tags @> ARRAY['SBER'];
 
-# 7. Freeze прошёл: в cron_log есть news_heatmap_freeze
-psql $DATABASE_URL -c "SELECT * FROM cron_log WHERE task_name='news_heatmap_freeze' ORDER BY started_at DESC LIMIT 1;"
+# 7. Freeze отрабатывает ежедневно: max(day_msk) = вчера по МСК и сдвигается сам
+psql $DATABASE_URL -c "SELECT max(day_msk) FROM news_all_daily;"
+# Доказательства в логах: '[Cron] News heatmap freeze scheduled...' при старте,
+# '[CronLock] ✅/🔓 news_heatmap_freeze' + '[NewsHeatmap] freeze: done ...' после 00:05 МСК.
+# cron_locks строка живёт только во время выполнения (TTL 10 мин, удаляется в finally).
 
 # 8. Portfolio hash format (16 символов)
 psql $DATABASE_URL -c "SELECT length(tags_hash), tags_hash FROM user_portfolio_daily_meta LIMIT 1;"
@@ -407,3 +424,4 @@ psql $DATABASE_URL -c "SELECT length(tags_hash), tags_hash FROM user_portfolio_d
 | 2026-09-02 | v1.2 | Hotfix 22007: корректные скобки `(AT TIME ZONE tz)::date` в `sqlYearHistory`, fallback на fully-live при любом сбое history-запроса. |
 | 2026-09-02 | v1.3 | Hotfix day digest: параметры PG для `scale=day` и `scale=day_hours` приведены в соответствие плейсхолдерам SQL; `tz` больше не передаётся как значение параметра. |
 | 2026-09-02 | v1.4 | `ensurePortfolioHistoryFresh` обёрнута в транзакцию с `SELECT ... FOR UPDATE` по хешу портфеля; SQLite-путь оставлен автокоммитным. |
+| 2026-09-03 | v1.5 | TZ-49: freeze-крон вынесен из отключённого `startCron()` в `startHeatmapFreezeCron()`, регистрация в boot-секции `index.ts` с guard `isShuttingDown`. До этого freeze не запускался никогда. Правки документации: реальная реализация в разделе «Freeze-крон», корректная проверка вместо несуществующей записи в `cron_log`. |
