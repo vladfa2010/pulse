@@ -43,6 +43,17 @@ function assert(cond, msg) {
   if (!cond) throw new Error('ASSERT: ' + msg);
 }
 
+/** PG возвращает DATE как Date (локальная полночь), SQLite — строку. Приводим к YYYY-MM-DD. */
+function toDateStr(v) {
+  if (v instanceof Date) {
+    const y = v.getFullYear();
+    const m = String(v.getMonth() + 1).padStart(2, '0');
+    const d = String(v.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  return String(v).slice(0, 10);
+}
+
 async function setup() {
   await bootstrapSetup();
 
@@ -56,16 +67,17 @@ async function setup() {
     created_at TEXT DEFAULT (datetime('now'))
   )`);
 
-  // admin-пользователь для прохождения adminMiddleware
+  // admin-пользователь для прохождения adminMiddleware (UUID — PG-режим требует валидный uuid)
+  const ADMIN_ID = '00000000-0000-4000-8000-000000000001';
   await query(
     `INSERT INTO users (id, email, username, password_hash, is_admin)
-     VALUES ('admin1', 'admin@test', 'admin', 'x', 1)`
+     VALUES ('${ADMIN_ID}', 'admin@test', 'admin', 'x', TRUE)`
   );
 
-  await seedTags();
+  await seedTags(ADMIN_ID);
 }
 
-async function seedTags() {
+async function seedTags(adminId) {
   await query(`DELETE FROM user_defined_tags`);
   await query(`DELETE FROM smart_tag_cache`);
 
@@ -79,16 +91,17 @@ async function seedTags() {
   });
   await query(
     `INSERT INTO user_defined_tags (tag_id, tag_name, tag_type, keywords, enriched_data, created_by)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    ['цб', 'Центральный банк', 'sector', '[]', cbEnriched, 'admin1']
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    ['цб', 'Центральный банк', 'sector', [], cbEnriched, adminId]
   );
 
   // Тег «lkoh» без обогащения: только тикер как keyword, поэтому "Лукойл" по имени
   // не сматчится на keyword и уйдёт в LLM-фолбэк.
+  // keywords — TEXT[] в PG / JSON-текст в SQLite: передаём массив параметром (как продуктовый код).
   await query(
     `INSERT INTO user_defined_tags (tag_id, tag_name, tag_type, keywords, enriched_data, created_by)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    ['lkoh', 'Лукойл', 'company', JSON.stringify(['lkoh']), null, 'admin1']
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    ['lkoh', 'Лукойл', 'company', ['lkoh'], null, adminId]
   );
 }
 
@@ -114,7 +127,7 @@ async function request(server, method, path, body) {
       agent: new http.Agent({ keepAlive: false }),
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + createToken('admin1'),
+        'Authorization': 'Bearer ' + createToken('00000000-0000-4000-8000-000000000001'),
       },
     };
     const req = http.request(options, (res) => {
@@ -177,6 +190,8 @@ async function main() {
 
     // === Test 1: create manual override; provider raw untouched; manual wins in canonical ===
     await loadInvestmint(server, base);
+    // Live-ответ приходит до фоновой пересборки канона — дожидаемся её (в PG она медленнее SQLite).
+    await flushCanonicalRewrites();
 
     // Pick a provider event with expected status to override.
     const providerEvent = await query(
@@ -184,6 +199,7 @@ async function main() {
     );
     assert(providerEvent.rows.length > 0, 'test1: need at least one expected provider canonical event');
     const pe = providerEvent.rows[0];
+    pe.date = toDateStr(pe.date); // PG возвращает DATE как Date — приводим к YYYY-MM-DD
 
     const overrideBody = {
       date: pe.date,
@@ -285,6 +301,7 @@ async function main() {
 
     // === Test 4: delete event; it disappears from canonical; reloading provider file does NOT resurrect it ===
     const deleteTarget = newCanonical;
+    deleteTarget.date = toDateStr(deleteTarget.date);
     const deleteRes = await request(
       server,
       'DELETE',
@@ -316,18 +333,18 @@ async function main() {
     const dupTitle = 'Dup Event';
     await query(
       `INSERT INTO calendar_events_raw (source, date, weekday, title, kind, status, company, ticker, uploaded_at)
-       VALUES ('investmint', $1, $2, $3, 'МСФО', 'expected', $4, $5, datetime('now'))`,
+       VALUES ('investmint', $1, $2, $3, 'МСФО', 'expected', $4, $5, NOW())`,
       [dupDate, dupWeekday, dupTitle, dupCompany, dupTicker]
     );
     await query(
       `INSERT INTO calendar_events_raw (source, date, weekday, title, kind, status, company, ticker, uploaded_at)
-       VALUES ('investmint', $1, $2, $3, 'РСБУ', 'expected', $4, $5, datetime('now'))`,
+       VALUES ('investmint', $1, $2, $3, 'РСБУ', 'expected', $4, $5, NOW())`,
       [dupDate, dupWeekday, dupTitle, dupCompany, dupTicker]
     );
     await query(
       `INSERT INTO calendar_sources (source, uploaded_at, last_stale_alert_at, last_warnings)
-       VALUES ('investmint', datetime('now'), NULL, '[]')
-       ON CONFLICT (source) DO UPDATE SET uploaded_at = datetime('now')`
+       VALUES ('investmint', NOW(), NULL, '[]')
+       ON CONFLICT (source) DO UPDATE SET uploaded_at = NOW()`
     );
     await rebuildCanonical();
 
@@ -338,11 +355,12 @@ async function main() {
     assert(Number(dupRowsBefore.rows[0].c) === 2, `test5: expected 2 possible_duplicate rows, got ${dupRowsBefore.rows[0].c}`);
 
     const dupAdmin = await query(
-      `SELECT date, title, kind FROM calendar_events WHERE ticker = $1 AND possible_duplicate = 1 LIMIT 1`,
+      `SELECT date, title, kind FROM calendar_events WHERE ticker = $1 AND possible_duplicate = TRUE LIMIT 1`,
       [dupTicker]
     );
     assert(dupAdmin.rows.length > 0, 'test5: need a possible_duplicate admin event');
     const dupEvent = dupAdmin.rows[0];
+    dupEvent.date = toDateStr(dupEvent.date);
 
     const deleteDupRes = await request(
       server,
@@ -398,7 +416,7 @@ async function main() {
     const unknownTitle = 'Unknown Event';
     await query(
       `INSERT INTO calendar_events_raw (source, date, weekday, title, kind, status, company, ticker, uploaded_at)
-       VALUES ('manual', $1, $2, $3, 'Другое', 'expected', $4, 'UNKNOWN', datetime('now'))`,
+       VALUES ('manual', $1, $2, $3, 'Другое', 'expected', $4, 'UNKNOWN', NOW())`,
       [unknownDate, unknownWeekday, unknownTitle, unknownCompany]
     );
     await rebuildCanonical();
@@ -459,12 +477,12 @@ async function main() {
     const bugCKey = `${bugCDate}|n:${bugCCompany.toLowerCase()}`;
     await query(
       `INSERT INTO calendar_events_raw (source, date, weekday, title, kind, status, company, ticker, uploaded_at, tombstone_key, original_title)
-       VALUES ('manual', $1, $2, '', 'Другое', 'expected', $3, '__deleted__', datetime('now'), $4, $5)`,
+       VALUES ('manual', $1, $2, '', 'Другое', 'expected', $3, '__deleted__', NOW(), $4, $5)`,
       [bugCDate, bugCWeekday, bugCCompany, bugCKey, bugCTitle1]
     );
     await query(
       `INSERT INTO calendar_events_raw (source, date, weekday, title, kind, status, company, ticker, uploaded_at, tombstone_key, original_title)
-       VALUES ('manual', $1, $2, '', 'Другое', 'expected', $3, '__deleted__', datetime('now'), $4, $5)`,
+       VALUES ('manual', $1, $2, '', 'Другое', 'expected', $3, '__deleted__', NOW(), $4, $5)`,
       [bugCDate, bugCWeekday, bugCCompany, bugCKey, bugCTitle2]
     );
     await rebuildCanonical();

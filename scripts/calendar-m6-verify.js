@@ -65,16 +65,17 @@ async function setup() {
     created_at TEXT DEFAULT (datetime('now'))
   )`);
 
-  // admin-пользователь для прохождения adminMiddleware
+  // admin-пользователь для прохождения adminMiddleware (UUID — PG-режим требует валидный uuid)
+  const ADMIN_ID = '00000000-0000-4000-8000-000000000001';
   await query(
     `INSERT INTO users (id, email, username, password_hash, is_admin)
-     VALUES ('admin1', 'admin@test', 'admin', 'x', 1)`
+     VALUES ('${ADMIN_ID}', 'admin@test', 'admin', 'x', TRUE)`
   );
 
-  await seedTags();
+  await seedTags(ADMIN_ID);
 }
 
-async function seedTags() {
+async function seedTags(adminId) {
   await query(`DELETE FROM user_defined_tags`);
   await query(`DELETE FROM smart_tag_cache`);
 
@@ -88,16 +89,17 @@ async function seedTags() {
   });
   await query(
     `INSERT INTO user_defined_tags (tag_id, tag_name, tag_type, keywords, enriched_data, created_by)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    ['цб', 'Центральный банк', 'sector', '[]', cbEnriched, 'admin1']
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    ['цб', 'Центральный банк', 'sector', [], cbEnriched, adminId]
   );
 
   // Тег «lkoh» без обогащения: только тикер как keyword, поэтому "Лукойл" по имени
   // не сматчится на keyword и уйдёт в LLM-фолбэк.
+  // keywords — TEXT[] в PG / JSON-текст в SQLite: передаём массив параметром (как продуктовый код).
   await query(
     `INSERT INTO user_defined_tags (tag_id, tag_name, tag_type, keywords, enriched_data, created_by)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    ['lkoh', 'Лукойл', 'company', JSON.stringify(['lkoh']), null, 'admin1']
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    ['lkoh', 'Лукойл', 'company', ['lkoh'], null, adminId]
   );
 }
 
@@ -123,7 +125,7 @@ async function request(server, method, path, body) {
       agent: new http.Agent({ keepAlive: false }),
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + createToken('admin1'),
+        'Authorization': 'Bearer ' + createToken('00000000-0000-4000-8000-000000000001'),
       },
     };
     const req = http.request(options, (res) => {
@@ -179,7 +181,7 @@ async function main() {
     await resetCalendarTables();
     await query(
       `INSERT INTO calendar_events_raw (source, date, weekday, title, kind, status, company, ticker, uploaded_at)
-       VALUES ('manual', ?, 'ср', 'Заседание ЦБ РФ', 'Другое', 'expected', 'ПАО ЦБ РФ', 'UNKNOWN', datetime('now'))`,
+       VALUES ('manual', $1, 'ср', 'Заседание ЦБ РФ', 'Другое', 'expected', 'ПАО ЦБ РФ', 'UNKNOWN', NOW())`,
       [serverDate]
     );
     await rebuildCanonical();
@@ -196,7 +198,7 @@ async function main() {
     await resetCalendarTables();
     await query(
       `INSERT INTO calendar_events_raw (source, date, weekday, title, kind, status, company, ticker, uploaded_at)
-       VALUES ('manual', ?, 'ср', 'Отчёт Лукойла', 'МСФО', 'expected', 'ПАО Лукойл', 'UNKNOWN', datetime('now'))`,
+       VALUES ('manual', $1, 'ср', 'Отчёт Лукойла', 'МСФО', 'expected', 'ПАО Лукойл', 'UNKNOWN', NOW())`,
       [serverDate]
     );
     await rebuildCanonical();
@@ -222,7 +224,7 @@ async function main() {
     await resetCalendarTables();
     await query(
       `INSERT INTO calendar_events_raw (source, date, weekday, title, kind, status, company, ticker, uploaded_at)
-       VALUES ('legacy', ?, 'ср', 'Заседание ЦБ РФ', 'Другое', 'expected', 'ПАО ЦБ РФ', 'UNKNOWN', datetime('now'))`,
+       VALUES ('legacy', $1, 'ср', 'Заседание ЦБ РФ', 'Другое', 'expected', 'ПАО ЦБ РФ', 'UNKNOWN', NOW())`,
       [serverDate]
     );
     const dryRunRows = [{
@@ -246,7 +248,7 @@ async function main() {
     await resetCalendarTables();
     await query(
       `INSERT INTO calendar_events_raw (source, date, weekday, title, kind, status, company, ticker, uploaded_at)
-       VALUES ('manual', ?, 'ср', 'Заседание ЦБ РФ', 'Другое', 'expected', 'ПАО ЦБ РФ', 'UNKNOWN', datetime('now'))`,
+       VALUES ('manual', $1, 'ср', 'Заседание ЦБ РФ', 'Другое', 'expected', 'ПАО ЦБ РФ', 'UNKNOWN', NOW())`,
       [serverDate]
     );
     await rebuildCanonical();
@@ -273,12 +275,12 @@ async function main() {
     await resetCalendarTables();
     await query(
       `INSERT INTO calendar_events_raw (source, date, weekday, title, kind, status, company, ticker, uploaded_at)
-       VALUES ('manual', ?, 'ср', 'Заседание ЦБ РФ', 'Другое', 'expected', 'ПАО ЦБ РФ', 'UNKNOWN', datetime('now'))`,
+       VALUES ('manual', $1, 'ср', 'Заседание ЦБ РФ', 'Другое', 'expected', 'ПАО ЦБ РФ', 'UNKNOWN', NOW())`,
       [serverDate]
     );
     await query(
       `INSERT INTO calendar_events_raw (source, date, weekday, title, kind, status, company, ticker, uploaded_at)
-       VALUES ('manual', ?, 'ср', 'Отчёт Лукойла', 'МСФО', 'expected', 'ПАО Лукойл', 'UNKNOWN', datetime('now'))`,
+       VALUES ('manual', $1, 'ср', 'Отчёт Лукойла', 'МСФО', 'expected', 'ПАО Лукойл', 'UNKNOWN', NOW())`,
       [serverDate]
     );
     await rebuildCanonical();

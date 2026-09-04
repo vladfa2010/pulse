@@ -192,14 +192,14 @@ router.get('/', maybeAuth, async (req: AuthRequest, res) => {
 
       // Параметры PG строго по плейсхолдерам SQL (fix6):
       //   sqlDay:      $1 = date, $2 = scopeParam (tz зашит в SQL литералом);
-      //   sqlDayHours: без плейсхолдеров (all) или $2 = scopeParam (tag/portfolio).
+      //   sqlDayHours: без плейсхолдеров (all) или $1 = scopeParam (tag/portfolio).
       const params = scale === 'day'
         ? (scope === 'all'
             ? [date]
             : [date, scopeParam])
         : (scope === 'all'
             ? []
-            : (USE_SQLITE ? [scopeParam] : [tz, scopeParam]));
+            : [scopeParam]);
 
       const r = await query(USE_SQLITE ? s.lite : s.pg, params);
 

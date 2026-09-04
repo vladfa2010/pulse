@@ -27,7 +27,8 @@
     "verify:calendarManual:pg": "npm run build && CALENDAR_VERIFY_PG=1 node scripts/calendar-manual-upload-verify.js",
     "verify:calendar:pg": "npm run build && CALENDAR_VERIFY_PG=1 node scripts/calendar-m1-verify.js && CALENDAR_VERIFY_PG=1 node scripts/calendar-m2-verify.js && CALENDAR_VERIFY_PG=1 node scripts/calendar-m3-verify.js && CALENDAR_VERIFY_PG=1 node scripts/calendar-m4-verify.js && CALENDAR_VERIFY_PG=1 node scripts/calendar-m5-verify.js && CALENDAR_VERIFY_PG=1 node scripts/calendar-m6-verify.js && CALENDAR_VERIFY_PG=1 node scripts/calendar-m7-verify.js && CALENDAR_VERIFY_PG=1 node scripts/calendar-manual-upload-verify.js",
     "verify:db:schema": "npm run build && node scripts/db-schema-parity-verify.js",
-    "verify:db:tz": "npm run build && node scripts/db-tz-verify.js"
+    "verify:db:tz": "npm run build && node scripts/db-tz-verify.js",
+    "verify:newsQueries": "npm run build && node scripts/db-news-queries-verify.js"
   },
   "keywords": [
     "news",

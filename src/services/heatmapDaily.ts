@@ -271,9 +271,9 @@ export function sqlDay(scope: Scope): { pg: string; lite: string } {
 
 export function sqlDayHours(scope: Scope): { pg: string; lite: string } {
   const pgFilter = scope === 'tag'
-    ? `AND matched_tags @> ARRAY[$2]::text[]`
+    ? `AND matched_tags @> ARRAY[$1]::text[]`
     : scope === 'portfolio'
-    ? `AND matched_tags && (SELECT array_agg(tag_id)::text[] FROM portfolios WHERE user_id = $2::uuid AND NOT is_frozen)`
+    ? `AND matched_tags && (SELECT array_agg(tag_id)::text[] FROM portfolios WHERE user_id = $1::uuid AND NOT is_frozen)`
     : `AND cardinality(matched_tags) > 0`;
   const liteFilter = scope === 'tag'
     ? `AND EXISTS (SELECT 1 FROM json_each(n.matched_tags) je WHERE je.value = ?)`
@@ -547,7 +547,7 @@ export async function ensurePortfolioHistoryFresh(userId: string, tags: string[]
         FROM news n
         WHERE n.published_at >= NOW() - interval '${WEEKS * 7} days'
           AND n.matched_tags && (SELECT array_agg(tag_id)::text[] FROM portfolios WHERE user_id = $1::uuid AND NOT is_frozen)
-        GROUP BY 1
+        GROUP BY 2
         ON CONFLICT (user_id, day_msk) DO UPDATE SET
           stories = EXCLUDED.stories, pos = EXCLUDED.pos,
           neg = EXCLUDED.neg, resonance = EXCLUDED.resonance

@@ -21,6 +21,9 @@ let addDays;
 let flushCanonicalRewrites;
 let adminRouter;
 let express;
+let nowSql;
+
+const ADMIN_ID = '00000000-0000-4000-8000-000000000001';
 
 function assert(cond, msg) {
   if (!cond) throw new Error('ASSERT: ' + msg);
@@ -36,13 +39,14 @@ async function setup() {
   getMskDateString = calendarModule.getMskDateString;
   addDays = calendarModule.addDays;
   flushCanonicalRewrites = calendarModule.flushCanonicalRewrites;
+  nowSql = require(path.join(distDir, 'utils', 'nowSql.js')).nowSql;
 
   adminRouter = require(path.join(distDir, 'routes', 'admin.js')).default;
   express = require('express');
 
   await query(
     `INSERT INTO users (id, email, username, password_hash, is_admin)
-     VALUES ('admin1', 'admin@test', 'admin', 'x', 1)`
+     VALUES ('${ADMIN_ID}', 'admin@test', 'admin', 'x', TRUE)`
   );
 }
 
@@ -68,7 +72,7 @@ async function request(server, method, pathName, body) {
       agent: new http.Agent({ keepAlive: false }),
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + createToken('admin1'),
+        'Authorization': 'Bearer ' + createToken(ADMIN_ID),
       },
     };
     const req = http.request(options, (res) => {
@@ -139,12 +143,12 @@ async function main() {
     // Архивная manual-строка (замороженная) + чужой срез investmint
     await query(
       `INSERT INTO calendar_events_raw (source, date, weekday, title, kind, status, company, ticker, uploaded_at)
-       VALUES ('manual', $1, 'пн', 'Архивное событие', 'МСФО', 'confirmed', 'OLD', 'OLDT', datetime('now'))`,
+       VALUES ('manual', $1, 'пн', 'Архивное событие', 'МСФО', 'confirmed', 'OLD', 'OLDT', ${nowSql()})`,
       [archiveDate]
     );
     await query(
       `INSERT INTO calendar_events_raw (source, date, weekday, title, kind, status, company, ticker, uploaded_at)
-       VALUES ('investmint', $1, 'пн', 'Событие инвестминта', 'МСФО', 'expected', 'INV', 'INVT', datetime('now'))`,
+       VALUES ('investmint', $1, 'пн', 'Событие инвестминта', 'МСФО', 'expected', 'INV', 'INVT', ${nowSql()})`,
       [d(2)]
     );
     const res2 = await upload(server, base, [

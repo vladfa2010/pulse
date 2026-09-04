@@ -204,6 +204,8 @@ CALENDAR_VERIFY_PG=1 DATABASE_URL_TEST=postgres://$(whoami)@localhost:5432/pulse
 
 Без `CALENDAR_VERIFY_PG=1` скрипты по умолчанию используют SQLite (быстрая итерация). PG-режим восстанавливает схему через `DROP SCHEMA public CASCADE` — БД обязана содержать `test` в имени (защита от случайного прод/dev).
 
+Полный реестр тестов БД (календарь М1–М7, schema parity, TZ parity, news queries) и **политика DDL** — в `docs/database-tests.md`.
+
 ### Git Repository
 - **URL:** https://github.com/vladfa2010/pulse
 - **Branch:** `main`

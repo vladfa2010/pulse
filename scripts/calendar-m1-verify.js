@@ -162,10 +162,10 @@ async function main() {
     assert(rows.rows.length === 2, 'expected 2 rows for duplicate kinds');
     assert(rows.rows.every(r => r.possible_duplicate === 1 || r.possible_duplicate === true), 'expected possible_duplicate flag');
 
-    console.log('\n[VERIFY] ALL TESTS PASSED');
+    console.log('\n[M1 VERIFY] ALL TESTS PASSED');
     process.exit(0);
   } catch (err) {
-    console.error('[VERIFY] FAILED:', err.message);
+    console.error('[M1 VERIFY] FAILED:', err.message);
     console.error(err.stack);
     process.exit(1);
   }

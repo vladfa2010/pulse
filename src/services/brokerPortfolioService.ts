@@ -698,7 +698,7 @@ export async function getRecommendedTags(userId: string): Promise<{ tags: Recomm
 // Tag cloud subscription helpers
 // ═══════════════════════════════════════════════════════════════════════════
 
-async function findPositionCompanyName(
+export async function findPositionCompanyName(
   userId: string,
   ticker: string,
   exchange: string

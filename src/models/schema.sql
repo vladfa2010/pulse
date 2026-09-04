@@ -425,11 +425,14 @@ CREATE TABLE IF NOT EXISTS frozen_tags (
 CREATE INDEX IF NOT EXISTS idx_frozen_tags_user_id ON frozen_tags(user_id);
 
 -- ============================================================
--- 7e1. cron_locks (SQLite dev race-condition protection)
+-- 7e1. cron_locks (защита cron-джоб от параллельного запуска — форма как на проде,
+-- прод-код использует job_name/locked_by/expires_at, см. index.ts и globalSummary.ts)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS cron_locks (
-  lock_key   TEXT PRIMARY KEY,
-  locked_at  TIMESTAMP NOT NULL
+  job_name   VARCHAR(50) PRIMARY KEY,
+  locked_at  TIMESTAMP,
+  locked_by  VARCHAR(100),
+  expires_at TIMESTAMP DEFAULT NOW()
 );
 
 -- ============================================================

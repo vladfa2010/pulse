@@ -233,24 +233,26 @@ async function main() {
 
     // === Test 7: per-provider stale alerts ===
     await resetCalendarTables();
-    // Админ для алертов.
-    await query(`INSERT INTO users (id, email, username, password_hash, is_admin) VALUES ('admin1', 'admin@test', 'admin', 'x', 1)`);
-    await query(`INSERT INTO admin_tg_settings (id, admin_user_id, tg_chat_id, is_active) VALUES ('s1', 'admin1', '12345', 1)`);
+    // Админ для алертов (UUID — PG-режим требует валидный uuid в users.id и admin_user_id).
+    const ADMIN_ID = '00000000-0000-4000-8000-000000000001';
+    await query(`INSERT INTO users (id, email, username, password_hash, is_admin) VALUES ('${ADMIN_ID}', 'admin@test', 'admin', 'x', TRUE)`);
+    await query(`INSERT INTO admin_tg_settings (id, admin_user_id, tg_chat_id, is_active) VALUES ('00000000-0000-4000-8000-000000000002', '${ADMIN_ID}', '12345', TRUE)`);
     // investmint с покрытием в прошлом.
-    await query(`INSERT INTO calendar_sources (source, uploaded_at, last_stale_alert_at) VALUES ('investmint', datetime('now'), NULL)`);
+    await query(`INSERT INTO calendar_sources (source, uploaded_at, last_stale_alert_at) VALUES ('investmint', NOW(), NULL)`);
     await query(`INSERT INTO calendar_events_raw (source, date, weekday, title, kind, status, company, ticker, uploaded_at)
-                  VALUES ('investmint', '2026-08-25', 'вт', 'Отчёт', 'МСФО', 'expected', 'X', 'X', datetime('now'))`);
+                  VALUES ('investmint', '2026-08-25', 'вт', 'Отчёт', 'МСФО', 'expected', 'X', 'X', NOW())`);
     await maybeSendProviderStaleAlerts();
     const investMeta1 = await query(`SELECT last_stale_alert_at FROM calendar_sources WHERE source = 'investmint'`);
     assert(investMeta1.rows[0].last_stale_alert_at, 'test7: investmint stale alert should update last_stale_alert_at');
     const t1 = investMeta1.rows[0].last_stale_alert_at;
     await maybeSendProviderStaleAlerts();
     const investMeta2 = await query(`SELECT last_stale_alert_at FROM calendar_sources WHERE source = 'investmint'`);
-    assert(investMeta2.rows[0].last_stale_alert_at === t1, 'test7: cooldown should prevent second alert');
+    // PG возвращает timestamp как Date, SQLite — строку; сравниваем через строковое представление.
+    assert(String(investMeta2.rows[0].last_stale_alert_at) === String(t1), 'test7: cooldown should prevent second alert');
     // legacy не должен алертиться.
-    await query(`INSERT INTO calendar_sources (source, uploaded_at, last_stale_alert_at) VALUES ('legacy', datetime('now'), NULL)`);
+    await query(`INSERT INTO calendar_sources (source, uploaded_at, last_stale_alert_at) VALUES ('legacy', NOW(), NULL)`);
     await query(`INSERT INTO calendar_events_raw (source, date, weekday, title, kind, status, company, ticker, uploaded_at)
-                  VALUES ('legacy', '2026-08-25', 'вт', 'Отчёт', 'МСФО', 'expected', 'Y', 'Y', datetime('now'))`);
+                  VALUES ('legacy', '2026-08-25', 'вт', 'Отчёт', 'МСФО', 'expected', 'Y', 'Y', NOW())`);
     await maybeSendProviderStaleAlerts();
     const legacyMeta = await query(`SELECT last_stale_alert_at FROM calendar_sources WHERE source = 'legacy'`);
     assert(!legacyMeta.rows[0].last_stale_alert_at, 'test7: legacy should not be alerted');

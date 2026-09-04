@@ -61,10 +61,10 @@ async function setup() {
     created_at TEXT DEFAULT (datetime('now'))
   )`);
 
-  // admin-пользователь для прохождения adminMiddleware
+  // admin-пользователь для прохождения adminMiddleware (UUID — PG-режим требует валидный uuid)
   await query(
     `INSERT INTO users (id, email, username, password_hash, is_admin)
-     VALUES ('admin1', 'admin@test', 'admin', 'x', 1)`
+     VALUES ('00000000-0000-4000-8000-000000000001', 'admin@test', 'admin', 'x', TRUE)`
   );
 }
 
@@ -90,7 +90,7 @@ async function request(server, method, path, body) {
       agent: new http.Agent({ keepAlive: false }),
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + createToken('admin1'),
+        'Authorization': 'Bearer ' + createToken('00000000-0000-4000-8000-000000000001'),
       },
     };
     const req = http.request(options, (res) => {
@@ -287,14 +287,14 @@ async function main() {
     for (const row of legacyRows) {
       await query(
         `INSERT INTO calendar_events_raw (source, date, weekday, title, kind, status, company, ticker, uploaded_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, datetime('now'))`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
         [row.source, row.date, row.weekday, row.title, row.kind, row.status, row.company, row.ticker]
       );
     }
     await query(
       `INSERT INTO calendar_sources (source, uploaded_at, last_stale_alert_at, last_warnings)
-       VALUES ('legacy', datetime('now'), NULL, '[]')
-       ON CONFLICT (source) DO UPDATE SET uploaded_at = datetime('now')`
+       VALUES ('legacy', NOW(), NULL, '[]')
+       ON CONFLICT (source) DO UPDATE SET uploaded_at = NOW()`
     );
 
     // Пересобираем канон с legacy, чтобы diff показал удаление
@@ -334,10 +334,12 @@ async function main() {
 
     // === Test 10: live ingest < 500 мс при медленном LLM (1500 мс/вызов) ===
     await flushCanonicalRewrites(); // drain фоновых пересборок от прошлых тестов
-    // Тег «fast» нужен, чтобы LLM-ответ прошёл фильтр по availableTags
+    // Тег «fast» нужен, чтобы LLM-ответ прошёл фильтр по availableTags.
+    // keywords — TEXT[] в PG / JSON-текст в SQLite: продуктовый код передаёт массив параметром.
     await query(
       `INSERT INTO user_defined_tags (tag_id, tag_name, tag_type, keywords, enriched_data, created_by)
-       VALUES ('fast', 'Fast Co', 'company', '["fast"]', NULL, 'admin1')`
+       VALUES ('fast', 'Fast Co', 'company', $1, NULL, '00000000-0000-4000-8000-000000000001')`,
+      [['fast']]
     );
     const t10dates = [0, 1, 2, 3, 4].map((i) => {
       const d = new Date(serverDate + 'T00:00:00Z');
@@ -396,14 +398,14 @@ async function main() {
     for (const row of legacyRows) {
       await query(
         `INSERT INTO calendar_events_raw (source, date, weekday, title, kind, status, company, ticker, uploaded_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, datetime('now'))`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
         [row.source, row.date, row.weekday, row.title, row.kind, row.status, row.company, row.ticker]
       );
     }
     await query(
       `INSERT INTO calendar_sources (source, uploaded_at, last_stale_alert_at, last_warnings)
-       VALUES ('legacy', datetime('now'), NULL, '[]')
-       ON CONFLICT (source) DO UPDATE SET uploaded_at = datetime('now')`
+       VALUES ('legacy', NOW(), NULL, '[]')
+       ON CONFLICT (source) DO UPDATE SET uploaded_at = NOW()`
     );
     const t13 = Date.now();
     const delete13 = await request(server, 'DELETE', `${base}/calendar/sources/legacy`);
