@@ -85,7 +85,7 @@ npm run verify:db:tz
 
 Файл: `scripts/db-news-queries-verify.js`. БД: `pulse_dev_test2`.
 
-16 проверок новостного контура **через реальные роуты** на живом сервере
+17 проверок новостного контура **через реальные роуты** на живом сервере
 (dist/index.js): лента, популярные теги, дайджест дня (`scale=day`),
 `day_hours`, годовые карты (all/tag/portfolio), `freezeHeatmapRecentDays`,
 глобальная сводка с мок-LLM (в т.ч. TZ-50 stale-fallback), резолвер названий
@@ -132,3 +132,4 @@ npm run verify:newsQueries
 | 2026-09-05 | News queries | `heatmapDaily.sqlDayHours` — 42P18 (`$2` вместо `$1` в PG-SQL); роут `newsHeatmap.ts` передавал лишний параметр |
 | 2026-09-05 | News queries | `ensurePortfolioHistoryFresh` — `GROUP BY 1` → 42703 в PG-ветке (ложилась каждая годовая карта портфеля) |
 | 2026-09-05 | Calendar М1–М6 + manual | Скрипты использовали SQLite-паттерны (`admin1`, `datetime('now')`, `?`, `is_admin = 1`) — не работали в PG-режиме; продуктовый код пострадал только в одном месте — `;` в комментарии schema.sql ломала сплиттер bootstrap'а |
+| 2026-09-05 | News queries (ТЗ-11.11fix14) | `getYearCells`: gap-fallback дочитывал только хвост `(frozenThrough; вчера]` — после первого freeze без backfill «голова» года пустовала в проде. Добавлен head-fill `[allDates[0]; firstFrozen-1]`; тест 17 изолирует инцидент (негативная проверка: без фикса ячейка пустая) |

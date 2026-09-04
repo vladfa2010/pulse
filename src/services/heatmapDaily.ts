@@ -376,17 +376,28 @@ export async function getYearCells(
     byDate.set(row.day_msk, row);
   }
 
-  // Gap-fallback: окно (frozenThrough; вчера] дочитываем живьём из news.
-  // Покрывает: отставание freeze, пустую историю после миграции,
-  // а при useAggregates === false (42P01) — весь год целиком (fully-live).
+  // Gap-fallback: живьём из news дочитываем:
+  //  • хвост (frozenThrough; вчера] — отставание freeze, пустая история
+  //    (при useAggregates === false / 42P01 — весь год целиком, fully-live);
+  //  • голову [allDates[0]; firstFrozen-1] — если агрегаты начинаются позже
+  //    начала годового окна (частичный или пропущенный backfill; инцидент
+  //    04.09 после первого запуска freeze, ТЗ-49/ТЗ-11.11fix14).
+  // Страховка: после нормального backfill ветка головы не срабатывает.
   const gapFrom = frozenThrough ? addDays(frozenThrough, 1) : allDates[0];
-  if (gapFrom <= yesterday) {
+  const liveRanges: Array<[string, string]> = [];
+  if (gapFrom <= yesterday) liveRanges.push([gapFrom, yesterday]);
+  const firstFrozen = historyRows.length > 0 ? String(historyRows[0].day_msk) : null;
+  if (firstFrozen && firstFrozen > allDates[0]) {
+    const headTo = addDays(firstFrozen, -1);
+    if (headTo <= yesterday) liveRanges.push([allDates[0], headTo]);
+  }
+  for (const [rangeFrom, rangeTo] of liveRanges) {
     const s = sqlLiveRange(scope);
     const params = scope === 'tag'
-      ? [tagId, gapFrom, yesterday]
+      ? [tagId, rangeFrom, rangeTo]
       : scope === 'portfolio'
-        ? [userId, gapFrom, yesterday]
-        : [gapFrom, yesterday];
+        ? [userId, rangeFrom, rangeTo]
+        : [rangeFrom, rangeTo];
     try {
       const r = await query(USE_SQLITE ? s.lite : s.pg, params);
       for (const row of r.rows || []) byDate.set(row.day_msk, row);

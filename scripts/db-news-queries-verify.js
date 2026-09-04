@@ -478,6 +478,39 @@ async function main() {
     assert(unknown === null, `securities: unknown ticker must be null, got ${unknown}`);
     console.log('[NewsQueriesVerify] 16. securities name resolver passed');
 
+    // === 17. Head-fill годовой сетки (ТЗ-11.11fix14): агрегаты начинаются недавно —
+    // «голова» года дочитывается живьём из news ===
+    // Инцидент 04.09: первый запуск freeze (ТЗ-49) записал лишь 3-дневное окно,
+    // обязательный backfill не сделан → без head-fill голова года пустует.
+    // Детерминированный сценарий: в агрегатах ровно один день (вчера), старая
+    // статья (42 дня — дата свободна от сидовых n1..n7) есть только в news.
+    // Без head-fill: gapFrom = frozenThrough+1 = сегодня > вчера → хвост пуст,
+    // голова не покрывается → ячейка 0. С head-fill: [allDates[0]; frozenThrough].
+    const frozenDay = toMskDateString(new Date(Date.now() - 1 * 86400000));
+    const oldTs = new Date(Date.now() - 42 * 86400000);
+    const oldNewsDate = toMskDateString(oldTs);
+    const oldNewsId = await insertNews(97, {
+      title: 'Архивная новость для head-fill', source: 'rbc',
+      publishedAt: oldTs.toISOString(),
+      sentiment: 'positive', tags: ['sber'],
+    });
+    await query(`DELETE FROM news_all_daily`);
+    await query(
+      `INSERT INTO news_all_daily (day_msk, stories, pos, neg, resonance) VALUES ($1::date, 1, 1, 0, 1)`,
+      [frozenDay]
+    );
+    // date=headfill17 — уникальный cache key (роут кэширует годовую сетку на 5 мин),
+    // иначе тест прочитает закэшированный ответ теста 11.
+    res = await request(server, 'GET', '/api/news_heatmap?scope=all&scale=year&date=headfill17');
+    assert(res.status === 200, `head-fill: status ${res.status}`);
+    assert(res.body.meta && res.body.meta.frozen_through === frozenDay,
+      `head-fill: агрегаты должны использоваться (frozen_through=${frozenDay}), got ${JSON.stringify(res.body.meta)}`);
+    const oldCell = (res.body.cells || []).find((c) => c.date === oldNewsDate);
+    assert(oldCell && Number(oldCell.stories) >= 1,
+      `head-fill: ячейка ${oldNewsDate} должна дочитаться из news, got ${JSON.stringify(oldCell)}`);
+    await query(`DELETE FROM news WHERE id = $1`, [oldNewsId]);
+    console.log('[NewsQueriesVerify] 17. head-fill year grid (ТЗ-11.11fix14) passed');
+
     console.log('\n[NEWS-QUERIES VERIFY] ALL TESTS PASSED');
     process.exit(0);
   } catch (err) {
