@@ -825,11 +825,14 @@ Query-параметр `past=true` переключает выдачу на ар
 
 ### Локальный Postgres
 
+Стенд — Homebrew PostgreSQL 17 (см. DEPLOYMENT.md «Локальный dev-стенд: PostgreSQL»), тестовая БД создаётся одноразово:
+
 ```bash
-docker run -d --name pulse-pg-test -p 5433:5432 \
-  -e POSTGRES_PASSWORD=test -e POSTGRES_DB=pulse_test postgres:16
-export DATABASE_URL_TEST=postgres://postgres:test@localhost:5433/pulse_test
+createdb pulse_dev_test
 ```
+
+Дальше `DATABASE_URL_TEST` не нужен: по умолчанию bootstrap использует
+`postgres://$USER@localhost:5432/pulse_dev_test` (переопределяется через `DATABASE_URL_TEST`).
 
 ### Запуск
 
@@ -848,11 +851,20 @@ npm run verify:calendar:pg
 - Гвард безопасности: если `DATABASE_URL_TEST` не содержит `test` в имени БД — сьют падает до первого запроса.
 - Применяется `src/models/schema.sql` + `uuid-ossp`/`pgcrypto`, затем `runCalendarV2Migrations()`.
 
-### Известный fallout (чинить при первом прогоне PG)
+### Fallout PG-режима (статус на 2026-09-05)
 
-- Скрипты вставляют тестового администратора как строку `admin1`; реальная схема ожидает `UUID`. Нужно либо заменить на фиксированный UUID, либо в PG-тестах ALTER типа admin-колонок на TEXT.
-- SQLite-специфичные литералы `datetime('now')` в verify-скриптах не работают в PG — заменить на `NOW()`/параметры.
-- Фоновая пересборка канона после CRUD требует `await flushCanonicalRewrites()` в тестах перед чтением `calendar_events`.
+**Исправлено в М7** (регрессия зелёная в обоих режимах, SQLite + PG):
+- ✅ Тестовый администратор — фиксированный UUID вместо строки `admin1`.
+- ✅ `is_admin` — `TRUE` вместо `1` (строгий boolean PG).
+- ✅ DATE-ассерты — нормализация через `toDateStr()` (PG возвращает Date, SQLite — строку).
+
+**Исправлено в прод-коде по находкам PG-стенда:**
+- ✅ `normalizeDbDate()` — локальные геттеры вместо UTC (сдвиг даты на −1 день в TZ восточнее UTC).
+- ✅ `restoreCalendarEventGroup` — `CAST($2 AS TEXT)` (PG: 'could not determine data type' при null).
+- ✅ `schema.sql` — llm-колонки news + сверка runtime-колонок + порядок индексов.
+
+**Осталось (чинить по мере прогонов М1–М6):**
+- Скрипты М1–М6 могут содержать те же SQLite-паттерны (`admin1`, `datetime('now')`, строковые id) — в PG-режиме потребуют таких же мелких правок, как М7.
 
 ---
 

@@ -28,10 +28,10 @@ function setCommonEnv() {
 }
 
 function ensureTestDatabaseUrl() {
-  const url = process.env[TEST_DB_VAR];
-  if (!url) {
-    throw new Error(`[CalendarVerify] ${TEST_DB_VAR} не задан. Для PG-режима укажите тестовую БД, например: postgres://postgres:test@localhost:5433/pulse_test`);
-  }
+  // По умолчанию — локальный brew-стенд (см. DEPLOYMENT.md «Локальный dev-стенд»).
+  // Переопределяется через DATABASE_URL_TEST.
+  const url = process.env[TEST_DB_VAR]
+    || `postgres://${process.env.USER}@localhost:5432/pulse_dev_test`;
   try {
     const parsed = new URL(url);
     if (!parsed.pathname || parsed.pathname.length <= 1 || !parsed.pathname.slice(1).toLowerCase().includes('test')) {
