@@ -69,9 +69,30 @@ export function formatDigestEmail(content: DigestContent): { subject: string; ht
 
 export function formatDigestPush(content: DigestContent): { title: string; body: string; data: Record<string, string> } {
   const n = content.totalUnread;
+  const first = content.articles[0];
+
+  if (n === 0 || !first) {
+    return {
+      title: 'Нет непрочитанных новостей',
+      body: 'Новые статьи по вашим тегам появятся позже',
+      data: { type: 'digest', count: '0' },
+    };
+  }
+
+  const title = truncateTextSmart(first.title, PUSH_TITLE_MAX);
+
+  let body: string;
+  if (n === 1) {
+    // summary в DigestArticle отсутствует — показываем контекст: источник и тег.
+    const ctx = [first.source, first.tag].filter(Boolean).join(' · ');
+    body = truncateTextSmart(ctx, PUSH_BODY_MAX) || '1 новая статья';
+  } else {
+    body = `+ ещё ${n - 1} ${declineWord(n - 1, 'статья', 'статьи', 'статей')}`;
+  }
+
   return {
-    title: 'PULSE — непрочитанные новости',
-    body: n === 1 ? '1 новая статья по вашим тегам' : `${n} новых статьи по вашим тегам`,
+    title,
+    body,
     data: { type: 'digest', count: String(n) },
   };
 }
@@ -151,6 +172,25 @@ export function truncateText(text: string, maxLength: number): string {
   if (text.length <= maxLength) return text;
   return text.slice(0, maxLength - 1) + '…';
 }
+
+/**
+ * Обрезка по границе слова: ищем последний пробел перед лимитом.
+ * Если пробел найден не раньше половины лимита — режем по нему,
+ * иначе жёсткая обрезка (защита от длинного первого слова/URL).
+ */
+export function truncateTextSmart(text: string, maxLength: number): string {
+  if (text.length <= maxLength) return text;
+  const cutAt = text.lastIndexOf(' ', maxLength - 1);
+  if (cutAt > maxLength * 0.5) {
+    return text.slice(0, cutAt) + '…';
+  }
+  return text.slice(0, maxLength - 1) + '…';
+}
+
+// Единый источник лимитов push-уведомлений (ТЗ push v3.0):
+// title — 60 симв. (iPhone SE ~50–60), body — 140 (iOS ~120–140)
+export const PUSH_TITLE_MAX = 60;
+export const PUSH_BODY_MAX = 140;
 
 // ── Weekly Report (Telegram HTML) ───────────────────────────────────────────
 
@@ -240,9 +280,21 @@ function statCardHtml(value: string, label: string, color: string): string {
 
 export function formatWeeklyReportPush(content: WeeklyReportContent): { title: string; body: string; data: Record<string, string> } {
   const n = content.totalArticles;
+  const topTag = content.tagSummaries[0]?.tagName || '';
+
+  const title = truncateTextSmart(`📊 Еженедельный отчёт: ${content.period}`, PUSH_TITLE_MAX);
+
+  let body: string;
+  if (n === 1) {
+    body = '1 новость за неделю';
+  } else {
+    const base = `${n} ${declineWord(n, 'новость', 'новости', 'новостей')} за неделю`;
+    body = topTag ? truncateTextSmart(`${base} · ${topTag}`, PUSH_BODY_MAX) : base;
+  }
+
   return {
-    title: '📊 PULSE — Еженедельный отчёт',
-    body: n === 1 ? '1 новость за неделю' : `${n} новостей за неделю`,
-    data: { type: 'weekly_report', count: String(n) },
+    title,
+    body,
+    data: { type: 'weekly_report', count: String(n), period: content.period },
   };
 }

@@ -620,8 +620,9 @@ async function saveProcessedArticles(
     for (let i = 0; i < articles.length; i++) {
       const a = articles[i];
       if (matchedTagsList[i].length > 0) {
-        const pushTitle = (a as any).title_ru || a.title_original || 'PULSE — новая новость';
-        sendNewArticlePush(a.id, pushTitle, a.source, matchedTagsList[i]).catch(err => {
+        const pushTitle = (a as any).title_ru || a.title_original || 'Новая новость';
+        const pushSummary = (a as any).summary_ru || (a as any).summary_original || '';
+        sendNewArticlePush(a.id, pushTitle, pushSummary, a.source, matchedTagsList[i]).catch(err => {
           console.error(`[NewsProcessor] sendNewArticlePush failed for ${a.id}:`, err.message);
         });
       }
@@ -713,8 +714,9 @@ async function saveProcessedArticlesPerArticle(
       updated++;
 
       if (matchedTagsList[i].length > 0) {
-        const pushTitle = (a as any).title_ru || a.title_original || 'PULSE — новая новость';
-        sendNewArticlePush(a.id, pushTitle, a.source, matchedTagsList[i]).catch(err => {
+        const pushTitle = (a as any).title_ru || a.title_original || 'Новая новость';
+        const pushSummary = (a as any).summary_ru || (a as any).summary_original || '';
+        sendNewArticlePush(a.id, pushTitle, pushSummary, a.source, matchedTagsList[i]).catch(err => {
           console.error(`[NewsProcessor] sendNewArticlePush failed for ${a.id}:`, err.message);
         });
       }

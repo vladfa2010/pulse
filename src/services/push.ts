@@ -14,6 +14,7 @@ import { sendWebPushToUser } from './webPush';
 import { isQuietHoursMsk } from './notifications/quietHours';
 import { getEnabledSubscriptions } from './notifications/subscriptions';
 import { getQuietHours } from './notifications/subscriptions';
+import { truncateTextSmart, PUSH_TITLE_MAX, PUSH_BODY_MAX } from './notifications/formatters';
 
 let messaging: Messaging | null = null;
 
@@ -220,10 +221,11 @@ export async function sendPushNotification(
 export async function sendNewArticlePush(
   newsId: string,
   title: string,
+  summary: string,
   source: string,
   matchedTags: string[]
 ): Promise<void> {
-  console.log(`[Push] sendNewArticlePush called for ${newsId}, tags=${JSON.stringify(matchedTags)}, messaging=${!!messaging}`);
+  console.log(`[Push] sendNewArticlePush called for ${newsId}, tags=${JSON.stringify(matchedTags)}, summary_len=${summary?.length || 0}, messaging=${!!messaging}`);
   if (!messaging || matchedTags.length === 0) {
     console.log(`[Push] Skipping article ${newsId}: messaging=${!!messaging}, tags=${matchedTags.length}`);
     return;
@@ -261,11 +263,19 @@ export async function sendNewArticlePush(
     console.log(`[Push] Article ${newsId}: ${userIds.length} candidate users`);
     if (userIds.length === 0) return;
 
-    const body = source || 'Новая новость';
+    const pushTitle = truncateTextSmart(title, PUSH_TITLE_MAX);
+
+    const rawBody = (summary || '').trim();
+    const body = truncateTextSmart(
+      rawBody || source || 'Новая новость',
+      PUSH_BODY_MAX
+    );
+
     const data: PushData = {
       type: 'new_article',
       news_id: newsId,
       tag: matchedTags[0] || '',
+      source: source || '',
     };
 
     for (const userId of userIds) {
@@ -282,7 +292,7 @@ export async function sendNewArticlePush(
            VALUES ($1, $2, $3, 'push')
            ON CONFLICT (user_id, news_id) DO NOTHING
            RETURNING id`,
-          [userId, newsId, title]
+          [userId, newsId, pushTitle]
         );
         if (insertResult.rows.length === 0) {
           console.log(`[Push] Article ${newsId}: already sent to user ${userId}`);
@@ -290,8 +300,8 @@ export async function sendNewArticlePush(
         }
 
         const [fcmOk, vapidCount] = await Promise.all([
-          sendPushNotification(userId, title, body, data),
-          sendWebPushToUser(userId, title, body, data),
+          sendPushNotification(userId, pushTitle, body, data),
+          sendWebPushToUser(userId, pushTitle, body, data),
         ]);
         console.log(`[Push] Article ${newsId}: sent to user ${userId} fcm=${fcmOk} vapid=${vapidCount}`);
       } catch (err: any) {
