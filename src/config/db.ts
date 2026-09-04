@@ -57,9 +57,11 @@ if (USE_SQLITE) {
 // ═══════════════════════════════════════════════════════════════════════════
 } else if (DATABASE_URL) {
   const { Pool } = require('pg');
+  // Локальный dev-стенд (localhost) не поддерживает SSL; на Render SSL обязателен
+  const isLocalDb = /localhost|127\.0\.0\.1|::1/.test(DATABASE_URL);
   poolInstance = new Pool({
     connectionString: DATABASE_URL,
-    ssl: { rejectUnauthorized: false },
+    ssl: isLocalDb ? false : { rejectUnauthorized: false },
     max: 40, // TZ-6: было 20; лимит тарифа 100, держим резерв 60 под Render/внешние подключения
     statement_timeout: 30000,
     idleTimeoutMillis: 60000,

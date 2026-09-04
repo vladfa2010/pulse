@@ -152,7 +152,7 @@ npm run build   # выход в dist/
 ### Environment Variables (Render Dashboard)
 | Variable | Value | Описание |
 |----------|-------|----------|
-| `USE_SQLITE` | `false` | `false` = PostgreSQL (production), `true` = SQLite (local) |
+| `USE_SQLITE` | `false` | `false` = PostgreSQL (production и локальный dev-стенд, см. раздел выше), `true` = SQLite (legacy fallback) |
 | `DATABASE_URL` | `(скрыт)` | PostgreSQL Internal Database URL от Render |
 | `JWT_SECRET` | `(скрыт)` | Секрет для JWT токенов |
 | `FRONTEND_URL` | `https://pulse.inside-trade.ru` | URL фронтенда для редиректов и ссылок в письмах |
@@ -167,6 +167,33 @@ npm run build   # выход в dist/
 | `YANDEX_PASS` | `(скрыт)` | Yandex SMTP app-пароль |
 | `TELEGRAM_BOT_TOKEN` | `(скрыт)` | Telegram Bot токен |
 | `ENCRYPTION_KEY` | `(скрыт)` | 64 hex-символов (32 байта) для AES-256-GCM шифрования API-токенов брокеров. Обязателен для фичи портфелей. |
+
+### Локальный dev-стенд: PostgreSQL (рекомендуется вместо SQLite)
+
+С 2026-09-04 локальная разработка ведётся на настоящем PostgreSQL — dev-prod parity: все PG-специфичные баги (`array_agg`, cast дат, `ANY($1::text[])` и т.п.) ловятся локально, а не в проде. SQLite-режим (`USE_SQLITE=true`) остаётся как legacy fallback, но новые задачи и verify-прогоны проверяются на PG.
+
+**Установка (одноразово, macOS + Homebrew):**
+
+```bash
+brew install postgresql@17
+brew services start postgresql@17
+createdb pulse_dev   # или: psql -d postgres -c "CREATE DATABASE pulse_dev;"
+```
+
+**Настройка:**
+
+В `pulse-backend/.env`:
+
+```env
+DATABASE_URL=postgres://$(whoami)@localhost:5432/pulse_dev
+```
+
+**Как это работает:**
+
+- Backend автоматически переключается в PG-режим при наличии `DATABASE_URL` (`src/config/db.ts`).
+- Для `localhost`/`127.0.0.1` SSL в pool отключается автоматически — локальный PostgreSQL SSL не поддерживает, на Render SSL остаётся обязательным.
+- `npm run build` копирует `src/models/schema.sql` в `dist/models/` — при первом старте backend сам создаёт все таблицы (53 шт.) в пустой БД. Раньше копирование делал только Dockerfile, локально таблицы не создавались.
+- Smoke-проверка: `node dist/index.js` → лог `[PostgreSQL] Schema initialized` → `curl localhost:3000/health` отдаёт `"status":"ok"`.
 
 ### Git Repository
 - **URL:** https://github.com/vladfa2010/pulse
@@ -437,8 +464,10 @@ VITE_API_URL=https://pulse-api-bsov.onrender.com
 ### Backend
 ```env
 PORT=3000
-USE_SQLITE=true
-DATABASE_URL=postgresql://postgres:password@localhost:5432/pulse
+# Локальный dev-стенд PostgreSQL (рекомендуется, см. DEPLOYMENT.md «Локальный dev-стенд»):
+DATABASE_URL=postgres://$(whoami)@localhost:5432/pulse_dev
+# Либо legacy fallback без PostgreSQL:
+# USE_SQLITE=true
 JWT_SECRET=your-secret-key
 FRONTEND_URL=https://pulse.inside-trade.ru
 YOOKASSA_SHOP_ID=54401
