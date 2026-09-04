@@ -195,6 +195,15 @@ DATABASE_URL=postgres://$(whoami)@localhost:5432/pulse_dev
 - `npm run build` копирует `src/models/schema.sql` в `dist/models/` — при первом старте backend сам создаёт все таблицы (53 шт.) в пустой БД. Раньше копирование делал только Dockerfile, локально таблицы не создавались.
 - Smoke-проверка: `node dist/index.js` → лог `[PostgreSQL] Schema initialized` → `curl localhost:3000/health` отдаёт `"status":"ok"`.
 
+**Verify-скрипты на PG (gate перед деплоем):**
+
+```bash
+createdb pulse_dev_test   # одноразово
+CALENDAR_VERIFY_PG=1 DATABASE_URL_TEST=postgres://$(whoami)@localhost:5432/pulse_dev_test npm run verify:calendarM7
+```
+
+Без `CALENDAR_VERIFY_PG=1` скрипты по умолчанию используют SQLite (быстрая итерация). PG-режим восстанавливает схему через `DROP SCHEMA public CASCADE` — БД обязана содержать `test` в имени (защита от случайного прод/dev).
+
 ### Git Repository
 - **URL:** https://github.com/vladfa2010/pulse
 - **Branch:** `main`

@@ -44,6 +44,17 @@ function addDaysStr(dateStr, n) {
   return d.toISOString().slice(0, 10);
 }
 
+/** PG возвращает DATE как Date (локальная полночь), SQLite — строку. Приводим к YYYY-MM-DD. */
+function toDateStr(v) {
+  if (v instanceof Date) {
+    const y = v.getFullYear();
+    const m = String(v.getMonth() + 1).padStart(2, '0');
+    const d = String(v.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  return String(v).slice(0, 10);
+}
+
 /** YYYY-MM-DD → DD.MM.YYYY (сырой формат smartlab). */
 function toSmartlabDate(dateStr) {
   const [y, m, d] = dateStr.split('-');
@@ -72,10 +83,11 @@ async function setup() {
     created_at TEXT DEFAULT (datetime('now'))
   )`);
 
-  // admin-пользователь для прохождения adminMiddleware
+  // admin-пользователь для прохождения adminMiddleware (UUID — PG-режим требует валидный uuid)
+  const ADMIN_ID = '00000000-0000-4000-8000-000000000001';
   await query(
     `INSERT INTO users (id, email, username, password_hash, is_admin)
-     VALUES ('admin1', 'admin@test', 'admin', 'x', 1)`
+     VALUES ('${ADMIN_ID}', 'admin@test', 'admin', 'x', TRUE)`
   );
 }
 
@@ -102,7 +114,7 @@ async function request(server, method, pathName, body, { auth = true } = {}) {
       agent: new http.Agent({ keepAlive: false }),
       headers: { 'Content-Type': 'application/json' },
     };
-    if (auth) options.headers['Authorization'] = 'Bearer ' + createToken('admin1');
+    if (auth) options.headers['Authorization'] = 'Bearer ' + createToken('00000000-0000-4000-8000-000000000001');
     const req = http.request(options, (res) => {
       let data = '';
       res.on('data', (chunk) => (data += chunk));
@@ -180,7 +192,7 @@ async function main() {
 
     const canonicalA = await findCanonical('ARCT');
     assert(canonicalA, 'test1: archive event should be in canonical after first ingest');
-    assert(canonicalA.date.slice(0, 10) === archiveDate, `test1: archive date should be ${archiveDate}, got ${canonicalA.date}`);
+    assert(toDateStr(canonicalA.date) === archiveDate, `test1: archive date should be ${archiveDate}, got ${canonicalA.date}`);
 
     // Файл B: 5 живых дат БЕЗ архивной → date-scoped DELETE не трогает архив,
     // а симуляция канона обязана его включить (фикс Б.1).
@@ -218,7 +230,7 @@ async function main() {
     for (const row of g2rows.rows) {
       assert(row.status === 'confirmed', `test2: status should be confirmed after re-upload, got ${row.status}`);
     }
-    assert(g2rows.rows.some((r) => r.date.slice(0, 10) === graceDate), 'test2: grace date row should exist');
+    assert(g2rows.rows.some((r) => toDateStr(r.date) === graceDate), 'test2: grace date row should exist');
     console.log('[m7] test2 passed: live-window replace updates status (expected → confirmed)');
 
     // === Test 3: годовой файл дважды — дедуп замороженных ===

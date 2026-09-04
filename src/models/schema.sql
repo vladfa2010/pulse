@@ -227,9 +227,16 @@ CREATE TABLE IF NOT EXISTS news (
   published_at    TIMESTAMPTZ,
   fetched_at      TIMESTAMP DEFAULT NOW(),
   sentiment       VARCHAR(20),
-  sentiment_source VARCHAR(20) DEFAULT 'keyword', -- keyword | llm
+  sentiment_source VARCHAR(30) DEFAULT 'keyword', -- keyword | llm
   matched_tags    TEXT[],
   tag_impact      JSONB DEFAULT '[]',  -- [{"tag":"tesla","impact":"negative","reasoning":"Stock dropped"}]
+  -- LLM-поля (были только в /migrate-v3 — свежие БД их не получали)
+  llm_error        TEXT,
+  llm_attempts     INTEGER DEFAULT 0,
+  last_retry_at    TIMESTAMP,
+  llm_raw_preview  TEXT,
+  llm_batch_size   INTEGER,
+  llm_results_count INTEGER,
   fact_check_status TEXT NOT NULL DEFAULT 'not_checked'
     CHECK(fact_check_status IN ('not_checked', 'in_progress', 'checked')),
   fact_check_result JSONB DEFAULT NULL,
@@ -500,8 +507,6 @@ CREATE INDEX IF NOT EXISTS idx_news_published_at ON news (published_at);
 CREATE INDEX IF NOT EXISTS idx_news_source_id ON news (source_id);
 CREATE INDEX IF NOT EXISTS idx_news_created_at ON news (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_news_llm_errors_recent ON news (created_at DESC) WHERE llm_error IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_llm_batches_started_at ON llm_batches (started_at DESC);
-CREATE INDEX IF NOT EXISTS idx_user_events_created_at ON user_events (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_portfolios_user_id ON portfolios (user_id);
 CREATE INDEX IF NOT EXISTS idx_payments_user_id ON payments (user_id);
 CREATE INDEX IF NOT EXISTS idx_user_channels_user_id ON user_channels (user_id);
@@ -570,6 +575,8 @@ CREATE TABLE IF NOT EXISTS llm_batches (
 -- ============================================================
 CREATE INDEX IF NOT EXISTS idx_translation_hash ON translation_cache (hash);
 CREATE INDEX IF NOT EXISTS idx_llm_batches_created_at ON llm_batches (created_at DESC);
+-- Индекс таблицы llm_batches (перенесён сюда: раньше шёл раньше своей таблицы)
+CREATE INDEX IF NOT EXISTS idx_llm_batches_started_at ON llm_batches (started_at DESC);
 
 -- ============================================================
 -- 12. sentiment_votes (голоса пользователей за индекс настроения)
@@ -864,3 +871,46 @@ CREATE TABLE IF NOT EXISTS news_all_daily (
   neg       INT NOT NULL DEFAULT 0,
   resonance INT NOT NULL DEFAULT 0
 );
+
+
+-- ============================================================
+-- 19. Runtime-миграции: сверка со свежими БД
+-- Колонки, которые исторически добавлялись только рантайм-ALTER'ами
+-- (index.ts / ручной endpoint /migrate-v3). На существующем проде они уже
+-- есть (ALTER ниже — no-op благодаря IF NOT EXISTS), на свежей БД — создаются.
+-- Типы скопированы 1:1 из index.ts.
+-- ============================================================
+
+-- users
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS expiry_notified JSONB DEFAULT '{}';
+
+-- news (llm_* и sentiment_source VARCHAR(30) — уже в CREATE TABLE выше)
+ALTER TABLE news ADD COLUMN IF NOT EXISTS article_type VARCHAR(10) DEFAULT 'micro';
+ALTER TABLE news ADD COLUMN IF NOT EXISTS is_political BOOLEAN DEFAULT FALSE;
+ALTER TABLE news ADD COLUMN IF NOT EXISTS needs_translation BOOLEAN DEFAULT TRUE;
+ALTER TABLE news ADD COLUMN IF NOT EXISTS sentiment_score INTEGER;
+ALTER TABLE news ADD COLUMN IF NOT EXISTS sentiment_reasoning TEXT;
+ALTER TABLE news ADD COLUMN IF NOT EXISTS enrichment_version INTEGER DEFAULT 1;
+
+-- news_sources
+ALTER TABLE news_sources ADD COLUMN IF NOT EXISTS last_error TEXT;
+ALTER TABLE news_sources ADD COLUMN IF NOT EXISTS last_error_at TIMESTAMP;
+ALTER TABLE news_sources ADD COLUMN IF NOT EXISTS error_count INTEGER DEFAULT 0;
+
+-- notification_settings
+ALTER TABLE notification_settings ADD COLUMN IF NOT EXISTS digest_email VARCHAR(255);
+ALTER TABLE notification_settings ADD COLUMN IF NOT EXISTS digest_frequency VARCHAR(10) DEFAULT '1h';
+ALTER TABLE notification_settings ADD COLUMN IF NOT EXISTS email_digest_enabled BOOLEAN DEFAULT FALSE;
+ALTER TABLE notification_settings ADD COLUMN IF NOT EXISTS fact_check_email_enabled BOOLEAN DEFAULT TRUE;
+ALTER TABLE notification_settings ADD COLUMN IF NOT EXISTS fact_check_tg_enabled BOOLEAN DEFAULT TRUE;
+ALTER TABLE notification_settings ADD COLUMN IF NOT EXISTS last_digest_sent TIMESTAMP;
+ALTER TABLE notification_settings ADD COLUMN IF NOT EXISTS tg_digest_enabled BOOLEAN DEFAULT FALSE;
+ALTER TABLE notification_settings ADD COLUMN IF NOT EXISTS web_push_enabled BOOLEAN DEFAULT TRUE;
+
+-- sentiment_index_cache
+ALTER TABLE sentiment_index_cache ADD COLUMN IF NOT EXISTS imoex_candles JSONB DEFAULT '[]';
+ALTER TABLE sentiment_index_cache ADD COLUMN IF NOT EXISTS imoex_updated_at TIMESTAMPTZ;
+
+-- user_defined_tags
+ALTER TABLE user_defined_tags ADD COLUMN IF NOT EXISTS enriched_data JSONB;

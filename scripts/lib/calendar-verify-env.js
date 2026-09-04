@@ -52,7 +52,8 @@ async function setupPostgres() {
   const { Pool } = require('pg');
   const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false },
+    // Локальный PG SSL не поддерживает (см. db.ts)
+    ssl: /localhost|127\.0\.0\.1|::1/.test(process.env.DATABASE_URL) ? false : { rejectUnauthorized: false },
   });
 
   try {
@@ -72,8 +73,10 @@ async function setupPostgres() {
   const schemaSql = fs.readFileSync(schemaPath, 'utf-8');
   const statements = schemaSql
     .split(';')
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0 && !s.startsWith('--'));
+    // Убираем строки-комментарии внутри каждого statement, а не весь statement целиком:
+    // иначе CREATE TABLE после "-- 0. subscription_plans" терялся вместе с комментарием
+    .map(s => s.split('\n').filter(l => !l.trim().startsWith('--')).join('\n').trim())
+    .filter(s => s.length > 0);
 
   for (const stmt of statements) {
     await query(`${stmt};`);

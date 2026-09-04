@@ -191,11 +191,16 @@ function toDateString(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-/** PostgreSQL DATE column is returned as a Date object; SQLite returns a string.
- *  Normalize any value to a canonical YYYY-MM-DD string so Map keys and JSON match. */
+/** PostgreSQL DATE column is returned as a Date object (parsed as LOCAL midnight);
+ *  SQLite returns a string. Normalize any value to a canonical YYYY-MM-DD string
+ *  so Map keys and JSON match. ВАЖНО: для Date берём ЛОКАЛЬНЫЕ геттеры — pg парсит
+ *  DATE как локальную полночь, UTC-геттеры дают сдвиг на день назад в TZ восточнее UTC. */
 export function normalizeDbDate(value: unknown): string {
   if (value instanceof Date) {
-    return toDateString(value);
+    const y = value.getFullYear();
+    const m = String(value.getMonth() + 1).padStart(2, '0');
+    const day = String(value.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
   }
   if (typeof value === 'string') {
     return value.length >= 10 ? value.slice(0, 10) : value;
@@ -964,7 +969,7 @@ export async function restoreCalendarEventGroup(
     const result = await q(
       `DELETE FROM calendar_events_raw
        WHERE source = 'manual' AND ticker = '__deleted__' AND tombstone_key = $1
-         AND ($2 IS NULL OR original_title = $2)`,
+         AND (CAST($2 AS TEXT) IS NULL OR original_title = $2)`,
       [keyAsTicker, hasOriginalTitle ? originalTitle : null]
     );
 
@@ -976,7 +981,7 @@ export async function restoreCalendarEventGroup(
       await q(
         `DELETE FROM calendar_events_raw
          WHERE source = 'manual' AND ticker = '__deleted__' AND tombstone_key = $1
-           AND ($2 IS NULL OR original_title = $2)`,
+           AND (CAST($2 AS TEXT) IS NULL OR original_title = $2)`,
         [keyAsCompany, hasOriginalTitle ? originalTitle : null]
       );
     }
