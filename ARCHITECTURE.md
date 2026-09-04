@@ -2809,6 +2809,18 @@ ALTER TABLE user_defined_tags
   ON DELETE SET NULL;
 ```
 
+### Удаление новости админом (ТЗ v1.3, 2026-09-04)
+
+| Method | Path | Описание |
+|--------|------|----------|
+| DELETE | `/api/admin/news/:id` | Полное удаление новости (admin only) |
+
+- **Реализация:** один атомарный `DELETE FROM news WHERE id = $1 RETURNING id, title_ru, slug` (`src/routes/admin.ts`). Невалидный UUID → `404` (иначе PG 22P02 → 500). Повторный DELETE → `404` (идемпотентно).
+- **Cascading Delete (5 таблиц, все FK с ON DELETE CASCADE):** `news_tag_links`, `user_news_reads`, `push_notifications_sent`, `fact_check_jobs`, `fact_check_sessions`. Ручные DELETE не требуются.
+- **Факт-чек воркер:** при каскадном удалении job посередины обработки молчаливо выходит (`src/services/factCheck.ts:701-703`), UPDATE'ы результата задевают 0 строк, воркер не падает.
+- **Frontend:** кнопка «Удалить новость» в NewsDetailModal (гейт `user.isAdmin`, секция после Debug ID) → DeleteNewsConfirmModal (`z-[80]` поверх `z-[70]`) → инвалидация `['unreadNews']`/`['historyNews']`/`['globalNews']` + событие `news:deleted` (слушает NewsFeed — он на локальном стейте без React Query).
+- **SQLite-режим:** `PRAGMA foreign_keys = ON` включён в `src/config/db-sqlite.ts` — без него CASCADE в dev не срабатывал.
+
 ### Frontend
 
 | Компонент | Изменения |

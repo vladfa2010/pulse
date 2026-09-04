@@ -630,6 +630,49 @@ router.delete('/users/:id', adminMiddleware, async (req: AuthRequest, res) => {
   }
 });
 
+// ════════════════════════════════════════════════════════════
+// DELETE /api/admin/news/:id — полное удаление новости
+// ТЗ-удаление-новости-админом v1.3
+// ════════════════════════════════════════════════════════════
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+router.delete('/news/:id', adminMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const newsId = req.params.id;
+
+    // news.id — UUID: невалидный формат иначе даст PG 22P02 → 500
+    if (!UUID_RE.test(newsId)) {
+      return res.status(404).json({ error: 'News not found' });
+    }
+
+    // Один атомарный запрос: удаляет и возвращает строку; если строки нет — 404.
+    // Все связанные таблицы чистятся ON DELETE CASCADE (см. docs, раздел 6.1 ТЗ):
+    //   news_tag_links, user_news_reads, push_notifications_sent,
+    //   fact_check_jobs, fact_check_sessions
+    const deleteResult = await query(
+      'DELETE FROM news WHERE id = $1 RETURNING id, title_ru, slug',
+      [newsId]
+    );
+
+    if (deleteResult.rows.length === 0) {
+      return res.status(404).json({ error: 'News not found' });
+    }
+    const deleted = deleteResult.rows[0];
+
+    console.log(`[Admin] News deleted by ${req.user!.userId}: ${deleted.id} (${deleted.title_ru || deleted.slug})`);
+
+    res.json({
+      success: true,
+      deletedId: deleted.id,
+      title: deleted.title_ru,
+      slug: deleted.slug,
+    });
+  } catch (err: any) {
+    console.error('[Admin] Delete news error:', err.message, err.stack?.substring(0, 200));
+    res.status(500).json({ error: 'Failed to delete news', details: err.message });
+  }
+});
+
 // GET /api/admin/stats — dashboard stats
 router.get('/stats', adminMiddleware, async (_req, res) => {
   try {

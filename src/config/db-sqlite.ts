@@ -33,6 +33,12 @@ export async function initSQLite(): Promise<void> {
     console.log('[SQLite] Created new database:', DB_FILE);
   }
 
+  // ТЗ-удаление-новости-админом v1.3: без этого PRAGMA внешние ключи выключены
+  // и ON DELETE CASCADE не срабатывает (сироты в user_news_reads / fact_check_*).
+  // Включаем для dev-паритета с PostgreSQL. На проде (PG) этот файл не используется.
+  db.exec('PRAGMA foreign_keys = ON');
+  console.log('[SQLite] PRAGMA foreign_keys = ON');
+
   // Auto-save on exit
   process.on('exit', saveDb);
   process.on('SIGINT', () => { saveDb(); process.exit(0); });
