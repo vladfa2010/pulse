@@ -114,6 +114,8 @@ PRIMARY KEY: `(user_id, product, channel)`.
 | `billing` | `email`, `push` | Подписка, оплата, истечение, grace |
 | `engagement` | `push` | Sentiment-напоминания, стрики и механики удержания |
 
+Контент пушей (title/body по типам, лимиты, data, маппинг маршрутов в service worker'ах) задокументирован в [docs/push.md](push.md).
+
 ### Дефолты и сидинг
 
 При регистрации или первом вызове `GET /api/user/notification-matrix` вызывается `ensureDefaultSubscriptions(userId)`. Он **только** создаёт отсутствующие строки (`INSERT ... ON CONFLICT DO NOTHING`) и **никогда** не перезаписывает выбор пользователя:
