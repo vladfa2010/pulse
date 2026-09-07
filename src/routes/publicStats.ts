@@ -16,10 +16,11 @@
  * GET /api/public/summary-global — публичный «Пульс рынка»: отдаёт только
  * свежий кэш globalSummary (LLM-генерацию не триггерит, прогрев — cron'ом).
  *
- * GET /api/public/demo-tags, GET /api/public/demo-feed (ТЗ-59) — демо-режим
- * гостевой главной: теги и лента (с графиками) демо-аккаунта
+ * GET /api/public/demo-tags, GET /api/public/demo-feed (ТЗ-59, кэш — ТЗ-60) —
+ * демо-режим гостевой главной: теги и лента (с графиками) демо-аккаунта
  * (env PUBLIC_DEMO_EMAIL, дефолт vladfa@ya1.ru). Кэш 60 с; лента — полный
- * аналог /api/news/global плюс фильтр matched_tags && demo-теги (PG-only).
+ * аналог /api/news/global плюс фильтр matched_tags && demo-теги (PG-only),
+ * без пагинации: параметры игнорируются, ответ один, кэш одноключевой.
  */
 
 import { Router } from 'express';
@@ -174,7 +175,10 @@ router.get('/summary-global', (_req, res) => {
 // PG-only (matched_tags && — как в /user/stats); SQLite не поддерживаем, ок.
 // ═══════════════════════════════════════════════════════════════════════════
 
-const DEMO_CACHE_MS = 60 * 1000; // под рекламный трафик; page=1 критична
+const DEMO_CACHE_MS = 60 * 1000; // под рекламный трафик
+// ТЗ-60: demo-feed без пагинации — один ключ на весь ответ
+const DEMO_FEED_TTL_MS = 60 * 1000;
+const DEMO_FEED_LIMIT = 50;
 
 interface DemoTag {
   tag_id: string;
@@ -184,7 +188,7 @@ interface DemoTag {
 
 let demoUserIdCache: { id: string; cachedAt: number } | null = null;
 let demoTagsCache: { data: { tags: DemoTag[]; count: number; cached_at: string }; cachedAt: number } | null = null;
-const demoFeedCache = new Map<string, { data: unknown; cachedAt: number }>();
+let demoFeedCache: { at: number; payload: unknown } | null = null;
 
 async function resolveDemoUserId(): Promise<string | null> {
   if (demoUserIdCache && Date.now() - demoUserIdCache.cachedAt < 3600 * 1000) {
@@ -229,18 +233,16 @@ router.get('/demo-tags', async (_req, res) => {
   }
 });
 
-// GET /api/public/demo-feed?limit=50&page=N — лента демо-аккаунта.
-// Полный аналог /api/news/global (тот же SELECT, timeFilterSql, LIMIT+1 для
-// hasMore) плюс фильтр matched_tags && demo-теги. Формат ответа идентичен
-// /global, чтобы фронт переиспользовал код карусели. Кэш 60 с по ключу page.
-router.get('/demo-feed', async (req, res) => {
+// GET /api/public/demo-feed — лента демо-аккаунта (ТЗ-59, кэш — ТЗ-60).
+// Query-параметры намеренно игнорируются: пагинации нет, гостю достаточно
+// первых 50 новостей; иначе перебор ?page=N обходит кэш и бьёт в БД.
+// SQL — полный аналог /api/news/global (тот же SELECT, timeFilterSql,
+// LIMIT+1) плюс фильтр matched_tags && demo-теги. Кэш один на весь ответ.
+router.get('/demo-feed', async (_req, res) => {
   try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
-    const cacheKey = `${page}:${limit}`;
-    const hit = demoFeedCache.get(cacheKey);
-    if (hit && Date.now() - hit.cachedAt < DEMO_CACHE_MS) {
-      return res.json(hit.data);
+    const hit = demoFeedCache;
+    if (hit && Date.now() - hit.at < DEMO_FEED_TTL_MS) {
+      return res.json(hit.payload);
     }
 
     const userId = await resolveDemoUserId();
@@ -250,10 +252,9 @@ router.get('/demo-feed', async (req, res) => {
     const { tags } = await fetchDemoTags(userId);
     if (tags.length === 0) {
       // Не ошибка: фронт скроет блок
-      return res.json({ articles: [], total: null, page, hasMore: false });
+      return res.json({ articles: [], total: null, page: 1, hasMore: false });
     }
     const tagIds = tags.map((t) => t.tag_id);
-    const offset = (page - 1) * limit;
     const timeFilter = timeFilterSql();
 
     const result = await query(
@@ -261,17 +262,22 @@ router.get('/demo-feed', async (req, res) => {
               tag_impact, source_count, all_sources, fact_check_status, fact_check_result, slug
        FROM news
        WHERE ${timeFilter}
-         AND matched_tags && $3::text[]
+         AND matched_tags && $2::text[]
        ORDER BY published_at DESC
-       LIMIT $1 OFFSET $2`,
-      [limit + 1, offset, tagIds]
+       LIMIT $1`,
+      [DEMO_FEED_LIMIT + 1, tagIds]
     );
 
-    const hasMore = result.rows.length > limit;
-    const articles = hasMore ? result.rows.slice(0, limit) : result.rows;
-    const data = { articles, total: null, page, hasMore };
-    demoFeedCache.set(cacheKey, { data, cachedAt: Date.now() });
-    return res.json(data);
+    const articles = result.rows.slice(0, DEMO_FEED_LIMIT);
+    const payload = {
+      articles,
+      total: null,
+      page: 1,
+      hasMore: false,
+      cached_at: new Date().toISOString(),
+    };
+    demoFeedCache = { at: Date.now(), payload };
+    return res.json(payload);
   } catch (err: any) {
     console.error('[PublicDemo] demo-feed error:', err.message);
     return res.status(500).json({ error: 'Failed to fetch demo feed' });
