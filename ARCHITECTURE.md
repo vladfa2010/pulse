@@ -788,21 +788,25 @@ ALTER TABLE news DROP CONSTRAINT IF EXISTS news_url_norm_unique;
 
 1. **Фильтрует** тексты: только EN (`hasLatin && !hasCyrillic && length > 5`).
 2. **Отправляет batch** в Kimi (5 текстов для `moonshot-v1-32k`, 3 для `kimi-k2.6`).
-3. **Парсит ответ** — поддерживает 3 формата:
-   - JSON-array: `["Перевод 1", "Перевод 2"]`
-   - JSON-object с числовыми ключами: `{"0": "Перевод 1", "1": "Перевод 2"}`
-   - Markdown code block с любым из двух выше
-4. **Возвращает оригиналы** при любом parse-failure (best effort).
+3. **Парсит ответ** — поддерживает 4 формата:
+   - JSON-array: `["Перевод 1", "Перевод 2"]` (основной путь)
+   - JSON-object с числовыми ключами: `{"0": "Перевод 1", "1": "Перевод 2"}` (fallback)
+   - Line-by-line: переводы по одной строке без обёртки (fallback)
+   - Markdown code block с любым из выше
+4. **Валидирует** результат через `isGarbageText` (`src/utils/translationGuard.ts`): каждая строка ответа проверяется на маркеры эха LLM (фрагменты промпта, сырой JSON). Батч с эхом отклоняется целиком → возвращаются оригиналы → `needs_translation` остаётся `TRUE` → штатный ретрай.
+5. **Возвращает оригиналы** при любом parse-failure (best effort).
 
-### 6.2 Почему JSON-object
+### 6.2 Почему убрали response_format: json_object
 
-При `response_format: { type: 'json_object' }` Kimi не всегда возвращает JSON-array. Для нумерованного списка переводов модель возвращает:
+Раньше запрос шёл с `response_format: { type: 'json_object' }` (принудительный объект), а промпт требовал JSON-array. В ~1% вызовов модель отвечала эхом частей диалога (system-промпт, user-message, имитация тела запроса) — фолбэки парсера принимали эти строки за перевод, и мусор попадал в `news.title_ru` (ТЗ-01 v1.2). Снятие `response_format` устраняет причину: промпт доминирует, модель возвращает чистый массив. Object-ветка парсера сохранена как fallback для ответов вида:
 
 ```json
 {"0": "CoreWeave: Почему единственный платиновый Neocloud...", "1": "..."}
 ```
 
-Если парсить только `[]`, перевод молча теряется и `translateBatch` возвращает оригиналы.
+Если парсить только `[]`, такой перевод молча теряется и `translateBatch` возвращает оригиналы.
+
+Гвард на записи в БД (мусор ≠ успешный перевод, покрытие `title_ru` и `summary_ru`, лимит ретраев `llm_attempts < 10` в ветке 1) — ТЗ-02 v1.2, см. §6.3.
 
 ### 6.3 Retry в newsProcessor.ts
 
@@ -810,7 +814,7 @@ ALTER TABLE news DROP CONSTRAINT IF EXISTS news_url_norm_unique;
 
 ```sql
 SELECT ... FROM news
-WHERE needs_translation = TRUE
+WHERE (needs_translation = TRUE AND COALESCE(llm_attempts, 0) < 10)
    OR (matched_tags = '{}'::text[] AND sentiment_source IS NULL)
    OR (
      lang_original = 'en'
@@ -821,8 +825,9 @@ WHERE needs_translation = TRUE
 ```
 
 - `translateArticles()` переводит статьи, даже если `title_ru` уже заполнен, но равен оригиналу.
-- Если перевод не удался (`title_ru` всё ещё равен `title_original`), `needs_translation` остаётся `TRUE`.
-- Максимум 3 попытки (`llm_attempts < 3`).
+- Перевод считается успешным только если `title_ru` заполнен, отличается от оригинала и проходит гвард `isGarbageText` (`title_ru` лимит 300, заполненный `summary_ru` лимит 2000; пустой/NULL саммари — норма). Иначе `needs_translation` остаётся `TRUE`.
+- Ветка 1: максимум 10 попыток (`llm_attempts < 10`) — после исчерпания статья остаётся с английским заголовком, патологический ретрай (модель стабильно отдаёт эхо) не крутится вечно.
+- Ветка 3: максимум 3 попытки (`llm_attempts < 3`).
 
 ### 6.4 Параметры
 

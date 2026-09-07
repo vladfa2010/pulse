@@ -15,6 +15,7 @@
 
 import { query } from '../config/db';
 import { translateBatch } from './translate';
+import { isGarbageText } from '../utils/translationGuard';
 import { smartMatchTagsBatch, analyzeUnifiedBatch, UnifiedResult, matchTagsByKeywords } from './smartTagMatcher';
 import { getAllTagNames } from './tagManager';
 import { sendNewArticlePush } from './push';
@@ -220,7 +221,7 @@ async function selectRawArticles(limit: number): Promise<RawArticle[]> {
       id, title_original, summary_original, lang_original,
       source, source_id, content_hash, matched_tags
     FROM news
-    WHERE needs_translation = TRUE
+    WHERE (needs_translation = TRUE AND COALESCE(llm_attempts, 0) < 10)
        OR (matched_tags = '{}'::text[] AND sentiment_source IS NULL)
        OR (
          lang_original = 'en'
@@ -549,7 +550,11 @@ async function saveProcessedArticles(
 
     // If English title was not translated, keep needs_translation = TRUE for retry
     const titleRu = (a as any).title_ru;
-    const isTranslationSuccessful = a.lang_original !== 'en' || (!!titleRu && titleRu !== a.title_original);
+    const summaryRu = (a as any).summary_ru;
+    const titleClean = !isGarbageText(titleRu);
+    const summaryClean = summaryRu == null || summaryRu === '' || !isGarbageText(summaryRu, 2000);
+    const isTranslationSuccessful = a.lang_original !== 'en'
+      || (!!titleRu && titleRu !== a.title_original && titleClean && summaryClean);
 
     // Generate slug once and freeze it (do not overwrite existing slug)
     const slug = slugify(a.title_original || (a as any).title_ru || 'news', a.id);
@@ -667,7 +672,11 @@ async function saveProcessedArticlesPerArticle(
     const llmAttempts = translateAttempts + (sentimentErrorType ? 1 : 0);
 
     const titleRu = (a as any).title_ru;
-    const isTranslationSuccessful = a.lang_original !== 'en' || (!!titleRu && titleRu !== a.title_original);
+    const summaryRu = (a as any).summary_ru;
+    const titleClean = !isGarbageText(titleRu);
+    const summaryClean = summaryRu == null || summaryRu === '' || !isGarbageText(summaryRu, 2000);
+    const isTranslationSuccessful = a.lang_original !== 'en'
+      || (!!titleRu && titleRu !== a.title_original && titleClean && summaryClean);
     const slug = slugify(a.title_original || (a as any).title_ru || 'news', a.id);
 
     try {

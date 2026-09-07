@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { query } from '../config/db';
+import { isGarbageText } from '../utils/translationGuard';
 
 const KIMI_API_KEY = process.env.KIMI_API_KEY;
 const MAX_RETRIES = 3;
@@ -102,7 +103,6 @@ export async function translateWithKimi(texts: string[], signal?: AbortSignal): 
             ],
             temperature: TEMP,
             max_tokens: isK2 ? 4000 : 3000,
-            response_format: { type: 'json_object' },
             thinking: KIMI_MODEL.startsWith('kimi-k') ? { type: 'disabled' } : undefined,
           },
           {
@@ -132,7 +132,7 @@ export async function translateWithKimi(texts: string[], signal?: AbortSignal): 
       const jsonMatch = content.match(/\[[\s\S]*?\]/);
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0]);
-        if (Array.isArray(parsed) && parsed.length === validTexts.length) {
+        if (Array.isArray(parsed) && parsed.length === validTexts.length && parsed.every(s => !isGarbageText(s))) {
           // Clean up: remove numbering if model added it
           const cleaned = parsed.map((s: string) => s.replace(/^\d+\.\s*/, '').trim());
           let validIdx = 0;
@@ -150,10 +150,13 @@ export async function translateWithKimi(texts: string[], signal?: AbortSignal): 
       }
 
       // Extract JSON object (e.g. {"0": "...", "1": "..."}) — common with response_format: json_object
+      // Ключи обязаны быть числовыми: объект-эхо запроса ({"model": ..., "messages": ...})
+      // иначе отдаёт позиционно поля тела запроса за перевод (найдено тестом translation-guard-verify).
       try {
         const parsedObj = JSON.parse(content);
-        if (parsedObj && typeof parsedObj === 'object' && !Array.isArray(parsedObj)) {
-          const values = Object.values(parsedObj).filter(v => typeof v === 'string') as string[];
+        if (parsedObj && typeof parsedObj === 'object' && !Array.isArray(parsedObj)
+            && Object.keys(parsedObj).every(k => /^\d+$/.test(k))) {
+          const values = Object.values(parsedObj).filter(v => !isGarbageText(v)) as string[];
           if (values.length === validTexts.length) {
             const cleaned = values.map((s: string) => s.replace(/^\d+\.\s*/, '').trim());
             let validIdx = 0;
@@ -169,12 +172,19 @@ export async function translateWithKimi(texts: string[], signal?: AbortSignal): 
             continue;
           }
         }
-      } catch {}
+      } catch (parseErr: any) {
+        console.warn(`[Translate] object-parse failed: ${parseErr.message?.slice(0, 80)}`);
+      }
 
       // Fallback: try line-by-line parsing
       const lines = content.split('\n').filter((l: string) => l.trim() && !l.trim().startsWith('[') && !l.trim().startsWith(']'));
       if (lines.length === validTexts.length) {
         const cleaned = lines.map((s: string) => s.replace(/^\d+\.\s*["']?|["']?,?\s*$/g, '').trim());
+        if (cleaned.some((s: string) => isGarbageText(s))) {
+          console.log(`[Translate] ${KIMI_MODEL} returned request echo, rejecting batch`);
+          results.push(...batch);
+          continue;
+        }
         let validIdx = 0;
         for (const original of batch) {
           if (original && original.length > 2 && validIdx < cleaned.length) {

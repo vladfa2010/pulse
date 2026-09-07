@@ -1225,6 +1225,7 @@ app.get('/backfill-translate', async (req, res) => {
 
   try {
     const { translateBatch } = await import('./services/translate');
+    const { isGarbageText } = await import('./utils/translationGuard');
 
     // Find news with EN titles (contain latin, no cyrillic)
     // Use COALESCE: prefer title_original if available, else title_ru
@@ -1246,11 +1247,13 @@ app.get('/backfill-translate', async (req, res) => {
         console.log(`[Backfill-Translate] Translating: "${sourceText?.slice(0, 60)}..."`);
 
         const [newTitle] = await translateBatch([sourceText]);
-        if (newTitle && newTitle !== sourceText) {
+        if (newTitle && newTitle !== sourceText && !isGarbageText(newTitle)) {
           await query(`UPDATE news SET title_ru = $1, title_original = $2 WHERE id = $3`, [newTitle, sourceText, row.id]);
           translated++;
           details.push({ id: row.id, before: sourceText.slice(0, 80), after: newTitle.slice(0, 80) });
           console.log(`[Backfill-Translate] ✓ "${newTitle?.slice(0, 60)}..."`);
+        } else if (newTitle && newTitle !== sourceText) {
+          console.log(`[Backfill-Translate] garbage rejected, skipping`);
         } else {
           console.log(`[Backfill-Translate] ✗ No change (API returned same text)`);
         }
@@ -1274,6 +1277,7 @@ app.get('/backfill-summary', async (req, res) => {
 
   try {
     const { translateBatch } = await import('./services/translate');
+    const { isGarbageText } = await import('./utils/translationGuard');
 
     // Find news with EN or empty summary (but EN lang or EN title)
     const result = await query(`
@@ -1297,11 +1301,13 @@ app.get('/backfill-summary', async (req, res) => {
 
         // Create a summary from the title (translate if EN)
         const [translatedSummary] = await translateBatch([sourceText]);
-        if (translatedSummary && translatedSummary.length > 10) {
+        if (translatedSummary && translatedSummary.length > 10 && !isGarbageText(translatedSummary, 2000)) {
           await query(`UPDATE news SET summary_ru = $1 WHERE id = $2`, [translatedSummary, row.id]);
           translated++;
           details.push({ id: row.id, title: row.title_ru?.slice(0, 60) || '', summary: translatedSummary.slice(0, 80) });
           console.log(`[Backfill-Summary] ✓ ${row.id.slice(0, 8)}...`);
+        } else if (translatedSummary && translatedSummary.length > 10) {
+          console.log(`[Backfill-Summary] garbage rejected, skipping`);
         }
       } catch (e: any) {
         console.log(`[Backfill-Summary] Skip: ${e.message?.slice(0, 80)}`);
