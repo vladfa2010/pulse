@@ -3076,6 +3076,14 @@ async function start() {
     } else {
       console.log('[market] FINAM_MARKET_SECRET not set; assets warmup skipped.');
     }
+
+    // ТЗ-57: прогрев публичного «Объёма информации» — первый хит гостя всегда из кэша
+    setTimeout(() => {
+      if (shuttingDown) return;
+      import('./routes/publicStats').then((m) =>
+        m.warmPublicEfficiency().catch((e: any) => console.warn('[PublicStats] warm failed:', e.message))
+      );
+    }, 30 * 1000);
   });
 
   // Graceful shutdown: stop accepting new connections, close SSE streams, drain in-flight requests
