@@ -1227,12 +1227,14 @@ app.get('/backfill-translate', async (req, res) => {
     const { translateBatch } = await import('./services/translate');
     const { isGarbageText } = await import('./utils/translationGuard');
 
-    // Find news with EN titles (contain latin, no cyrillic)
+    // Find news with EN titles: либо title_ru NULL (после cleanup ТЗ-03 —
+    // источник в title_original), либо EN-текст ещё лежит в title_ru
     // Use COALESCE: prefer title_original if available, else title_ru
     const result = await query(`
       SELECT id, COALESCE(NULLIF(title_original, ''), title_ru) as source_text, title_ru
       FROM news
-      WHERE title_ru ~ '[a-zA-Z]' AND title_ru !~ '[а-яёА-ЯЁ]'
+      WHERE (title_ru IS NULL AND COALESCE(NULLIF(title_original, ''), '') ~ '[a-zA-Z]')
+         OR (title_ru ~ '[a-zA-Z]' AND title_ru !~ '[а-яёА-ЯЁ]')
       LIMIT 50
     `);
 
