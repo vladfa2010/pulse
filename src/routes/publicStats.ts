@@ -12,10 +12,14 @@
  * дефолт 24 ч). Single-flight: параллельные хиты при истёкшем TTL ждут один
  * in-flight пересчёт. Stale-on-error: пересчёт упал при живом кэше → отдаём
  * старое со stale: true; 500 только когда кэша нет вообще. Ночной cron не нужен.
+ *
+ * GET /api/public/summary-global — публичный «Пульс рынка»: отдаёт только
+ * свежий кэш globalSummary (LLM-генерацию не триггерит, прогрев — cron'ом).
  */
 
 import { Router } from 'express';
 import { query } from '../config/db';
+import { getCachedGlobalSummary } from '../services/globalSummary';
 
 const router = Router();
 
@@ -136,6 +140,23 @@ router.get('/efficiency', async (_req, res) => {
     console.error('[PublicStats] Error:', err.message);
     return res.status(500).json({ error: 'Failed to get efficiency stats' });
   }
+});
+
+// GET /api/public/summary-global — публичный «Пульс рынка» (ИИ-саммари всей ленты)
+// для гостевой главной. Только свежий кэш (TTL 6ч10м), генерацию НЕ триггерит —
+// LLM прогревает cron (warm-up после boot + каждые 6 ч). Нет кэша → 404, фронт
+// скрывает блок. Refresh-параметр анонимам игнорируется.
+router.get('/summary-global', (_req, res) => {
+  const cached = getCachedGlobalSummary();
+  if (!cached) {
+    return res.status(404).json({ error: 'summary_not_ready' });
+  }
+  return res.json({
+    summary: cached.summary,
+    cached: true,
+    generated_at: cached.generatedAt || undefined,
+    articles_count: cached.articlesCount,
+  });
 });
 
 export default router;
