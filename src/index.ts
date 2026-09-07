@@ -43,6 +43,7 @@ import adminMetricsRoutes from './routes/adminMetrics';
 import adminLegacyRoutes from './routes/adminLegacy';
 import marketRoutes from './routes/market';
 import marketPublicRoutes from './routes/marketPublic';
+import publicStatsRoutes from './routes/publicStats';
 import newsHeatmapRoutes from './routes/newsHeatmap';
 import tagMarketRoutes from './routes/tagMarket';
 import sentimentRoutes from './routes/sentiment';
@@ -2327,6 +2328,7 @@ app.use('/api/auth', authLimiter, authRoutes);  // Строгий лимит (15
 app.use('/api/news', newsRoutes);       // GET /api/news, /api/news/:tag (должен быть первым, т.к. содержит публичные маршруты)
 app.use('/api/news', factCheckRoutes);  // POST/GET /api/news/:id/fact-check
 app.use('/api/market', marketPublicRoutes); // Public market data: /api/market/news-chart (TZ-3)
+app.use('/api/public', publicStatsRoutes); // GET /api/public/efficiency — публичный «Объём информации» (ТЗ-56)
 app.use('/api/news_heatmap', newsHeatmapRoutes); // News heatmap (TZ 11.11)
 app.use('/api/calendar', calendarRoutes); // Public investor calendar
 app.use('/api/payment', paymentRoutes); // POST /api/payment/create, /confirm
