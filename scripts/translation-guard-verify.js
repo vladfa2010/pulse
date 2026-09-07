@@ -113,6 +113,18 @@ async function runParserChecks() {
   currentFixture = '{"model": "kimi-k2.6", "temperature": 0.6, "messages": [{"role": "system", "content": "You are a senior financial news editor"}]}';
   r = await translateBatch([EN_TWO[0]]);
   check('эхо сырого запроса: возвращён оригинал', r[0] === EN_TWO[0]);
+
+  console.log('\n[translateBatch — лимит длины по типу текста]');
+
+  // Честный перевод саммари >300 символов: с maxLen 2000 принимается,
+  // с дефолтным 300 отклонялся бы по длине (стрельба по своим, найдено при ревью v1.2).
+  const longSummaryRu = 'Компания отчиталась за квартал лучше ожиданий: выручка выросла на 18% год к году, маржинальность расширилась до 34%, свободный денежный поток достиг рекордных 12 млрд долларов. ' + 'Менеджмент подтвердил годовой прогноз и объявил о новой программе обратного выкупа акций на 20 млрд, рынок встретил отчёт ростом котировок на 5% на послебиржевых торгах.';
+  const summaryEn = 'Company reported quarterly results beating expectations with record free cash flow';
+  currentFixture = JSON.stringify([longSummaryRu]);
+  r = await translateBatch([summaryEn], undefined, 2000);
+  check('саммари >300 символов с maxLen=2000: перевод принят', r[0] === longSummaryRu);
+  r = await translateBatch([summaryEn]); // дефолт 300 — контроль, что лимит реально применяется
+  check('тот же текст с дефолтным maxLen=300: отклонён по длине, возвращён оригинал', r[0] === summaryEn);
 }
 
 runParserChecks().then(() => {

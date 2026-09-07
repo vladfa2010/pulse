@@ -793,7 +793,7 @@ ALTER TABLE news DROP CONSTRAINT IF EXISTS news_url_norm_unique;
    - JSON-object с числовыми ключами: `{"0": "Перевод 1", "1": "Перевод 2"}` (fallback)
    - Line-by-line: переводы по одной строке без обёртки (fallback)
    - Markdown code block с любым из выше
-4. **Валидирует** результат через `isGarbageText` (`src/utils/translationGuard.ts`): каждая строка ответа проверяется на маркеры эха LLM (фрагменты промпта, сырой JSON). Батч с эхом отклоняется целиком → возвращаются оригиналы → `needs_translation` остаётся `TRUE` → штатный ретрай.
+4. **Валидирует** результат через `isGarbageText` (`src/utils/translationGuard.ts`): каждая строка ответа проверяется на маркеры эха LLM (фрагменты промпта, сырой JSON). Лимит длины — параметр `maxLen`, проброшенный через всю цепочку (`translateBatch → translateWithKimi`): 300 для заголовков, 2000 для саммари (саммари легитимно длинные; дефолтный 300 резал бы честные переводы). Эхо ловится маркерами независимо от лимита. Батч с эхом отклоняется целиком → возвращаются оригиналы → `needs_translation` остаётся `TRUE` → штатный ретрай.
 5. **Возвращает оригиналы** при любом parse-failure (best effort).
 
 ### 6.2 Почему убрали response_format: json_object

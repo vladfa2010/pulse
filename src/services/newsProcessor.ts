@@ -261,7 +261,7 @@ async function translateArticles(articles: RawArticle[], signal: AbortSignal): P
     const summaries = toTranslate.map(a => a.summary_original);
 
     const translatedTitles = await translateBatch(titles, signal);
-    const translatedSummaries = await translateBatch(summaries, signal);
+    const translatedSummaries = await translateBatch(summaries, signal, 2000);
 
     for (let i = 0; i < toTranslate.length; i++) {
       const a = toTranslate[i];

@@ -61,7 +61,7 @@ EXAMPLES:
 
 Return ONLY a JSON array of translated strings in the SAME ORDER as input. No commentary, no markdown, just JSON array.`;
 
-export async function translateWithKimi(texts: string[], signal?: AbortSignal): Promise<string[]> {
+export async function translateWithKimi(texts: string[], signal?: AbortSignal, maxLen = 300): Promise<string[]> {
   if (!KIMI_API_KEY) {
     console.log('[Translate] No KIMI_API_KEY, skipping translation');
     return texts;
@@ -132,7 +132,7 @@ export async function translateWithKimi(texts: string[], signal?: AbortSignal): 
       const jsonMatch = content.match(/\[[\s\S]*?\]/);
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0]);
-        if (Array.isArray(parsed) && parsed.length === validTexts.length && parsed.every(s => !isGarbageText(s))) {
+        if (Array.isArray(parsed) && parsed.length === validTexts.length && parsed.every(s => !isGarbageText(s, maxLen))) {
           // Clean up: remove numbering if model added it
           const cleaned = parsed.map((s: string) => s.replace(/^\d+\.\s*/, '').trim());
           let validIdx = 0;
@@ -156,7 +156,7 @@ export async function translateWithKimi(texts: string[], signal?: AbortSignal): 
         const parsedObj = JSON.parse(content);
         if (parsedObj && typeof parsedObj === 'object' && !Array.isArray(parsedObj)
             && Object.keys(parsedObj).every(k => /^\d+$/.test(k))) {
-          const values = Object.values(parsedObj).filter(v => !isGarbageText(v)) as string[];
+          const values = Object.values(parsedObj).filter(v => !isGarbageText(v, maxLen)) as string[];
           if (values.length === validTexts.length) {
             const cleaned = values.map((s: string) => s.replace(/^\d+\.\s*/, '').trim());
             let validIdx = 0;
@@ -180,7 +180,7 @@ export async function translateWithKimi(texts: string[], signal?: AbortSignal): 
       const lines = content.split('\n').filter((l: string) => l.trim() && !l.trim().startsWith('[') && !l.trim().startsWith(']'));
       if (lines.length === validTexts.length) {
         const cleaned = lines.map((s: string) => s.replace(/^\d+\.\s*["']?|["']?,?\s*$/g, '').trim());
-        if (cleaned.some((s: string) => isGarbageText(s))) {
+        if (cleaned.some((s: string) => isGarbageText(s, maxLen))) {
           console.log(`[Translate] ${KIMI_MODEL} returned request echo, rejecting batch`);
           results.push(...batch);
           continue;
@@ -219,7 +219,9 @@ export async function translateWithKimi(texts: string[], signal?: AbortSignal): 
 // translateBatch — main entry point
 // ═══════════════════════════════════════════════════════════════════════════
 
-export async function translateBatch(texts: string[], signal?: AbortSignal): Promise<string[]> {
+// maxLen — лимит длины для валидатора isGarbageText: 300 для заголовков (дефолт),
+// 2000 для саммари (саммари легитимно длинные; лимит 300 резал бы честные переводы).
+export async function translateBatch(texts: string[], signal?: AbortSignal, maxLen = 300): Promise<string[]> {
   // Skip if no Kimi key
   if (!KIMI_API_KEY) {
     return texts;
@@ -249,7 +251,7 @@ export async function translateBatch(texts: string[], signal?: AbortSignal): Pro
 
   // Translate via Kimi
   const textsToTranslate = toTranslate.map(t => t.text);
-  const translated = await translateWithKimi(textsToTranslate, signal);
+  const translated = await translateWithKimi(textsToTranslate, signal, maxLen);
 
   // Map back
   for (let i = 0; i < toTranslate.length; i++) {

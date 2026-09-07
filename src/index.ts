@@ -1300,7 +1300,7 @@ app.get('/backfill-summary', async (req, res) => {
         if (!sourceText || sourceText.length < 5) continue;
 
         // Create a summary from the title (translate if EN)
-        const [translatedSummary] = await translateBatch([sourceText]);
+        const [translatedSummary] = await translateBatch([sourceText], undefined, 2000);
         if (translatedSummary && translatedSummary.length > 10 && !isGarbageText(translatedSummary, 2000)) {
           await query(`UPDATE news SET summary_ru = $1 WHERE id = $2`, [translatedSummary, row.id]);
           translated++;
