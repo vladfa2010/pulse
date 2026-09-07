@@ -15,11 +15,19 @@
  *
  * GET /api/public/summary-global — публичный «Пульс рынка»: отдаёт только
  * свежий кэш globalSummary (LLM-генерацию не триггерит, прогрев — cron'ом).
+ *
+ * GET /api/public/demo-tags, GET /api/public/demo-feed (ТЗ-59) — демо-режим
+ * гостевой главной: теги и лента (с графиками) демо-аккаунта
+ * (env PUBLIC_DEMO_EMAIL, дефолт vladfa@ya1.ru). Кэш 60 с; лента — полный
+ * аналог /api/news/global плюс фильтр matched_tags && demo-теги (PG-only).
  */
 
 import { Router } from 'express';
 import { query } from '../config/db';
 import { getCachedGlobalSummary } from '../services/globalSummary';
+import { timeFilterSql } from '../services/newsReads';
+
+const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
 const router = Router();
 
@@ -157,6 +165,117 @@ router.get('/summary-global', (_req, res) => {
     generated_at: cached.generatedAt || undefined,
     articles_count: cached.articlesCount,
   });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ТЗ-59: демо-режим гостевой главной — теги и лента демо-аккаунта
+// (env PUBLIC_DEMO_EMAIL, по умолчанию vladfa@ya1.ru; владелец наполняет
+// тегами сам — контент лендинга правится без деплоя).
+// PG-only (matched_tags && — как в /user/stats); SQLite не поддерживаем, ок.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const DEMO_CACHE_MS = 60 * 1000; // под рекламный трафик; page=1 критична
+
+interface DemoTag {
+  tag_id: string;
+  tag_name: string;
+  tag_type: string;
+}
+
+let demoUserIdCache: { id: string; cachedAt: number } | null = null;
+let demoTagsCache: { data: { tags: DemoTag[]; count: number; cached_at: string }; cachedAt: number } | null = null;
+const demoFeedCache = new Map<string, { data: unknown; cachedAt: number }>();
+
+async function resolveDemoUserId(): Promise<string | null> {
+  if (demoUserIdCache && Date.now() - demoUserIdCache.cachedAt < 3600 * 1000) {
+    return demoUserIdCache.id;
+  }
+  const email = process.env.PUBLIC_DEMO_EMAIL || 'vladfa@ya1.ru';
+  const result = await query(`SELECT id FROM users WHERE email = $1`, [email]);
+  const id = result.rows[0]?.id || null;
+  if (id) demoUserIdCache = { id, cachedAt: Date.now() };
+  return id;
+}
+
+async function fetchDemoTags(userId: string) {
+  if (demoTagsCache && Date.now() - demoTagsCache.cachedAt < DEMO_CACHE_MS) {
+    return demoTagsCache.data;
+  }
+  const result = await query(
+    `SELECT tag_id, tag_name, tag_type FROM portfolios WHERE user_id = $1 AND is_frozen = ${USE_SQLITE ? '0' : 'FALSE'}`,
+    [userId]
+  );
+  const data = {
+    tags: result.rows as DemoTag[],
+    count: result.rows.length,
+    cached_at: new Date().toISOString(),
+  };
+  demoTagsCache = { data, cachedAt: Date.now() };
+  return data;
+}
+
+// GET /api/public/demo-tags — теги демо-аккаунта (без замороженных), кэш 60 с
+router.get('/demo-tags', async (_req, res) => {
+  try {
+    const userId = await resolveDemoUserId();
+    if (!userId) {
+      return res.status(404).json({ error: 'demo_account_not_configured' });
+    }
+    const data = await fetchDemoTags(userId);
+    return res.json(data);
+  } catch (err: any) {
+    console.error('[PublicDemo] demo-tags error:', err.message);
+    return res.status(500).json({ error: 'Failed to fetch demo tags' });
+  }
+});
+
+// GET /api/public/demo-feed?limit=50&page=N — лента демо-аккаунта.
+// Полный аналог /api/news/global (тот же SELECT, timeFilterSql, LIMIT+1 для
+// hasMore) плюс фильтр matched_tags && demo-теги. Формат ответа идентичен
+// /global, чтобы фронт переиспользовал код карусели. Кэш 60 с по ключу page.
+router.get('/demo-feed', async (req, res) => {
+  try {
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
+    const cacheKey = `${page}:${limit}`;
+    const hit = demoFeedCache.get(cacheKey);
+    if (hit && Date.now() - hit.cachedAt < DEMO_CACHE_MS) {
+      return res.json(hit.data);
+    }
+
+    const userId = await resolveDemoUserId();
+    if (!userId) {
+      return res.status(404).json({ error: 'demo_account_not_configured' });
+    }
+    const { tags } = await fetchDemoTags(userId);
+    if (tags.length === 0) {
+      // Не ошибка: фронт скроет блок
+      return res.json({ articles: [], total: null, page, hasMore: false });
+    }
+    const tagIds = tags.map((t) => t.tag_id);
+    const offset = (page - 1) * limit;
+    const timeFilter = timeFilterSql();
+
+    const result = await query(
+      `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags,
+              tag_impact, source_count, all_sources, fact_check_status, fact_check_result, slug
+       FROM news
+       WHERE ${timeFilter}
+         AND matched_tags && $3::text[]
+       ORDER BY published_at DESC
+       LIMIT $1 OFFSET $2`,
+      [limit + 1, offset, tagIds]
+    );
+
+    const hasMore = result.rows.length > limit;
+    const articles = hasMore ? result.rows.slice(0, limit) : result.rows;
+    const data = { articles, total: null, page, hasMore };
+    demoFeedCache.set(cacheKey, { data, cachedAt: Date.now() });
+    return res.json(data);
+  } catch (err: any) {
+    console.error('[PublicDemo] demo-feed error:', err.message);
+    return res.status(500).json({ error: 'Failed to fetch demo feed' });
+  }
 });
 
 export default router;
