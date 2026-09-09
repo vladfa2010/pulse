@@ -317,14 +317,24 @@ docker-compose up   # PostgreSQL 16 + Redis 7 + Backend
 - **Секреты свои**: `DB_PASSWORD`, `JWT_SECRET`, `CRON_SECRET_KEY`, `ENCRYPTION_KEY`
   сгенерированы отдельно от Render. ⚠️ Перегенерация JWT_SECRET инвалидирует все
   сессии, ENCRYPTION_KEY делает нечитаемыми сохранённые broker-ключи. Не менять.
+- **Остальные ключи сервисов** (KIMI, YooKassa, Telegram, Finnhub, Finam, Firebase,
+  VAPID, Resend, Serper, Yandex Search) — те же значения, что у pulse-api на Render
+  (источник — Render API). Доставлены на VPS 2026-09-09 (бэкапы: `.env.bak-20260909`,
+  `docker-compose.yml.bak-20260909`).
+- ⚠️ **Ключ в .env ≠ ключ в контейнере**: docker-compose.yml передаёт переменные
+  явным списком в `environment:`. Новый ключ в .env без правки compose контейнеру
+  не виден. Проверено 2026-09-09: имена синхронизированы с кодом (Firebase —
+  `FIREBASE_SERVICE_ACCOUNT_BASE64`, НЕ `..._BASE`).
+- ⚠️ **YuKassa webhook**: автопостановка требует OAuth-токена (его нет) — webhook
+  добавляется вручную в кабинете ЮKassa: `https://pulse.inside-trade.ru/api/webhook/yookassa`.
+  Проверить, что старая точка на Render отключена — иначе уведомления об оплатах
+  продолжат уходить на Render-бэкенд.
 - **Сессии Render↔VPS несовместимы** (разные JWT_SECRET + разные домены) —
   пользователь логинится заново, пароль тот же (хэши мигрированы).
 - **YooKassa**: при пустых `YOOKASSA_SHOP_ID`/`YOOKASSA_SECRET_KEY` код работает
   в ДЕМО-режиме (`demo: true`, фейковый /payment/return?demo=1). Реальные платежи
-  включаются постановкой ключей; webhook перевешивается автоматически при старте
-  (`setupYookassaWebhook`), у магазина webhook один — в параллельной схеме им владеет
-  тот бэкенд, который стартовал последним. Оплата обслуживается на VPS — боевые
-  ключи ЮKassa держать там; на Render оставить пустыми (демо-режим).
+  включаются постановкой ключей. Боевые ключи доставлены на VPS 2026-09-09 —
+  см. замечание про webhook выше. На Render ключи остаются (там своя копия).
 - **Крон в процессе бэкенда → всегда ровно 1 инстанс backend.**
 - **БД — снапшот Render на 2026-09-02.** Новые регистрации/действия пользователей
   на Render после этой даты на VPS не попали. Репликации нет (Render managed PG
