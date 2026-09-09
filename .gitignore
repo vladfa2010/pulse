@@ -34,3 +34,6 @@ redis_data/
 
 # Graphify outputs — generated artifacts, not source-controlled
 graphify-out/
+
+# Локальные доступы (не коммитить)
+.vps-credentials
