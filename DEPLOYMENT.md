@@ -1,7 +1,17 @@
 # PULSE — Deployment Guide
 
 > Единый документ по инфраструктуре, деплою и окружению.
-> Последнее обновление: 2026-08-11
+> Последнее обновление: 2026-09-09
+>
+> **⚡ СТАТУС:** работают **две идентичные параллельные среды** — это осознанное
+> текущее состояние, а не переходный этап миграции:
+> - **Render — основной пайплайн деплоя (по старой логике).** Push в `main` → автодеплой
+>   frontend + backend, настройки/логи/мониторинг Render используются как раньше
+>   (Render API — в разделе «Render API и доступ к логам»). Там же живёт **tgparser-web** —
+>   критичный источник телеграм-новостей для обеих сред. Отключение Render не планируется.
+> - **VPS** `155.212.216.142` — русский сервер, доступен **без VPN**, на нём обслуживается
+>   **оплата**. Домен `pulse.inside-trade.ru` смотрит на него. Обновляется вручную
+>   по процедуре из раздела «VPS».
 
 > **⚠️ ВАЖНО:** Все сервисы развёрнуты на **платном тарифе Render**. Instance не засыпает, крон работает 24/7. Никакого «free tier» — не использовать как аргумент при отладке.
 
@@ -9,30 +19,54 @@
 
 ## Архитектура
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                         ПОЛЬЗОВАТЕЛЬ                        │
-└─────────────────────────────────────────────────────────────┘
-                              │
-              ┌───────────────┼───────────────┐
-              ▼                               ▼
-┌──────────────────────────┐    ┌──────────────────────────────┐
-│   FRONTEND               │    │   BACKEND                    │
-│   pulse.inside-trade.ru  │    │   pulse-api-bsov             │
-│   (custom domain)        │    │   .onrender.com              │
-│                          │    │                              │
-│   Render Static Site     │◄──►│   Render Web Service         │
-│   - React SPA            │    │   - Node.js + Express        │
-│   - Build: npm run build │    │   - PostgreSQL (Render) /    │
-│   - Publish: dist/       │    │     SQLite (local)           │
-│                          │    │   - JWT Auth                 │
-│                          │    │   - RSS Aggregator           │
-│                          │    │   - Kimi API (translation +  │
-│                          │    │     sentiment + tag matching)│
-└──────────────────────────┘    └──────────────────────────────┘
+### VPS: схема (с 2026-09-03)
 
-        Связь: Frontend → Backend: REST API + JWT
 ```
+┌──────────────────────────┐
+│        ПОЛЬЗОВАТЕЛЬ      │
+└────────────┬─────────────┘
+             │ https://pulse.inside-trade.ru
+             ▼
+┌─────────────────────────────────────────────────────┐
+│  VPS 155.212.216.142 (Ubuntu 26.04, 1vCPU/1GB+swap) │
+│  Docker Compose (/opt/pulse):                       │
+│                                                     │
+│   pulse-caddy    :80/:443 — HTTPS (Let's Encrypt,   │
+│                  авто-продление), статика фронта,   │
+│                  прокси /api/* → backend            │
+│   pulse-backend  Node.js 20 + Express               │
+│                  node-cron ВНУТРИ процесса:         │
+│                  RSS-парсер (15 мин), авто-продл.,  │
+│                  уведомления, factcheck-воркер      │
+│   pulse-postgres PostgreSQL 18, volume              │
+│                  /var/lib/postgresql (НЕ /data!)    │
+│                                                     │
+│  Порты наружу: 22/80/443 (ufw). PG закрыт снаружи.  │
+└─────────────────────────────────────────────────────┘
+             │ RSS-ленты (https://tgparser-web.onrender.com/rss и др.)
+             │ Kimi API / Firebase / YooKassa / Telegram — по ключам из /opt/pulse/.env
+             ▼
+        внешние сервисы
+
+⚠️ tgparser — ОТДЕЛЬНЫЙ сервис на Render (tgparser-web.onrender.com).
+   Пока он там — VPS-прод зависит от Render для телеграм-новостей.
+   При полном отказе от Render его нужно перенести и обновить
+   news_sources.config.url.
+```
+
+### Render — вторая параллельная среда (основной пайплайн деплоя)
+
+```
+pulse-frontend-jt53.onrender.com  (Static Site, автодеплой из main)
+pulse-api-bsov.onrender.com       (Web Service, Docker, автодеплой из main)
+Managed PostgreSQL 18             (данные — снапшот на 2026-09-02, дрейфует)
+```
+
+Две копии идентичны по коду — различаются только IP/хостом и окружением.
+Сервисы полноценны: при каждом push в `main` Render пересобирает и выкатывает
+их автоматически (настройки Render всё делают сами). Домен на них не смотрит,
+но они доступны по onrender-адресам. Остановка/удаление Render **не планируется**:
+на нём держится tgparser-web, от которого зависит сбор телеграм-новостей.
 
 ---
 
@@ -50,7 +84,7 @@
 
 | Сервис | Render ID | URL |
 |--------|-----------|-----|
-| pulse-frontend (Static Site) | `srv-d8ao626k1jcs73856fbg` | https://pulse-frontend-jt53.onrender.com (custom domain: https://pulse.inside-trade.ru) |
+| pulse-frontend (Static Site) | `srv-d8ao626k1jcs73856fbg` | https://pulse-frontend-jt53.onrender.com (custom domain pulse.inside-trade.ru зарегистрирован в Render, но DNS домена смотрит на VPS — фактически не используется) |
 | pulse-api (Web Service) | `srv-d8a2fum7r5hc73e11pbg` | https://pulse-api-bsov.onrender.com |
 | pulse-app (Static Site, legacy) | `srv-d8aafhrbc2fs73ak9790` | https://pulse-app-nfez.onrender.com |
 
@@ -76,6 +110,10 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 ---
 
 ## Frontend (Render Static Site)
+
+> Основной деплой-контур: push в `main` → Render автоматически пересобирает и выкатывает.
+> Доменный трафик обслуживает VPS, но сервис активен и доступен по onrender-адресу;
+> настройки и логи Render используются как раньше.
 
 ### URL
 **Production:** https://pulse.inside-trade.ru  
@@ -135,6 +173,11 @@ npm run build   # выход в dist/
 
 ## Backend (Render Web Service)
 
+> Основной деплой-контур: push в `main` → Render автоматически пересобирает и выкатывает.
+> Домен обслуживает VPS-бэкенд, но Render-экземпляр полноценен и обновляется из main.
+> Раздел также служит справкой: описание health-эндпоинтов, graceful shutdown и
+> env-переменных актуально и для VPS.
+
 ### URL
 **https://pulse-api-bsov.onrender.com**
 
@@ -152,7 +195,7 @@ npm run build   # выход в dist/
 ### Environment Variables (Render Dashboard)
 | Variable | Value | Описание |
 |----------|-------|----------|
-| `USE_SQLITE` | `false` | `false` = PostgreSQL (production и локальный dev-стенд, см. раздел выше), `true` = SQLite (legacy fallback) |
+| `USE_SQLITE` | `false` | `false` = PostgreSQL (production), `true` = SQLite (local) |
 | `DATABASE_URL` | `(скрыт)` | PostgreSQL Internal Database URL от Render |
 | `JWT_SECRET` | `(скрыт)` | Секрет для JWT токенов |
 | `FRONTEND_URL` | `https://pulse.inside-trade.ru` | URL фронтенда для редиректов и ссылок в письмах |
@@ -167,44 +210,6 @@ npm run build   # выход в dist/
 | `YANDEX_PASS` | `(скрыт)` | Yandex SMTP app-пароль |
 | `TELEGRAM_BOT_TOKEN` | `(скрыт)` | Telegram Bot токен |
 | `ENCRYPTION_KEY` | `(скрыт)` | 64 hex-символов (32 байта) для AES-256-GCM шифрования API-токенов брокеров. Обязателен для фичи портфелей. |
-
-### Локальный dev-стенд: PostgreSQL (рекомендуется вместо SQLite)
-
-С 2026-09-04 локальная разработка ведётся на настоящем PostgreSQL — dev-prod parity: все PG-специфичные баги (`array_agg`, cast дат, `ANY($1::text[])` и т.п.) ловятся локально, а не в проде. SQLite-режим (`USE_SQLITE=true`) остаётся как legacy fallback, но новые задачи и verify-прогоны проверяются на PG.
-
-**Установка (одноразово, macOS + Homebrew):**
-
-```bash
-brew install postgresql@17
-brew services start postgresql@17
-createdb pulse_dev   # или: psql -d postgres -c "CREATE DATABASE pulse_dev;"
-```
-
-**Настройка:**
-
-В `pulse-backend/.env`:
-
-```env
-DATABASE_URL=postgres://$(whoami)@localhost:5432/pulse_dev
-```
-
-**Как это работает:**
-
-- Backend автоматически переключается в PG-режим при наличии `DATABASE_URL` (`src/config/db.ts`).
-- Для `localhost`/`127.0.0.1` SSL в pool отключается автоматически — локальный PostgreSQL SSL не поддерживает, на Render SSL остаётся обязательным.
-- `npm run build` копирует `src/models/schema.sql` в `dist/models/` — при первом старте backend сам создаёт все таблицы (53 шт.) в пустой БД. Раньше копирование делал только Dockerfile, локально таблицы не создавались.
-- Smoke-проверка: `node dist/index.js` → лог `[PostgreSQL] Schema initialized` → `curl localhost:3000/health` отдаёт `"status":"ok"`.
-
-**Verify-скрипты на PG (gate перед деплоем):**
-
-```bash
-createdb pulse_dev_test   # одноразово
-CALENDAR_VERIFY_PG=1 DATABASE_URL_TEST=postgres://$(whoami)@localhost:5432/pulse_dev_test npm run verify:calendarM7
-```
-
-Без `CALENDAR_VERIFY_PG=1` скрипты по умолчанию используют SQLite (быстрая итерация). PG-режим восстанавливает схему через `DROP SCHEMA public CASCADE` — БД обязана содержать `test` в имени (защита от случайного прод/dev).
-
-Полный реестр тестов БД (календарь М1–М7, schema parity, TZ parity, news queries) и **политика DDL** — в `docs/database-tests.md`.
 
 ### Git Repository
 - **URL:** https://github.com/vladfa2010/pulse
@@ -276,6 +281,176 @@ npm start       # localhost:3000
 ```bash
 docker-compose up   # PostgreSQL 16 + Redis 7 + Backend
 ```
+
+---
+
+## VPS (русская параллельная среда)
+
+### Доступ
+
+| Параметр | Значение |
+|----------|----------|
+| **URL** | https://pulse.inside-trade.ru (прод); fallback https://155.212.216.142.sslip.io |
+| **IP** | 155.212.216.142 |
+| **SSH** | `root@155.212.216.142` |
+| **ОС** | Ubuntu 26.04 LTS, 1 vCPU / 1 ГБ RAM + 2 ГБ swap |
+| **Расположение** | Россия — сервер доступен **без VPN** для русских пользователей |
+| **Назначение** | Параллельная копия прода; здесь обслуживается **оплата** (подписки) |
+
+### Структура на сервере
+
+```
+/opt/pulse/
+├── docker-compose.yml   # стек: caddy + backend + postgres:18 (лимиты памяти под 1 ГБ)
+├── .env                 # секреты (НЕ в git, chmod 600)
+├── Caddyfile            # два домена (прод + sslip), прокси /api
+├── frontend/dist/       # собранный фронт (API_BASE захардкожен → pulse.inside-trade.ru)
+├── pulse/               # git-клон этого репозитория (источник сборки backend)
+├── logs/                # логи бэкенда (volume)
+└── dump.sql.gz          # дамп БД от миграции с Render (2026-09-02, 56 МБ)
+```
+
+### Ключевые особенности
+
+- **Redis отсутствует** — в коде не используется (только в package.json).
+- **Секреты свои**: `DB_PASSWORD`, `JWT_SECRET`, `CRON_SECRET_KEY`, `ENCRYPTION_KEY`
+  сгенерированы отдельно от Render. ⚠️ Перегенерация JWT_SECRET инвалидирует все
+  сессии, ENCRYPTION_KEY делает нечитаемыми сохранённые broker-ключи. Не менять.
+- **Сессии Render↔VPS несовместимы** (разные JWT_SECRET + разные домены) —
+  пользователь логинится заново, пароль тот же (хэши мигрированы).
+- **YooKassa**: при пустых `YOOKASSA_SHOP_ID`/`YOOKASSA_SECRET_KEY` код работает
+  в ДЕМО-режиме (`demo: true`, фейковый /payment/return?demo=1). Реальные платежи
+  включаются постановкой ключей; webhook перевешивается автоматически при старте
+  (`setupYookassaWebhook`), у магазина webhook один — в параллельной схеме им владеет
+  тот бэкенд, который стартовал последним. Оплата обслуживается на VPS — боевые
+  ключи ЮKassa держать там; на Render оставить пустыми (демо-режим).
+- **Крон в процессе бэкенда → всегда ровно 1 инстанс backend.**
+- **БД — снапшот Render на 2026-09-02.** Новые регистрации/действия пользователей
+  на Render после этой даты на VPS не попали. Репликации нет (Render managed PG
+  не даёт прав на logical replication) — только повторные дампы.
+- **Бэкапы ручные** (на Render делала платформа):
+  `docker exec pulse-postgres pg_dump -U pulse_user pulse | gzip > backup-$(date +%F).sql.gz`
+- **root по паролю** — перевести на SSH-ключи, отключить password auth (задача открыта).
+
+### Операции
+
+```bash
+ssh root@155.212.216.142 && cd /opt/pulse
+
+docker compose ps                              # статус
+docker logs pulse-backend --tail 100 -f        # логи
+docker compose restart backend                 # рестарт
+```
+
+### Обновление версии (процедура, проверена 2026-09-05)
+
+> ⚠️ В отличие от Render, push в `main` **сам VPS не обновляет** — выкатка только вручную
+> по этой процедуре. Push обновляет лишь Render-контур (и git-клон на VPS при `git pull`).
+
+```bash
+# 0. БЭКАП БД перед обновлением — обязательно:
+docker exec pulse-postgres pg_dump -U pulse_user pulse | gzip > /opt/pulse/backup-$(date +%F).sql.gz
+
+# 1. Backend (~5-10 мин на 1 vCPU):
+cd /opt/pulse/pulse && git pull
+cd /opt/pulse && docker compose up -d --build backend
+docker logs pulse-backend --tail 30            # проверить старт и миграции
+
+# 2. Frontend — собирается НЕ на сервере (1 ГБ RAM не тянет сборку):
+#    на любой машине: git clone репозитория pulse-frontend,
+#    заменить API URL на https://pulse.inside-trade.ru в 4 файлах
+#    (src/lib/api.ts, src/pages/DownloadPage.tsx, src/hooks/useSseNews.ts,
+#     src/components/SentimentChartCard.tsx) и VITE_FRONTEND_URL в .env.production,
+#    затем: npm ci && npm run build && tar czf dist.tar.gz -C dist .
+#    scp dist.tar.gz root@155.212.216.142:/opt/pulse/
+#    на сервере:
+rm -rf /opt/pulse/frontend/dist/*              # ⚠️ именно /* — НЕ удалять сам каталог
+tar xzf /opt/pulse/dist.tar.gz -C /opt/pulse/frontend/dist && rm /opt/pulse/dist.tar.gz
+# (если каталог dist всё же пересоздавался — bind-mount теряет inode,
+#  лечится: docker compose up -d --force-recreate caddy)
+```
+
+### Восстановление БД из бэкапа
+
+Бэкапы — plain-SQL дампы: `/opt/pulse/backup-*.sql.gz`. Восстановление = 2-3 минуты простоя.
+
+```bash
+cd /opt/pulse
+
+# 1. Остановить бэкенд (чтобы не писал в базу во время восстановления)
+docker compose stop backend
+
+# 2. Пересоздать базу (чистая, пустая)
+docker exec pulse-postgres psql -U pulse_user -d postgres \
+  -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='pulse' AND pid <> pg_backend_pid();"
+docker exec pulse-postgres dropdb -U pulse_user pulse
+docker exec pulse-postgres createdb -U pulse_user -O pulse_user pulse
+
+# 3. Залить дамп (укажите нужный файл)
+zcat backup-2026-09-05.sql.gz | docker exec -i pulse-postgres psql -U pulse_user -d pulse -q
+
+# 4. Контроль: таблицы и счётчики на месте?
+docker exec pulse-postgres psql -U pulse_user -d pulse \
+  -tc "select count(*) from information_schema.tables where table_schema='public';
+       select count(*) from news; select count(*) from users;"
+
+# 5. Запустить бэкенд (схема применится идемпотентно поверх дампа)
+docker compose start backend
+docker logs pulse-backend --tail 20
+```
+
+⚠️ Восстанавливать только в пересозданную (пустую) базу — заливка дампа
+поверх живой базы даст конфликты `duplicate key` / `already exists`.
+
+### Откат версии
+
+Если обновление сломало прод:
+
+```bash
+# 1. Найти последний рабочий коммит
+cd /opt/pulse/pulse && git log --oneline -10
+
+# 2. Откатить код (пример: на один коммит назад)
+git reset --hard origin/main~1        # или конкретный sha: git reset --hard 9f2aead
+
+# 3. Пересобрать и перезапустить (~5-10 мин)
+cd /opt/pulse && docker compose up -d --build backend
+
+# 4. Frontend при необходимости: в клоне pulse-frontend сделать
+#    git reset --hard <тот же/совместимый sha>, пропатчить API URL,
+#    собрать и залить dist (см. «Обновление версии», шаг 2)
+
+# 5. Когда разобрались с причиной — вернуться на актуальную main:
+cd /opt/pulse/pulse && git reset --hard origin/main
+```
+
+⚠️ Если сломанное обновление успело поменять схему/данные в БД —
+сначала восстановите предобновочный бэкап (раздел выше), потом откатывайте код.
+Именно поэтому шаг 0 «Бэкап перед обновлением» обязателен.
+
+### Если кончилось место на диске (ENOSPC при сборке)
+
+Диск 8,6 ГБ — впритык. Симптом: сборка падает на `npm install` с ENOSPC.
+Чистка (безопасно, освобождает ~1 ГБ):
+
+```bash
+docker image prune -af      # неиспользуемые образы (старые postgres и пр.)
+docker builder prune -af    # кэш сборок
+rm -f /opt/pulse/dump.sql.gz /opt/pulse/*.log   # старые дампы/логи (бэкап БД не трогать!)
+df -h /                     # проверить
+```
+
+При регулярных обновлениях — расширить диск у хостера до 20+ ГБ.
+
+### Ограничения среды
+
+- 1 vCPU / 1 ГБ RAM: для прода под нагрузкой апгрейдить до 2+ ГБ.
+- Диск 8,6 ГБ — впритык: БД ~300 МБ + образы Docker ~1 ГБ + бэкапы.
+  При ENOSPC — см. «Если кончилось место на диске». Рекомендуется 20+ ГБ.
+- API_BASE фронта захардкожен в 4 файлах (`src/lib/api.ts`, `DownloadPage.tsx`,
+  `useSseNews.ts`, `SentimentChartCard.tsx`) — смена домена = правка + пересборка.
+- Без боевых ключей молча отключены: LLM (перевод/сентимент/фактчек), Telegram,
+  платежи (демо), пуши.
 
 ---
 
@@ -475,10 +650,8 @@ VITE_API_URL=https://pulse-api-bsov.onrender.com
 ### Backend
 ```env
 PORT=3000
-# Локальный dev-стенд PostgreSQL (рекомендуется, см. DEPLOYMENT.md «Локальный dev-стенд»):
-DATABASE_URL=postgres://$(whoami)@localhost:5432/pulse_dev
-# Либо legacy fallback без PostgreSQL:
-# USE_SQLITE=true
+USE_SQLITE=true
+DATABASE_URL=postgresql://postgres:password@localhost:5432/pulse
 JWT_SECRET=your-secret-key
 FRONTEND_URL=https://pulse.inside-trade.ru
 YOOKASSA_SHOP_ID=54401
