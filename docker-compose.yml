@@ -3,12 +3,16 @@ version: '3.8'
 
 services:
   postgres:
-    image: pgvector/pgvector:pg16
+    # ТЗ-91, задача 2: pgvector той же мажорной версии, что и кластер (18).
+    # PGDATA указываем явно: действующий кластер лежит в подкаталоге 18/docker
+    # (наследие прежнего контейнера), volume postgres_data совместим — данные не трогаем.
+    image: pgvector/pgvector:pg18
     container_name: pulse-postgres
     environment:
       POSTGRES_DB: pulse
       POSTGRES_USER: pulse_user
       POSTGRES_PASSWORD: ${DB_PASSWORD:-pulse_password}
+      PGDATA: /var/lib/postgresql/data/18/docker
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
