@@ -73,7 +73,8 @@ services:
   # Порт наружу НЕ публикуем: бекенд ходит по внутренней сети (http://embeddings:80).
   # depends_on у backend НЕ добавляем — этап 1 не должен мешать старту бекенда.
   embeddings:
-    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9
+    # digest закреплён после первого pull (ТЗ-91 v1.1): теги на ghcr.io перезаписываемы, digest — нет
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9@sha256:ad950d30878eceb72aaf32024d26fa2b1d04a75304fa0b4776b49aa1941fea07
     container_name: pulse-embeddings
     restart: unless-stopped
     mem_limit: 3g        # v1.3: TEI RSS ~2,5–3 ГБ (fp32) — лимит с запасом
