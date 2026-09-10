@@ -20,9 +20,12 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { query } from '../config/db';
-import { embedBatch, embeddingText, EMBEDDING_MAX_BATCH } from '../services/embeddings';
+import { embedBatch, embeddingText } from '../services/embeddings';
 
-const BATCH_SIZE = EMBEDDING_MAX_BATCH; // 32 — лимит TEI
+// 16 текстов ≈ ≤4k токенов — помещается в --max-batch-tokens 4096 контейнера
+// (16384, указанные в ТЗ, требуют 16 ГБ RAM при прогреве TEI и на VDS 4 ГБ
+// не работают; лимит 32 у клиента сохранён — EMBEDDING_MAX_BATCH).
+const BATCH_SIZE = 16;
 const PROGRESS_EVERY = 500;
 const SKIPPED_LOG = path.join(process.cwd(), 'logs', 'backfill_embeddings_skipped.json');
 

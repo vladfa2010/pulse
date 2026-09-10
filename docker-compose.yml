@@ -84,7 +84,9 @@ services:
     command: >
       --model-id Qwen/Qwen3-Embedding-0.6B
       --max-client-batch-size 32
-      --max-batch-tokens 16384
+      --max-batch-tokens 4096
+    # dev: 16384 из ТЗ требует ~16 ГБ RAM при прогреве TEI (warmup-аллокация),
+    # на VDS 4 ГБ контейнер падает; 4096 проверено, RSS ~1,2–2,5 ГБ
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:80/health || exit 1"]
       interval: 30s
