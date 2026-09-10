@@ -295,7 +295,7 @@ docker-compose up   # PostgreSQL 16 + Redis 7 + Backend
 | **IP** | 155.212.216.142 |
 | **SSH** | `root@155.212.216.142` |
 | **Доступы** | Локально в `.vps-credentials` (корень рабочей директории, `chmod 600`, в `.gitignore` обоих репозиториев) |
-| **ОС** | Ubuntu 26.04 LTS, 1 vCPU / 1 ГБ RAM + 2 ГБ swap |
+| **ОС** | Ubuntu 26.04 LTS, 2 vCPU / 4 ГБ RAM + 4 ГБ swap (апгрейд 2026-09-10, было 1/1+2G) |
 | **Расположение** | Россия — сервер доступен **без VPN** для русских пользователей |
 | **Назначение** | Параллельная копия прода; здесь обслуживается **оплата** (подписки) |
 
@@ -303,7 +303,7 @@ docker-compose up   # PostgreSQL 16 + Redis 7 + Backend
 
 ```
 /opt/pulse/
-├── docker-compose.yml   # стек: caddy + backend + postgres:18 (лимиты памяти под 1 ГБ)
+├── docker-compose.yml   # стек: caddy + backend + postgres:18 (pgvector) + embeddings (TEI)
 ├── .env                 # секреты (НЕ в git, chmod 600)
 ├── Caddyfile            # два домена (прод + sslip), прокси /api
 ├── frontend/dist/       # собранный фронт (API_BASE захардкожен → pulse.inside-trade.ru)
@@ -343,6 +343,46 @@ docker-compose up   # PostgreSQL 16 + Redis 7 + Backend
 - **Бэкапы ручные** (на Render делала платформа):
   `docker exec pulse-postgres pg_dump -U pulse_user pulse | gzip > backup-$(date +%F).sql.gz`
 - **root по паролю** — перевести на SSH-ключи, отключить password auth (задача открыта).
+
+### ТЗ-91 (2026-09-10): семантические эмбеддинги новостей — фактическое состояние
+
+- ⚠️ **Боевой compose — `/opt/pulse/docker-compose.yml`, НЕ клон в `/opt/pulse/pulse`.**
+  Compose в git-клоне — упрощённый вариант (с redis, без caddy, без полного списка
+  секретов). Оба файла дают проекту имя `pulse` (имя каталога), поэтому команды
+  из клона управляют теми же контейнерами, но с ДРУГИМ конфигом (mount БД, env,
+  лимиты). Любые операции на проде — только `cd /opt/pulse && docker compose ...`.
+  Бэкап боевого compose: `/opt/pulse/docker-compose.yml.bak-tz91`.
+- **Postgres: `pgvector/pgvector:pg18`** (ТЗ-91, задача 2; в ТЗ было pg16 — фактический
+  кластер 18.6, мажорная версия образа обязана совпадать с кластером).
+  ⚠️ **`PGDATA: /var/lib/postgresql/18/docker` задан явно** — кластер лежит в подкаталоге
+  volume `pulse_postgres_data` (mount у боевого compose: `/var/lib/postgresql`,
+  у клона был `/var/lib/postgresql/data` — путаница mount'ов чуть не привела к
+  инициализации пустого кластера). Без явного PGDATA контейнер падает с
+  «initdb: directory exists but is not empty» или молча поднимает пустую БД.
+  Миграция `src/migrations/news_embeddings_v1.sql` применена (vector, embedding,
+  clusters, cluster_items). Бэкап до: `/opt/pulse/pulse/backup_pre_tz91.sql` (228 МБ).
+- **Сервис `embeddings`** (TEI + Qwen3-Embedding-0.6B, dim 1024): образ закреплён
+  по digest (`cpu-1.9@sha256:ad950d30…`), лимиты 3G RAM / 1 CPU, порт наружу не
+  опубликован, бекенд ходит по `http://embeddings:80`.
+  ⚠️ **Отклонение от ТЗ:** `--max-batch-tokens 4096` вместо 16384 — значение из ТЗ
+  требует ~16 ГБ RAM при warmup-аллокации и на 4 ГБ контейнер падает
+  («memory allocation of 17179869184 bytes failed»). 4096 проверено, RSS ~2,4 ГБ.
+  Бэкфилл (`src/scripts/backfillEmbeddings.ts`) шлёт батчи по 16 текстов
+  (~≤4k токенов), а не 32.
+- ⚠️ **Прогрев TEI на этом VDS занимает 15–20 мин** (машина впритык по RAM,
+  ~3 ГБ уходят в swap — по ТЗ v1.3 это осознанный trade-off). Healthcheck становится
+  healthy только после прогрева; первый /embed после старта медленный. При рестарте
+  контейнера закладывать это время.
+- **factCheck:** OpenAI/Kimi-клиент создаётся лениво — без `KIMI_API_KEY` бекенд
+  не падает при старте (fix 2026-09-10, c44c5df). Раньше модуль валил весь бекенд
+  на VPS при пересборке.
+- **Ночной бэкфилл (задача 5 ТЗ-91) намеренно НЕ запущен.** Команда (в часы
+  минимальной нагрузки, МСК): `docker exec pulse-backend npx ts-node --transpile-only
+  src/scripts/backfillEmbeddings.ts` — скрипт резюмируемый, прогресс каждые 500.
+  После бэкфилла: HNSW-индекс (задача 6), импорт каскадов
+  (`importCascadeSnapshot.ts`, ждём `cascade_import.json` от владельца), выгрузка
+  `dumpCalibrationPairs.ts` → `calibration_pairs.csv`.
+- Swap: `/swapfile` 2G + `/swapfile2` 2G (fstab, pri=-2), итого 4G.
 
 ### Операции
 
