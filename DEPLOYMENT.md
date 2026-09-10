@@ -1,7 +1,8 @@
 # PULSE — Deployment Guide
 
 > Единый документ по инфраструктуре, деплою и окружению.
-> Последнее обновление: 2026-09-09
+> Последнее обновление: 2026-09-10 (процедура обновления VPS переписана по итогам
+> выкатки ТЗ-85…90 — раздел «Обновление версии (процедура v2)»).
 >
 > **⚡ СТАТУС:** работают **две идентичные параллельные среды** — это осознанное
 > текущее состояние, а не переходный этап миграции:
@@ -353,32 +354,94 @@ docker logs pulse-backend --tail 100 -f        # логи
 docker compose restart backend                 # рестарт
 ```
 
-### Обновление версии (процедура, проверена 2026-09-05 и 2026-09-09)
+### Обновление версии (процедура v2, проверена 2026-09-10)
 
 > ⚠️ В отличие от Render, push в `main` **сам VPS не обновляет** — выкатка только вручную
 > по этой процедуре. Push обновляет лишь Render-контур (и git-клон на VPS при `git pull`).
+>
+> Локальные грабли, которые эта версия процедуры закрывает (все пойманы на практике):
+> - на macOS нет `sshpass` → доступ только через expect-хелперы (ниже);
+> - в `.vps-credentials` значение `VPS_PASSWORD` в кавычках — хелперы их снимают,
+>   ручной парсинг «как есть» даёт Permission denied;
+> - `scp` сохраняет **basename** локального файла — имя архива на сервере = локальному,
+>   поэтому имя фиксируем `dist.tar.gz` и никуда его не «переименовываем»;
+> - `tar` из macOS пишет xattr-заголовки (`LIBARCHIVE.xattr…` warnings на сервере) —
+>   безвредно, но лечится `COPYFILE_DISABLE=1`;
+> - backend мог уже быть актуален — сначала проверка `git log HEAD..origin/main`,
+>   пустая = пересборка НЕ нужна (экономия 5–10 мин на 1 vCPU).
+
+#### 0. Доступ с локальной машины (macOS)
+
+В корне рабочей директории лежат хелперы (локально, НЕ в git):
 
 ```bash
-# 0. БЭКАП БД перед обновлением — обязательно:
-docker exec pulse-postgres pg_dump -U pulse_user pulse | gzip > /opt/pulse/backup-$(date +%F).sql.gz
+.kimi/vps-ssh.exp "<одна shell-команда для сервера>"   # пароль берёт из .vps-credentials
+.kimi/vps-scp.exp <local-file> <remote-path>           # то же для копирования
+```
 
-# 1. Backend (~5-10 мин на 1 vCPU):
-cd /opt/pulse/pulse && git pull
-cd /opt/pulse && docker compose up -d --build backend
-docker logs pulse-backend --tail 30            # проверить старт и миграции
+Оба парсят `VPS_HOST` / `VPS_USER` / `VPS_PASSWORD` из `.vps-credentials`
+(обрамляющие кавычки снимаются), пароль в вывод и history не попадает.
+Проверка доступа: `.kimi/vps-ssh.exp "hostname && docker compose -f /opt/pulse/docker-compose.yml ps"`.
 
-# 2. Frontend — собирается НЕ на сервере (1 ГБ RAM не тянет сборку):
-#    на любой машине: git clone репозитория pulse-frontend,
-#    заменить API URL на https://pulse.inside-trade.ru в 4 файлах
-#    (src/lib/api.ts, src/pages/DownloadPage.tsx, src/hooks/useSseNews.ts,
-#     src/components/SentimentChartCard.tsx) и VITE_FRONTEND_URL в .env.production,
-#    затем: npm ci && npm run build && tar czf dist.tar.gz -C dist .
-#    scp dist.tar.gz root@155.212.216.142:/opt/pulse/
-#    на сервере:
-rm -rf /opt/pulse/frontend/dist/*              # ⚠️ именно /* — НЕ удалять сам каталог
-tar xzf /opt/pulse/dist.tar.gz -C /opt/pulse/frontend/dist && rm /opt/pulse/dist.tar.gz
+#### 1. Бэкап БД — обязательно перед любыми изменениями
+
+```bash
+.kimi/vps-ssh.exp "docker exec pulse-postgres pg_dump -U pulse_user pulse | gzip > /opt/pulse/backup-\$(date +%F).sql.gz && ls -la /opt/pulse/backup-*.sql.gz | tail -1"
+```
+
+#### 2. Backend — только если есть новые коммиты
+
+```bash
+# Проверка отставания (fetch + сколько коммитов позади):
+.kimi/vps-ssh.exp "cd /opt/pulse/pulse && git fetch origin && git status -sb && git log --oneline HEAD..origin/main | head -20"
+
+# Если список пуст — backend актуален, ШАГИ 3–4 ПРОПУСТИТЬ.
+# Иначе (~5-10 мин на 1 vCPU):
+.kimi/vps-ssh.exp "cd /opt/pulse/pulse && git pull"
+.kimi/vps-ssh.exp "cd /opt/pulse && docker compose up -d --build backend"
+.kimi/vps-ssh.exp "docker logs pulse-backend --tail 30"   # старт и миграции без ошибок
+```
+
+#### 3. Frontend — собирается НЕ на сервере (1 ГБ RAM не тянет сборку)
+
+```bash
+cd pulse-frontend
+# 3.1. Пропатчить API URL на VPS-домен в 4 файлах (одной командой):
+sed -i '' 's/pulse-api-bsov\.onrender\.com/pulse.inside-trade.ru/g' \
+  src/lib/api.ts src/pages/DownloadPage.tsx src/hooks/useSseNews.ts src/components/SentimentChartCard.tsx
+# (.env.production уже содержит VITE_FRONTEND_URL=https://pulse.inside-trade.ru — проверить)
+
+# 3.2. Собрать и упаковать (COPYFILE_DISABLE убирает macOS-xattr из tar):
+npm run build && COPYFILE_DISABLE=1 tar czf dist.tar.gz -C dist .
+
+# 3.3. ОТКАТИТЬ ПАТЧ ЛОКАЛЬНО — иначе Render-контур соберётся с VPS-доменом:
+git checkout -- src/lib/api.ts src/pages/DownloadPage.tsx src/hooks/useSseNews.ts src/components/SentimentChartCard.tsx
+git status --short   # должно быть пусто
+
+# 3.4. Залить (scp сохранит имя dist.tar.gz):
+.kimi/vps-scp.exp dist.tar.gz /opt/pulse/
+rm dist.tar.gz
+
+# 3.5. Распаковать на сервере (именно /* — НЕ удалять сам каталог, bind-mount caddy):
+.kimi/vps-ssh.exp "rm -rf /opt/pulse/frontend/dist/* && tar xzf /opt/pulse/dist.tar.gz -C /opt/pulse/frontend/dist && rm /opt/pulse/dist.tar.gz && du -sh /opt/pulse/frontend/dist"
 # (если каталог dist всё же пересоздавался — bind-mount теряет inode,
 #  лечится: docker compose up -d --force-recreate caddy)
+```
+
+#### 4. Проверка после выкатки (с локальной машины)
+
+```bash
+# 4.1. Прод отдаёт свежий билд — хэш главного чанка совпал с локальным dist:
+LOCAL=$(grep -o 'assets/index-[^"]*\.js' dist/index.html | head -1)
+REMOTE=$(curl -s https://pulse.inside-trade.ru/ | grep -o 'assets/index-[^"]*\.js' | head -1)
+[ "$LOCAL" = "$REMOTE" ] && echo OK || echo "MISMATCH — на проде старый билд"
+
+# 4.2. В JS зашит VPS-домен, onrender отсутствует:
+curl -s "https://pulse.inside-trade.ru/$REMOTE" | grep -c "pulse.inside-trade.ru/api"   # > 0
+curl -s "https://pulse.inside-trade.ru/$REMOTE" | grep -c "pulse-api-bsov.onrender.com" # 0
+
+# 4.3. Backend жив через caddy:
+curl -s https://pulse.inside-trade.ru/api/health   # {"ok":true,...}
 ```
 
 ### Восстановление БД из бэкапа
