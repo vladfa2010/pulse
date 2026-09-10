@@ -3,7 +3,7 @@ version: '3.8'
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     container_name: pulse-postgres
     environment:
       POSTGRES_DB: pulse
@@ -65,6 +65,28 @@ services:
       - ./logs:/app/logs
     restart: unless-stopped
 
+  # ТЗ-91 (этап 1) — TEI с Qwen3-Embedding-0.6B (dim 1024).
+  # Порт наружу НЕ публикуем: бекенд ходит по внутренней сети (http://embeddings:80).
+  # depends_on у backend НЕ добавляем — этап 1 не должен мешать старту бекенда.
+  embeddings:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9
+    container_name: pulse-embeddings
+    restart: unless-stopped
+    mem_limit: 3g        # v1.3: TEI RSS ~2,5–3 ГБ (fp32) — лимит с запасом
+    cpus: 1.0            # v1.3: 1 ядро контейнеру, 1 ядро проду
+    volumes:
+      - tei_data:/data
+    command: >
+      --model-id Qwen/Qwen3-Embedding-0.6B
+      --max-client-batch-size 32
+      --max-batch-tokens 16384
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:80/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
 volumes:
   postgres_data:
   redis_data:
+  tei_data:
