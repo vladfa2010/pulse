@@ -29,7 +29,8 @@
              │ https://pulse.inside-trade.ru
              ▼
 ┌─────────────────────────────────────────────────────┐
-│  VPS 155.212.216.142 (Ubuntu 26.04, 1vCPU/1GB+swap) │
+│  VPS 155.212.216.142 (Ubuntu 26.04, 2vCPU/4GB,      │
+│  swap 4G — апгрейд 2026-09-10)                      │
 │  Docker Compose (/opt/pulse):                       │
 │                                                     │
 │   pulse-caddy    :80/:443 — HTTPS (Let's Encrypt,   │
@@ -39,8 +40,13 @@
 │                  node-cron ВНУТРИ процесса:         │
 │                  RSS-парсер (15 мин), авто-продл.,  │
 │                  уведомления, factcheck-воркер      │
-│   pulse-postgres PostgreSQL 18, volume              │
-│                  /var/lib/postgresql (НЕ /data!)    │
+│   pulse-postgres PostgreSQL 18 + pgvector, volume   │
+│                  /var/lib/postgresql (НЕ /data!),   │
+│                  PGDATA=/var/lib/postgresql/18/docker│
+│   pulse-embeddings TEI + Qwen3-Embedding-0.6B       │
+│                  (dim 1024, лимит 3G RAM / 1 CPU,   │
+│                  порт наружу НЕ опубликован;        │
+│                  бекенд ходит по http://embeddings:80)│
 │                                                     │
 │  Порты наружу: 22/80/443 (ufw). PG закрыт снаружи.  │
 └─────────────────────────────────────────────────────┘

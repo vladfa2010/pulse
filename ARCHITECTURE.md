@@ -3076,7 +3076,89 @@ Backend API: отвечает 403 "Tag limit reached (10)"
 3. Перед удалением любого индекса на проде проверять `pg_stat_user_indexes.idx_scan` и `EXPLAIN` типовых запросов.
 4. `DROP INDEX CONCURRENTLY` — всегда, чтобы не блокировать запись.
 
+> **Дополнение 2026-09-10 (ТЗ-91):** к таблице добавлены `embedding vector(1024)` и
+> `cluster_id UUID` (миграция `src/migrations/news_embeddings_v1.sql`, не в `schema.sql`).
+> HNSW-индекс по `embedding` строится `CREATE INDEX CONCURRENTLY` только после полного
+> бэкфилла векторов (вставка 119k векторов в существующий HNSW медленнее построения
+> с нуля). До построения индекса в таблице индексов появляться не должен.
+
 ---
 
-*Document: ARCHITECTURE.md v9.7.0 — PULSE Platform*  
+## 18. Семантические эмбеддинги новостей (ТЗ-91, этап 1)
+
+> **Дата:** 2026-09-10
+> **Статус:** инфраструктура и инструменты развёрнуты на VPS; бэкфилл и
+> реалтайм-кластеризация — по графику (реалтайм — ТЗ-92, отдельным этапом)
+> **Принцип этапа 1:** ни одна существующая функция бекенда не меняется —
+> только новый контейнер, новые колонки/таблицы, новый сервис-клиент и
+> разовые скрипты. Откат = `ALTER TABLE news DROP COLUMN embedding, DROP COLUMN cluster_id;
+> DROP TABLE cluster_items, clusters;` + удаление сервиса из compose.
+
+### 18.1. Зачем
+
+Поиск новостных каскадов: одно событие → много источников → система склеивает
+перепечатки. В сендбоксе пайплайн проверен на TF-IDF (119k новостей, 90 дней,
+1520 каскадов); целевая архитектура — семантические эмбеддинги. Модель:
+**Qwen3-Embedding-0.6B** (dim 1024, контекст 32K, Apache-2.0, ~119 языков),
+обоснование — `Методология_поиска_новостных_каскадов_PULSE.md` §6.
+
+### 18.2. Компоненты
+
+```
+pulse-embeddings (TEI, ghcr.io/huggingface/text-embeddings-inference:cpu-1.9,
+                  digest-закреплённый)        ← Qwen3-Embedding-0.6B, CPU, fp32
+        ▲ http://embeddings:80/embed {"inputs":[...]} → [[1024 floats], ...]
+        │ (внутренняя сеть compose, порт наружу не опубликован)
+src/services/embeddings.ts                    ← embedBatch(texts): retry/timeout/валидация
+        ▼
+PostgreSQL + pgvector (pgvector/pgvector:pg18):
+  news.embedding vector(1024)  — вектор новости (title_ru + ' ' + summary_ru, ≤1000 симв.,
+                                 без instruction-префикса — задача симметричная)
+  news.cluster_id UUID         — первый привязанный кластер (realtime или import)
+  clusters                     — каскады: kind (cascade|story_candidate), tags, verdict,
+                                 max_sim, first/last_published_at, size, source
+                                 (realtime|sandbox-import)
+  cluster_items                — связь кластер↔новость, lag_min от первой новости
+```
+
+### 18.3. Файлы
+
+| Файл | Назначение |
+|------|------------|
+| `src/migrations/news_embeddings_v1.sql` | схема: vector-расширение, колонки, таблицы (применяется вручную, HNSW не включён) |
+| `src/services/embeddings.ts` | клиент TEI: батч ≤32, таймаут 30с, 1 retry через 5с, валидация dim 1024; `EMBEDDINGS_URL` env, дефолт `http://embeddings:80` |
+| `src/scripts/backfillEmbeddings.ts` | разовый бэкфилл всех новостей; батчи по 16, резюмируемый (фильтр `embedding IS NULL`), прогресс каждые 500, упавшие дважды батчи → `logs/backfill_embeddings_skipped.json` |
+| `src/scripts/importCascadeSnapshot.ts` | импорт исторических каскадов из `cascade_import.json` (идемпотентно, `source='sandbox-import'`) |
+| `src/scripts/dumpCalibrationPairs.ts` | пары для калибровки порогов: позитивы из импортных кластеров + 10k случайных негативов (Δt > 3 суток) → `calibration_pairs.csv` |
+
+Запуск скриптов на VPS: `docker exec pulse-backend npx ts-node --transpile-only src/scripts/<имя>.ts`.
+
+### 18.4. Порядок операций (этап 1)
+
+1. Бэкап БД → swap 4G → Postgres на `pgvector/pgvector:pg18` (мажорная = кластеру, 18.6).
+2. Миграция `news_embeddings_v1.sql`.
+3. Сервис `embeddings` (модель ~1,2 ГБ качается в volume `tei_data` при первом старте;
+   ⚠️ прогрев на VDS 2vCPU/4GB занимает 15–20 мин, ~3 ГБ уходят в swap — healthcheck
+   `healthy` только после прогрева).
+4. Ночной бэкфилл (6–15 ч на ~119–156k новостей, скрипт резюмируемый).
+5. `CREATE INDEX CONCURRENTLY news_embedding_hnsw ON news USING hnsw (embedding vector_cosine_ops); ANALYZE news;`
+6. Импорт каскадов → выгрузка `calibration_pairs.csv` → владелец калибрует пороги.
+7. Приёмка → ТЗ-92 (реалтайм-кластеризация новостей по мере поступления).
+
+### 18.5. Отклонения от ТЗ-91 и ограничения
+
+- **`--max-batch-tokens 4096` вместо 16384**: значение из ТЗ требует ~16 ГБ RAM при
+  warmup-аллокации TEI («memory allocation of 17179869184 bytes failed») и на VDS
+  4 ГБ контейнер падает. 4096 проверено (RSS ~2,4 ГБ). Бэкфилл шлёт батчи по 16
+  текстов (~≤4k токенов), лимит клиента 32 сохранён.
+- **Только PostgreSQL**: SQLite-режим (`USE_SQLITE`) в новых скриптах не поддерживается.
+- **PGDATA на VPS задан явно** (`/var/lib/postgresql/18/docker`) — см. DEPLOYMENT.md,
+  раздел ТЗ-91; кластер лежит в подкаталоге volume.
+- Риск «зависание TEI на отдельных входах» (TEI issue #694) митигирован клиентским
+  таймаутом 30с + пропуском проблемных батчей; fallback при воспроизведении —
+  sentence-transformers с той же моделью (колонка и данные не меняются).
+
+---
+
+*Document: ARCHITECTURE.md v9.8.0 — PULSE Platform*  
 *Format: Markdown — living document, updated with each release*
