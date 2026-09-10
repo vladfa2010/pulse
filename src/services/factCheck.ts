@@ -27,10 +27,15 @@ const KIMI_API_KEY = process.env.KIMI_API_KEY;
 const KIMI_BASE_URL = process.env.KIMI_BASE_URL || 'https://api.moonshot.ai/v1';
 const FACT_CHECK_MODEL = process.env.FACT_CHECK_MODEL || 'kimi-k2.6';
 
-const client = new OpenAI({
-  apiKey: KIMI_API_KEY,
-  baseURL: KIMI_BASE_URL,
-});
+// Локальный патч PULSE: клиент создаём только при наличии ключа —
+// иначе конструктор OpenAI бросает при загрузке модуля и валит весь бекенд
+// на окружениях без KIMI_API_KEY (использование в kimiChat уже загашено гвардом).
+const client = KIMI_API_KEY
+  ? new OpenAI({
+      apiKey: KIMI_API_KEY,
+      baseURL: KIMI_BASE_URL,
+    })
+  : null;
 
 const POLL_INTERVAL_SECONDS = 5;
 const MAX_CONCURRENT_JOBS = 3;
@@ -281,7 +286,7 @@ async function kimiChat(messages: any[], tools?: any[]): Promise<any> {
         params.tools = tools as any;
         params.tool_choice = 'auto';
       }
-      const completion = await client.chat.completions.create(params);
+      const completion = await client!.chat.completions.create(params);
       return completion.choices[0].message as any;
     } catch (err: any) {
       lastError = err;
