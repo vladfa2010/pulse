@@ -29,6 +29,13 @@ const BATCH_SIZE = 16;
 const PROGRESS_EVERY = 500;
 const SKIPPED_LOG = path.join(process.cwd(), 'logs', 'backfill_embeddings_skipped.json');
 
+// Партиционирование для параллельных воркеров (временный апгрейд VDS до 24 ядер):
+// BACKFILL_MOD=4 BACKFILL_REM=0..3 — воркер берёт только строки с
+// hashtext(id::text) % MOD = REM. Множества не пересекаются → воркеры не дублируют работу.
+const MOD = parseInt(process.env.BACKFILL_MOD || '1', 10);
+const REM = parseInt(process.env.BACKFILL_REM || '0', 10);
+const modFilter = MOD > 1 ? `AND hashtext(id::text) % ${MOD} = ${REM}` : '';
+
 interface SkippedEntry {
   ids: string[];
   reason: string;
@@ -48,6 +55,7 @@ async function backfillEmbeddings(): Promise<void> {
       SELECT id, title_ru, summary_ru
       FROM news
       WHERE embedding IS NULL AND title_ru IS NOT NULL
+      ${modFilter}
       ORDER BY published_at
       LIMIT ${BATCH_SIZE}
     `);
@@ -112,7 +120,7 @@ async function backfillEmbeddings(): Promise<void> {
 
     if (processed % PROGRESS_EVERY < BATCH_SIZE) {
       const remaining = await query(
-        `SELECT count(*)::int AS c FROM news WHERE embedding IS NULL AND title_ru IS NOT NULL`
+        `SELECT count(*)::int AS c FROM news WHERE embedding IS NULL AND title_ru IS NOT NULL ${modFilter}`
       );
       const elapsedMin = (Date.now() - t0) / 60000;
       const rate = processed / Math.max(elapsedMin, 0.01);
@@ -127,8 +135,10 @@ async function backfillEmbeddings(): Promise<void> {
 
   if (skipped.length > 0) {
     fs.mkdirSync(path.dirname(SKIPPED_LOG), { recursive: true });
-    fs.writeFileSync(SKIPPED_LOG, JSON.stringify(skipped, null, 2));
-    console.log(`[BackfillEmb] Список skipped сохранён: ${SKIPPED_LOG}`);
+    // Параллельные воркеры пишут разные файлы, чтобы не затирать друг друга
+    const file = MOD > 1 ? SKIPPED_LOG.replace(/\.json$/, `.rem${REM}.json`) : SKIPPED_LOG;
+    fs.writeFileSync(file, JSON.stringify(skipped, null, 2));
+    console.log(`[BackfillEmb] Список skipped сохранён: ${file}`);
   }
 
   process.exit(0);
