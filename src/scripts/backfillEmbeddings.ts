@@ -25,7 +25,12 @@ import { embedBatch, embeddingText } from '../services/embeddings';
 // 16 текстов ≈ ≤4k токенов — помещается в --max-batch-tokens 4096 контейнера
 // (16384, указанные в ТЗ, требуют 16 ГБ RAM при прогреве TEI и на VDS 4 ГБ
 // не работают; лимит 32 у клиента сохранён — EMBEDDING_MAX_BATCH).
-const BATCH_SIZE = 16;
+// BACKFILL_BATCH_SIZE позволяет поднять батч для ночного прогона на мощной VDS:
+// TEI сам режет запрос на несколько scheduling-батчей по max-batch-tokens.
+const BATCH_SIZE = Math.min(
+  parseInt(process.env.BACKFILL_BATCH_SIZE || '16', 10) || 16,
+  32,
+);
 const PROGRESS_EVERY = 500;
 const SKIPPED_LOG = path.join(process.cwd(), 'logs', 'backfill_embeddings_skipped.json');
 
