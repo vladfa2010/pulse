@@ -3140,7 +3140,8 @@ PostgreSQL + pgvector (pgvector/pgvector:pg18):
 3. Сервис `embeddings` (модель ~1,2 ГБ качается в volume `tei_data` при первом старте;
    ⚠️ прогрев на VDS 2vCPU/4GB занимает 15–20 мин, ~3 ГБ уходят в swap — healthcheck
    `healthy` только после прогрева).
-4. Ночной бэкфилл (6–15 ч на ~119–156k новостей, скрипт резюмируемый).
+4. Ночной бэкфилл (6–15 ч на ~53 тыс. новостей с `title_ru`; EN без перевода
+   не эмбеддятся; скрипт резюмируемый, watchdog-цикл на сервере).
 5. `CREATE INDEX CONCURRENTLY news_embedding_hnsw ON news USING hnsw (embedding vector_cosine_ops); ANALYZE news;`
 6. Импорт каскадов → выгрузка `calibration_pairs.csv` → владелец калибрует пороги.
 7. Приёмка → ТЗ-92 (реалтайм-кластеризация новостей по мере поступления).

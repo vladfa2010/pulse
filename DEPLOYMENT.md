@@ -382,12 +382,18 @@ docker-compose up   # PostgreSQL 16 + Redis 7 + Backend
 - **factCheck:** OpenAI/Kimi-клиент создаётся лениво — без `KIMI_API_KEY` бекенд
   не падает при старте (fix 2026-09-10, c44c5df). Раньше модуль валил весь бекенд
   на VPS при пересборке.
-- **Ночной бэкфилл (задача 5 ТЗ-91) намеренно НЕ запущен.** Команда (в часы
-  минимальной нагрузки, МСК): `docker exec pulse-backend npx ts-node --transpile-only
-  src/scripts/backfillEmbeddings.ts` — скрипт резюмируемый, прогресс каждые 500.
-  После бэкфилла: HNSW-индекс (задача 6), импорт каскадов
-  (`importCascadeSnapshot.ts`, ждём `cascade_import.json` от владельца), выгрузка
-  `dumpCalibrationPairs.ts` → `calibration_pairs.csv`.
+- **Ночной бэкфилл (задача 5 ТЗ-91).** Статус: запущен 2026-09-10 под watchdog
+  (`/opt/pulse/backfill_loop.sh` — перезапускает скрипт, пока `remaining > 0`;
+  логи: `/opt/pulse/logs/backfill_loop.log`, `/tmp/backfill_watchdog.log`).
+  ⚠️ Фактический объём — **~53 тыс. новостей с `title_ru`** (EN-новости без
+  перевода эмбеддинг не получают, скрипт их не трогает), не 119/155k.
+  Скорость ~20 новостей/мин → ~44 ч (2 ночи), в пределах оценки ТЗ v1.3.
+  ⚠️ Отклонения во время бэкфилла: `cpus: "2.0"` у embeddings (в git compose 1.0 —
+  вернуть после бэкфилла), таймаут клиента 120 с (30 с из ТЗ мало для 1 CPU;
+  коммит d05956b). Ручная команда:
+  `docker exec pulse-backend npx ts-node --transpile-only src/scripts/backfillEmbeddings.ts`
+  (скрипт резюмируемый, прогресс каждые 500, skipped → `/app/logs/backfill_embeddings_skipped.json`).
+  После бэкфилла: HNSW-индекс (задача 6), `dumpCalibrationPairs.ts` → `calibration_pairs.csv`.
 - Swap: `/swapfile` 2G + `/swapfile2` 2G (fstab, pri=-2), итого 4G.
 
 ### Операции
