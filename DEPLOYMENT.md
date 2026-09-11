@@ -350,7 +350,7 @@ docker-compose up   # PostgreSQL 16 + Redis 7 + Backend
   `docker exec pulse-postgres pg_dump -U pulse_user pulse | gzip > backup-$(date +%F).sql.gz`
 - **root по паролю** — перевести на SSH-ключи, отключить password auth (задача открыта).
 
-### ТЗ-91 (2026-09-10): семантические эмбеддинги новостей — фактическое состояние
+### ТЗ-91 (2026-09-10..11): семантические эмбеддинги новостей — фактическое состояние
 
 - ⚠️ **Боевой compose — `/opt/pulse/docker-compose.yml`, НЕ клон в `/opt/pulse/pulse`.**
   Compose в git-клоне — упрощённый вариант (с redis, без caddy, без полного списка
@@ -368,32 +368,43 @@ docker-compose up   # PostgreSQL 16 + Redis 7 + Backend
   Миграция `src/migrations/news_embeddings_v1.sql` применена (vector, embedding,
   clusters, cluster_items). Бэкап до: `/opt/pulse/pulse/backup_pre_tz91.sql` (228 МБ).
 - **Сервис `embeddings`** (TEI + Qwen3-Embedding-0.6B, dim 1024): образ закреплён
-  по digest (`cpu-1.9@sha256:ad950d30…`), лимиты 3G RAM / 1 CPU, порт наружу не
-  опубликован, бекенд ходит по `http://embeddings:80`.
-  ⚠️ **Отклонение от ТЗ:** `--max-batch-tokens 4096` вместо 16384 — значение из ТЗ
-  требует ~16 ГБ RAM при warmup-аллокации и на 4 ГБ контейнер падает
-  («memory allocation of 17179869184 bytes failed»). 4096 проверено, RSS ~2,4 ГБ.
-  Бэкфилл (`src/scripts/backfillEmbeddings.ts`) шлёт батчи по 16 текстов
-  (~≤4k токенов), а не 32.
-- ⚠️ **Прогрев TEI на этом VDS занимает 15–20 мин** (машина впритык по RAM,
-  ~3 ГБ уходят в swap — по ТЗ v1.3 это осознанный trade-off). Healthcheck становится
-  healthy только после прогрева; первый /embed после старта медленный. При рестарте
-  контейнера закладывать это время.
+  по digest (`cpu-1.9@sha256:ad950d30…`), порт наружу не опубликован, бекенд ходит
+  по `http://embeddings:80`. Апгрейд VDS до 24 ядер / 10 ГБ RAM (2026-09-10):
+  лимиты **8G RAM / 22 CPU**, `RAYON_NUM_THREADS=22`, `--tokenization-workers 12`,
+  `--max-client-batch-size 32`, `--max-batch-tokens 4096`.
+  ⚠️ **Отклонение от ТЗ:** `--max-batch-tokens 4096` вместо 16384 — 16384 требует
+  ~16 ГБ RAM warmup-аллокации; 8192 при 22 потоках не влезают даже в 7.5G
+  (рестарт-луп, проверено). 4096 проверено, RSS ~2,7 ГБ, прогрев ~3 мин.
+  ⚠️ **`RAYON_NUM_THREADS` обязателен**: без ограничения warmup-спайк RSS превышает
+  лимит и процесс молча умирает (ExitCode 0, рестарт-луп).
 - **factCheck:** OpenAI/Kimi-клиент создаётся лениво — без `KIMI_API_KEY` бекенд
   не падает при старте (fix 2026-09-10, c44c5df). Раньше модуль валил весь бекенд
   на VPS при пересборке.
-- **Ночной бэкфилл (задача 5 ТЗ-91).** Статус: запущен 2026-09-10 под watchdog
-  (`/opt/pulse/backfill_loop.sh` — перезапускает скрипт, пока `remaining > 0`;
-  логи: `/opt/pulse/logs/backfill_loop.log`, `/tmp/backfill_watchdog.log`).
-  ⚠️ Фактический объём — **~53 тыс. новостей с `title_ru`** (EN-новости без
-  перевода эмбеддинг не получают, скрипт их не трогает), не 119/155k.
-  Скорость ~20 новостей/мин → ~44 ч (2 ночи), в пределах оценки ТЗ v1.3.
-  ⚠️ Отклонения во время бэкфилла: `cpus: "2.0"` у embeddings (в git compose 1.0 —
-  вернуть после бэкфилла), таймаут клиента 120 с (30 с из ТЗ мало для 1 CPU;
-  коммит d05956b). Ручная команда:
-  `docker exec pulse-backend npx ts-node --transpile-only src/scripts/backfillEmbeddings.ts`
-  (скрипт резюмируемый, прогресс каждые 500, skipped → `/app/logs/backfill_embeddings_skipped.json`).
-  После бэкфилла: HNSW-индекс (задача 6), `dumpCalibrationPairs.ts` → `calibration_pairs.csv`.
+- **Бэкфилл завершён 2026-09-11** (задача 5 ТЗ-91). Ферма: `/opt/pulse/backfill_farm.sh`
+  — 4 резюмируемых воркера под watchdog (партиции по `((hashtext(id::text)::bigint
+  % 4) + 4) % 4 = REM`, батч 16, таймаут клиента 600 с).
+  ⚠️ Фактический объём — **53361 новость с `title_ru`** (EN-новости без перевода
+  эмбеддинг не получают; осознанно: один канонический язык для кластеризации).
+  Скорость 33–88/мин в зависимости от длины текстов (CPU-инференс candle,
+  потолок ~22 потока ≈ 2200% CPU). Итог: `embedding IS NULL AND title_ru IS NOT NULL` = 0,
+  skipped-батчей 0.
+- ⚠️ **Инциденты бэкфилла (все исправлены, коммиты 5b2eb02 → d4b107f):**
+  1. `hashtext()` возвращает int4 **со знаком**, `%` в Postgres сохраняет знак
+     (-5 % 4 = -1) → диапазон остатков -3..3 вместо 0..3; воркеры 0..3 обработали
+     только положительные бакеты (~75%) и «завершились» досрочно. Лечение:
+     нормализация `((hashtext(...)::bigint % MOD) + MOD) % MOD`.
+  2. Таймаут клиента 300 с < латентность очереди TEI (~290–300 с) → батчи
+     улетали в skipped. Лечение: 600 с.
+  3. Непарные Unicode-суррогаты в текстах новостей → serde_json TEI отклонял
+     весь батч (HTTP 400). Лечение: `stripLoneSurrogates` в `embeddings.ts`.
+  4. 8 воркеров/батч 32 перегружали очередь TEI без прироста (CPU-bound) —
+     стабильная схема 4 воркера/батч 16.
+- **После бэкфилла (2026-09-11):** HNSW-индекс
+  `news_embedding_hnsw ON news USING hnsw (embedding vector_cosine_ops)`
+  (CONCURRENTLY; maintenance_work_mem 32M → постройка ~20–40 мин),
+  `ANALYZE news`. Калибровочные пары: `dumpCalibrationPairs.ts` →
+  `/opt/pulse/calibration_pairs.csv` (11884 пары: 3607 позитивов из кластеров +
+  8277 негативов, sim = косинусная близость).
 - Swap: `/swapfile` 2G + `/swapfile2` 2G (fstab, pri=-2), итого 4G.
 
 ### Операции

@@ -3086,9 +3086,9 @@ Backend API: отвечает 403 "Tag limit reached (10)"
 
 ## 18. Семантические эмбеддинги новостей (ТЗ-91, этап 1)
 
-> **Дата:** 2026-09-10
-> **Статус:** инфраструктура и инструменты развёрнуты на VPS; бэкфилл и
-> реалтайм-кластеризация — по графику (реалтайм — ТЗ-92, отдельным этапом)
+> **Дата:** 2026-09-10 (бэкфилл завершён 2026-09-11)
+> **Статус:** инфраструктура, бэкфилл (53 361 вектор), HNSW-индекс и
+> calibration_pairs.csv — готово; реалтайм-кластеризация — ТЗ-92, отдельным этапом
 > **Принцип этапа 1:** ни одна существующая функция бекенда не меняется —
 > только новый контейнер, новые колонки/таблицы, новый сервис-клиент и
 > разовые скрипты. Откат = `ALTER TABLE news DROP COLUMN embedding, DROP COLUMN cluster_id;
@@ -3126,38 +3126,47 @@ PostgreSQL + pgvector (pgvector/pgvector:pg18):
 | Файл | Назначение |
 |------|------------|
 | `src/migrations/news_embeddings_v1.sql` | схема: vector-расширение, колонки, таблицы (применяется вручную, HNSW не включён) |
-| `src/services/embeddings.ts` | клиент TEI: батч ≤32, таймаут 30с, 1 retry через 5с, валидация dim 1024; `EMBEDDINGS_URL` env, дефолт `http://embeddings:80` |
-| `src/scripts/backfillEmbeddings.ts` | разовый бэкфилл всех новостей; батчи по 16, резюмируемый (фильтр `embedding IS NULL`), прогресс каждые 500, упавшие дважды батчи → `logs/backfill_embeddings_skipped.json` |
+| `src/services/embeddings.ts` | клиент TEI: батч ≤32, таймаут 600с, 1 retry через 5с, валидация dim 1024, санация непарных Unicode-суррогатов (иначе TEI отклоняет батч: HTTP 400); `EMBEDDINGS_URL` env, дефолт `http://embeddings:80` |
+| `src/scripts/backfillEmbeddings.ts` | разовый бэкфилл всех новостей; батчи по 16 (env `BACKFILL_BATCH_SIZE`), партиционирование воркеров `BACKFILL_MOD/REM` по нормализованному остатку `((hashtext(id::text)::bigint % MOD) + MOD) % MOD` (hashtext знаковый!), резюмируемый (фильтр `embedding IS NULL`), прогресс каждые 500, упавшие дважды батчи → `logs/backfill_embeddings_skipped.json` |
 | `src/scripts/importCascadeSnapshot.ts` | импорт исторических каскадов из `cascade_import.json` (идемпотентно, `source='sandbox-import'`) |
 | `src/scripts/dumpCalibrationPairs.ts` | пары для калибровки порогов: позитивы из импортных кластеров + 10k случайных негативов (Δt > 3 суток) → `calibration_pairs.csv` |
 
 Запуск скриптов на VPS: `docker exec pulse-backend npx ts-node --transpile-only src/scripts/<имя>.ts`.
 
-### 18.4. Порядок операций (этап 1)
+### 18.4. Порядок операций (этап 1) — все пункты выполнены 2026-09-11
 
-1. Бэкап БД → swap 4G → Postgres на `pgvector/pgvector:pg18` (мажорная = кластеру, 18.6).
-2. Миграция `news_embeddings_v1.sql`.
-3. Сервис `embeddings` (модель ~1,2 ГБ качается в volume `tei_data` при первом старте;
-   ⚠️ прогрев на VDS 2vCPU/4GB занимает 15–20 мин, ~3 ГБ уходят в swap — healthcheck
-   `healthy` только после прогрева).
-4. Ночной бэкфилл (6–15 ч на ~53 тыс. новостей с `title_ru`; EN без перевода
-   не эмбеддятся; скрипт резюмируемый, watchdog-цикл на сервере).
-5. `CREATE INDEX CONCURRENTLY news_embedding_hnsw ON news USING hnsw (embedding vector_cosine_ops); ANALYZE news;`
-6. Импорт каскадов → выгрузка `calibration_pairs.csv` → владелец калибрует пороги.
-7. Приёмка → ТЗ-92 (реалтайм-кластеризация новостей по мере поступления).
+1. ✅ Бэкап БД → swap 4G → Postgres на `pgvector/pgvector:pg18` (мажорная = кластеру, 18.6).
+2. ✅ Миграция `news_embeddings_v1.sql`.
+3. ✅ Сервис `embeddings` (модель ~1,2 ГБ в volume `tei_data`; после апгрейда VDS
+   до 24 CPU/10G прогрев ~3 мин: лимиты 8G/22 CPU, `RAYON_NUM_THREADS=22` —
+   без него warmup-спайк RSS убивает контейнер молча, ExitCode 0).
+4. ✅ Бэкфилл: 53 361 новость с `title_ru`, ферма 4 воркера (`/opt/pulse/backfill_farm.sh`),
+   33–88/мин в зависимости от длины текстов (CPU-bound, candle на 22 потоках ~2200% CPU).
+   Итог: `embedding IS NULL AND title_ru IS NOT NULL` = 0, skipped = 0.
+5. ✅ `CREATE INDEX CONCURRENTLY news_embedding_hnsw ON news USING hnsw (embedding vector_cosine_ops); ANALYZE news;`
+   (постройка 20–40 мин при maintenance_work_mem 32M — см. DEPLOYMENT.md).
+6. ✅ Импорт каскадов (1568 кластеров / 4225 связей, source='sandbox-import') →
+   `calibration_pairs.csv` (11 884 пары) → владелец калибрует пороги.
+7. ✅ Приёмка → ТЗ-92 (реалтайм-кластеризация новостей по мере поступления).
 
-### 18.5. Отклонения от ТЗ-91 и ограничения
+### 18.5. Отклонения от ТЗ-91, инциденты и ограничения
 
 - **`--max-batch-tokens 4096` вместо 16384**: значение из ТЗ требует ~16 ГБ RAM при
-  warmup-аллокации TEI («memory allocation of 17179869184 bytes failed») и на VDS
-  4 ГБ контейнер падает. 4096 проверено (RSS ~2,4 ГБ). Бэкфилл шлёт батчи по 16
-  текстов (~≤4k токенов), лимит клиента 32 сохранён.
+  warmup-аллокации TEI; 8192 при 22 потоках не влезают даже в 7.5G (рестарт-луп).
+  4096 проверено (RSS ~2,7 ГБ). Бэкфилл шлёт батчи по 16 текстов, лимит клиента 32.
+- **Инциденты бэкфилла 2026-09-11** (все исправлены, см. коммиты 5b2eb02…d4b107f):
+  1. знаковые остатки `hashtext % MOD` (-3..3 вместо 0..3) — воркеры обработали
+     ~75% и «завершились»; лечение — нормализация остатка;
+  2. таймаут клиента 300 с < латентность очереди TEI → батчи в skipped; лечение 600 с;
+  3. непарные Unicode-суррогаты в текстах → HTTP 400 на весь батч; лечение —
+     `stripLoneSurrogates` в `embeddings.ts`;
+  4. 8 воркеров/батч 32 vs 4/16 — перегруз очереди без прироста (CPU-bound),
+     стабильная схема 4/16.
 - **Только PostgreSQL**: SQLite-режим (`USE_SQLITE`) в новых скриптах не поддерживается.
 - **PGDATA на VPS задан явно** (`/var/lib/postgresql/18/docker`) — см. DEPLOYMENT.md,
   раздел ТЗ-91; кластер лежит в подкаталоге volume.
-- Риск «зависание TEI на отдельных входах» (TEI issue #694) митигирован клиентским
-  таймаутом 30с + пропуском проблемных батчей; fallback при воспроизведении —
-  sentence-transformers с той же моделью (колонка и данные не меняются).
+- EN-новости без `title_ru` (103k) эмбеддинг не получили — осознанно: один
+  канонический язык для кластеризации; добор — после разбора бэклога переводов (ТЗ-92+).
 
 ---
 
