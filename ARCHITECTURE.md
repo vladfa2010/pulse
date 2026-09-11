@@ -3139,7 +3139,8 @@ PostgreSQL + pgvector (pgvector/pgvector:pg18):
 2. ✅ Миграция `news_embeddings_v1.sql`.
 3. ✅ Сервис `embeddings` (модель ~1,2 ГБ в volume `tei_data`; после апгрейда VDS
    до 24 CPU/10G прогрев ~3 мин: лимиты 8G/22 CPU, `RAYON_NUM_THREADS=22` —
-   без него warmup-спайк RSS убивает контейнер молча, ExitCode 0).
+   без него warmup-спайк RSS убивает контейнер молча, ExitCode 0. После возврата
+   VDS на 2 ядра/4G (2026-09-12): 3G/2 CPU, `RAYON_NUM_THREADS=4`, прогрев ~8 мин).
 4. ✅ Бэкфилл: 53 361 новость с `title_ru`, ферма 4 воркера (`/opt/pulse/backfill_farm.sh`),
    33–88/мин в зависимости от длины текстов (CPU-bound, candle на 22 потоках ~2200% CPU).
    Итог: `embedding IS NULL AND title_ru IS NOT NULL` = 0, skipped = 0.

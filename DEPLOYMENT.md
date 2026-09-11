@@ -371,7 +371,11 @@ docker-compose up   # PostgreSQL 16 + Redis 7 + Backend
   по digest (`cpu-1.9@sha256:ad950d30…`), порт наружу не опубликован, бекенд ходит
   по `http://embeddings:80`. Апгрейд VDS до 24 ядер / 10 ГБ RAM (2026-09-10):
   лимиты **8G RAM / 22 CPU**, `RAYON_NUM_THREADS=22`, `--tokenization-workers 12`,
-  `--max-client-batch-size 32`, `--max-batch-tokens 4096`.
+  `--max-client-batch-size 32`, `--max-batch-tokens 4096`. Возврат VDS на 2 ядра /
+  4 ГБ RAM (2026-09-12): лимиты **3G RAM / 2 CPU**, `RAYON_NUM_THREADS=4`,
+  `--tokenization-workers 4` (`--max-batch-tokens 4096` без изменений; warmup-аллокация
+  TEI ~2,6–2,8 ГБ почти не зависит от числа потоков — при 2,5G лимите был рестарт-луп,
+  при 3G healthy, прогрев ~8 мин).
   ⚠️ **Отклонение от ТЗ:** `--max-batch-tokens 4096` вместо 16384 — 16384 требует
   ~16 ГБ RAM warmup-аллокации; 8192 при 22 потоках не влезают даже в 7.5G
   (рестарт-луп, проверено). 4096 проверено, RSS ~2,7 ГБ, прогрев ~3 мин.
