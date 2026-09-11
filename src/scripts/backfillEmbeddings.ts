@@ -37,9 +37,13 @@ const SKIPPED_LOG = path.join(process.cwd(), 'logs', 'backfill_embeddings_skippe
 // Партиционирование для параллельных воркеров (временный апгрейд VDS до 24 ядер):
 // BACKFILL_MOD=4 BACKFILL_REM=0..3 — воркер берёт только строки с
 // hashtext(id::text) % MOD = REM. Множества не пересекаются → воркеры не дублируют работу.
+// ВАЖНО: hashtext возвращает int4 со знаком, а % в Postgres сохраняет знак делимого
+// (-5 % 4 = -1) → диапазон остатков -3..3, а не 0..3. Без нормализации воркеры 0..3
+// обрабатывали лишь часть строк (~75%), отрицательные бакеты (~19.7k новостей)
+// остались нетронутыми и «ферма завершилась» досрочно (инцидент 2026-09-11).
 const MOD = parseInt(process.env.BACKFILL_MOD || '1', 10);
 const REM = parseInt(process.env.BACKFILL_REM || '0', 10);
-const modFilter = MOD > 1 ? `AND hashtext(id::text) % ${MOD} = ${REM}` : '';
+const modFilter = MOD > 1 ? `AND ((hashtext(id::text)::bigint % ${MOD}) + ${MOD}) % ${MOD} = ${REM}` : '';
 
 interface SkippedEntry {
   ids: string[];
