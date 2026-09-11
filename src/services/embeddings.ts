@@ -33,15 +33,25 @@ export const EMBEDDING_DIM = 1024;
 export const EMBEDDING_MAX_TEXT = 1000;
 
 // ТЗ-91 задавало 30 с, но на VDS с лимитом CPUs батч 16 текстов инференсится
-// дольше; при 4 параллельных воркерах TEI сериализует батчи в очередь
-// (max-batch-tokens) и латентность запроса доходит до ~2–4 мин. 300 с с запасом.
-const REQUEST_TIMEOUT_MS = 300_000;
+// дольше; при параллельных воркерах TEI сериализует батчи в очередь
+// (max-batch-tokens) и латентность запроса доходит до минут. 600 с с запасом:
+// при 300 с ночной бэкфилл временами уходил в таймауты, батчи падали дважды
+// и улетали в skipped (инцидент 2026-09-11).
+const REQUEST_TIMEOUT_MS = 600_000;
 const RETRY_DELAY_MS = 5_000;
 
 /** Единый формат текста для эмбеддинга: заголовок + пробел + summary (обрезка 1000) */
 export function embeddingText(titleRu: string | null, summaryRu: string | null): string {
   const text = `${titleRu || ''} ${summaryRu || ''}`.trim();
   return text.slice(0, EMBEDDING_MAX_TEXT);
+}
+
+// TEI (serde_json) отклоняет JSON с одиночными суррогатами: часть новостей в БД
+// содержит битый Unicode из старых импортов → батч целиком получал HTTP 400
+// («unexpected end of hex escape») и улетал в skipped (инцидент 2026-09-11).
+// Убираем только НЕПАРНЫЕ суррогаты, легальные пары (эмодзи и т.п.) сохраняем.
+function stripLoneSurrogates(s: string): string {
+  return s.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '');
 }
 
 function sleep(ms: number): Promise<void> {
@@ -81,10 +91,13 @@ export async function embedBatch(texts: string[]): Promise<number[][]> {
     throw new Error(`embedBatch: батч ${texts.length} > лимита ${EMBEDDING_MAX_BATCH}`);
   }
 
+  // Санитизация Unicode: непарные суррогаты убивают весь батч (HTTP 400 от TEI)
+  const cleanTexts = texts.map((t) => stripLoneSurrogates(t));
+
   let lastErr: unknown;
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
-      const vectors = await postEmbed(texts);
+      const vectors = await postEmbed(cleanTexts);
       // Валидация: массив той же длины, каждый вектор длины 1024
       if (!Array.isArray(vectors) || vectors.length !== texts.length) {
         throw new Error(`TEI вернул ${Array.isArray(vectors) ? vectors.length : 'не массив'} векторов вместо ${texts.length}`);
