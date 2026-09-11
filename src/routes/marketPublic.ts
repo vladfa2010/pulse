@@ -301,7 +301,7 @@ router.get('/cascades', async (req, res) => {
               fn.published_at AS first_news_at
        FROM clusters c
        LEFT JOIN LATERAL (
-         SELECT n.title_ru, n.source, n.url, n.published_at
+         SELECT n.title_ru AS title, n.source, n.url, n.published_at
          FROM cluster_items ci
          JOIN news n ON n.id = ci.news_id
          WHERE ci.cluster_id = c.id
