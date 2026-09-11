@@ -21,6 +21,7 @@ import { getAllTagNames } from './tagManager';
 import { sendNewArticlePush } from './push';
 import { slugify } from '../utils/slugify';
 import { populateNewsTagLinksBatch, EnrichmentTask } from './enrichment';
+import { embedAndClusterBatch } from './clustering';
 
 const INSTANCE_ID = `${process.env.HOSTNAME || 'unknown'}-${Date.now()}`;
 const SQL_NOW = "NOW()";
@@ -176,6 +177,13 @@ async function processRawArticlesLocked(signal: AbortSignal): Promise<void> {
           }));
           void populateNewsTagLinksBatch(tasks).catch(err =>
             console.warn('[Enrichment] news_tag_links write failed (non-fatal):', err.message));
+
+          // ТЗ-92: реалтайм-кластеризация (fire-and-forget, фиче-флаг
+          // CLUSTERING_ENABLED, дефолт — выключено; откат без деплоя)
+          if (process.env.CLUSTERING_ENABLED === 'true') {
+            void embedAndClusterBatch(chunk.map(a => a.id)).catch(err =>
+              console.warn('[Clustering] batch failed (non-fatal):', err.message));
+          }
 
         } catch (err: any) {
           if (isAbortError(err)) {

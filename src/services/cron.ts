@@ -31,6 +31,8 @@ import { sendSubscriptionReminders } from './subscription';
 import { broadcastNews } from './sse';
 import { analyzeUnifiedBatch, UnifiedResult } from './smartTagMatcher';
 import { freezeHeatmapRecentDays } from './heatmapDaily';
+import { embedAndClusterBatch } from './clustering';      // ТЗ-92, задача 4
+import { runStoryGrouping } from './storyGrouper';        // ТЗ-92, задача 5
 
 // ═══════════════════════════════════════════════════════════════════════════
 // analyzeSentiment — простой анализ на основе ключевых слов
@@ -485,4 +487,64 @@ export function startHeatmapFreezeCron(opts?: { isShuttingDown?: () => boolean }
       await releaseCronLock('news_heatmap_freeze');
     }
   }, { timezone: 'Europe/Moscow' });
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ТЗ-92: реалтайм-кластеризация — догоняющий воркер пропусков + сюжеты
+// ═══════════════════════════════════════════════════════════════════════════
+// ВНИМАНИЕ: startCron() выше ОТКЛЮЧЁН (TZ_REMOVE_DUPLICATE_RSS_CRON) — этот
+// блок живёт отдельным экспортом startClusteringCron() и подключается из
+// index.ts под фиче-флагом CLUSTERING_ENABLED.
+//
+// Догоняющий воркер (задача 4): каждые 15 минут — до 200 новостей с
+// embedding IS NULL за последние 7 суток. Закрывает: падение TEI, перезапуски
+// бекенда, окно между этапами 1 и 2.
+//
+// Сюжеты (задача 5): раз в час — runStoryGrouping().
+
+const CLUSTERING_ENABLED = process.env.CLUSTERING_ENABLED === 'true';
+const CATCHUP_BATCH = 200;
+
+export function startClusteringCron(opts?: { isShuttingDown?: () => boolean }) {
+  if (!CLUSTERING_ENABLED) {
+    console.log('[Cron] Clustering disabled (CLUSTERING_ENABLED != true) — catch-up and story cron not scheduled');
+    return;
+  }
+
+  cron.schedule('*/15 * * * *', async () => {
+    if (opts?.isShuttingDown?.()) return;
+    const acquired = await acquireCronLock('clustering-catchup');
+    if (!acquired) return;
+    try {
+      const res = await query(
+        `SELECT id FROM news
+         WHERE embedding IS NULL
+           AND title_ru IS NOT NULL
+           AND published_at > NOW() - INTERVAL '7 days'
+         ORDER BY published_at ASC
+         LIMIT $1`,
+        [CATCHUP_BATCH]
+      );
+      if (res.rows.length > 0) {
+        console.log(`[Cron] Clustering catch-up: ${res.rows.length} новостей без эмбеддинга`);
+        await embedAndClusterBatch(res.rows.map((r: any) => r.id));
+      }
+    } catch (err: any) {
+      console.error('[Cron] Clustering catch-up failed:', err.message);
+    }
+  });
+  console.log('[Cron] Clustering catch-up scheduled every 15 minutes');
+
+  cron.schedule('0 * * * *', async () => {
+    if (opts?.isShuttingDown?.()) return;
+    const acquired = await acquireCronLock('story-grouping');
+    if (!acquired) return;
+    try {
+      await runStoryGrouping();
+    } catch (err: any) {
+      console.error('[Cron] Story grouping failed:', err.message);
+    }
+  });
+  console.log('[Cron] Story grouping scheduled hourly');
 }

@@ -52,7 +52,7 @@ import { runCalendarV2Migrations } from './services/calendar';
 import appRoutes from './routes/app';
 import { authMiddleware, AuthRequest } from './middleware/auth';
 import { apiLimiter, authLimiter, webhookLimiter, forgotPasswordLimiter, passwordResetFlowLimiter, promoValidateLimiter } from './middleware/rateLimit';
-import { startCron, startHeatmapFreezeCron } from './services/cron';   // startCron (RSS) отключен (TZ_REMOVE_DUPLICATE_RSS_CRON) — модуль оставлен для отката; heatmap freeze — TZ-49
+import { startCron, startHeatmapFreezeCron, startClusteringCron } from './services/cron';   // startCron (RSS) отключен (TZ_REMOVE_DUPLICATE_RSS_CRON); heatmap freeze — TZ-49; clustering — ТЗ-92 (флаг CLUSTERING_ENABLED)
 import { sendWeeklyReportForUser } from './services/reports'; // ← Еженедельные репорты (manual + API)
 import { startDigestCron, sendAllDigests, setDigestEnabled } from './services/digest'; // ← дайджест (каждый час) — через notification matrix
 import { startPortfolioSyncWorker } from './services/portfolioSync/worker';
@@ -3957,6 +3957,7 @@ async function start() {
       startPortfolioSyncWorker(); // Broker portfolio sync (every 15 min MSK)
       startFactCheckCron(); // Fact-check worker (every 10s)
       startHeatmapFreezeCron({ isShuttingDown: () => shuttingDown }); // News heatmap freeze — ежедневно 00:05 MSK (TZ-49)
+      startClusteringCron({ isShuttingDown: () => shuttingDown }); // ТЗ-92: catch-up кластеризации (*/15) + сюжеты (ежечасно), флаг CLUSTERING_ENABLED
     }
 
     // Sentiment Index — daily reset of vote_count_today / streak at 00:00 MSK (21:00 UTC)
