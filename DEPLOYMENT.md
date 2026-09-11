@@ -411,6 +411,53 @@ docker-compose up   # PostgreSQL 16 + Redis 7 + Backend
   8277 негативов, sim = косинусная близость).
 - Swap: `/swapfile` 2G + `/swapfile2` 2G (fstab, pri=-2), итого 4G.
 
+### ⚠️ Инцидент 2026-09-11: wipe БД через `docker compose down -v`
+
+Вечером 2026-09-11 (20:13–20:18 UTC) при ручных операциях на сервере
+контейнеры были пересозданы с удалением именованных volumes
+(`down -v` / `docker volume rm`) — **все данные postgres и TEI удалены**:
+53 361 эмбеддинг, HNSW-индекс, 1568 импортных кластеров, продуктовые
+данные. Без флага `-v` данные переживают пересоздание контейнера.
+
+**Восстановление (2026-09-12):**
+- БД пересоздана из `backup-2026-09-10.sql.gz` (данные на 10.09 12:51;
+  `DROP DATABASE pulse WITH (FORCE)` → `CREATE` → заливка, 0 ошибок).
+- Миграции `news_embeddings_v1.sql` + `news_embeddings_v2.sql` применены заново.
+- `calibration_pairs.csv` уцелел (лежал вне volume) — калибровка порогов не потеряна.
+- Бэкфилл эмбеддингов перезапущен фермой `/opt/pulse/backfill_farm.sh`
+  (4 воркера, ~30–40 векторов/мин на 2 ядрах → ~30 ч). HNSW-индекс
+  строится ПОСЛЕ завершения бэкфилла (иначе вставки в разы медленнее).
+- Правило: **никогда не использовать `docker compose down -v` на проде**;
+  перед любыми операциями с volumes — свежий дамп (`backup-*.sql.gz`).
+
+### ТЗ-92 (2026-09-12): реалтайм-кластеризация — фактическое состояние
+
+- Фиче-флаг `CLUSTERING_ENABLED` (env backend'а, в `.env` сервера = true;
+  дефолт в compose `false` — мгновенный откат без деплоя).
+- **Задача 1** — хук в `newsProcessor.ts` после `populateNewsTagLinksBatch`:
+  fire-and-forget `embedAndClusterBatch(chunk)`, не блокирует чанк.
+- **Задача 2** — `src/services/clustering.ts`: embed (формат ТЗ-91) → top-10
+  по HNSW в окне 48 ч → **числовое вето до зон** (значимые числа: длина ≥ 2,
+  годы исключены; сводки ПВО разных дней sim до 0.944 — без вето авто-склейка
+  слипала бы разные дни) → рубрик-чёрный список → трёхзонная логика
+  (T1=0.80 авто-склейка / T2=0.55 LLM-верификатор, пороги откалиброваны
+  ТЗ-91, в `src/config/clustering.ts`) → приклеивание транзакцией с
+  блокировкой строки-кандидата; окно жизни кластера 36 ч.
+- **Задача 3** — `src/services/clusterVerifier.ts` + промпт по Методологии
+  §9.4 (ключ `same_fact`); парсинг по explicit keys, fail-closed (§9.3);
+  суточный лимит 2000 вызовов; каждый вызов логируется (аудит качества).
+- **Задача 4** — `startClusteringCron` (cron.ts, под флагом): catch-up
+  `*/15` — до 200 новостей с `embedding IS NULL` за 7 суток.
+- **Задача 5** — `src/services/storyGrouper.ts`: ежечасно, кандидаты
+  size ≥ 8 или жизнь > 24 ч без story_id; батч-LLM назначает существующий
+  или новый сюжет; миграция `news_embeddings_v2.sql` (stories + clusters.story_id).
+- **Задача 6** — API в `marketPublic.ts`: `GET /api/market/cascades?window=`
+  (TTL 60 с), `GET /api/market/cascade-chart?cluster_id=` (TTL 15 мин,
+  свечи по тегам кластера + метки новостей), `GET /api/market/stories`
+  (TTL 15 мин). Инструменты свечей переиспользуют `buildInstrumentsForTags`
+  (общий хелпер с news-chart, логика без изменений).
+- Юнит-тест: `src/tests/clusteringVeto.test.ts` (15 кейсов вето/рубрик).
+
 ### Операции
 
 ```bash
@@ -420,6 +467,12 @@ docker compose ps                              # статус
 docker logs pulse-backend --tail 100 -f        # логи
 docker compose restart backend                 # рестарт
 ```
+
+⚠️ **ЗАПРЕЩЕНО на проде:** `docker compose down -v`, `docker volume rm`,
+`docker compose up -V` — удаляют данные postgres/TEI (инцидент 2026-09-11,
+восстановление из бэкапа + ~30 ч пересчёта эмбеддингов). Перед любыми
+операциями с volumes делать дамп:
+`docker exec pulse-postgres pg_dump -U pulse_user -d pulse | gzip > /opt/pulse/backup-$(date +%F).sql.gz`
 
 ### Обновление версии (процедура v2, проверена 2026-09-10)
 

@@ -3168,6 +3168,41 @@ PostgreSQL + pgvector (pgvector/pgvector:pg18):
   раздел ТЗ-91; кластер лежит в подкаталоге volume.
 - EN-новости без `title_ru` (103k) эмбеддинг не получили — осознанно: один
   канонический язык для кластеризации; добор — после разбора бэклога переводов (ТЗ-92+).
+- **Инцидент 2026-09-11 (wipe БД, `down -v`)**: данные postgres/TEI удалены при
+  ручной операции; восстановление из `backup-2026-09-10.sql.gz`, бэкфилл
+  перезапущен (~30 ч на 2 ядрах). Правило: `down -v`/`volume rm` на проде
+  запрещены, перед операциями с volumes — дамп. Подробно в DEPLOYMENT.md.
+
+### 18.6. Реалтайм-кластеризация (ТЗ-92, 2026-09-12)
+
+Пайплайн встраивается в конец обработки чанка NewsProcessor
+(`newsProcessor.ts`, fire-and-forget, флаг `CLUSTERING_ENABLED`):
+
+```
+чанк сохранён → embedAndClusterBatch(newsIds)          [services/clustering.ts]
+  1. embedBatch (TEI, формат ТЗ-91) → news.embedding
+  2. top-10 кандидатов по HNSW, окно 48ч назад
+  3. числовое вето (значимые числа: ≥2 цифр, без годов; обязательно ДО зон —
+     сводки ПВО разных дней дают sim до 0.944)
+  4. рубрик-чёрный список (дайджесты не сид и не дубль)
+  5. зоны: sim ≥ 0.80 (T1) → приклеить; 0.55–0.80 (T2..T1) → LLM-верификатор
+     [services/clusterVerifier.ts, промпт Методология §9.4, ключ same_fact,
+     fail-closed, лимит 2000 вызовов/сутки]; < 0.55 → одиночка
+  6. приклеивание транзакцией (FOR UPDATE строки-кандидата), окно жизни
+     кластера 36 ч; кластер создаётся только из 2+ новостей
+```
+
+- Пороги и константы: `src/config/clustering.ts` (T1/T2 откалиброваны
+  по calibration_pairs.csv: max негативов 0.743 — запас 0.057 до T1).
+- Догоняющий воркер: `startClusteringCron` — catch-up `*/15` (до 200
+  новостей без эмбеддинга за 7 суток) + сюжеты `0 * * * *`
+  (`services/storyGrouper.ts`: кандидаты size ≥ 8 или жизнь > 24 ч,
+  батч-LLM назначает story_id; таблица stories — миграция
+  `news_embeddings_v2.sql`).
+- API: `GET /api/market/cascades?window=24h|7d|30d` (TTL 60 с),
+  `/cascade-chart?cluster_id=` и `/stories` (TTL 15 мин) — routes/marketPublic.ts;
+  свечи через общий `buildInstrumentsForTags` (с news-chart).
+- Откат: `CLUSTERING_ENABLED=false` — ни одного вызова embeddings/LLM.
 
 ---
 
