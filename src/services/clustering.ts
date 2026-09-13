@@ -335,14 +335,14 @@ async function clusterOne(news: NewsRow, vector: number[]): Promise<void> {
         title: news.title_ru || '',
         summary: news.summary_ru || '',
         source: news.source || undefined,
-        publishedAt: news.published_at,
+        publishedAt: new Date(news.published_at).toISOString(),
       },
       {
         id: best.id,
         title: best.title_ru || '',
         summary: '',
         source: best.source || undefined,
-        publishedAt: best.published_at,
+        publishedAt: new Date(best.published_at).toISOString(),
       },
       best.sim
     );
