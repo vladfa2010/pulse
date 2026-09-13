@@ -301,7 +301,8 @@ router.get('/cascades', async (req, res) => {
               c.first_published_at, c.last_seen_at, c.story_id,
               EXTRACT(EPOCH FROM (c.last_seen_at - c.first_published_at)) / 60 AS life_min,
               fn.title AS first_title, fn.source AS first_source, fn.url AS first_url,
-              fn.published_at AS first_news_at
+              fn.published_at AS first_news_at,
+              sc.sources AS sources
        FROM clusters c
        LEFT JOIN LATERAL (
          SELECT n.title_ru AS title, n.source, n.url, n.published_at
