@@ -20,6 +20,7 @@ export interface MarketProvider {
   getDailyCandles(ticker: string, exchange: string, days?: number): Promise<MarketCandle[]>;
   getWeeklyCandles?(ticker: string, exchange: string, weeks?: number): Promise<MarketCandle[]>;
   getIntraday5min(ticker: string, exchange: string, date: string): Promise<MarketCandle[]>;
+  getIntraday5minRange?(ticker: string, exchange: string, startDate: string, endDate: string): Promise<MarketCandle[]>;
   getCurrentPrice(ticker: string, exchange: string): Promise<number | null>;
 }
 
@@ -57,6 +58,22 @@ export async function getIntraday5min(
 ): Promise<{ candles: MarketCandle[]; provider: ServedBy }> {
   const provider = await resolveProvider(exchange);
   const candles = await provider.getIntraday5min(ticker.toUpperCase(), exchange.toUpperCase(), date);
+  return { candles, provider: 'finam' };
+}
+
+export async function getIntraday5minRange(
+  exchange: string,
+  ticker: string,
+  startDate: string,
+  endDate: string
+): Promise<{ candles: MarketCandle[]; provider: ServedBy }> {
+  const provider = await resolveProvider(exchange);
+  if (!provider.getIntraday5minRange) {
+    throw Object.assign(new Error(`Intraday range not supported: ${exchange}`), { code: 'finam_bad_exchange' });
+  }
+  const candles = await provider.getIntraday5minRange(
+    ticker.toUpperCase(), exchange.toUpperCase(), startDate, endDate
+  );
   return { candles, provider: 'finam' };
 }
 

@@ -61,6 +61,11 @@ interface InstrumentChart {
   times: string[];
   ohlc: number[][];
   volumes: number[];
+  // ТЗ-97: многодневный диапазон каскада (только /cascade-chart; для /news-chart не заполняются)
+  dates?: string[];
+  covered_until?: string;
+  truncated?: boolean;
+  range_fallback?: boolean;
 }
 
 /**
@@ -251,6 +256,8 @@ async function buildInstrumentsForTags(matchedTags: string[], publishedAt: strin
 
 const CASCADES_CACHE_TTL_MS = 60 * 1000;        // 60 с
 const CASCADE_CHART_CACHE_TTL_MS = 15 * 60 * 1000; // 15 мин
+// ТЗ-97: крышка многодневного диапазона каскада (календарных дней, включительно)
+const CASCADE_CHART_MAX_RANGE_DAYS = 14;
 const STORIES_CACHE_TTL_MS = 15 * 60 * 1000;    // 15 мин
 
 const cascadesCache = new Map<string, { at: number; payload: any }>();
@@ -589,6 +596,54 @@ router.get('/cascade-chart', async (req, res) => {
 
     const instruments = await buildInstrumentsForTags(effectiveTags, anchor);
 
+    // ТЗ-97: многодневный охват — одним диапазонным запросом Finam от якорного
+    // дня (instrument.date, уже разрешён со сдвигом) до дня last_seen_at кластера.
+    // buildInstrumentsForTags не меняем — это пост-обработка только для /cascade-chart.
+    const rangedInstruments: InstrumentChart[] = [];
+    for (const instrument of instruments) {
+      const d0 = instrument.date;
+      let d1 = dateInTz(cluster.last_seen_at, instrument.timezone);
+      let truncated = false;
+      const d1Max = addDays(d0, CASCADE_CHART_MAX_RANGE_DAYS - 1);
+      if (d1 > d1Max) {
+        d1 = d1Max;
+        truncated = true;
+      }
+      if (d1 <= d0) {
+        // Однодневный каскад — поведение как до ТЗ-97, поля диапазона не выставляем.
+        rangedInstruments.push(instrument);
+        continue;
+      }
+      instrument.truncated = truncated;
+
+      const [rangeTicker, rangeMic] = instrument.symbol.split('@');
+      let rangeCandles: MarketCandle[];
+      try {
+        rangeCandles = (await marketRouter.getIntraday5minRange(rangeMic, rangeTicker, d0, d1)).candles;
+      } catch (err: any) {
+        if (err.code === 'finam_not_found') {
+          continue; // пропустить инструмент
+        }
+        throw err;
+      }
+
+      if (rangeCandles.length === 0) {
+        // Finam не хранит M5 за старые даты — оставляем однодневный график
+        instrument.range_fallback = true;
+        rangedInstruments.push(instrument);
+        continue;
+      }
+
+      // Свечи отсортированы по возрастанию (fetchBars отдаёт в порядке времени);
+      // findNearestTimeIndex фронта полагается на сортировку.
+      instrument.times = rangeCandles.map((c) => c.time);
+      instrument.ohlc = rangeCandles.map((c) => [c.open, c.close, c.low, c.high]);
+      instrument.volumes = rangeCandles.map((c) => c.volume ?? 0);
+      instrument.dates = [...new Set(rangeCandles.map((c) => dateInTz(c.time, instrument.timezone)))];
+      instrument.covered_until = rangeCandles[rangeCandles.length - 1].time;
+      rangedInstruments.push(instrument);
+    }
+
     const newsRes = await query(
       `SELECT n.published_at, n.title_ru, n.source
        FROM cluster_items ci
@@ -601,7 +656,7 @@ router.get('/cascade-chart', async (req, res) => {
     const payload = {
       cluster_id: clusterId,
       published_at: anchor,
-      instruments,
+      instruments: rangedInstruments,
       news_markers: newsRes.rows.map((r: any) => ({
         published_at: r.published_at,
         title: r.title_ru,

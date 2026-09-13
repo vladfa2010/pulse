@@ -193,6 +193,32 @@ export async function getIntraday5min(ticker: string, exchange: string, date: st
   return candles;
 }
 
+export async function getIntraday5minRange(
+  ticker: string,
+  exchange: string,
+  startDate: string,
+  endDate: string
+): Promise<MarketCandle[]> {
+  assertReady();
+  const mic = await resolveMic(exchange);
+  if (!mic) {
+    throw Object.assign(new Error(`Exchange not supported by Finam: ${exchange}`), { code: 'finam_bad_exchange' });
+  }
+  const key = cacheKey(ticker, exchange, `m5r_${startDate}_${endDate}`);
+  const hit = fromCache(intradayCache, key);
+  if (hit) return hit;
+
+  // startDate/endDate are calendar days (YYYY-MM-DD) in the exchange's own
+  // timezone, inclusive — one range request covers the whole span.
+  const tz = micTimezone(mic);
+  const start = zonedMidnightToUtc(startDate, tz);
+  const end = new Date(zonedMidnightToUtc(endDate, tz).getTime() + 24 * 3600 * 1000);
+  const candles = await fetchBars(`${ticker}@${mic}`, 'TIME_FRAME_M5', start.toISOString(), end.toISOString());
+  const ttl = candles.length === 0 ? TTL_EMPTY_MS : TTL_INTRADAY_PAST_MS;
+  intradayCache.set(key, { data: candles, expiresAt: Date.now() + ttl });
+  return candles;
+}
+
 export async function getCurrentPrice(ticker: string, exchange: string): Promise<number | null> {
   assertReady();
   const mic = await resolveMic(exchange);
