@@ -256,6 +256,41 @@ export async function embedAndClusterBatch(newsIds: string[]): Promise<void> {
   }
 }
 
+/**
+ * Исторический проход (после бэкфилла ТЗ-91): кластеризация новостей, у
+ * которых вектор УЖЕ есть (embedAndClusterBatch их пропускает — выбирает
+ * только embedding IS NULL). Вектор читается из БД, TEI не дёргается.
+ * Используется скриптом src/scripts/backfillClusters.ts.
+ */
+export async function clusterEmbeddedBatch(newsIds: string[]): Promise<void> {
+  if (!Array.isArray(newsIds) || newsIds.length === 0) return;
+
+  const res = await query(
+    `SELECT id, title_ru, summary_ru, source, published_at, embedding::text AS embedding_text
+     FROM news
+     WHERE id = ANY($1::uuid[])
+       AND title_ru IS NOT NULL
+       AND embedding IS NOT NULL
+       AND cluster_id IS NULL`,
+    [newsIds]
+  );
+  for (const row of res.rows) {
+    try {
+      await clusterOne(row as NewsRow, parseVectorLiteral(row.embedding_text));
+    } catch (err: any) {
+      console.warn(`[Clustering] новость ${row.id} пропущена (non-fatal):`, err.message);
+    }
+  }
+}
+
+/** '[0.1,0.2,...]' (текстовая форма vector из pg) → number[] */
+function parseVectorLiteral(s: string): number[] {
+  return s
+    .replace(/^\[|\]$/g, '')
+    .split(',')
+    .map((x) => Number(x));
+}
+
 async function clusterOne(news: NewsRow, vector: number[]): Promise<void> {
   if (isRubricTitle(news.title_ru || '')) {
     return; // рубрики-дайджесты не участвуют в склейке
