@@ -35,7 +35,7 @@ async function main() {
   const idsRes = await query(
     `SELECT id FROM news
      WHERE embedding IS NOT NULL AND title_ru IS NOT NULL AND cluster_id IS NULL
-     ORDER BY published_at ASC`
+     ORDER BY published_at DESC`
   );
   const ids: string[] = idsRes.rows.map((r: any) => r.id);
 
