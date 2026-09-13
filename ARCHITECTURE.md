@@ -3203,6 +3203,27 @@ PostgreSQL + pgvector (pgvector/pgvector:pg18):
   `/cascade-chart?cluster_id=` и `/stories` (TTL 15 мин) — routes/marketPublic.ts;
   свечи через общий `buildInstrumentsForTags` (с news-chart).
 - Откат: `CLUSTERING_ENABLED=false` — ни одного вызова embeddings/LLM.
+- **Доработки по ревью (ТЗ-95, 2026-09-13, коммит c5e47cf):**
+  1. Дедупликация гонки NewsProcessor ↔ catch-up cron: обработка каждой
+     новости под advisory-xact-локом `pg_try_advisory_xact_lock
+     (hashtextextended('cluster:' || id, 42))` (снимается на COMMIT; не взяли —
+     skip с логом «уже в обработке»); порядок локов advisory → row, дедлок
+     невозможен. Идемпотентный size: INSERT в cluster_items первым
+     (ON CONFLICT DO NOTHING), UPDATE clusters.size только при rowCount=1.
+     fail-loud: pool === null → throw, молчаливый пропуск запрещён.
+  2. verdict не деградирует: UPDATE применяет новый вердикт только если его
+     ранг (сильный 3 / средний 2 / сомнительный 1) не ниже текущего;
+     инвариант verdict = verdictBySim(max_sim). Старые данные не трогали
+     (на момент деплоя 67/768 realtime-кластеров с «деградировавшим»
+     verdict — разовый пересчёт size/verdict по желанию владельца).
+  3. Верификатор видит summary обеих новостей: кандидатский SQL выбирает
+     summary_ru, в промпт добавлен {{SUMMARY_B_BLOCK}} (рендерится при
+     непустом summary, иначе пустая строка).
+  4. Тест числового вето запускаемый: чистые функции вынесены в
+     `services/clusteringRules.ts` (реэкспорт из clustering.ts),
+     `scripts/clustering-veto-verify.js` + `npm run verify:clusteringVeto`
+     (15 проверок, без DATABASE_URL); неработающий jest-файл
+     src/tests/clusteringVeto.test.ts удалён.
 - **Исторический проход (2026-09-13)**: `clusterEmbeddedBatch(newsIds)` +
   скрипт `src/scripts/backfillClusters.ts` — кластеризация задним числом по
   всем новостям с готовым вектором и `cluster_id IS NULL` (realtime-пайплайн

@@ -460,6 +460,21 @@ docker-compose up   # PostgreSQL 16 + Redis 7 + Backend
   (TTL 15 мин). Инструменты свечей переиспользуют `buildInstrumentsForTags`
   (общий хелпер с news-chart, логика без изменений).
 - Юнит-тест: `src/tests/clusteringVeto.test.ts` (15 кейсов вето/рубрик).
+  ⚠️ Заменён ТЗ-95: jest-раннера в репо нет, файл не запускался → удалён,
+  покрытие перенесено в `scripts/clustering-veto-verify.js`
+  (`npm run verify:clusteringVeto`, 15 проверок, без БД; функции вынесены
+  в `src/services/clusteringRules.ts`).
+- **ТЗ-95 (2026-09-13, коммит c5e47cf) — доработки по ревью:**
+  1. Advisory-xact-лок `hashtextextended('cluster:' || news_id, 42)` на всю
+     обработку новости (гонка NewsProcessor ↔ catch-up cron → skip с логом);
+     идемпотентный size (INSERT … ON CONFLICT DO NOTHING первым, UPDATE
+     clusters только при rowCount=1); fail-loud вместо молчаливого пропуска
+     при pool === null. Проверено гоночным тестом на прод-БД (синтетическая
+     пара, cleanup после): два параллельных вызова → 1 кластер, size=2,
+     items=2, второй вызов отскочил advisory-локом.
+  2. verdict обновляется только при ранге не ниже текущего (не деградирует
+     против max_sim). Бэкап перед деплоем: `backup-2026-09-13-pre-tz95.sql.gz`.
+  3. Верификатор: {{SUMMARY_B_BLOCK}} — summary кандидата в промпте.
 - **Исторический проход (2026-09-13, коммиты 82c5842 → c41c694)** —
   задним числом по всем новостям с вектором и `cluster_id IS NULL`
   (realtime охватывает только 7 суток). Runbook:
