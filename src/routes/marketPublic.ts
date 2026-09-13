@@ -634,6 +634,39 @@ router.get('/cascade-chart', async (req, res) => {
         continue;
       }
 
+      // Дотяжка вперёд (доп. к ТЗ-97): если каскад живёт до/после последней
+      // свечи диапазона (напр. весь в выходные, а якорь сдвинут на пятницу),
+      // после последней новости в охвате нет свечей — фронт-клиппинг спрячет
+      // все маркеры. Дозапрашиваем следующие торговые дни в пределах той же
+      // крышки 14 дней от d0. При truncated === true не дотягиваем — хвост
+      // осознанно уходит в чип «+N вне графика».
+      const lastCandleTime = rangeCandles[rangeCandles.length - 1].time;
+      if (!truncated && lastCandleTime < cluster.last_seen_at) {
+        const d1ForwardMax = addDays(d1, CASCADE_CHART_MAX_RANGE_DAYS);
+        const capForwardMax = addDays(d0, CASCADE_CHART_MAX_RANGE_DAYS - 1);
+        const forwardEnd = d1ForwardMax < capForwardMax ? d1ForwardMax : capForwardMax;
+        const forwardStart = addDays(d1, 1);
+        if (forwardStart <= forwardEnd) {
+          let forwardCandles: MarketCandle[] = [];
+          try {
+            forwardCandles = (await marketRouter.getIntraday5minRange(rangeMic, rangeTicker, forwardStart, forwardEnd)).candles;
+          } catch (err: any) {
+            if (err.code !== 'finam_not_found') throw err;
+            // finam_not_found: дотяжку пропускаем, оставляем исходный диапазон
+          }
+          if (forwardCandles.length > 0) {
+            // Склейка: защита от дублей по time (если диапазоны пересеклись),
+            // сортировка по возрастанию времени.
+            const merged = new Map<string, MarketCandle>();
+            for (const c of rangeCandles) merged.set(c.time, c);
+            for (const c of forwardCandles) merged.set(c.time, c);
+            rangeCandles = [...merged.values()].sort((a, b) => a.time.localeCompare(b.time));
+          }
+          // Пустой дозапрос (напр. понедельник ещё не наступил) — оставляем как есть,
+          // завтра свечи появятся и TTL кэша подтянет их сам.
+        }
+      }
+
       // Свечи отсортированы по возрастанию (fetchBars отдаёт в порядке времени);
       // findNearestTimeIndex фронта полагается на сортировку.
       instrument.times = rangeCandles.map((c) => c.time);
