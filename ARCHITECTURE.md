@@ -3241,6 +3241,36 @@ PostgreSQL + pgvector (pgvector/pgvector:pg18):
   (2026-09-13, ~33 мин CONCURRENTLY; warm top-10 = 4 мс, cold 76–92 мс
   на 2 ядрах). Перед проходом сделан дамп `backup-2026-09-13.sql.gz` (338 МБ).
 
+### 18.7. Публичное API каскадов и страница «Каскады» (ТЗ-93, 2026-09-13)
+
+Три новых публичных эндпоинта в `routes/marketPublic.ts` (кэш по окну,
+TTL 15 мин, `X-Cache: hit/miss`):
+- `GET /api/market/cascades?window=` — дополнен `sources`: цепочка источников
+  каскада в порядке публикации (`array_agg(n.source ORDER BY ci.lag_min)`,
+  LATERAL-подзапрос; повторы сохраняются — фронт схлопывает при отрисовке).
+- `GET /api/market/cascade-graph?window=7d|30d` — данные force-графа:
+  каскады с `items` (t=epoch, source, title; сортировка по lag_min ASC,
+  первый элемент — первоисточник), сюжеты выборки (для цветов категорий) и
+  `feed` — ВСЕ новости окна ([[t, source], …]) для фона «звёздное поле»
+  (30d ≈ 40 тыс. точек ≈ 1,9 МБ JSON). 400 на 24h и прочих окнах.
+- `GET /api/market/cascade-research?window=7d|30d` — статистика «кто чаще
+  первый»: first_count (rn=1 по lag_min), share, participations, first_rate,
+  median_lag_not_first (percentile_cont, lag>0) + блок скорости каскада
+  (медиана lag второй новости, доли дублей ≤10/≤60 мин). Фильтр —
+  `clusters.first_published_at` в окне.
+
+Фронт (pulse-frontend, коммит `587ccf2`): страница `/cascades` (гостевой
+доступ, 5 вкладок — Каскады/Сюжеты/Граф/Ресерч/Методология, состояние в URL
+`?tab=&window=&cluster=`), деталь-панель каскада со свечами (переиспользован
+`InstrumentChart`), маркерами новостей и диапазоном % (только в детали, §2.5),
+ECharts force-граф со «звёздным полем» на canvas (ленивая инициализация),
+редакционный блок «Выводы» (обновляется вручную) и версионируемая
+«Методология» (`src/docs/methodology.tsx`, дата версии в шапке).
+Навигация: пункт «Каскады» после «Лента» (Navbar, бургер подхватывает сам).
+Деплой фронта на прод — `/opt/pulse/update-frontend.sh` (сборка в
+node:20-контейнере → rsync в /opt/pulse/frontend/dist; Caddy отдаёт /srv/dist).
+Плашка на карточке новости — ТЗ-94 (после; ссылается на `/cascades?cluster=`).
+
 ---
 
 *Document: ARCHITECTURE.md v9.8.0 — PULSE Platform*  
