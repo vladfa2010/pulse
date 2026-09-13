@@ -102,12 +102,14 @@ export async function runStoryGrouping(): Promise<{ assigned: number; candidates
     candidates.push({
       id: row.id,
       size: row.size,
-      first_published_at: row.first_published_at,
-      last_seen_at: row.last_seen_at,
+      // pg возвращает timestamptz как Date — нормализуем в ISO-строку,
+      // иначе .slice() на строке 127 падает (s.published_at.slice is not a function)
+      first_published_at: new Date(row.first_published_at).toISOString(),
+      last_seen_at: new Date(row.last_seen_at).toISOString(),
       samples: samplesRes.rows.map((r: any) => ({
         title: r.title_ru || '',
         source: r.source || '',
-        published_at: r.published_at,
+        published_at: new Date(r.published_at).toISOString(),
       })),
     });
   }
