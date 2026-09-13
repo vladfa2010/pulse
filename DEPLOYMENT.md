@@ -460,6 +460,30 @@ docker-compose up   # PostgreSQL 16 + Redis 7 + Backend
   (TTL 15 мин). Инструменты свечей переиспользуют `buildInstrumentsForTags`
   (общий хелпер с news-chart, логика без изменений).
 - Юнит-тест: `src/tests/clusteringVeto.test.ts` (15 кейсов вето/рубрик).
+- **Исторический проход (2026-09-13, коммиты 82c5842 → c41c694)** —
+  задним числом по всем новостям с вектором и `cluster_id IS NULL`
+  (realtime охватывает только 7 суток). Runbook:
+  ```bash
+  # перед запуском — дамп!
+  docker exec pulse-postgres pg_dump -U pulse_user -d pulse | gzip > /opt/pulse/backup-$(date +%F).sql.gz
+  # запуск (фон, лог):
+  nohup docker exec pulse-backend npx ts-node --transpile-only \
+    src/scripts/backfillClusters.ts > /opt/pulse/logs/backfill_clusters.log 2>&1 &
+  # контроль:
+  docker exec pulse-backend sh -c "pgrep -f 'backfill[C]lusters' || echo DEAD"
+  docker exec pulse-postgres psql -U pulse_user -d pulse -tAc \
+    "SELECT count(*) FROM news WHERE embedding IS NOT NULL AND cluster_id IS NULL"
+  ```
+  Идемпотентен (фильтр `cluster_id IS NULL`), батчи по 200, обход от свежих
+  к старым. Серая зона упирается в суточный лимит LLM-верификатора
+  (2000/сутки) — повторные прогоны на следующие дни; исчерпание лимита =
+  fail-closed, остаток одиночками. Наблюдение: cron */30 проверяет процесс
+  и перезапускает при падении (watchdog-лог /opt/pulse/logs/backfill_clusters.log).
+- **Состояние инфраструктуры 2026-09-13:** HNSW-индекс перестроен после
+  wipe 11.09 (`CREATE INDEX CONCURRENTLY`, ~33 мин, замечание
+  «graph no longer fits into maintenance_work_mem» — не ошибка, только
+  замедление; warm top-10 = 4 мс). Дамп перед проходом:
+  `backup-2026-09-13.sql.gz` (338 МБ, gzip-проверка пройдена).
 
 ### Операции
 

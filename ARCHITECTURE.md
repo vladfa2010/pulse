@@ -3203,6 +3203,22 @@ PostgreSQL + pgvector (pgvector/pgvector:pg18):
   `/cascade-chart?cluster_id=` и `/stories` (TTL 15 мин) — routes/marketPublic.ts;
   свечи через общий `buildInstrumentsForTags` (с news-chart).
 - Откат: `CLUSTERING_ENABLED=false` — ни одного вызова embeddings/LLM.
+- **Исторический проход (2026-09-13)**: `clusterEmbeddedBatch(newsIds)` +
+  скрипт `src/scripts/backfillClusters.ts` — кластеризация задним числом по
+  всем новостям с готовым вектором и `cluster_id IS NULL` (realtime-пайплайн
+  охватывает только последние 7 суток). Вектор читается из БД (`embedding::text`
+  → `parseVectorLiteral`), TEI не дёргается; та же `clusterOne` (окно 48 ч,
+  вето, зоны, верификатор). Обход **от свежих к старым** (DESC): свежая
+  новость видит старые дубли в своём окне и приклеивает их (получают
+  `cluster_id` и выбывают из очереди) — раздвоения каскадов нет, а самые
+  актуальные события закрываются первыми. Идемпотентен (фильтр
+  `cluster_id IS NULL`), батчи по 200. Серая зона упирается в суточный лимит
+  LLM (2000) — повторные прогоны добивают остаток, fail-closed остаток
+  остаётся одиночками. Нюанс: верификатору `publishedAt` передаётся
+  ISO-строкой — pg отдаёт timestamptz как Date, у объекта нет `.slice()`
+  (fix d76ef8a). HNSW-индекс перестроен после wipe 2026-09-11 заново
+  (2026-09-13, ~33 мин CONCURRENTLY; warm top-10 = 4 мс, cold 76–92 мс
+  на 2 ядрах). Перед проходом сделан дамп `backup-2026-09-13.sql.gz` (338 МБ).
 
 ---
 
