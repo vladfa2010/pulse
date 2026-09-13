@@ -475,6 +475,33 @@ docker-compose up   # PostgreSQL 16 + Redis 7 + Backend
   2. verdict обновляется только при ранге не ниже текущего (не деградирует
      против max_sim). Бэкап перед деплоем: `backup-2026-09-13-pre-tz95.sql.gz`.
   3. Верификатор: {{SUMMARY_B_BLOCK}} — summary кандидата в промпте.
+- **ТЗ-97 (2026-09-13, backend a93141d, frontend 3af7f7a) — многодневный
+  график каскада + сверка size:**
+  1. `getIntraday5minRange(ticker, exchange, startDate, endDate)` в
+     `finamMarketAdapter.ts` (один диапазонный fetchBars M5, кэш
+     `m5r_` + TTL_INTRADAY_PAST_MS / TTL_EMPTY_MS) + проброс в
+     `marketRouter.ts`. `/cascade-chart`: пост-обработка после
+     buildInstrumentsForTags — d0=instrument.date, d1=last_seen_at в тз
+     инструмента, крышка CASCADE_CHART_MAX_RANGE_DAYS=14 (truncated),
+     пустой диапазон → range_fallback (однодневный payload). Новые поля:
+     dates / covered_until / truncated. `buildInstrumentsForTags` и
+     `/news-chart` не тронуты.
+  2. Фронт: подписи границ дней (DD.MM) у markLine, клиппинг маркеров
+     [первая свеча−30мин; covered_until+30мин] + чип «+N вне графика»,
+     группировка маркеров-дублей на одной свече (символ с числом,
+     тултип-список). Тесты vitest 41/41 (4 новых).
+  3. **Сверка `clusters.size` (разовый дата-фикс, прод=тест — одна БД):**
+     до: `count(size <> items)` = **285** →
+     `UPDATE clusters SET size = cnt FROM (per-cluster count)…` →
+     **UPDATE 285** → после: **0**. Кластер-пример
+     a17f5bd1 (Песков/Уиткофф): size 35 → 21 (21 строка cluster_items).
+     Новые кластеры после ТЗ-95 считаются корректно (идемпотентный
+     INSERT-first), миграции не нужны.
+  4. Проверка после деплоя (VPS): `/cascade-chart?cluster_id=a17f5bd1-…`
+     — 419 свечей 05–07.09, times[0]=2026-09-05T06:55Z,
+     covered_until=2026-09-07T20:45Z, dates=[05,06,07], truncated=false.
+     Регрессия `/news-chart`: будни — однодневный payload без новых полей;
+     выходная новость — сдвиг prefer-previous-session как раньше.
 - **Исторический проход (2026-09-13, коммиты 82c5842 → c41c694)** —
   задним числом по всем новостям с вектором и `cluster_id IS NULL`
   (realtime охватывает только 7 суток). Runbook:
