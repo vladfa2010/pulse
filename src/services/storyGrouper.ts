@@ -34,6 +34,11 @@ import {
 const KIMI_API_KEY = process.env.KIMI_API_KEY;
 const KIMI_MODEL = process.env.KIMI_MODEL || 'kimi-k2.6';
 
+// Батч до 30 кластеров с генерацией до 4000 токенов не укладывается
+// в VERIFIER_TIMEOUT_MS (60 с) — реальный таймаут генерации наблюдался
+// в проде, поэтому для группировки сюжетов свой лимит.
+const STORY_GROUPING_TIMEOUT_MS = 180_000;
+
 const MAX_CANDIDATES = 30;
 const MAX_EXISTING_STORIES = 30;
 const MAX_TOKENS = 4000; // батч до 30 кластеров — с запасом
@@ -155,7 +160,7 @@ export async function runStoryGrouping(): Promise<{ assigned: number; candidates
       },
       {
         headers: { Authorization: `Bearer ${KIMI_API_KEY}`, 'Content-Type': 'application/json' },
-        timeout: VERIFIER_TIMEOUT_MS,
+        timeout: STORY_GROUPING_TIMEOUT_MS,
       }
     );
     content = response.data?.choices?.[0]?.message?.content || '';
