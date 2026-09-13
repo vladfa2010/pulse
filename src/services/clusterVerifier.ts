@@ -92,6 +92,9 @@ export async function verifyPair(a: PairSide, b: PairSide, sim: number): Promise
     SUMMARY_A_BLOCK: a.summary
       ? `Дополнительный контекст новости A: ${a.summary.slice(0, 400)}\n\n`
       : '',
+    SUMMARY_B_BLOCK: b.summary
+      ? `Дополнительный контекст новости B: ${b.summary.slice(0, 400)}\n\n`
+      : '',
   });
 
   const startedAt = Date.now();

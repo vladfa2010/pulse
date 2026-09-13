@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * PULSE — Реалтайм-кластеризация новостей (ТЗ-92, задача 2)
+ * PULSE — Реалтайм-кластеризация новостей (ТЗ-92, задача 2; доработки ТЗ-95)
  * =============================================================================
  *
  * Встраивается в пайплайн NewsProcessor fire-and-forget (задача 1) и в
@@ -9,17 +9,24 @@
  * Поток embedAndClusterBatch(newsIds):
  *   1. SELECT новостей → текст по единому формату ТЗ-91 (embeddingText).
  *   2. embedBatch (TEI) → UPDATE news SET embedding.
- *   3. Для каждой новости — top-10 кандидатов по HNSW в окне 48 ч.
- *   4. Числовое вето ДО трёх зон (измерено на боевой БД: сводки ПВО разных
+ *   3. Для каждой новости — advisory-xact-лок ('cluster:' || id): новость уже
+ *      обрабатывается другим воркером → skip (ТЗ-95 задача 1б — дедупликация
+ *      гонки NewsProcessor ↔ catch-up cron).
+ *   4. top-10 кандидатов по HNSW в окне 48 ч.
+ *   5. Числовое вето ДО трёх зон (измерено на боевой БД: сводки ПВО разных
  *      дней дают sim до 0.944 — без вето авто-склейка слипала бы разные дни).
- *   5. Рубрик-черный список: заголовки-дайджесты не участвуют в склейке.
- *   6. Трёхзонная логика: >= T1 авто-склейка; T2..T1 — LLM-верификатор;
- *      < T2 — одиночка (кластеры из одной новости не создаём).
- *   7. Приклеивание с окном жизни 36 ч (CLUSTER_GAP_HOURS).
+ *   6. Рубрик-черный список: заголовки-дайджесты не участвуют в склейке.
+ *   7. Трёхзонная логика: >= T1 авто-склейка; T2..T1 — LLM-верификатор
+ *      (с summary ОБЕИХ новостей, ТЗ-95 задача 3); < T2 — одиночка.
+ *   8. Приклеивание с окном жизни 36 ч (CLUSTER_GAP_HOURS): идемпотентный
+ *      size через ON CONFLICT (ТЗ-95 задача 1а), verdict не деградирует
+ *      ниже ранга max_sim (ТЗ-95 задача 2).
  *
- * PG-only: SQLite-режим не поддерживаем (как и в ТЗ-91).
+ * PG-only: SQLite-режим не поддерживаем (как и в ТЗ-91); pool === null —
+ * ошибка конфигурации, fail-loud (ТЗ-95 задача 1в).
  */
 
+import { PoolClient } from 'pg';
 import { query, pool } from '../config/db';
 import { embedBatch, embeddingText, EMBEDDING_MAX_BATCH } from './embeddings';
 import { verifyPair } from './clusterVerifier';
@@ -28,53 +35,12 @@ import {
   CLUSTER_T2,
   CLUSTER_GAP_HOURS,
   CANDIDATE_WINDOW_HOURS,
-  RUBRIC_BLACKLIST,
 } from '../config/clustering';
+import { significantNumbers, numericVeto, isRubricTitle } from './clusteringRules';
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Числовое вето (референс _cascades_full.py:29-30, 76-77)
-// ═══════════════════════════════════════════════════════════════════════════
-
-const NON_SIGNIFICANT_NUMS = new Set(['2025', '2026', '2027']);
-
-/** Значимые числа заголовка: длина >= 2 и не год. Числа < 10 не значимы —
- *  иначе ложная склейка по «топ-3», «5 причин» (Методология §5). */
-export function significantNumbers(title: string): Set<string> {
-  const out = new Set<string>();
-  for (const m of title.matchAll(/\d+/g)) {
-    const n = m[0];
-    if (n.length >= 2 && !NON_SIGNIFICANT_NUMS.has(n)) {
-      out.add(n);
-    }
-  }
-  return out;
-}
-
-/** true = пара отбрасывается: оба заголовка имеют значимые числа и их
- *  пересечение пусто (разные факты: «сбито 516 БПЛА» ≠ «сбито 130 БПЛА»). */
-export function numericVeto(a: string, b: string): boolean {
-  const sa = significantNumbers(a);
-  const sb = significantNumbers(b);
-  if (sa.size === 0 || sb.size === 0) return false;
-  for (const n of sa) {
-    if (sb.has(n)) return false;
-  }
-  return true;
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Рубрик-черный список (референс _cascades_full.py:38-44)
-// ═══════════════════════════════════════════════════════════════════════════
-
-/** lower() после обрезки ведущих эмодзи/символов; дайджест-заголовки
- *  не участвуют в склейке ни сидом, ни дублём. */
-export function isRubricTitle(title: string): boolean {
-  const t = title
-    .toLowerCase()
-    .replace(/^[^\p{L}\p{N}\s]+/u, '')   // эмодзи/префиксы Telegram-источников
-    .trim();
-  return RUBRIC_BLACKLIST.some((r) => t.startsWith(r));
-}
+// Реэкспорт правил (ТЗ-95 задача 4): внешние импорты из clustering.ts
+// продолжают работать, чистые функции живут в clusteringRules.ts.
+export { significantNumbers, numericVeto, isRubricTitle };
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Вспомогательное
@@ -91,6 +57,7 @@ interface NewsRow {
 interface Candidate {
   id: string;
   title_ru: string | null;
+  summary_ru: string | null;
   cluster_id: string | null;
   source: string | null;
   published_at: string;
@@ -107,108 +74,154 @@ function verdictBySim(sim: number): string {
   return 'сомнительный';
 }
 
+/** Ранг вердикта: 'сильный' (≥ T1) > 'средний' (≥ T2) > 'сомнительный' —
+ *  для не-деградирующего UPDATE (ТЗ-95 задача 2). */
+function verdictRank(v: string): number {
+  if (v === 'сильный') return 3;
+  if (v === 'средний') return 2;
+  return 1;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
-// Приклеивание (транзакция: блокировка строки-кандидата сериализует
-// конкурентных приклеивателей — catch-up воркер и NewsProcessor могут
-// пересекаться по расписанию)
+// Advisory-лок обработки новости (ТЗ-95, задача 1б)
 // ═══════════════════════════════════════════════════════════════════════════
 
-async function attachToCluster(
-  news: NewsRow,
-  candidate: Candidate,
-  sim: number
-): Promise<void> {
+/**
+ * Оборачивает обработку одной новости в транзакцию с advisory-xact-локом
+ * ('cluster:' || id). Лок снимается на COMMIT/ROLLBACK — session-level с
+ * пулом соединений протёк бы. Не взяли лок → новость уже обрабатывается
+ * другим воркером (NewsProcessor ↔ catch-up cron) → skip с логом.
+ * Порядок локов единый: advisory → row (дедлок невозможен).
+ * Соединение пула занято на всё время обработки (включая сетевые вызовы
+ * LLM) — осознанно, см. риски §4 ТЗ-95.
+ */
+async function withNewsLock(newsId: string, fn: (client: PoolClient) => Promise<void>): Promise<void> {
   if (!pool) {
-    console.warn('[Clustering] pool недоступен (SQLite?) — приклеивание пропущено');
-    return;
+    throw new Error('[Clustering] pool недоступен — проверьте конфигурацию БД');
   }
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-
-    // Блокируем строку кандидата: перечитываем его cluster_id в транзакции
-    const candRes = await client.query(
-      'SELECT id, cluster_id, published_at FROM news WHERE id = $1 FOR UPDATE',
-      [candidate.id]
+    const lockRes = await client.query(
+      `SELECT pg_try_advisory_xact_lock(hashtextextended('cluster:' || $1, 42)) AS ok`,
+      [newsId]
     );
-    if (candRes.rows.length === 0) {
+    if (!lockRes.rows[0].ok) {
       await client.query('ROLLBACK');
+      console.log(`[Clustering] новость ${newsId} уже в обработке, skip`);
       return;
     }
-    const candClusterId: string | null = candRes.rows[0].cluster_id;
-
-    let clusterId: string;
-
-    if (candClusterId) {
-      clusterId = candClusterId;
-      // Окно жизни: кластер живёт, если last_seen_at в пределах GAP от новости
-      const clRes = await client.query(
-        'SELECT last_seen_at, first_published_at FROM clusters WHERE id = $1 FOR UPDATE',
-        [clusterId]
-      );
-      if (clRes.rows.length === 0) {
-        await client.query('ROLLBACK');
-        return;
-      }
-      const lastSeen = new Date(clRes.rows[0].last_seen_at).getTime();
-      const pub = new Date(news.published_at).getTime();
-      if (Math.abs(pub - lastSeen) > CLUSTER_GAP_HOURS * 3600 * 1000) {
-        console.log(
-          `[Clustering] кластер ${clusterId} мёртв (gap ${((pub - lastSeen) / 3600000).toFixed(1)}ч > ${CLUSTER_GAP_HOURS}ч) — новость ${news.id} остаётся одиночкой`
-        );
-        await client.query('ROLLBACK');
-        return;
-      }
-      const firstPub = clRes.rows[0].first_published_at;
-      await client.query(
-        `UPDATE clusters SET
-           size = size + 1,
-           last_seen_at = GREATEST(last_seen_at, $2::timestamptz),
-           max_sim = GREATEST(COALESCE(max_sim, 0), $3::real),
-           verdict = $4
-         WHERE id = $1`,
-        [clusterId, news.published_at, sim, verdictBySim(sim)]
-      );
-      const lagMin = Math.max(
-        0,
-        Math.round((new Date(news.published_at).getTime() - new Date(firstPub).getTime()) / 60000)
-      );
-      await client.query(
-        'INSERT INTO cluster_items (cluster_id, news_id, lag_min) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
-        [clusterId, news.id, lagMin]
-      );
-    } else {
-      // Кандидат без кластера — создаём кластер на двоих.
-      // first_published_at = published_at кандидата (первоисточник).
-      const firstPub = candidate.published_at;
-      const insRes = await client.query(
-        `INSERT INTO clusters (kind, source, max_sim, verdict, first_published_at, last_seen_at, size)
-         VALUES ('cascade', 'realtime', $1::real, $2, $3::timestamptz, $4::timestamptz, 2)
-         RETURNING id`,
-        [sim, verdictBySim(sim), firstPub, news.published_at]
-      );
-      clusterId = insRes.rows[0].id;
-      const firstMs = firstPub ? new Date(firstPub).getTime() : new Date(news.published_at).getTime();
-      const items = [
-        { id: candidate.id, at: firstMs },
-        { id: news.id, at: new Date(news.published_at).getTime() },
-      ];
-      for (const it of items) {
-        await client.query(
-          'INSERT INTO cluster_items (cluster_id, news_id, lag_min) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
-          [clusterId, it.id, Math.max(0, Math.round((it.at - firstMs) / 60000))]
-        );
-      }
-      await client.query('UPDATE news SET cluster_id = $1 WHERE id = $2', [clusterId, candidate.id]);
-    }
-
-    await client.query('UPDATE news SET cluster_id = $1 WHERE id = $2', [clusterId, news.id]);
+    await fn(client);
     await client.query('COMMIT');
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     throw err;
   } finally {
     client.release();
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Приклеивание (внутри транзакции withNewsLock: блокировка строки-кандидата
+// сериализует конкурентных приклеивателей)
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function attachToCluster(
+  news: NewsRow,
+  candidate: Candidate,
+  sim: number,
+  client: PoolClient
+): Promise<void> {
+  if (!pool) {
+    // fail-loud (ТЗ-95 задача 1в): молчаливый пропуск кластеризации недопустим
+    throw new Error('[Clustering] pool недоступен — проверьте конфигурацию БД');
+  }
+
+  // Блокируем строку кандидата: перечитываем его cluster_id в транзакции
+  const candRes = await client.query(
+    'SELECT id, cluster_id, published_at FROM news WHERE id = $1 FOR UPDATE',
+    [candidate.id]
+  );
+  if (candRes.rows.length === 0) {
+    return; // кандидат исчез — нечего приклеивать (откат делает withNewsLock)
+  }
+  const candClusterId: string | null = candRes.rows[0].cluster_id;
+
+  let clusterId: string;
+
+  if (candClusterId) {
+    clusterId = candClusterId;
+    // Окно жизни: кластер живёт, если last_seen_at в пределах GAP от новости
+    const clRes = await client.query(
+      'SELECT last_seen_at, first_published_at FROM clusters WHERE id = $1 FOR UPDATE',
+      [clusterId]
+    );
+    if (clRes.rows.length === 0) {
+      return;
+    }
+    const lastSeen = new Date(clRes.rows[0].last_seen_at).getTime();
+    const pub = new Date(news.published_at).getTime();
+    if (Math.abs(pub - lastSeen) > CLUSTER_GAP_HOURS * 3600 * 1000) {
+      console.log(
+        `[Clustering] кластер ${clusterId} мёртв (gap ${((pub - lastSeen) / 3600000).toFixed(1)}ч > ${CLUSTER_GAP_HOURS}ч) — новость ${news.id} остаётся одиночкой`
+      );
+      return;
+    }
+    const firstPub = clRes.rows[0].first_published_at;
+    const lagMin = Math.max(
+      0,
+      Math.round((new Date(news.published_at).getTime() - new Date(firstPub).getTime()) / 60000)
+    );
+    // Идемпотентный size (ТЗ-95 задача 1а): INSERT первым, UPDATE только при
+    // rowCount === 1. Уникальный индекс cluster_items(cluster_id, news_id)
+    // сериализует конкурентные вставки — двойной инкремент невозможен.
+    const insRes = await client.query(
+      'INSERT INTO cluster_items (cluster_id, news_id, lag_min) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
+      [clusterId, news.id, lagMin]
+    );
+    if (insRes.rowCount === 1) {
+      // verdict не деградирует (ТЗ-95 задача 2): применяем новый вердикт,
+      // только если его ранг не ниже текущего. max_sim — через GREATEST,
+      // поэтому инвариант: verdict = verdictBySim(max_sim).
+      await client.query(
+        `UPDATE clusters SET
+           size = size + 1,
+           last_seen_at = GREATEST(last_seen_at, $2::timestamptz),
+           max_sim = GREATEST(COALESCE(max_sim, 0), $3::real),
+           verdict = CASE
+             WHEN CASE $4 WHEN 'сильный' THEN 3 WHEN 'средний' THEN 2 ELSE 1 END
+                  >= CASE verdict WHEN 'сильный' THEN 3 WHEN 'средний' THEN 2 ELSE 1 END
+             THEN $4 ELSE verdict END
+         WHERE id = $1`,
+        [clusterId, news.published_at, sim, verdictBySim(sim)]
+      );
+      await client.query('UPDATE news SET cluster_id = $1 WHERE id = $2', [clusterId, news.id]);
+    }
+    // rowCount === 0 → новость уже член кластера: UPDATE пропускаем целиком
+  } else {
+    // Кандидат без кластера — создаём кластер на двоих.
+    // first_published_at = published_at кандидата (первоисточник).
+    const firstPub = candidate.published_at;
+    const insRes = await client.query(
+      `INSERT INTO clusters (kind, source, max_sim, verdict, first_published_at, last_seen_at, size)
+       VALUES ('cascade', 'realtime', $1::real, $2, $3::timestamptz, $4::timestamptz, 2)
+       RETURNING id`,
+      [sim, verdictBySim(sim), firstPub, news.published_at]
+    );
+    clusterId = insRes.rows[0].id;
+    const firstMs = firstPub ? new Date(firstPub).getTime() : new Date(news.published_at).getTime();
+    const items = [
+      { id: candidate.id, at: firstMs },
+      { id: news.id, at: new Date(news.published_at).getTime() },
+    ];
+    for (const it of items) {
+      await client.query(
+        'INSERT INTO cluster_items (cluster_id, news_id, lag_min) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
+        [clusterId, it.id, Math.max(0, Math.round((it.at - firstMs) / 60000))]
+      );
+    }
+    await client.query('UPDATE news SET cluster_id = $1 WHERE id = $2', [clusterId, candidate.id]);
+    await client.query('UPDATE news SET cluster_id = $1 WHERE id = $2', [clusterId, news.id]);
   }
 }
 
@@ -246,10 +259,13 @@ export async function embedAndClusterBatch(newsIds: string[]): Promise<void> {
     ]);
   }
 
-  // 3–7. Кандидаты, вето, зоны, приклеивание — по одной новости последовательно
+  // 3–8. Кандидаты, вето, зоны, приклеивание — по одной новости последовательно,
+  // каждая под advisory-локом (дедупликация гонки с catch-up cron, ТЗ-95)
   for (const news of newsList) {
     try {
-      await clusterOne(news, vectors.get(news.id)!);
+      await withNewsLock(news.id, async (client) => {
+        await clusterOne(news, vectors.get(news.id)!, client);
+      });
     } catch (err: any) {
       console.warn(`[Clustering] новость ${news.id} пропущена (non-fatal):`, err.message);
     }
@@ -276,7 +292,9 @@ export async function clusterEmbeddedBatch(newsIds: string[]): Promise<void> {
   );
   for (const row of res.rows) {
     try {
-      await clusterOne(row as NewsRow, parseVectorLiteral(row.embedding_text));
+      await withNewsLock(row.id, async (client) => {
+        await clusterOne(row as NewsRow, parseVectorLiteral(row.embedding_text), client);
+      });
     } catch (err: any) {
       console.warn(`[Clustering] новость ${row.id} пропущена (non-fatal):`, err.message);
     }
@@ -291,7 +309,7 @@ function parseVectorLiteral(s: string): number[] {
     .map((x) => Number(x));
 }
 
-async function clusterOne(news: NewsRow, vector: number[]): Promise<void> {
+async function clusterOne(news: NewsRow, vector: number[], client: PoolClient): Promise<void> {
   if (isRubricTitle(news.title_ru || '')) {
     return; // рубрики-дайджесты не участвуют в склейке
   }
@@ -299,8 +317,8 @@ async function clusterOne(news: NewsRow, vector: number[]): Promise<void> {
   const pub = new Date(news.published_at);
   const from = new Date(pub.getTime() - CANDIDATE_WINDOW_HOURS * 3600 * 1000);
 
-  const candRes = await query(
-    `SELECT n.id, n.title_ru, n.cluster_id, n.source, n.published_at,
+  const candRes = await client.query(
+    `SELECT n.id, n.title_ru, n.summary_ru, n.cluster_id, n.source, n.published_at,
             1 - (n.embedding <=> $1::vector) AS sim
      FROM news n
      WHERE n.embedding IS NOT NULL
@@ -324,7 +342,7 @@ async function clusterOne(news: NewsRow, vector: number[]): Promise<void> {
   if (!best) return;
 
   if (best.sim >= CLUSTER_T1) {
-    await attachToCluster(news, best, best.sim);
+    await attachToCluster(news, best, best.sim, client);
     return;
   }
 
@@ -340,14 +358,14 @@ async function clusterOne(news: NewsRow, vector: number[]): Promise<void> {
       {
         id: best.id,
         title: best.title_ru || '',
-        summary: '',
+        summary: best.summary_ru || '', // ТЗ-95 задача 3: верификатор видит оба summary
         source: best.source || undefined,
         publishedAt: new Date(best.published_at).toISOString(),
       },
       best.sim
     );
     if (verdict.sameEvent) {
-      await attachToCluster(news, best, best.sim);
+      await attachToCluster(news, best, best.sim, client);
     }
     return;
   }

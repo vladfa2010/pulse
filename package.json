@@ -29,7 +29,8 @@
     "verify:db:schema": "npm run build && node scripts/db-schema-parity-verify.js",
     "verify:db:tz": "npm run build && node scripts/db-tz-verify.js",
     "verify:newsQueries": "npm run build && node scripts/db-news-queries-verify.js",
-    "verify:translateGuard": "npm run build && node scripts/translation-guard-verify.js"
+    "verify:translateGuard": "npm run build && node scripts/translation-guard-verify.js",
+    "verify:clusteringVeto": "npm run build && node scripts/clustering-veto-verify.js"
   },
   "keywords": [
     "news",

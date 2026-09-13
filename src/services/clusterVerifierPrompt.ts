@@ -19,7 +19,7 @@ export const CLUSTER_VERIFIER_PROMPT_TEMPLATE = `Ты — редактор но�
 
 Новость A: «{{TITLE_A}}» ({{SOURCE_A}}, {{PUBLISHED_A}})
 Новость B: «{{TITLE_B}}» ({{SOURCE_B}}, {{PUBLISHED_B}})
-{{SUMMARY_A_BLOCK}}
+{{SUMMARY_A_BLOCK}}{{SUMMARY_B_BLOCK}}
 Дубль = тот же факт без существенно новой информации.
 НЕ дубли (контрпримеры):
 - одно событие, разные новости («Сбер отчитался» ≠ «Аналитики про отчёт Сбера»);
