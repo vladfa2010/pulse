@@ -256,6 +256,9 @@ const STORIES_CACHE_TTL_MS = 15 * 60 * 1000;    // 15 мин
 const cascadesCache = new Map<string, { at: number; payload: any }>();
 const cascadeChartCache = new Map<string, { at: number; payload: any }>();
 const storiesCache = new Map<string, { at: number; payload: any }>();
+// ТЗ-93: данные графа и ресерч-статистика — кэш по окну, TTL 15 мин
+const cascadeGraphCache = new Map<string, { at: number; payload: any }>();
+const cascadeResearchCache = new Map<string, { at: number; payload: any }>();
 
 function cacheGet(store: Map<string, { at: number; payload: any }>, key: string, ttl: number): any | null {
   const hit = store.get(key);
@@ -308,6 +311,12 @@ router.get('/cascades', async (req, res) => {
          ORDER BY n.published_at ASC
          LIMIT 1
        ) fn ON true
+       LEFT JOIN LATERAL (
+         SELECT array_agg(n.source ORDER BY ci.lag_min) AS sources
+         FROM cluster_items ci
+         JOIN news n ON n.id = ci.news_id
+         WHERE ci.cluster_id = c.id
+       ) sc ON true
        WHERE c.last_seen_at > NOW() - INTERVAL '${interval}'
        ORDER BY c.size DESC
        LIMIT 200`,
@@ -328,6 +337,7 @@ router.get('/cascades', async (req, res) => {
         first_news: r.first_title
           ? { title: r.first_title, source: r.first_source, url: r.first_url, published_at: r.first_news_at }
           : null,
+        sources: r.sources || [],
         first_published_at: r.first_published_at,
         last_seen_at: r.last_seen_at,
       })),
@@ -339,6 +349,199 @@ router.get('/cascades', async (req, res) => {
   } catch (err: any) {
     console.error('[marketPublic] cascades error:', err.message);
     return res.status(500).json({ error: 'cascades_unavailable' });
+  }
+});
+
+/**
+ * GET /api/market/cascade-graph?window=7d|30d (ТЗ-93, задача 2)
+ * Данные force-графа каскадов: узлы-цепочки (первоисточник → дубли по
+ * lag_min), категории-сюжеты для цвета и фон «звёздное поле» — ВСЕ новости
+ * окна. TTL 15 мин, ключ = окно. 24h для графа не отдаём (400).
+ */
+router.get('/cascade-graph', async (req, res) => {
+  try {
+    const windowKey = (req.query.window as string) || '7d';
+    if (windowKey !== '7d' && windowKey !== '30d') {
+      return res.status(400).json({ error: 'window must be 7d|30d' });
+    }
+    const interval = CASCADE_WINDOWS[windowKey];
+
+    const cached = cacheGet(cascadeGraphCache, windowKey, CASCADE_CHART_CACHE_TTL_MS);
+    if (cached) {
+      res.setHeader('X-Cache', 'hit');
+      return res.json(cached);
+    }
+
+    const cascadesRes = await query(
+      `SELECT c.id AS cluster_id, c.story_id,
+              (SELECT json_agg(sub ORDER BY sub.lag) FROM (
+                 SELECT ci.lag_min AS lag, n.source,
+                        n.title_ru AS title,
+                        EXTRACT(EPOCH FROM n.published_at)::bigint AS t
+                 FROM cluster_items ci
+                 JOIN news n ON n.id = ci.news_id
+                 WHERE ci.cluster_id = c.id
+                 ORDER BY ci.lag_min ASC
+               ) sub) AS items
+       FROM clusters c
+       WHERE c.last_seen_at > NOW() - INTERVAL '${interval}'`,
+      []
+    );
+
+    const storyIds = [
+      ...new Set(cascadesRes.rows.map((r: any) => r.story_id).filter(Boolean)),
+    ] as string[];
+    let stories: any[] = [];
+    if (storyIds.length > 0) {
+      const storiesRes = await query(
+        `SELECT id AS story_id, title FROM stories WHERE id = ANY($1::uuid[])`,
+        [storyIds]
+      );
+      stories = storiesRes.rows;
+    }
+
+    const feedRes = await query(
+      `SELECT EXTRACT(EPOCH FROM published_at)::bigint AS t, source
+       FROM news
+       WHERE published_at > NOW() - INTERVAL '${interval}'
+       ORDER BY published_at ASC`,
+      []
+    );
+
+    const payload = {
+      window: windowKey,
+      cascades: cascadesRes.rows.map((r: any) => ({
+        cluster_id: r.cluster_id,
+        story_id: r.story_id,
+        items: r.items || [],
+      })),
+      stories,
+      feed: feedRes.rows.map((r: any) => [Number(r.t), r.source]),
+    };
+
+    cacheSet(cascadeGraphCache, windowKey, payload);
+    res.setHeader('X-Cache', 'miss');
+    return res.json(payload);
+  } catch (err: any) {
+    console.error('[marketPublic] cascade-graph error:', err.message);
+    return res.status(500).json({ error: 'cascade_graph_unavailable' });
+  }
+});
+
+/**
+ * GET /api/market/cascade-research?window=7d|30d (ТЗ-93, задача 3)
+ * Статистика «кто чаще первый» + скорость каскада. Живые числа для вкладки
+ * «Ресерч» страницы Каскадов. TTL 15 мин, ключ = окно.
+ */
+router.get('/cascade-research', async (req, res) => {
+  try {
+    const windowKey = (req.query.window as string) || '7d';
+    if (windowKey !== '7d' && windowKey !== '30d') {
+      return res.status(400).json({ error: 'window must be 7d|30d' });
+    }
+    const interval = CASCADE_WINDOWS[windowKey];
+
+    const cached = cacheGet(cascadeResearchCache, windowKey, CASCADE_CHART_CACHE_TTL_MS);
+    if (cached) {
+      res.setHeader('X-Cache', 'hit');
+      return res.json(cached);
+    }
+
+    const result = await query(
+      `WITH items AS (
+         SELECT ci.cluster_id, n.source, ci.lag_min
+         FROM cluster_items ci
+         JOIN news n ON n.id = ci.news_id
+         JOIN clusters c ON c.id = ci.cluster_id
+         WHERE c.first_published_at > NOW() - INTERVAL '${interval}'
+       ),
+       ranked AS (
+         SELECT *, row_number() OVER (PARTITION BY cluster_id ORDER BY lag_min ASC, source) AS rn
+         FROM items
+       ),
+       firsts AS (
+         SELECT cluster_id, source AS first_source FROM ranked WHERE rn = 1
+       ),
+       seconds AS (
+         SELECT cluster_id, lag_min AS second_lag FROM ranked WHERE rn = 2
+       ),
+       per_source AS (
+         SELECT r.source,
+                count(*) AS participations,
+                percentile_cont(0.5) WITHIN GROUP (ORDER BY r.lag_min)
+                  FILTER (WHERE r.lag_min > 0) AS median_lag_not_first
+         FROM ranked r
+         GROUP BY r.source
+       ),
+       first_counts AS (
+         SELECT first_source AS source, count(*) AS first_count
+         FROM firsts
+         GROUP BY first_source
+       ),
+       window_clusters AS (
+         SELECT count(*) AS n FROM clusters
+         WHERE first_published_at > NOW() - INTERVAL '${interval}'
+       ),
+       speed AS (
+         SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY second_lag) AS median_second_lag,
+                count(*) FILTER (WHERE second_lag <= 10) AS dup_le_10m,
+                count(*) FILTER (WHERE second_lag <= 60) AS dup_le_60m,
+                count(*) AS cascades_with_second
+         FROM seconds
+       )
+       SELECT ps.source,
+              COALESCE(fc.first_count, 0) AS first_count,
+              ps.participations,
+              ps.median_lag_not_first,
+              wc.n AS clusters_total,
+              s.median_second_lag,
+              s.dup_le_10m,
+              s.dup_le_60m,
+              s.cascades_with_second
+       FROM per_source ps
+       LEFT JOIN first_counts fc ON fc.source = ps.source
+       CROSS JOIN window_clusters wc
+       CROSS JOIN speed s
+       ORDER BY first_count DESC NULLS LAST`,
+      []
+    );
+
+    const clustersTotal = result.rows.length > 0 ? Number(result.rows[0].clusters_total) : 0;
+    const speedRow = result.rows.length > 0 ? result.rows[0] : null;
+    const payload = {
+      window: windowKey,
+      clusters_total: clustersTotal,
+      sources: result.rows.map((r: any) => ({
+        source: r.source,
+        first_count: Number(r.first_count),
+        share: clustersTotal > 0 ? Number(r.first_count) / clustersTotal : 0,
+        participations: Number(r.participations),
+        first_rate: Number(r.participations) > 0 ? Number(r.first_count) / Number(r.participations) : 0,
+        median_lag_not_first:
+          r.median_lag_not_first != null ? Math.round(Number(r.median_lag_not_first)) : null,
+      })),
+      speed: {
+        median_second_lag_min: speedRow?.median_second_lag != null ? Number(speedRow.median_second_lag) : null,
+        cascades_with_second: speedRow ? Number(speedRow.cascades_with_second) : 0,
+        dup_le_10m: speedRow ? Number(speedRow.dup_le_10m) : 0,
+        dup_le_60m: speedRow ? Number(speedRow.dup_le_60m) : 0,
+        dup_le_10m_share:
+          speedRow && Number(speedRow.cascades_with_second) > 0
+            ? Number(speedRow.dup_le_10m) / Number(speedRow.cascades_with_second)
+            : 0,
+        dup_le_60m_share:
+          speedRow && Number(speedRow.cascades_with_second) > 0
+            ? Number(speedRow.dup_le_60m) / Number(speedRow.cascades_with_second)
+            : 0,
+      },
+    };
+
+    cacheSet(cascadeResearchCache, windowKey, payload);
+    res.setHeader('X-Cache', 'miss');
+    return res.json(payload);
+  } catch (err: any) {
+    console.error('[marketPublic] cascade-research error:', err.message);
+    return res.status(500).json({ error: 'cascade_research_unavailable' });
   }
 });
 
