@@ -3553,6 +3553,14 @@ async function start() {
       )`,
       name: 'news_all_daily'
     },
+    // ТЗ-99: частичный индекс по кластеризованным новостям. CTE ranked
+    // (позиция в кластере) идёт index-only scan'ом вместо seq scan всей
+    // таблицы news: без него запрос списков деградировал на +60% (замер
+    // на проде 2026-09-14, деградация выше порога 20% из приёмки ТЗ-99).
+    {
+      sql: `CREATE INDEX IF NOT EXISTS idx_news_clustered ON news (cluster_id, published_at) INCLUDE (id) WHERE cluster_id IS NOT NULL`,
+      name: 'idx_news_clustered'
+    },
   ];
   for (const m of migrations) {
     try {
