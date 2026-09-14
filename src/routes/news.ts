@@ -52,7 +52,7 @@ router.get('/global', async (req, res) => {
     // CTE считается один раз на запрос поверх кластеризованных новостей (мс).
     const result = await query(
       `WITH ranked AS (
-         SELECT id, ROW_NUMBER() OVER (PARTITION BY cluster_id ORDER BY published_at) AS cluster_position
+         SELECT id, ROW_NUMBER() OVER (PARTITION BY cluster_id ORDER BY published_at)::int AS cluster_position
          FROM news
          WHERE cluster_id IS NOT NULL
        )
@@ -191,7 +191,7 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
       // TZ-7.3 не трогаем). CTE ranked — позиция новости внутри кластера.
       const result = await query(
         `WITH ranked AS (
-           SELECT id, ROW_NUMBER() OVER (PARTITION BY cluster_id ORDER BY published_at) AS cluster_position
+           SELECT id, ROW_NUMBER() OVER (PARTITION BY cluster_id ORDER BY published_at)::int AS cluster_position
            FROM news
            WHERE cluster_id IS NOT NULL
          )
@@ -346,7 +346,7 @@ router.get('/tags/:tagId', async (req, res) => {
       // ТЗ-99: каскадные поля (CTE ranked + join'ы).
       result = await query(
         `WITH ranked AS (
-           SELECT id, ROW_NUMBER() OVER (PARTITION BY cluster_id ORDER BY published_at) AS cluster_position
+           SELECT id, ROW_NUMBER() OVER (PARTITION BY cluster_id ORDER BY published_at)::int AS cluster_position
            FROM news
            WHERE cluster_id IS NOT NULL
          )
@@ -445,7 +445,7 @@ router.get('/search', authMiddleware, async (req: AuthRequest, res) => {
       // ТЗ-99: каскадные поля (CTE ranked + join'ы).
       const result = await query(
         `WITH ranked AS (
-           SELECT id, ROW_NUMBER() OVER (PARTITION BY cluster_id ORDER BY published_at) AS cluster_position
+           SELECT id, ROW_NUMBER() OVER (PARTITION BY cluster_id ORDER BY published_at)::int AS cluster_position
            FROM news
            WHERE cluster_id IS NOT NULL
          )

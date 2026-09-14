@@ -260,7 +260,7 @@ router.get('/demo-feed', async (_req, res) => {
 
     const result = await query(
       `WITH ranked AS (
-         SELECT id, ROW_NUMBER() OVER (PARTITION BY cluster_id ORDER BY published_at) AS cluster_position
+         SELECT id, ROW_NUMBER() OVER (PARTITION BY cluster_id ORDER BY published_at)::int AS cluster_position
          FROM news
          WHERE cluster_id IS NOT NULL
        )
