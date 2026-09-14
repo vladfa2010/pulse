@@ -677,8 +677,10 @@ router.get('/cascade-chart', async (req, res) => {
       rangedInstruments.push(instrument);
     }
 
+    // ТЗ-99: id и url новости — список новостей каскада в деталь-панели
+    // становится кликабельным (ссылка на первоисточник / карточку новости).
     const newsRes = await query(
-      `SELECT n.published_at, n.title_ru, n.source
+      `SELECT n.id, n.url, n.published_at, n.title_ru, n.source
        FROM cluster_items ci
        JOIN news n ON n.id = ci.news_id
        WHERE ci.cluster_id = $1
@@ -691,6 +693,8 @@ router.get('/cascade-chart', async (req, res) => {
       published_at: anchor,
       instruments: rangedInstruments,
       news_markers: newsRes.rows.map((r: any) => ({
+        id: r.id,
+        url: r.url,
         published_at: r.published_at,
         title: r.title_ru,
         source: r.source,

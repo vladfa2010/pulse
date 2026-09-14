@@ -47,12 +47,28 @@ router.get('/global', async (req, res) => {
 
     // TZ-37: запрашиваем limit+1 строк — наличие лишней строки = hasMore.
     // COUNT(*) убран: фронт не использует total, а COUNT по 90 дням — дорогой index-only scan.
+    //
+    // ТЗ-99: каскадные поля (cluster_*) через CTE ranked — позиция новости в кластере.
+    // CTE считается один раз на запрос поверх кластеризованных новостей (мс).
     const result = await query(
-      `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags,
-              tag_impact, source_count, all_sources, fact_check_status, fact_check_result, slug
-       FROM news
+      `WITH ranked AS (
+         SELECT id, ROW_NUMBER() OVER (PARTITION BY cluster_id ORDER BY published_at) AS cluster_position
+         FROM news
+         WHERE cluster_id IS NOT NULL
+       )
+       SELECT n.id, n.title_ru, n.title_original, n.summary_ru, n.summary_original, n.source, n.url, n.published_at, n.sentiment, n.sentiment_score, n.sentiment_reasoning, n.sentiment_source, n.is_political, n.article_type, n.matched_tags,
+              n.tag_impact, n.source_count, n.all_sources, n.fact_check_status, n.fact_check_result, n.slug,
+              n.cluster_id,
+              c.size AS cluster_size,
+              c.last_seen_at AS cluster_last_seen_at,
+              c.last_seen_at > now() - interval '2 hours' AS cluster_growing,
+              r.cluster_position,
+              CASE WHEN n.cluster_id IS NULL AND n.embedding IS NULL THEN TRUE ELSE FALSE END AS cluster_pending
+       FROM news n
+       LEFT JOIN clusters c ON c.id = n.cluster_id
+       LEFT JOIN ranked r ON r.id = n.id
        WHERE ${timeFilter}
-       ORDER BY published_at DESC
+       ORDER BY n.published_at DESC
        LIMIT $1 OFFSET $2`,
       [limit + 1, offset]
     );
@@ -132,7 +148,8 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
       const orderDir = 'DESC'; // всегда новые сверху
       const result = await query(
         `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags,
-                tag_impact, source_count, all_sources, fact_check_status, fact_check_result, slug
+                tag_impact, source_count, all_sources, fact_check_status, fact_check_result, slug,
+                NULL AS cluster_id, NULL AS cluster_size, NULL AS cluster_position, NULL AS cluster_last_seen_at, 0 AS cluster_growing, 0 AS cluster_pending
          FROM news
          WHERE (${conditions})${readFilter}
          AND ${timeFilter}
@@ -169,10 +186,26 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
       // (summary_ru, tag_impact, fact_check_result и пр.) только для limit+1 отобранных строк —
       // раньше они вычитывались с диска для всех ~3757 кандидатов, отсюда 7–16s на ленте.
       const pgOrder = 'DESC'; // всегда новые сверху
+      //
+      // ТЗ-99: каскадные поля добавлены во ВНЕШНИЙ select (внутренний узкий id-select
+      // TZ-7.3 не трогаем). CTE ranked — позиция новости внутри кластера.
       const result = await query(
-        `SELECT n.id, n.title_ru, n.title_original, n.summary_ru, n.summary_original, n.source, n.url, n.published_at, n.sentiment, n.sentiment_score, n.sentiment_reasoning, n.sentiment_source, n.is_political, n.article_type, n.matched_tags,
-                n.tag_impact, n.source_count, n.all_sources, n.fact_check_status, n.fact_check_result, n.slug
+        `WITH ranked AS (
+           SELECT id, ROW_NUMBER() OVER (PARTITION BY cluster_id ORDER BY published_at) AS cluster_position
+           FROM news
+           WHERE cluster_id IS NOT NULL
+         )
+         SELECT n.id, n.title_ru, n.title_original, n.summary_ru, n.summary_original, n.source, n.url, n.published_at, n.sentiment, n.sentiment_score, n.sentiment_reasoning, n.sentiment_source, n.is_political, n.article_type, n.matched_tags,
+                n.tag_impact, n.source_count, n.all_sources, n.fact_check_status, n.fact_check_result, n.slug,
+                n.cluster_id,
+                c.size AS cluster_size,
+                c.last_seen_at AS cluster_last_seen_at,
+                c.last_seen_at > now() - interval '2 hours' AS cluster_growing,
+                r.cluster_position,
+                CASE WHEN n.cluster_id IS NULL AND n.embedding IS NULL THEN TRUE ELSE FALSE END AS cluster_pending
          FROM news n
+         LEFT JOIN clusters c ON c.id = n.cluster_id
+         LEFT JOIN ranked r ON r.id = n.id
          JOIN (
            SELECT id FROM news
            WHERE matched_tags && $1::text[]${pgReadFilter}
@@ -297,7 +330,8 @@ router.get('/tags/:tagId', async (req, res) => {
     if (USE_SQLITE) {
       result = await query(
         `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags,
-                tag_impact, source_count, all_sources, fact_check_status, fact_check_result, slug
+                tag_impact, source_count, all_sources, fact_check_status, fact_check_result, slug,
+                NULL AS cluster_id, NULL AS cluster_size, NULL AS cluster_position, NULL AS cluster_last_seen_at, 0 AS cluster_growing, 0 AS cluster_pending
          FROM news
          WHERE matched_tags LIKE $1 AND ${timeFilter}
          ORDER BY published_at DESC
@@ -308,13 +342,28 @@ router.get('/tags/:tagId', async (req, res) => {
       // ТЗ-7.5.2: @> ARRAY[$1]::text[] (даёт idx_news_matched_tags_gin) +
       // выражение в ORDER BY — иначе Index Scan Backward по idx_news_published_at
       // с построчным ANY-фильтром (замер на проде: 6043 мс, 61k строк отфильтровано).
+      //
+      // ТЗ-99: каскадные поля (CTE ranked + join'ы).
       result = await query(
-        `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags,
-                tag_impact, source_count, all_sources, fact_check_status, fact_check_result, slug
-         FROM news
-         WHERE matched_tags @> ARRAY[$1]::text[]
+        `WITH ranked AS (
+           SELECT id, ROW_NUMBER() OVER (PARTITION BY cluster_id ORDER BY published_at) AS cluster_position
+           FROM news
+           WHERE cluster_id IS NOT NULL
+         )
+         SELECT n.id, n.title_ru, n.title_original, n.summary_ru, n.summary_original, n.source, n.url, n.published_at, n.sentiment, n.sentiment_score, n.sentiment_reasoning, n.sentiment_source, n.is_political, n.article_type, n.matched_tags,
+                n.tag_impact, n.source_count, n.all_sources, n.fact_check_status, n.fact_check_result, n.slug,
+                n.cluster_id,
+                c.size AS cluster_size,
+                c.last_seen_at AS cluster_last_seen_at,
+                c.last_seen_at > now() - interval '2 hours' AS cluster_growing,
+                r.cluster_position,
+                CASE WHEN n.cluster_id IS NULL AND n.embedding IS NULL THEN TRUE ELSE FALSE END AS cluster_pending
+         FROM news n
+         LEFT JOIN clusters c ON c.id = n.cluster_id
+         LEFT JOIN ranked r ON r.id = n.id
+         WHERE n.matched_tags @> ARRAY[$1]::text[]
          AND ${timeFilter}
-         ORDER BY (published_at + INTERVAL '0 seconds') DESC
+         ORDER BY (n.published_at + INTERVAL '0 seconds') DESC
          LIMIT 50`,
         [tagId]
       );
@@ -367,7 +416,8 @@ router.get('/search', authMiddleware, async (req: AuthRequest, res) => {
       total = parseInt(countResult.rows[0]?.count || '0');
 
       const result = await query(
-        `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags, tag_impact, source_count, all_sources, fact_check_status, fact_check_result, slug
+        `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags, tag_impact, source_count, all_sources, fact_check_status, fact_check_result, slug,
+                NULL AS cluster_id, NULL AS cluster_size, NULL AS cluster_position, NULL AS cluster_last_seen_at, 0 AS cluster_growing, 0 AS cluster_pending
          FROM news
          WHERE ${where}
          ORDER BY published_at DESC
@@ -392,11 +442,25 @@ router.get('/search', authMiddleware, async (req: AuthRequest, res) => {
       );
       total = parseInt(countResult.rows[0]?.count || '0');
 
+      // ТЗ-99: каскадные поля (CTE ranked + join'ы).
       const result = await query(
-        `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags, tag_impact, source_count, all_sources, fact_check_status, fact_check_result, slug
-         FROM news
+        `WITH ranked AS (
+           SELECT id, ROW_NUMBER() OVER (PARTITION BY cluster_id ORDER BY published_at) AS cluster_position
+           FROM news
+           WHERE cluster_id IS NOT NULL
+         )
+         SELECT n.id, n.title_ru, n.title_original, n.summary_ru, n.summary_original, n.source, n.url, n.published_at, n.sentiment, n.sentiment_score, n.sentiment_reasoning, n.sentiment_source, n.is_political, n.article_type, n.matched_tags, n.tag_impact, n.source_count, n.all_sources, n.fact_check_status, n.fact_check_result, n.slug,
+                n.cluster_id,
+                c.size AS cluster_size,
+                c.last_seen_at AS cluster_last_seen_at,
+                c.last_seen_at > now() - interval '2 hours' AS cluster_growing,
+                r.cluster_position,
+                CASE WHEN n.cluster_id IS NULL AND n.embedding IS NULL THEN TRUE ELSE FALSE END AS cluster_pending
+         FROM news n
+         LEFT JOIN clusters c ON c.id = n.cluster_id
+         LEFT JOIN ranked r ON r.id = n.id
          WHERE ${where}
-         ORDER BY published_at DESC
+         ORDER BY n.published_at DESC
          LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
         [...params, limit, offset]
       );
