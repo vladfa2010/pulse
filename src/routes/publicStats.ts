@@ -237,7 +237,8 @@ router.get('/demo-tags', async (_req, res) => {
 // Query-параметры намеренно игнорируются: пагинации нет, гостю достаточно
 // первых 50 новостей; иначе перебор ?page=N обходит кэш и бьёт в БД.
 // SQL — полный аналог /api/news/global (тот же SELECT, timeFilterSql,
-// LIMIT+1) плюс фильтр matched_tags && demo-теги. Кэш один на весь ответ.
+// LIMIT+1) плюс фильтр matched_tags && demo-теги. ТЗ-99: те же каскадные
+// поля cluster_* через CTE ranked — теперь это снова правда. Кэш один на весь ответ.
 router.get('/demo-feed', async (_req, res) => {
   try {
     const hit = demoFeedCache;
@@ -258,12 +259,25 @@ router.get('/demo-feed', async (_req, res) => {
     const timeFilter = timeFilterSql();
 
     const result = await query(
-      `SELECT id, title_ru, title_original, summary_ru, summary_original, source, url, published_at, sentiment, sentiment_score, sentiment_reasoning, sentiment_source, is_political, article_type, matched_tags,
-              tag_impact, source_count, all_sources, fact_check_status, fact_check_result, slug
-       FROM news
+      `WITH ranked AS (
+         SELECT id, ROW_NUMBER() OVER (PARTITION BY cluster_id ORDER BY published_at) AS cluster_position
+         FROM news
+         WHERE cluster_id IS NOT NULL
+       )
+       SELECT n.id, n.title_ru, n.title_original, n.summary_ru, n.summary_original, n.source, n.url, n.published_at, n.sentiment, n.sentiment_score, n.sentiment_reasoning, n.sentiment_source, n.is_political, n.article_type, n.matched_tags,
+              n.tag_impact, n.source_count, n.all_sources, n.fact_check_status, n.fact_check_result, n.slug,
+              n.cluster_id,
+              c.size AS cluster_size,
+              c.last_seen_at AS cluster_last_seen_at,
+              c.last_seen_at > now() - interval '2 hours' AS cluster_growing,
+              r.cluster_position,
+              CASE WHEN n.cluster_id IS NULL AND n.embedding IS NULL THEN TRUE ELSE FALSE END AS cluster_pending
+       FROM news n
+       LEFT JOIN clusters c ON c.id = n.cluster_id
+       LEFT JOIN ranked r ON r.id = n.id
        WHERE ${timeFilter}
-         AND matched_tags && $2::text[]
-       ORDER BY published_at DESC
+         AND n.matched_tags && $2::text[]
+       ORDER BY n.published_at DESC
        LIMIT $1`,
       [DEMO_FEED_LIMIT + 1, tagIds]
     );
