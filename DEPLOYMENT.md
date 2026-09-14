@@ -1,8 +1,9 @@
 # PULSE — Deployment Guide
 
 > Единый документ по инфраструктуре, деплою и окружению.
-> Последнее обновление: 2026-09-10 (процедура обновления VPS переписана по итогам
-> выкатки ТЗ-85…90 — раздел «Обновление версии (процедура v2)»).
+> Последнее обновление: 2026-09-15 (инцидент «сборка из клона уронила env бэкенда» —
+> усилены предупреждения «compose только из /opt/pulse», см. раздел об инциденте
+> 2026-09-15 и «Обновление версии (процедура v2)»).
 >
 > **⚡ СТАТУС:** работают **две идентичные параллельные среды** — это осознанное
 > текущее состояние, а не переходный этап миграции:
@@ -310,10 +311,14 @@ docker-compose up   # PostgreSQL 16 + Redis 7 + Backend
 ```
 /opt/pulse/
 ├── docker-compose.yml   # стек: caddy + backend + postgres:18 (pgvector) + embeddings (TEI)
+│                        # ⚠️ БОЕВОЙ compose — все docker compose команды только из /opt/pulse
 ├── .env                 # секреты (НЕ в git, chmod 600)
 ├── Caddyfile            # два домена (прод + sslip), прокси /api
 ├── frontend/dist/       # собранный фронт (API_BASE захардкожен → pulse.inside-trade.ru)
 ├── pulse/               # git-клон этого репозитория (источник сборки backend)
+│                        # ⚠️ его docker-compose.yml НЕ боевой — для compose не использовать
+├── update-backend.sh    # каноническое обновление бэкенда (git pull + build из /opt/pulse)
+├── update-frontend.sh   # каноническое обновление фронта
 ├── logs/                # логи бэкенда (volume)
 └── dump.sql.gz          # дамп БД от миграции с Render (2026-09-02, 56 МБ)
 ```
@@ -433,6 +438,29 @@ docker-compose up   # PostgreSQL 16 + Redis 7 + Backend
 - Правило: **никогда не использовать `docker compose down -v` на проде**;
   перед любыми операциями с volumes — свежий дамп (`backup-*.sql.gz`).
 
+### ⚠️ Инцидент 2026-09-15: сборка из git-клона уронила env бэкенда
+
+При деплое ТЗ-104 сборка была запущена из `/opt/pulse/pulse` (`docker compose
+up -d --build backend`) вместо `/opt/pulse`. Оба каталога дают проекту имя
+`pulse`, поэтому compose из клона пересоздал **боевые** контейнеры своим
+упрощённым конфигом — без `CRON_SECRET_KEY` и остальных секретов. Бэкенд
+ушёл в crash-loop (`Error: CRON_SECRET_KEY environment variable is required`).
+Данные postgres не пострадали (volume не тронут, пересоздание контейнера
+данные сохраняет), но сам контейнер postgres тоже был пересоздан чужим
+конфигом (mount/PGDATA совпали, кластер поднялся штатно).
+
+**Лечение:** пересборка строго из `/opt/pulse` (штатный compose + `.env`) —
+контейнер поднялся с полным env.
+
+**Правила, добавленные после инцидента:**
+1. Золотое правило: `docker compose` на проде — только из `/opt/pulse`
+   (закреплено в «Операции» и в шаге 2 процедуры обновления).
+2. Канонические скрипты `/opt/pulse/update-backend.sh` /
+   `/opt/pulse/update-frontend.sh` — оба тянут код из клона, но собирают
+   из `/opt/pulse`.
+3. Длинные команды (сборка, дамп) — через `nohup ... &` + контроль короткими
+   вызовами: SSH-соединение с сервером нестабильно (Connection reset by peer).
+
 ### ТЗ-92 (2026-09-12): реалтайм-кластеризация — фактическое состояние
 
 - Фиче-флаг `CLUSTERING_ENABLED` (env backend'а, в `.env` сервера = true;
@@ -537,6 +565,15 @@ docker logs pulse-backend --tail 100 -f        # логи
 docker compose restart backend                 # рестарт
 ```
 
+> 🚫 **ЗОЛОТОЕ ПРАВИЛО: все `docker compose` команды на проде — ТОЛЬКО из `/opt/pulse`.**
+> Команду никогда не запускать из `/opt/pulse/pulse` (git-клон) — там другой
+> docker-compose.yml (упрощённый, без полного списка секретов), оба файла дают
+> проекту имя `pulse` и управляют ТЕМИ ЖЕ контейнерами, но с ДРУГИМ конфигом
+> (env, mount БД, лимиты). Пересоздание контейнера из клона молча теряет
+> переменные (`CRON_SECRET_KEY`, `ENCRYPTION_KEY`, Firebase и пр.) → crash-loop.
+> См. инцидент 2026-09-15 ниже. Канонические скрипты обновления на сервере:
+> `/opt/pulse/update-backend.sh`, `/opt/pulse/update-frontend.sh`.
+
 ⚠️ **ЗАПРЕЩЕНО на проде:** `docker compose down -v`, `docker volume rm`,
 `docker compose up -V` — удаляют данные postgres/TEI (инцидент 2026-09-11,
 восстановление из бэкапа + ~30 ч пересчёта эмбеддингов). Перед любыми
@@ -580,16 +617,30 @@ docker compose restart backend                 # рестарт
 
 #### 2. Backend — только если есть новые коммиты
 
+> 🚫 **Сборка — ТОЛЬКО из `/opt/pulse`** (боевой compose с полным env).
+> Ни в коем случае не запускать `docker compose up` из `/opt/pulse/pulse` —
+> пересоздаст контейнер без `CRON_SECRET_KEY` и др. → crash-loop (инцидент
+> 2026-09-15). Канонический вариант одной командой: `/opt/pulse/update-backend.sh`.
+
 ```bash
 # Проверка отставания (fetch + сколько коммитов позади):
 .kimi/vps-ssh.exp "cd /opt/pulse/pulse && git fetch origin && git status -sb && git log --oneline HEAD..origin/main | head -20"
 
 # Если список пуст — backend актуален, ШАГИ 3–4 ПРОПУСТИТЬ.
-# Иначе (~5-10 мин на 1 vCPU):
+# Иначе (~5-10 мин на 1 vCPU). Сборку запускаем через nohup: SSH-соединение
+# с сервером периодически обрывается (Connection reset by peer) — без nohup
+# обрыв убьёт процесс сборки посередине.
 .kimi/vps-ssh.exp "cd /opt/pulse/pulse && git pull"
-.kimi/vps-ssh.exp "cd /opt/pulse && docker compose up -d --build backend"
+.kimi/vps-ssh.exp "cd /opt/pulse && nohup docker compose up -d --build backend > /tmp/build.log 2>&1 &"
+# ждать ~2 мин, затем контроль:
+.kimi/vps-ssh.exp "tail -5 /tmp/build.log; docker ps --format '{{.Names}} {{.Status}}'"
 .kimi/vps-ssh.exp "docker logs pulse-backend --tail 30"   # старт и миграции без ошибок
 ```
+
+> Если бэкенд после пересборки в статусе `Restarting` — смотреть
+> `docker logs pulse-backend --tail 30`. Падение с
+> `... environment variable is required` = контейнер пересоздан не из боевого
+> compose → повторить сборку строго из `/opt/pulse` (см. золотое правило выше).
 
 #### 3. Frontend — собирается НЕ на сервере (1 ГБ RAM не тянет сборку)
 
