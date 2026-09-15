@@ -75,9 +75,12 @@ def connect() -> psycopg.Connection:
 
 
 def to_vector(value) -> np.ndarray:
-    """np.ndarray от register_vector; str '[0.01,-0.02,...]' — fallback-парсинг."""
+    """np.ndarray от register_vector; pgvector.Vector — через to_numpy();
+    str '[0.01,-0.02,...]' — fallback-парсинг."""
     if isinstance(value, np.ndarray):
         return value.astype(np.float32)
+    if hasattr(value, "to_numpy"):  # pgvector.vector.Vector (psycopg-регистрация)
+        return np.asarray(value.to_numpy(), dtype=np.float32)
     if isinstance(value, (list, tuple)):
         return np.asarray(value, dtype=np.float32)
     if isinstance(value, str):
