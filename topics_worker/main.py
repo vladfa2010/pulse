@@ -255,8 +255,11 @@ def save_result(
     prev: dict,
     noise_count: int,
 ) -> None:
-    """Запись результата ОДНОЙ транзакцией (при исключении — ROLLBACK снаружи)."""
-    with conn.transaction():
+    """Запись результата ОДНОЙ транзакцией (явный commit — см. psycopg3 ниже)."""
+    # psycopg3: conn.transaction() при уже открытой транзакции (SELECT из load_news)
+    # создаёт SAVEPOINT, и выход из контекста НЕ коммитит внешнюю транзакцию —
+    # при conn.close() в finally молча происходит ROLLBACK. Поэтому ручной commit.
+    try:
         with conn.cursor() as cur:
             for label in sorted(clusters.keys()):
                 idxs = clusters[label]
@@ -309,6 +312,10 @@ def save_result(
                 """,
                 [len(rows), len(clusters), noise_count, run_id],
             )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def error_text(exc: BaseException, loaded: int | None) -> str:
