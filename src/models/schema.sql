@@ -758,6 +758,37 @@ ALTER TABLE fact_check_sessions DROP CONSTRAINT IF EXISTS fact_check_sessions_fi
 
 
 -- ============================================================
+-- 19a. fact_check_requests — ad-hoc фактчекинг (TZ_FACTCHECK_PAGE v1.3)
+-- Все проверки частные: is_public DEFAULT FALSE, публикация — v2
+-- ============================================================
+CREATE TABLE IF NOT EXISTS fact_check_requests (
+  id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  input_type      TEXT NOT NULL CHECK (input_type IN ('text','url','image','file')),
+  input_raw       TEXT,
+  input_hash      TEXT,
+  title           TEXT,
+  extracted_text  TEXT,
+  status          TEXT NOT NULL DEFAULT 'queued',
+  result          JSONB,
+  error_message   TEXT,
+  is_public       BOOLEAN NOT NULL DEFAULT FALSE,
+  attempts        INTEGER NOT NULL DEFAULT 0,
+  next_retry_at   TIMESTAMPTZ,
+  created_at      TIMESTAMPTZ DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_fact_check_requests_user_created ON fact_check_requests (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_fact_check_requests_status ON fact_check_requests (status);
+CREATE INDEX IF NOT EXISTS idx_fact_check_requests_input_hash ON fact_check_requests (input_hash);
+CREATE INDEX IF NOT EXISTS idx_fact_check_requests_public ON fact_check_requests (is_public, status, created_at DESC);
+
+-- TZ_FACTCHECK_PAGE §5: согласие на передачу файлов оператору ИИ (NULL — не давал/отозвал)
+ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_file_consent_at TIMESTAMPTZ;
+
+
+-- ============================================================
 -- 20. search_cache — кэш результатов веб-поиска
 -- ============================================================
 CREATE TABLE IF NOT EXISTS search_cache (

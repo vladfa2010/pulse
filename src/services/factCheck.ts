@@ -76,6 +76,9 @@ export interface AssessmentV4 {
   missing_context: string;
   manipulation_risks: string;
   verdict: string;
+  // TZ_FACTCHECK_PAGE v1.3 §6 слой 3: false — текст не проверяем фактологически.
+  // Обратная совместимость: у старых результатов поля нет → трактуем как true.
+  verifiable: boolean;
 }
 
 export interface PipelineV4Result {
@@ -264,6 +267,13 @@ export async function updateFactCheckSession(sessionId: string, patch: SessionPa
   );
 }
 
+// TZ_FACTCHECK_PAGE v1.3 §9: ad-hoc проверки вызывают pipeline с sessionId = null —
+// записи в fact_check_sessions создаются только при наличии id (новостной фактчек).
+async function updateSessionSafe(sessionId: string | null, patch: SessionPatch): Promise<void> {
+  if (!sessionId) return;
+  await updateFactCheckSession(sessionId, patch);
+}
+
 // ─── LLM helpers ────────────────────────────────────────────────────────────
 
 function delay(ms: number): Promise<void> {
@@ -329,7 +339,7 @@ const SYSTEM_ANALYSIS = `Ты новостной аналитик. Давай р
 
 const SYSTEM_SOURCES = `Извлеки источники из результатов поиска. Отвечай ТОЛЬКО JSON: {"sources": [{"site": "название", "url": "https://...", "title": "заголовок", "date": "YYYY-MM-DD", "engine": "kimi|yandex_ru|yandex_com|serper_ru|serper_en"}]}. Перечисли ВСЕ источники.`;
 
-const SYSTEM_ASSESSMENT = `Ты эксперт по медиаграмотности. Оцени текст на основе анализа и источников. JSON: {"credibility_score": 0-100, "credibility_label": "Высокая"|"Средняя"|"Низкая"|"Критическая", "tone": "нейтральная"|"позитивная"|"негативная"|"манипулятивная", "facts_verified": "да"|"частично"|"нет", "has_opinion_bias": true|false, "missing_context": "...", "manipulation_risks": "...", "verdict": "2-3 предложения"}`;
+const SYSTEM_ASSESSMENT = `Ты эксперт по медиаграмотности. Оцени текст на основе анализа и источников. JSON: {"credibility_score": 0-100, "credibility_label": "Высокая"|"Средняя"|"Низкая"|"Критическая", "tone": "нейтральная"|"позитивная"|"негативная"|"манипулятивная", "facts_verified": "да"|"частично"|"нет", "has_opinion_bias": true|false, "missing_context": "...", "manipulation_risks": "...", "verdict": "2-3 предложения", "verifiable": true|false}. Поле verifiable: false — если текст не содержит проверяемых фактических утверждений (мнение, вопрос, эмоции), true — если содержит.`;
 
 const WEB_SEARCH_TOOL = { type: 'builtin_function', function: { name: '$web_search' } };
 
@@ -363,6 +373,8 @@ function normalizeAssessment(parsed: any): AssessmentV4 {
     missing_context: String(parsed?.missing_context || ''),
     manipulation_risks: String(parsed?.manipulation_risks || ''),
     verdict: String(parsed?.verdict || ''),
+    // Старые результаты (до TZ_FACTCHECK_PAGE v1.3) поля не имеют → true
+    verifiable: parsed?.verifiable === undefined ? true : Boolean(parsed.verifiable),
   };
 }
 
@@ -373,7 +385,7 @@ async function step1MultiSearch(
   titleOriginal: string | null | undefined,
   newsId: string,
   userId: string,
-  sessionId: string
+  sessionId: string | null
 ): Promise<{ sources: SearchSource[]; engineStatuses: EngineStatus[] }> {
   emitStage(newsId, userId, 'search', { status: 'searching' });
 
@@ -480,7 +492,7 @@ async function step1MultiSearch(
   });
 
   // ─── Сохраняем + отправляем в context ───
-  await updateFactCheckSession(sessionId, {
+  await updateSessionSafe(sessionId, {
     status: 'search',
     sources_json: JSON.stringify(deduped),
     sources_count: deduped.length,
@@ -534,7 +546,7 @@ async function step2Analysis(
   messages: any[],
   newsId: string,
   userId: string,
-  sessionId: string
+  sessionId: string | null
 ): Promise<string> {
   emitStage(newsId, userId, 'analysis', { status: 'analyzing' });
 
@@ -554,7 +566,7 @@ async function step2Analysis(
     preview: analysis.slice(0, 200),
   });
 
-  await updateFactCheckSession(sessionId, {
+  await updateSessionSafe(sessionId, {
     status: 'analysis',
     final_reasoning: analysis,
   });
@@ -567,7 +579,7 @@ async function step3Sources(
   rawSources: SearchSource[],
   newsId: string,
   userId: string,
-  sessionId: string
+  sessionId: string | null
 ): Promise<SourceV4[]> {
   emitStage(newsId, userId, 'sources', { status: 'extracting' });
 
@@ -624,7 +636,7 @@ async function step3Sources(
     items: sources,
   });
 
-  await updateFactCheckSession(sessionId, {
+  await updateSessionSafe(sessionId, {
     status: 'sources',
     sources_json: JSON.stringify(sources),
     sources_count: sources.length,
@@ -640,7 +652,7 @@ async function step4Assessment(
   sources: SourceV4[],
   newsId: string,
   userId: string,
-  sessionId: string
+  sessionId: string | null
 ): Promise<AssessmentV4> {
   emitStage(newsId, userId, 'assessment', { status: 'assessing' });
 
@@ -662,7 +674,7 @@ async function step4Assessment(
     ...assessment,
   });
 
-  await updateFactCheckSession(sessionId, {
+  await updateSessionSafe(sessionId, {
     status: 'assessment',
     final_verdict: assessment.credibility_label,
     final_confidence: assessment.credibility_score,
@@ -678,7 +690,7 @@ export async function runFactCheckPipelineV4(
   articleText: string,
   titleRu: string,
   titleOriginal: string | null | undefined,
-  sessionId: string
+  sessionId: string | null
 ): Promise<PipelineV4Result> {
   const messages: any[] = [
     { role: 'system', content: 'Ты помощник, который ищет информацию в интернете и анализирует новости.' },
@@ -812,6 +824,7 @@ export async function processFactCheckJob(jobId: string): Promise<void> {
           missing_context: '',
           manipulation_risks: '',
           verdict: `Ошибка проверки: ${message}`,
+          verifiable: true,
         },
         checked_at: new Date().toISOString(),
         model: FACT_CHECK_MODEL,

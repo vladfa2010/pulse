@@ -505,7 +505,8 @@ router.get('/me', async (req, res) => {
     // Загружаем пользователя из БД
     const result = await query(
       `SELECT id, email, username, subscription_active, subscription_plan, subscription_expires_at,
-              subscription_auto_renew, scheduled_plan_downgrade, news_count, is_admin
+              subscription_auto_renew, scheduled_plan_downgrade, news_count, is_admin,
+              ai_file_consent_at
        FROM users WHERE id = $1`,
       [decoded.userId]
     );
@@ -529,6 +530,8 @@ router.get('/me', async (req, res) => {
         username: user.username,
         is_admin: user.is_admin === 1 || user.is_admin === true,
         subscription: subStatus,
+        // TZ_FACTCHECK_PAGE §5: согласие на передачу файлов оператору ИИ
+        ai_file_consent: !!user.ai_file_consent_at,
       },
     });
   } catch (err) {

@@ -656,6 +656,31 @@ export async function initSQLiteSchema(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_user_events_user_id ON user_events(user_id);
     CREATE INDEX IF NOT EXISTS idx_user_events_type ON user_events(event_type);
     CREATE INDEX IF NOT EXISTS idx_user_events_created_at ON user_events(created_at DESC);
+
+    -- TZ_FACTCHECK_PAGE v1.3 §8.3: ad-hoc фактчекинг (ручной дубль схемы).
+    -- is_public INTEGER 0/1 — все проверки частные (v1), result TEXT (JSON).
+    CREATE TABLE IF NOT EXISTS fact_check_requests (
+      id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      input_type TEXT NOT NULL CHECK (input_type IN ('text','url','image','file')),
+      input_raw TEXT,
+      input_hash TEXT,
+      title TEXT,
+      extracted_text TEXT,
+      status TEXT NOT NULL DEFAULT 'queued',
+      result TEXT,
+      error_message TEXT,
+      is_public INTEGER NOT NULL DEFAULT 0,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      next_retry_at TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_fact_check_requests_user_created ON fact_check_requests (user_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_fact_check_requests_status ON fact_check_requests (status);
+    CREATE INDEX IF NOT EXISTS idx_fact_check_requests_input_hash ON fact_check_requests (input_hash);
+    CREATE INDEX IF NOT EXISTS idx_fact_check_requests_public ON fact_check_requests (is_public, status, created_at DESC);
   `;
 
   const statements = schema.split(';').filter(s => s.trim());
@@ -675,6 +700,14 @@ export async function initSQLiteSchema(): Promise<void> {
   try {
     db.run('ALTER TABLE users ADD COLUMN auto_renew_failures INTEGER DEFAULT 0');
     console.log('[SQLite] Migration: added auto_renew_failures column');
+  } catch {
+    // Column already exists — ignore
+  }
+
+  // Migration: TZ_FACTCHECK_PAGE §5 — согласие на передачу файлов оператору ИИ
+  try {
+    db.run('ALTER TABLE users ADD COLUMN ai_file_consent_at TEXT');
+    console.log('[SQLite] Migration: added ai_file_consent_at column');
   } catch {
     // Column already exists — ignore
   }

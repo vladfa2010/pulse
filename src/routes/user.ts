@@ -1530,4 +1530,30 @@ router.post('/push-unsubscribe', authMiddleware, async (req: AuthRequest, res) =
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// PUT /api/user/ai-consent — согласие на передачу файлов оператору ИИ (§5)
+// { granted: boolean } → users.ai_file_consent_at (NULL — не давал/отозвал).
+// Флаг возвращается в GET /api/auth/me как ai_file_consent: boolean.
+// ═══════════════════════════════════════════════════════════════════════════
+router.put('/ai-consent', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.userId;
+    const { granted } = req.body || {};
+    if (typeof granted !== 'boolean') {
+      return res.status(400).json({ error: 'granted (boolean) required' });
+    }
+    await query(
+      `UPDATE users SET ai_file_consent_at = ${granted ? nowSql() : 'NULL'} WHERE id = $1`,
+      [userId]
+    );
+    // Отдельный SELECT: SQLite write-helper не возвращает строки RETURNING
+    const result = await query(`SELECT ai_file_consent_at FROM users WHERE id = $1`, [userId]);
+    const consentAt = result.rows[0]?.ai_file_consent_at || null;
+    res.json({ ai_file_consent: !!consentAt, ai_file_consent_at: consentAt });
+  } catch (err: any) {
+    console.error('[User] ai-consent error:', err.message);
+    res.status(500).json({ error: 'Failed to save consent' });
+  }
+});
+
 export default router;

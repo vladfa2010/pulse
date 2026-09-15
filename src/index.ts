@@ -27,7 +27,9 @@ import { slugify } from './utils/slugify';
 import authRoutes from './routes/auth';
 import newsRoutes from './routes/news';
 import factCheckRoutes from './routes/factCheck';
+import factCheckRequestsRoutes from './routes/factCheckRequests';
 import { startFactCheckCron } from './services/factCheck';
+import { startFactCheckRequestCron } from './services/factCheckRequests';
 import { markProcessorShutdown } from './services/newsProcessor';
 import paymentRoutes from './routes/payment';
 import plansRoutes from './routes/plans';
@@ -125,7 +127,9 @@ async function runMigration(sql: string, name: string) {
 // ═══════════════════════════════════════════════════════════════════════════
 app.set('trust proxy', true); // Required for X-Forwarded-For behind Render proxy
 app.use(cors());
-app.use(express.json({ limit: '5mb' }));
+// TZ_FACTCHECK_PAGE §15 п.1: 15 МБ глобально (base64 файлов ≈ +33% к размеру);
+// Premium-гейт на POST /api/fact-check смягчает риск
+app.use(express.json({ limit: '15mb' }));
 
 // Health endpoints — before rate limiter, so monitoring can always reach them
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2327,6 +2331,7 @@ app.use('/api/auth/reset-password', passwordResetFlowLimiter);
 app.use('/api/auth', authLimiter, authRoutes);  // Строгий лимит (15/15min) — защита от брутфорса
 app.use('/api/news', newsRoutes);       // GET /api/news, /api/news/:tag (должен быть первым, т.к. содержит публичные маршруты)
 app.use('/api/news', factCheckRoutes);  // POST/GET /api/news/:id/fact-check
+app.use('/api/fact-check', factCheckRequestsRoutes); // Ad-hoc фактчекинг (TZ_FACTCHECK_PAGE v1.3)
 app.use('/api/market', marketPublicRoutes); // Public market data: /api/market/news-chart (TZ-3)
 app.use('/api/public', publicStatsRoutes); // GET /api/public/efficiency — публичный «Объём информации» (ТЗ-56)
 app.use('/api/news_heatmap', newsHeatmapRoutes); // News heatmap (TZ 11.11)
@@ -3561,6 +3566,36 @@ async function start() {
       sql: `CREATE INDEX IF NOT EXISTS idx_news_clustered ON news (cluster_id, published_at) INCLUDE (id) WHERE cluster_id IS NOT NULL`,
       name: 'idx_news_clustered'
     },
+    // TZ_FACTCHECK_PAGE v1.3 §8: ad-hoc фактчекинг — таблица проверок.
+    // is_public DEFAULT FALSE: все проверки частные, публикация — v2 (§2 п.4).
+    {
+      sql: `CREATE TABLE IF NOT EXISTS fact_check_requests (
+        id ${USE_SQLITE ? 'TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16))))' : 'UUID PRIMARY KEY DEFAULT uuid_generate_v4()'},
+        user_id ${USE_SQLITE ? 'TEXT' : 'UUID'} NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        input_type TEXT NOT NULL CHECK (input_type IN ('text','url','image','file')),
+        input_raw TEXT,
+        input_hash TEXT,
+        title TEXT,
+        extracted_text TEXT,
+        status TEXT NOT NULL DEFAULT 'queued',
+        result ${USE_SQLITE ? 'TEXT' : 'JSONB'},
+        error_message TEXT,
+        is_public ${USE_SQLITE ? 'INTEGER' : 'BOOLEAN'} NOT NULL DEFAULT FALSE,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        next_retry_at ${USE_SQLITE ? 'TIMESTAMP' : 'TIMESTAMPTZ'},
+        created_at ${USE_SQLITE ? 'TIMESTAMP' : 'TIMESTAMPTZ'} DEFAULT ${_SQL_NOW},
+        updated_at ${USE_SQLITE ? 'TIMESTAMP' : 'TIMESTAMPTZ'} DEFAULT ${_SQL_NOW}
+      )`,
+      name: 'fact_check_requests'
+    },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_fact_check_requests_user_created ON fact_check_requests (user_id, created_at DESC)`, name: 'idx_fcr_user_created' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_fact_check_requests_status ON fact_check_requests (status)`, name: 'idx_fcr_status' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_fact_check_requests_input_hash ON fact_check_requests (input_hash)`, name: 'idx_fcr_input_hash' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_fact_check_requests_public ON fact_check_requests (is_public, status, created_at DESC)`, name: 'idx_fcr_public' },
+    // Согласие на передачу файлов оператору ИИ (§5); NULL — не давал/отозвал
+    { sql: `ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_file_consent_at ${USE_SQLITE ? 'TIMESTAMP' : 'TIMESTAMPTZ'}`, name: 'users_ai_file_consent_at' },
+    // Страховка (§14.4 п.4): любые существующие данные — всегда частные
+    { sql: `UPDATE fact_check_requests SET is_public = FALSE WHERE is_public != FALSE`, name: 'fact_check_requests_is_public_false' },
   ];
   for (const m of migrations) {
     try {
@@ -3964,6 +3999,7 @@ async function start() {
       startGlobalSummaryCron({ isShuttingDown: () => shuttingDown }); // TZ: global AI summary every 6 hours MSK
       startPortfolioSyncWorker(); // Broker portfolio sync (every 15 min MSK)
       startFactCheckCron(); // Fact-check worker (every 10s)
+      startFactCheckRequestCron(); // Ad-hoc fact-check worker (TZ_FACTCHECK_PAGE v1.3, every 5s)
       startHeatmapFreezeCron({ isShuttingDown: () => shuttingDown }); // News heatmap freeze — ежедневно 00:05 MSK (TZ-49)
       startClusteringCron({ isShuttingDown: () => shuttingDown }); // ТЗ-92: catch-up кластеризации (*/15) + сюжеты (ежечасно), флаг CLUSTERING_ENABLED
       startTopicsNamingCron({ isShuttingDown: () => shuttingDown }); // ТЗ-115: нейминг тем 04:10 МСК, флаг TOPICS_ENABLED

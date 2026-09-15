@@ -9,41 +9,18 @@
  *   GET  /api/news/:id/fact-check/stream — SSE-прогресс проверки
  */
 
-import { Router, type Response } from 'express';
+import { Router } from 'express';
 import { EventEmitter } from 'events';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { query } from '../config/db';
-import { getUserSubscription, planLevel, computeAccessState } from '../services/subscription';
+import { getUserSubscription } from '../services/subscription';
 import { createFactCheckJob, updateNewsFactCheck, setEmitter, removeEmitter } from '../services/factCheck';
 import { logFactCheckOrdered } from '../services/activityLog';
 import { nowSql } from '../utils/nowSql';
+import requirePremium from '../middleware/requirePremium';
 
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
-
-const ELIGIBLE_PLANS = ['premium', 'club', 'pro'];
-
-async function requirePremium(req: AuthRequest, res: Response): Promise<boolean> {
-  const userId = req.user!.userId;
-  const sub = await getUserSubscription(userId);
-  const access = computeAccessState(sub.expiresAt);
-  const [currentLevel, premiumLevel] = await Promise.all([
-    planLevel(sub.plan),
-    planLevel('premium'),
-  ]);
-  const isEligible = access.active && currentLevel >= premiumLevel;
-
-  if (!isEligible) {
-    res.status(403).json({
-      error: 'Факт-чекинг доступен только на тарифе Premium и выше',
-      upgrade_required: true,
-      min_plan: 'premium',
-      min_price: 990,
-    });
-    return false;
-  }
-  return true;
-}
 
 async function checkRateLimit(userId: string, plan: string): Promise<boolean> {
   const limit = plan === 'premium' ? 100 : 300;
