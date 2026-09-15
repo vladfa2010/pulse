@@ -235,9 +235,9 @@ Push отправляется в две параллельные системы:
 | `VAPID_PUBLIC_KEY` | Публичный VAPID-ключ |
 | `VAPID_PRIVATE_KEY` | Приватный VAPID-ключ |
 | `VAPID_SUBJECT` | `mailto:` контакт (по умолчанию `mailto:admin@pulse.app`) |
-| `EMAIL_PROVIDER` | `resend`, `yandex` или `none` |
+| `EMAIL_PROVIDER` | `resend` или `none` |
 | `EMAIL_FROM` | Адрес отправителя |
-| `RESEND_API_KEY` / `YANDEX_USER` / `YANDEX_PASS` | Зависит от `EMAIL_PROVIDER` |
+| `RESEND_API_KEY` | Resend API ключ (обязателен при `EMAIL_PROVIDER=resend`) |
 
 ---
 

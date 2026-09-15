@@ -211,11 +211,9 @@ npm run build   # выход в dist/
 | `YOOKASSA_SECRET_KEY` | `(скрыт)` | ЮKassa secret key |
 | `KIMI_API_KEY` | `(скрыт)` | Kimi API (api.moonshot.ai) для перевода EN→RU, sentiment analysis, tag matching |
 | `CRON_SECRET_KEY` | `(скрыт)` | Секрет для manual triggers (/trigger-rss, /backfill-tags, /backfill-translate) |
-| `EMAIL_PROVIDER` | `(скрыт)` | `resend` / `yandex` / `none` |
+| `EMAIL_PROVIDER` | `(скрыт)` | `resend` / `none` (ТЗ-09: Yandex-провайдер удалён — мёртвый код) |
 | `EMAIL_FROM` | `(скрыт)` | Адрес отправителя (`noreply@pulse.inside-trade.ru`) |
 | `RESEND_API_KEY` | `(скрыт)` | Resend API ключ |
-| `YANDEX_USER` | `(скрыт)` | Yandex SMTP логин |
-| `YANDEX_PASS` | `(скрыт)` | Yandex SMTP app-пароль |
 | `TELEGRAM_BOT_TOKEN` | `(скрыт)` | Telegram Bot токен |
 | `ENCRYPTION_KEY` | `(скрыт)` | 64 hex-символов (32 байта) для AES-256-GCM шифрования API-токенов брокеров. Обязателен для фичи портфелей. |
 

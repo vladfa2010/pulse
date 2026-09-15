@@ -169,11 +169,9 @@ Push-канал реализован через Firebase Cloud Messaging (FCM) �
 | `YOOKASSA_SECRET_KEY` | ЮKassa secret |
 | `KIMI_API_KEY` | Kimi Translate API |
 | `ENCRYPTION_KEY` | 64 hex-символов (32 байта) для AES-256-GCM шифрования API-токенов брокеров |
-| `EMAIL_PROVIDER` | Email-провайдер: `resend`, `yandex` или `none` |
+| `EMAIL_PROVIDER` | Email-провайдер: `resend` или `none` |
 | `EMAIL_FROM` | Адрес отправителя (например `noreply@pulse.inside-trade.ru`) |
 | `RESEND_API_KEY` | Resend API ключ |
-| `YANDEX_USER` | Yandex SMTP логин |
-| `YANDEX_PASS` | Yandex SMTP app-пароль |
 | `TELEGRAM_BOT_TOKEN` | Telegram Bot token |
 
 ---
