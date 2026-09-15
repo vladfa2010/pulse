@@ -63,6 +63,9 @@ services:
       TRANSLATION_API_KEY: ${TRANSLATION_API_KEY:-}
       RSS_FETCH_INTERVAL: 15
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      # ТЗ-115: темы живут только на VPS — на Render переменной нет (крон не
+      # регистрируется, ручки отвечают 404 topics_disabled)
+      TOPICS_ENABLED: ${TOPICS_ENABLED:-false}
     ports:
       - "3001:3001"
     volumes:
