@@ -133,7 +133,10 @@ def run_clustering(X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     )
     labels = clusterer.fit_predict(X_pca)
     log.info("HDBSCAN: кластеров %s, шум %s", len(set(labels) - {-1}), int(np.sum(labels == -1)))
-    return labels, clusterer.membership_probabilities_
+    # is_core: в ТЗ — membership_probabilities_ >= 0.5, но в hdbscan >= 0.8.34
+    # soft-матрица убрана из атрибутов fit; probabilities_ — вероятность принадлежности
+    # НАЗНАЧЕННОМУ кластеру (0 у шума), для диагонали soft-матрицы эквивалентна.
+    return labels, clusterer.probabilities_.astype(np.float32)
 
 
 def load_prev_topics(conn: psycopg.Connection) -> dict:
