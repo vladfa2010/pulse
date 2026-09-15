@@ -59,7 +59,11 @@ services:
       YOOKASSA_SHOP_ID: ${YOOKASSA_SHOP_ID:-}
       YOOKASSA_SECRET_KEY: ${YOOKASSA_SECRET_KEY:-}
       SENDGRID_API_KEY: ${SENDGRID_API_KEY:-}
-      EMAIL_FROM: ${EMAIL_FROM:-noreply@pulse.app}
+      # ТЗ-09: без проброса этих переменных compose-запуск бэкенда получает
+      # EMAIL_PROVIDER='none' — почта молча выключена (инцидент 2026-09-16)
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-none}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:-noreply@pulse.inside-trade.ru}
       TRANSLATION_API_KEY: ${TRANSLATION_API_KEY:-}
       RSS_FETCH_INTERVAL: 15
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}

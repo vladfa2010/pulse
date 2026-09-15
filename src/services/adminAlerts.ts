@@ -255,3 +255,26 @@ export async function notifyAdmins(
     console.error('[AdminAlerts] notifyAdmins failed:', err);
   }
 }
+
+/**
+ * Системный алерт ВСЕМ активным админам, независимо от подписок на event_types.
+ *
+ * Операционный инцидент (падение почты, недоступность API и т.п.) — не
+ * пользовательское событие: если фильтровать по подпискам, алерт может не
+ * сработать, пока админ не включит галочку. Поэтому notifyAdmins здесь
+ * НЕ переиспользуется. Ошибки глотаются — вызов всегда fire-and-forget.
+ */
+export async function notifyAdminsSystemAlert(text: string): Promise<void> {
+  try {
+    const settingsResult = await query(
+      `SELECT tg_chat_id FROM admin_tg_settings
+       WHERE is_active = TRUE AND tg_chat_id IS NOT NULL AND tg_chat_id <> ''`,
+      []
+    );
+    for (const row of settingsResult.rows) {
+      await sendTelegramMessage(row.tg_chat_id, `🚨 <b>СИСТЕМНЫЙ АЛЕРТ</b>\n${escapeHtml(text)}`).catch(() => {});
+    }
+  } catch (err) {
+    console.error('[AdminAlerts] system alert failed:', err);
+  }
+}

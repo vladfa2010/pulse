@@ -34,6 +34,7 @@ import { ensureDefaultSubscriptions } from '../services/notifications/subscripti
 import { getUserTagsFull } from '../services/tagManager';
 import { sendPasswordResetCodeEmail, sendWelcomeEmail } from '../services/email';
 import { sendTelegramMessage } from '../services/telegram';
+import { notifyAdminsSystemAlert } from '../services/adminAlerts';
 import {
   logRegister,
   logLogin,
@@ -346,6 +347,14 @@ router.post('/forgot-password', validate(ForgotPasswordSchema), async (req, res)
 
     if (!sent) {
       console.error('[Auth] Failed to deliver reset code to', email);
+      // Провал доставки — операционный инцидент (env/квота/домен Resend),
+      // а не ошибка конкретного пользователя. Анти-перебор не ломаем:
+      // ответ выше по-прежнему {success:true}, алерт уходит админам
+      // fire-and-forget, не задерживая ответ.
+      notifyAdminsSystemAlert(
+        `Не удалось доставить код восстановления пароля на ${email}. ` +
+        `Проверьте логи Render: строки [Email]. Возможные причины: EMAIL_FROM/EMAIL_PROVIDER/RESEND_API_KEY, квота Resend.`
+      ).catch(() => {});
     }
 
     res.json({ success: true });

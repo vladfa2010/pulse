@@ -1,22 +1,32 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// Email Module — Multi-provider: Resend API (primary) + Yandex SMTP (fallback)
+// Email Module — Resend API
 // ═══════════════════════════════════════════════════════════════════════════
-// Provider: EMAIL_PROVIDER env var — 'resend' | 'yandex' | 'none' (default: none)
+// Provider: EMAIL_PROVIDER env var — 'resend' | 'none' (default: none)
 // Resend:  https://resend.com — API key registration, 100 emails/day free
-// Yandex:  https://yandex.ru — SMTP, password app required, 500/day
 // ═══════════════════════════════════════════════════════════════════════════
 
 import axios from 'axios';
-// @ts-ignore — nodemailer types not installed
-import nodemailer from 'nodemailer';
 import { isQuietHoursMsk } from './notifications/quietHours';
 import type { LostFeatures, UserMonthlyStats } from './subscription';
 
 const EMAIL_PROVIDER = process.env.EMAIL_PROVIDER || 'none';
-const EMAIL_FROM = process.env.EMAIL_FROM || 'noreply@pulse.app';
+const EMAIL_FROM = process.env.EMAIL_FROM || 'noreply@pulse.inside-trade.ru';
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
-const YANDEX_USER = process.env.YANDEX_USER;       // e.g. vladfa@ya.ru
-const YANDEX_PASS = process.env.YANDEX_PASS;       // app password
+
+// Boot-лог эффективной конфигурации — без значений секретов, только факты.
+// Потеря env или провайдер=none в проде видна в логах сразу при старте,
+// а не по жалобам «письмо не пришло» (инцидент: неверифицированный домен
+// pulse.app в дефолте EMAIL_FROM, письма молча отклонял Resend 403).
+console.log(
+  `[Email] Config: provider=${EMAIL_PROVIDER}, from=${EMAIL_FROM}, ` +
+  `resend_key=${RESEND_API_KEY ? 'set' : 'MISSING'}`
+);
+if (process.env.NODE_ENV === 'production' && EMAIL_PROVIDER === 'none') {
+  console.error('[Email] WARNING: EMAIL_PROVIDER не задан — все письма будут молча пропускаться!');
+}
+if (EMAIL_PROVIDER === 'resend' && !RESEND_API_KEY) {
+  console.error('[Email] WARNING: EMAIL_PROVIDER=resend, но RESEND_API_KEY отсутствует — все письма будут молча пропускаться!');
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Quiet hours check
@@ -46,9 +56,6 @@ export async function sendEmail(
   if (EMAIL_PROVIDER === 'resend' && RESEND_API_KEY) {
     return sendViaResend(to, subject, html);
   }
-  if (EMAIL_PROVIDER === 'yandex' && YANDEX_USER && YANDEX_PASS) {
-    return sendViaYandex(to, subject, html);
-  }
   console.log('[Email] No provider configured. Skipped.');
   return false;
 }
@@ -77,44 +84,6 @@ async function sendViaResend(
     return true;
   } catch (err: any) {
     console.error('[Email] Resend error:', err.response?.data || err.message);
-    return false;
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Yandex SMTP
-// ═══════════════════════════════════════════════════════════════════════════
-let yandexTransporter: nodemailer.Transporter | null = null;
-
-function getYandexTransporter(): nodemailer.Transporter {
-  if (!yandexTransporter) {
-    yandexTransporter = nodemailer.createTransporter({
-      host: 'smtp.yandex.ru',
-      port: 465,
-      secure: true,
-      auth: {
-        user: YANDEX_USER,
-        pass: YANDEX_PASS,
-      },
-    });
-  }
-  return yandexTransporter;
-}
-
-async function sendViaYandex(
-  to: string, subject: string, html: string
-): Promise<boolean> {
-  try {
-    const info = await getYandexTransporter().sendMail({
-      from: `"PULSE" <${YANDEX_USER}>`,
-      to,
-      subject,
-      html,
-    });
-    console.log('[Email] Yandex OK:', info.messageId);
-    return true;
-  } catch (err: any) {
-    console.error('[Email] Yandex error:', err.message);
     return false;
   }
 }
