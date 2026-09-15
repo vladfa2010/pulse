@@ -555,6 +555,33 @@ up -d --build backend`) вместо `/opt/pulse`. Оба каталога да�
   замедление; warm top-10 = 4 мс). Дамп перед проходом:
   `backup-2026-09-13.sql.gz` (338 МБ, gzip-проверка пройдена).
 
+### ТЗ-115 (2026-09-15): Темы — HDBSCAN-кластеризация эмбеддингов — фактическое состояние
+
+Третий уровень пирамиды (ТЕМА недели–месяцы → СЮЖЕТ → КАСКАД), методология §6.2.
+**Темы живут ТОЛЬКО на VPS-проде** — на Render таблиц нет, ручки отвечают
+`404 {"error":"topics_disabled"}`, вкладка скрыта флагом сборки.
+
+- **Миграция:** `src/migrations/topics_v1.sql` (таблицы `topic_runs`, `topics`,
+  `topic_items`) применена вручную на VPS 2026-09-15. На Render-БД НЕ применять.
+- **Сервис `topics-worker`** (5-й в compose, Python-sidecar): one-shot через
+  `docker compose --profile worker run --rm topics-worker` — в обычный
+  `compose up -d` не входит (profile). Хостовый cron VPS:
+  `40 3 * * * cd /opt/pulse && docker compose --profile worker run --rm topics-worker`
+  (03:40 МСК, после heatmap-крона 00:05). `mem_limit: 2g`, `restart: "no"`.
+  Параметры env: `TOPICS_WINDOW_DAYS` (14), `TOPICS_MIN_CLUSTER_SIZE` (8),
+  `TOPICS_MIN_SAMPLES` (3), `TOPICS_PCA_DIMS` (50), `TOPICS_JACCARD_THRESHOLD` (0.3).
+  Падение воркера сайт не затрагивает: в `topic_runs` строка `error`, UI показывает
+  прошлый прогон, следующая попытка — следующую ночь.
+- **Нейминг:** Node-cron `topics-naming` (04:10 МСК) под флагом
+  `TOPICS_ENABLED=true` в `/opt/pulse/.env` (на Render переменной нет — крон не
+  регистрируется). LLM ≤1 вызов на новую тему в сутки (сматченные через Jaccard
+  наследуют имя бесплатно).
+- **API:** `GET /api/market/topics` (последний done-прогон) и
+  `GET /api/market/topic?id=<uuid>` (деталка), кэш TTL 15 мин.
+- **Фронт:** вкладка «Темы» (позиция 3: Каскады → Сюжеты → Темы) только в
+  VPS-сборке с `VITE_TOPICS_ENABLED=true`; на Render Static Site флаг не
+  проставлен — вкладки нет, `?tab=topics` откатывается на «Каскады».
+
 ### Операции
 
 ```bash

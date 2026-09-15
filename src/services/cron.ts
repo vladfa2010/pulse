@@ -19,6 +19,7 @@
  */
 
 import cron from 'node-cron';
+import axios from 'axios';
 import { fetchAllRSS } from './rssFetcher';
 import { query } from '../config/db';
 import { normalizeUrl } from '../utils/normalizeUrl';
@@ -33,6 +34,7 @@ import { analyzeUnifiedBatch, UnifiedResult } from './smartTagMatcher';
 import { freezeHeatmapRecentDays } from './heatmapDaily';
 import { embedAndClusterBatch } from './clustering';      // ТЗ-92, задача 4
 import { runStoryGrouping } from './storyGrouper';        // ТЗ-92, задача 5
+import { VERIFIER_MODEL_TEMPERATURE } from '../config/clustering'; // ТЗ-115: температура LLM по конвенции §9.1
 
 // ═══════════════════════════════════════════════════════════════════════════
 // analyzeSentiment — простой анализ на основе ключевых слов
@@ -547,4 +549,155 @@ export function startClusteringCron(opts?: { isShuttingDown?: () => boolean }) {
     }
   });
   console.log('[Cron] Story grouping scheduled hourly');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ТЗ-115, задача 3 — нейминг тем (topics-naming)
+// ═══════════════════════════════════════════════════════════════════════════
+// Кластеризацию делает Python-sidecar topics-worker (03:40 МСК) — здесь
+// только LLM-имена для безымянных тем последнего done-прогона.
+// Стоимость: 0 LLM на кластеризацию + ≤1 вызов на новую тему в сутки
+// (сматченные через Jaccard темы наследуют имя бесплатно, LLM не дёргаем).
+// Конвенции вызова — §9.1 Методологии (как storyGrouper): kimi-k2.6, temp из
+// VERIFIER_MODEL_TEMPERATURE, thinking disabled для kimi-k*, response_format
+// json_object, fail-closed (§9.3): невалидный JSON → тема остаётся unnamed.
+const TOPICS_ENABLED = process.env.TOPICS_ENABLED === 'true';
+const KIMI_API_KEY = process.env.KIMI_API_KEY;
+const KIMI_MODEL = process.env.KIMI_MODEL || 'kimi-k2.6';
+
+const TOPICS_NAMING_LIMIT = 30;        // тем за запуск — разгребает накопленное после сбоев
+const TOPICS_NAMING_TIMEOUT_MS = 60_000;
+const TOPICS_NAMING_MAX_TOKENS = 500;  // {"name": "2–5 слов", "summary": "1 предложение"}
+
+const TOPICS_NAMING_PROMPT = `Ты — редактор новостной ленты PULSE. Дай короткое название теме новостей.
+
+Заголовки новостей темы (top-8, максимум 2 на источник):
+{{HEADLINES}}
+
+Ключевые слова темы (TF-IDF):
+{{KEYWORDS}}
+
+Ответь строго JSON:
+{"name": "2–5 слов", "summary": "одно предложение о предмете темы"}
+
+Требования к name: КОНКРЕТИКА вместо общих слов. ЗАПРЕЩЕНЫ generic-имена вроде «Новости», «Экономика», «Рынки», «Политика» — бери доминирующий предмет темы (примеры хороших имён: «Госдолг США», «Курс юаня», «Санкции против банков», «Отчётность IT-гигантов»).`;
+
+interface TopicToName {
+  id: string;
+  keywords: string[];
+}
+
+/** Один вызов LLM на тему. true — имя записано; false — fail-closed, тема остаётся unnamed. */
+async function nameTopicWithLlm(topic: TopicToName): Promise<boolean> {
+  if (!KIMI_API_KEY) return false;
+
+  // top-8 заголовков, максимум 2 на источник — берём свежие, дальше режем в JS
+  const headRes = await query(
+    `SELECT n.title_ru, n.source
+     FROM topic_items ti
+     JOIN news n ON n.id = ti.news_id
+     WHERE ti.topic_id = $1
+     ORDER BY n.published_at DESC
+     LIMIT 24`,
+    [topic.id]
+  );
+  const perSource: Record<string, number> = {};
+  const headlines: string[] = [];
+  for (const r of headRes.rows) {
+    const src = r.source || '';
+    perSource[src] = (perSource[src] || 0) + 1;
+    if (perSource[src] > 2) continue;
+    const title = String(r.title_ru || '').slice(0, 160);
+    if (title) headlines.push(title);
+    if (headlines.length >= 8) break;
+  }
+  if (headlines.length === 0) return false;
+
+  const prompt = TOPICS_NAMING_PROMPT
+    .split('{{HEADLINES}}').join(headlines.map((h) => `- «${h}»`).join('\n'))
+    .split('{{KEYWORDS}}').join((topic.keywords || []).slice(0, 10).join(', '));
+
+  let content = '';
+  try {
+    const response = await axios.post(
+      'https://api.moonshot.ai/v1/chat/completions',
+      {
+        model: KIMI_MODEL,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: KIMI_MODEL.startsWith('kimi-k') ? VERIFIER_MODEL_TEMPERATURE : 0.1,
+        max_tokens: TOPICS_NAMING_MAX_TOKENS,
+        response_format: { type: 'json_object' },
+        thinking: KIMI_MODEL.startsWith('kimi-k') ? { type: 'disabled' } : undefined,
+      },
+      {
+        headers: { Authorization: `Bearer ${KIMI_API_KEY}`, 'Content-Type': 'application/json' },
+        timeout: TOPICS_NAMING_TIMEOUT_MS,
+      }
+    );
+    content = response.data?.choices?.[0]?.message?.content || '';
+  } catch (err: any) {
+    console.warn(`[TopicsNaming] LLM-ошибка: ${err.message?.slice(0, 120)}`);
+    return false;
+  }
+
+  // Парсинг по явным ключам; невалидный JSON → тема остаётся unnamed (fail-closed)
+  let parsed: any = null;
+  try {
+    const raw = content.trim().replace(/^```json\s*/, '').replace(/\s*```$/, '');
+    parsed = JSON.parse(raw);
+  } catch {
+    console.warn('[TopicsNaming] невалидный JSON — тема остаётся unnamed');
+    return false;
+  }
+
+  const name = typeof parsed?.name === 'string' ? parsed.name.trim() : '';
+  if (!name) return false;
+  const summary = typeof parsed?.summary === 'string' ? parsed.summary.trim().slice(0, 2000) : '';
+  // named=false — страховка от гонки с другим запуском: не затираем чужое имя
+  await query(
+    'UPDATE topics SET name = $1, summary = $2, named = true WHERE id = $3 AND named = false',
+    [name.slice(0, 300), summary, topic.id]
+  );
+  return true;
+}
+
+export function startTopicsNamingCron(opts?: { isShuttingDown?: () => boolean }) {
+  if (!TOPICS_ENABLED) {
+    console.log('[Cron] Topics disabled (TOPICS_ENABLED != true) — topics-naming cron not scheduled');
+    return;
+  }
+
+  cron.schedule('10 4 * * *', async () => {
+    if (opts?.isShuttingDown?.()) return;
+    const acquired = await acquireCronLock('topics-naming');
+    if (!acquired) return;
+    try {
+      const res = await query(
+        `SELECT t.id, t.keywords
+         FROM topics t
+         WHERE t.run_id = (
+           SELECT id FROM topic_runs
+           WHERE status = 'done'
+           ORDER BY finished_at DESC NULLS LAST
+           LIMIT 1
+         )
+           AND t.named = false
+         ORDER BY t.news_count DESC
+         LIMIT $1`,
+        [TOPICS_NAMING_LIMIT]
+      );
+      let named = 0;
+      for (const row of res.rows) {
+        try {
+          if (await nameTopicWithLlm({ id: row.id, keywords: row.keywords || [] })) named++;
+        } catch (err: any) {
+          console.warn(`[TopicsNaming] тема ${row.id}: ${err.message?.slice(0, 100)}`);
+        }
+      }
+      console.log(`[TopicsNaming] безымянных тем: ${res.rows.length}, названо: ${named}`);
+    } catch (err: any) {
+      console.error('[Cron] Topics naming failed:', err.message);
+    }
+  }, { timezone: 'Europe/Moscow' });
+  console.log('[Cron] Topics naming scheduled daily at 04:10 Europe/Moscow');
 }

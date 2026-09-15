@@ -93,6 +93,23 @@ services:
       timeout: 5s
       retries: 3
 
+  # ТЗ-115, задача 2 — one-shot кластеризация тем (HDBSCAN по эмбеддингам).
+  # Не стартует с обычным `compose up -d` (профиль worker); запуск — хостовый
+  # cron на VPS: 40 3 * * * cd /opt/pulse && docker compose --profile worker run --rm topics-worker
+  topics-worker:
+    build: ./topics_worker
+    profiles: ["worker"]            # не стартует с обычным `compose up -d`
+    environment:
+      DATABASE_URL: postgres://pulse_user:${DB_PASSWORD:-pulse_password}@postgres:5432/pulse
+      TOPICS_WINDOW_DAYS: ${TOPICS_WINDOW_DAYS:-14}
+      TOPICS_MIN_CLUSTER_SIZE: ${TOPICS_MIN_CLUSTER_SIZE:-8}
+      TOPICS_MIN_SAMPLES: ${TOPICS_MIN_SAMPLES:-3}
+      TOPICS_PCA_DIMS: ${TOPICS_PCA_DIMS:-50}
+      TOPICS_JACCARD_THRESHOLD: ${TOPICS_JACCARD_THRESHOLD:-0.3}
+    depends_on: [postgres]
+    restart: "no"
+    mem_limit: 2g
+
 volumes:
   postgres_data:
   redis_data:

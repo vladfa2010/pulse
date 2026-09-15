@@ -1,0 +1,7 @@
+# ТЗ-115, задача 2 — topics-worker (HDBSCAN-кластеризация эмбеддингов)
+# LLM-клиентов и HTTP-фреймворков здесь НЕТ — скрипт «запустился → отработал → умер».
+hdbscan>=0.8.39
+scikit-learn>=1.4
+numpy>=1.26
+psycopg[binary]>=3.1
+pgvector>=0.3

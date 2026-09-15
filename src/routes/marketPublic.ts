@@ -259,10 +259,18 @@ const CASCADE_CHART_CACHE_TTL_MS = 15 * 60 * 1000; // 15 мин
 // ТЗ-97: крышка многодневного диапазона каскада (календарных дней, включительно)
 const CASCADE_CHART_MAX_RANGE_DAYS = 14;
 const STORIES_CACHE_TTL_MS = 15 * 60 * 1000;    // 15 мин
+// ТЗ-115: темы меняются раз в сутки — TTL как у /stories (15 мин)
+const TOPICS_CACHE_TTL_MS = 15 * 60 * 1000;     // 15 мин
+// ТЗ-115: темы живут только на VPS — на Render (флаг выключен) ручки отвечают
+// 404 topics_disabled БЕЗ обращения к таблицам (там их нет)
+const TOPICS_ENABLED = process.env.TOPICS_ENABLED === 'true';
 
 const cascadesCache = new Map<string, { at: number; payload: any }>();
 const cascadeChartCache = new Map<string, { at: number; payload: any }>();
 const storiesCache = new Map<string, { at: number; payload: any }>();
+// ТЗ-115, задача 4 — кэши тем (как storiesCache: Map + cacheGet/cacheSet)
+const topicsCache = new Map<string, { at: number; payload: any }>();
+const topicCache = new Map<string, { at: number; payload: any }>();
 // ТЗ-93: данные графа и ресерч-статистика — кэш по окну, TTL 15 мин
 const cascadeGraphCache = new Map<string, { at: number; payload: any }>();
 const cascadeResearchCache = new Map<string, { at: number; payload: any }>();
@@ -773,6 +781,205 @@ router.get('/stories', async (req, res) => {
   } catch (err: any) {
     console.error('[marketPublic] stories error:', err.message);
     return res.status(500).json({ error: 'stories_unavailable' });
+  }
+});
+
+/**
+ * GET /api/market/topics (ТЗ-115, задача 4)
+ * Темы последнего done-прогона topics-worker, сортировка news_count DESC.
+ * Темы без имени (named=false) отдаём с name=null — фронт покажет
+ * «Тема без названия (формируется)» (штатно до крона нейминга 04:10 МСК).
+ * TTL 15 мин, публичная, read-only. При TOPICS_ENABLED != 'true' — 404.
+ */
+router.get('/topics', async (req, res) => {
+  if (!TOPICS_ENABLED) {
+    return res.status(404).json({ error: 'topics_disabled' });
+  }
+  try {
+    const cached = cacheGet(topicsCache, 'all', TOPICS_CACHE_TTL_MS);
+    if (cached) {
+      res.setHeader('X-Cache', 'hit');
+      return res.json(cached);
+    }
+
+    const runRes = await query(
+      `SELECT id, window_days, news_count, noise_count, finished_at
+       FROM topic_runs
+       WHERE status = 'done'
+       ORDER BY finished_at DESC NULLS LAST
+       LIMIT 1`,
+      []
+    );
+
+    let payload: any;
+    if (runRes.rows.length === 0) {
+      // Прогона ещё не было — пустое состояние (не ошибка)
+      payload = {
+        run_at: null,
+        window_days: null,
+        topics_total: 0,
+        news_covered: 0,
+        noise_count: 0,
+        topics: [],
+      };
+    } else {
+      const run = runRes.rows[0];
+      const topicsRes = await query(
+        `SELECT id, name, summary, named, news_count, span_days, sources_count, trend, daily
+         FROM topics
+         WHERE run_id = $1
+         ORDER BY news_count DESC`,
+        [run.id]
+      );
+      payload = {
+        run_at: run.finished_at,
+        window_days: run.window_days,
+        topics_total: topicsRes.rows.length,
+        news_covered: run.news_count != null ? Number(run.news_count) : 0,
+        noise_count: run.noise_count != null ? Number(run.noise_count) : 0,
+        topics: topicsRes.rows.map((r: any) => ({
+          id: r.id,
+          // unnamed-темы — строго name=null (не пустая строка)
+          name: r.named ? r.name : null,
+          summary: r.named ? r.summary : null,
+          news_count: Number(r.news_count),
+          span_days: r.span_days != null ? Number(r.span_days) : null,
+          sources_count: r.sources_count != null ? Number(r.sources_count) : null,
+          trend: r.trend,
+          daily: r.daily || [],
+        })),
+      };
+    }
+
+    cacheSet(topicsCache, 'all', payload);
+    res.setHeader('X-Cache', 'miss');
+    return res.json(payload);
+  } catch (err: any) {
+    console.error('[marketPublic] topics error:', err.message);
+    return res.status(500).json({ error: 'topics_unavailable' });
+  }
+});
+
+/**
+ * GET /api/market/topic?id=<uuid> (ТЗ-115, задача 4)
+ * Детальная карточка темы: новости (topic_items JOIN news, time DESC, лимит 200),
+ * каскады в теме (JOIN cluster_items по news_id, overlap DESC, лимит 20),
+ * сюжеты в теме (news_id → cluster_items → clusters.story_id, overlap DESC, лимит 20).
+ * TTL 15 мин, публичная, read-only. При TOPICS_ENABLED != 'true' — 404.
+ */
+router.get('/topic', async (req, res) => {
+  if (!TOPICS_ENABLED) {
+    return res.status(404).json({ error: 'topics_disabled' });
+  }
+  try {
+    const topicId = req.query.id as string;
+    if (!topicId) {
+      return res.status(400).json({ error: 'id required' });
+    }
+
+    const cached = cacheGet(topicCache, topicId, TOPICS_CACHE_TTL_MS);
+    if (cached) {
+      res.setHeader('X-Cache', 'hit');
+      return res.json(cached);
+    }
+
+    const tRes = await query(
+      `SELECT id, name, summary, named, news_count, span_days, sources_count, trend, daily
+       FROM topics
+       WHERE id = $1`,
+      [topicId]
+    );
+    if (tRes.rows.length === 0) {
+      return res.status(404).json({ error: 'topic_not_found' });
+    }
+    const t = tRes.rows[0];
+
+    const newsRes = await query(
+      `SELECT n.id, n.published_at, n.source, n.title_ru, n.url
+       FROM topic_items ti
+       JOIN news n ON n.id = ti.news_id
+       WHERE ti.topic_id = $1
+       ORDER BY n.published_at DESC
+       LIMIT 200`,
+      [topicId]
+    );
+
+    // Каскады в теме: overlap = сколько новостей темы входит в каскад
+    const cascadesRes = await query(
+      `SELECT c.id,
+              fn.title,
+              c.size AS news_count,
+              COUNT(*) AS overlap
+       FROM topic_items ti
+       JOIN cluster_items ci ON ci.news_id = ti.news_id
+       JOIN clusters c ON c.id = ci.cluster_id
+       LEFT JOIN LATERAL (
+         SELECT n.title_ru AS title
+         FROM cluster_items ci2
+         JOIN news n ON n.id = ci2.news_id
+         WHERE ci2.cluster_id = c.id
+         ORDER BY n.published_at ASC
+         LIMIT 1
+       ) fn ON true
+       WHERE ti.topic_id = $1
+       GROUP BY c.id, fn.title, c.size
+       ORDER BY overlap DESC
+       LIMIT 20`,
+      [topicId]
+    );
+
+    // Сюжеты в теме: news_id темы → каскады → сюжет (clusters.story_id);
+    // overlap = сколько новостей темы входит в каскады сюжета
+    const storiesRes = await query(
+      `SELECT s.id, s.title AS name, COUNT(*) AS overlap
+       FROM topic_items ti
+       JOIN cluster_items ci ON ci.news_id = ti.news_id
+       JOIN clusters c ON c.id = ci.cluster_id
+       JOIN stories s ON s.id = c.story_id
+       WHERE ti.topic_id = $1
+       GROUP BY s.id, s.title
+       ORDER BY overlap DESC
+       LIMIT 20`,
+      [topicId]
+    );
+
+    const payload = {
+      id: t.id,
+      name: t.named ? t.name : null,
+      summary: t.named ? t.summary : null,
+      stats: {
+        news_count: Number(t.news_count),
+        span_days: t.span_days != null ? Number(t.span_days) : null,
+        sources_count: t.sources_count != null ? Number(t.sources_count) : null,
+        trend: t.trend,
+        daily: t.daily || [],
+      },
+      news: newsRes.rows.map((r: any) => ({
+        id: r.id,
+        time: r.published_at,
+        source: r.source,
+        title: r.title_ru,
+        url: r.url,
+      })),
+      cascades: cascadesRes.rows.map((r: any) => ({
+        id: r.id,
+        title: r.title,
+        news_count: Number(r.news_count),
+        overlap: Number(r.overlap),
+      })),
+      stories: storiesRes.rows.map((r: any) => ({
+        id: r.id,
+        name: r.name,
+        overlap: Number(r.overlap),
+      })),
+    };
+
+    cacheSet(topicCache, topicId, payload);
+    res.setHeader('X-Cache', 'miss');
+    return res.json(payload);
+  } catch (err: any) {
+    console.error('[marketPublic] topic error:', err.message);
+    return res.status(500).json({ error: 'topics_unavailable' });
   }
 });
 
