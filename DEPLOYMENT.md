@@ -702,8 +702,11 @@ sed -i '' 's/pulse-api-bsov\.onrender\.com/pulse.inside-trade.ru/g' \
   src/lib/api.ts src/pages/DownloadPage.tsx src/hooks/useSseNews.ts src/components/SentimentChartCard.tsx
 # (.env.production уже содержит VITE_FRONTEND_URL=https://pulse.inside-trade.ru — проверить)
 
-# 3.2. Собрать и упаковать (COPYFILE_DISABLE убирает macOS-xattr из tar):
-npm run build && COPYFILE_DISABLE=1 tar czf dist.tar.gz -C dist .
+# 3.2. Собрать и упаковать (COPYFILE_DISABLE убирает macOS-xattr из tar).
+# ⚠️ VITE_TOPICS_ENABLED=true — ОБЯЗАТЕЛЕН для VPS-сборки: без него из «Каскадов»
+# пропадает вкладка «Темы» (ТЗ-115). Флаг не лежит ни в одном .env — передаётся
+# только инлайн здесь (файл .env под git, Render-контур флаг не должен видеть).
+VITE_TOPICS_ENABLED=true npm run build && COPYFILE_DISABLE=1 tar czf dist.tar.gz -C dist .
 
 # 3.3. ОТКАТИТЬ ПАТЧ ЛОКАЛЬНО — иначе Render-контур соберётся с VPS-доменом:
 git checkout -- src/lib/api.ts src/pages/DownloadPage.tsx src/hooks/useSseNews.ts src/components/SentimentChartCard.tsx
