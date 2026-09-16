@@ -335,6 +335,9 @@ docker-compose up   # PostgreSQL 16 + Redis 7 + Backend
 │                        # ⚠️ БОЕВОЙ compose — все docker compose команды только из /opt/pulse
 ├── .env                 # секреты (НЕ в git, chmod 600)
 ├── Caddyfile            # два домена (прод + sslip), прокси /api
+│                        # + ТЗ-118: временный блок @adminLegacyApi (прокси /admin/* и
+│                        #   /cleanup-failed-articles на backend:3001; УДАЛИТЬ в Задаче 3
+│                        #   ТЗ-118; бэкап до хотфикса — /opt/pulse/Caddyfile.bak-tz118)
 ├── frontend/dist/       # собранный фронт (API_BASE захардкожен → pulse.inside-trade.ru)
 ├── pulse/               # git-клон этого репозитория (источник сборки backend)
 │                        # ⚠️ его docker-compose.yml НЕ боевой — для compose не использовать
