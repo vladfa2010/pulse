@@ -485,7 +485,8 @@ function cleanupAuth(req: AuthRequest, res: any, next: any) {
   adminMiddleware(req, res, next);
 }
 
-app.post('/cleanup-failed-articles', cleanupAuth, async (req, res) => {
+// ТЗ-118: dual mount. Корневой путь удалить в Задаче 3.
+app.post(['/cleanup-failed-articles', '/api/admin/cleanup-failed-articles'], cleanupAuth, async (req, res) => {
   try {
     const before = await query(`SELECT COUNT(*) as count FROM news WHERE llm_error IS NOT NULL`);
     const count = parseInt(before.rows[0]?.count || '0');
@@ -510,7 +511,8 @@ app.post('/cleanup-failed-articles', cleanupAuth, async (req, res) => {
 // Body: { matched_tags?: string[], source_id?: string, lang_original?: string,
 //         date_from?: string, date_to?: string, title_contains?: string }
 // ═══════════════════════════════════════════════════════════════════════════
-app.post('/admin/news-count', async (req, res) => {
+// ТЗ-118: dual mount. Legacy-пути удалить в Задаче 3 (по решению гейта логов).
+app.post(['/admin/news-count', '/api/admin/news-count'], async (req, res) => {
   const secret = req.headers['x-trigger-secret'];
   if (secret !== CRON_SECRET_KEY) {
     return res.status(403).json({ error: 'Forbidden' });
@@ -564,7 +566,8 @@ app.post('/admin/news-count', async (req, res) => {
 //         date_from?: string, date_to?: string, title_contains?: string,
 //         dry_run?: boolean }
 // ═══════════════════════════════════════════════════════════════════════════
-app.post('/admin/news-delete', async (req, res) => {
+// ТЗ-118: dual mount. Legacy-пути удалить в Задаче 3 (по решению гейта логов).
+app.post(['/admin/news-delete', '/api/admin/news-delete'], async (req, res) => {
   const secret = req.headers['x-trigger-secret'];
   if (secret !== CRON_SECRET_KEY) {
     return res.status(403).json({ error: 'Forbidden' });
@@ -628,7 +631,8 @@ app.post('/admin/news-delete', async (req, res) => {
 // ADMIN: List news with matched_tags (GET — для браузера)
 // Query: ?source_id=finnhub&limit=50&secret=KEY
 // ═══════════════════════════════════════════════════════════════════════════
-app.get('/admin/news-list', async (req, res) => {
+// ТЗ-118: dual mount. Legacy-пути удалить в Задаче 3 (по решению гейта логов).
+app.get(['/admin/news-list', '/api/admin/news-list'], async (req, res) => {
   const secret = req.headers['x-trigger-secret'] || req.query.secret;
   if (secret !== CRON_SECRET_KEY) {
     return res.status(403).json({ error: 'Forbidden' });
@@ -681,7 +685,8 @@ app.get('/admin/news-list', async (req, res) => {
 // ADMIN: Send weekly report to specific user
 // Query: ?user_id=123&secret=KEY
 // ═══════════════════════════════════════════════════════════════════════════
-app.get('/admin/weekly-report', async (req, res) => {
+// ТЗ-118: dual mount. Legacy-пути удалить в Задаче 3 (по решению гейта логов).
+app.get(['/admin/weekly-report', '/api/admin/weekly-report'], async (req, res) => {
   const secret = req.headers['x-trigger-secret'] || req.query.secret;
   if (secret !== CRON_SECRET_KEY) {
     return res.status(403).json({ error: 'Forbidden' });
@@ -719,7 +724,8 @@ app.get('/admin/weekly-report', async (req, res) => {
 // ADMIN: Count news by filters (GET — для браузера)
 // Query: ?matched_tags=nvda,crispr&source_id=finnhub&lang_original=en&secret=KEY
 // ═══════════════════════════════════════════════════════════════════════════
-app.get('/admin/news-count-query', async (req, res) => {
+// ТЗ-118: dual mount. Legacy-пути удалить в Задаче 3 (по решению гейта логов).
+app.get(['/admin/news-count-query', '/api/admin/news-count-query'], async (req, res) => {
   const secret = req.headers['x-trigger-secret'] || req.query.secret;
   if (secret !== CRON_SECRET_KEY) {
     return res.status(403).json({ error: 'Forbidden' });
@@ -2347,7 +2353,8 @@ app.use('/api/translate', translateRoutes);
 app.use('/api/webhook', webhookLimiter, webhookRoutes); // Высокий лимит для YuKassa
 app.use('/api/admin', adminRoutes);     // GET /api/admin/users, /stats
 app.use('/api/admin', adminMetricsRoutes); // GET /api/admin/metrics?section=...
-app.use('/admin', adminLegacyRoutes);       // legacy admin UI endpoints (moved from index.ts)
+// ТЗ-118: dual mount. Legacy-префикс '/admin' удалить в Задаче 3.
+app.use(['/admin', '/api/admin'], adminLegacyRoutes); // legacy admin UI endpoints (moved from index.ts)
 
 // ═══════════════════════════════════════════════════════════════════════════
 // GET /api/tags/search — поиск тегов по enriched-полям (substring, ILIKE)
