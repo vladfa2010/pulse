@@ -12,8 +12,11 @@
      нормировка слетает, а euclidean на нормированных векторах ~ cosine)
   4. PCA до TOPICS_PCA_DIMS компонент (сырые 1024-мерные вектора страдают
      от проклятия размерности; precomputed-матрица 42k×42k ≈ 14 ГБ — не строим)
-  5. HDBSCAN (min_cluster_size / min_samples из env, metric='euclidean');
-     шум = label -1, в таблицы не пишем, считаем noise_count
+  5. HDBSCAN (min_cluster_size / min_samples из env, metric='euclidean';
+     cluster_selection_method='leaf' — EOM на наших данных бистабилен: плотные
+     мосты схлопывают 96% новостей в один мега-кластер (зафиксировано 2026-09-18,
+     прогоны 03:40 давали 2 темы вместо ~95; leaf выбирает гомогенные мелкие
+     кластеры и мосты не тянет); шум = label -1, в таблицы не пишем, считаем noise_count
   6. Склейка с последним done-прогоном: Jaccard по news_id >=
      TOPICS_JACCARD_THRESHOLD -> наследуем prev_topic_id + name/summary
      (named=true сразу, LLM не дёргаем); один старый кластер наследует
@@ -61,6 +64,7 @@ MIN_CLUSTER_SIZE = int(os.environ.get("TOPICS_MIN_CLUSTER_SIZE", "8"))
 MIN_SAMPLES = int(os.environ.get("TOPICS_MIN_SAMPLES", "3"))
 PCA_DIMS = int(os.environ.get("TOPICS_PCA_DIMS", "50"))
 JACCARD_THRESHOLD = float(os.environ.get("TOPICS_JACCARD_THRESHOLD", "0.3"))
+CLUSTER_SELECTION_METHOD = os.environ.get("TOPICS_CLUSTER_SELECTION_METHOD", "leaf")
 EMBEDDING_DIM = 1024  # Qwen3-Embedding-0.6B (ТЗ-91)
 ITEMS_BATCH = 1000    # батч-инсёрт topic_items (поштучные INSERT запрещены)
 
@@ -125,14 +129,20 @@ def build_matrix(rows: list[tuple]) -> np.ndarray:
 def run_clustering(X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     n_components = min(PCA_DIMS, X.shape[0], X.shape[1])
     log.info("PCA: %s -> %s компонент", X.shape[1], n_components)
-    X_pca = PCA(n_components=n_components).fit_transform(X).astype(np.float32)
+    # random_state фиксируем: randomized SVD без seed недетерминирован, а картина
+    # кластеров на грани бистабильности (см. баг 2026-09-18 в docstring).
+    X_pca = PCA(n_components=n_components, random_state=0).fit_transform(X).astype(np.float32)
     clusterer = hdbscan.HDBSCAN(
         min_cluster_size=MIN_CLUSTER_SIZE,
         min_samples=MIN_SAMPLES,
         metric="euclidean",
+        cluster_selection_method=CLUSTER_SELECTION_METHOD,
     )
     labels = clusterer.fit_predict(X_pca)
-    log.info("HDBSCAN: кластеров %s, шум %s", len(set(labels) - {-1}), int(np.sum(labels == -1)))
+    log.info(
+        "HDBSCAN (%s): кластеров %s, шум %s",
+        CLUSTER_SELECTION_METHOD, len(set(labels) - {-1}), int(np.sum(labels == -1)),
+    )
     # is_core: в ТЗ — membership_probabilities_ >= 0.5, но в hdbscan >= 0.8.34
     # soft-матрица убрана из атрибутов fit; probabilities_ — вероятность принадлежности
     # НАЗНАЧЕННОМУ кластеру (0 у шума), для диагонали soft-матрицы эквивалентна.
@@ -341,6 +351,7 @@ def main() -> int:
             "min_samples": MIN_SAMPLES,
             "pca_dims": PCA_DIMS,
             "jaccard_threshold": JACCARD_THRESHOLD,
+            "cluster_selection_method": CLUSTER_SELECTION_METHOD,
         }
         with conn.cursor() as cur:
             cur.execute(

@@ -593,7 +593,9 @@ up -d --build backend`) вместо `/opt/pulse`. Оба каталога да�
   `40 3 * * * cd /opt/pulse && docker compose --profile worker run --rm topics-worker`
   (03:40 МСК, после heatmap-крона 00:05). `mem_limit: 2g`, `restart: "no"`.
   Параметры env: `TOPICS_WINDOW_DAYS` (14), `TOPICS_MIN_CLUSTER_SIZE` (8),
-  `TOPICS_MIN_SAMPLES` (3), `TOPICS_PCA_DIMS` (50), `TOPICS_JACCARD_THRESHOLD` (0.3).
+  `TOPICS_MIN_SAMPLES` (3), `TOPICS_PCA_DIMS` (50), `TOPICS_JACCARD_THRESHOLD` (0.3),
+  `TOPICS_CLUSTER_SELECTION_METHOD` (`leaf`; EOM бистабилен — плотные мосты
+  схлопывали 96% новостей в мега-кластер, баг 2026-09-18).
   Падение воркера сайт не затрагивает: в `topic_runs` строка `error`, UI показывает
   прошлый прогон, следующая попытка — следующую ночь.
 - **Нейминг:** Node-cron `topics-naming` (04:10 МСК) под флагом
