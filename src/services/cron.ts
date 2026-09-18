@@ -587,8 +587,10 @@ interface TopicToName {
   keywords: string[];
 }
 
-/** Один вызов LLM на тему. true — имя записано; false — fail-closed, тема остаётся unnamed. */
-async function nameTopicWithLlm(topic: TopicToName): Promise<boolean> {
+/** Один вызов LLM на тему. true — имя записано; false — fail-closed, тема остаётся unnamed.
+ *  Экспортировано для разовых джобов ручного нейминга (например, после
+ *  внепланового перезапуска кластеризации — см. баг 2026-09-18). */
+export async function nameTopicWithLlm(topic: TopicToName): Promise<boolean> {
   if (!KIMI_API_KEY) return false;
 
   // top-8 заголовков, максимум 2 на источник — берём свежие, дальше режем в JS
