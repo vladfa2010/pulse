@@ -6,8 +6,9 @@
 саммари, календарь, котировки наблюдения.
 
 Продуктовый контекст — `RADIO.md` (в пакете радио у владельца, v4).
-ТЗ: **ТЗ-42 (backend)** ✅ · **ТЗ-43 (страница и данные)** — предстоит ·
-**ТЗ-44 (UI и голос)** — предстоит. Ревью техлида: `REVIEW_RADIO_TZ42_V31_2026-09-21.md`
+ТЗ: **ТЗ-42 (backend)** ✅ · **ТЗ-43 (страница и данные)** ✅ ·
+**ТЗ-44 (UI и голос)** ✅ · **ТЗ-45 (флаги в БД + админка)** ✅.
+Ревью техлида: `REVIEW_RADIO_TZ42_V31_2026-09-21.md`
 (блокеры Б1/Б2 закрыты в ТЗ-42).
 
 ## Статус
@@ -17,6 +18,7 @@
 | ТЗ-42 backend: TTS-прокси, флаги, SSE из News Processor | ✅ на проде | 2026-09-21 |
 | ТЗ-43 frontend: страница `/radio`, адаптеры, хуки | ✅ на проде (коммит `b176c5f` pulse-frontend) | 2026-09-21 |
 | ТЗ-44 frontend: перенос UI и голосового движка | ✅ на проде (коммит `3db7434` pulse-frontend) | 2026-09-21 |
+| ТЗ-45 флаги в БД `_radio_settings` + таба «Радио» в админке | ✅ на проде (backend `bd879bf`, frontend `fe9841b`) | 2026-09-22 |
 
 ## Концепция подачи (как будет выглядеть эфир)
 
@@ -46,11 +48,13 @@
 ```
 pulse-backend
 ├── src/routes/radio.ts            POST /api/radio/tts, GET /api/radio/config
+├── src/services/radioSettings.ts  флаги в БД _radio_settings (ТЗ-45): кэш TTL 60с,
+│                                  сид дефолтов, whitelist-валидация, upsert PG/SQLite
 ├── src/services/radioMetrics.ts   in-memory метрики TTS (см. «Эксплуатация»)
 ├── src/services/newsProcessor.ts  broadcastProcessedArticle() — SSE news ПОСЛЕ UPDATE
 ├── src/services/sse.ts            payload события news (расширен ТЗ-42)
 ├── src/middleware/rateLimit.ts    radioTtsLimiter 100/мин per-user
-└── src/index.ts                   app.use('/api/radio', radioRoutes)
+└── src/index.ts                   app.use('/api/radio', radioRoutes); runRadioMigrations()
 ```
 
 Зависимости данных (существующие эндпоинты Pulse — НЕ части радио):
@@ -99,7 +103,8 @@ pulse-backend
   `GET /api/features` не подходит — boolean-only registry, строковые флаги
   туда не ложатся.
 - **Cache-Control:** `public, max-age=300` (= TTL useQuery 5 мин, ТЗ-43).
-- **Ответ (дефолты в коде, v1):**
+- **Ответ (ТЗ-45, значения из БД `_radio_settings` через сервис
+  `src/services/radioSettings.ts`, формат контракта ТЗ-42 не менялся):**
 
 ```json
 {
@@ -107,12 +112,56 @@ pulse-backend
   "radio_voice_provider": "browser",
   "radio_minimax_host_voice": "presenter_male",
   "radio_minimax_guest_voice": "presenter_female",
-  "radio_default_mode": "reflect"
+  "radio_default_mode": "reflect",
+  "minimax_configured": true
 }
 ```
 
-Управление значениями — правкой дефолтов в `src/routes/radio.ts` и деплоем
-(откат за минуту — осознанный trade-off v1; админка флагов с записью в БД — v2).
+`minimax_configured` = `!!process.env.MINIMAX_API_KEY` — индикатор для админки
+и фолбэка фронта (фронт v1 игнорирует неизвестное поле).
+
+Управление значениями — таба «Радио» в админке Pulse (ТЗ-45, ниже). Голос
+по умолчанию для TTS-запросов без `voice_id` — `radio_minimax_host_voice`
+из этих же флагов.
+
+## Управление флагами из админки (ТЗ-45)
+
+Флаги живут в БД, меняются без деплоя. Паттерн — `calendar_settings`:
+key/value-таблица + ensure-миграция из кода + upsert в двух диалектах.
+
+- **Таблица `_radio_settings`** (PG и SQLite; конвенция — всё радио с префиксом
+  `_radio_`). Ключи в БД — БЕЗ префикса `radio_`, префикс добавляет код ответа.
+- **Сервис `src/services/radioSettings.ts`:**
+  - `getRadioFlags()` — эффективные значения (БД + дефолты на недостающие
+    ключи), кэш в памяти TTL 60 с. При первом обращении на пустую таблицу —
+    идемпотентный сид 5 дефолтов (INSERT по PK + ON CONFLICT, конкурентные
+    сиды безопасны).
+  - `setRadioFlag(key, value, changedBy)` — whitelist ключей + валидация
+    (`auto_read_enabled`: boolean; `voice_provider`: browser|minimax;
+    голоса: 10 id из whitelist; `default_mode`: text|reflect|podcast),
+    upsert, инвалидация кэша, запись в activityLog.
+  - `resetRadioFlags(changedBy)` — DELETE всех строк, дефолты применятся сами.
+- **Admin endpoints** (`src/routes/admin.ts`, рядом с calendar/settings,
+  все под `adminMiddleware`):
+  - `GET /api/admin/radio-flags` → `{ flags, minimax_configured, allowed_voices }`
+    (список голосов с бэка — админка whitelist не хардкодит).
+  - `PUT /api/admin/radio-flags` body `{ key, value }` → 200 + `{ success, key,
+    old_value, new_value, flags }`; 400 на невалидный ключ/значение;
+    не-админ → 403.
+  - `POST /api/admin/radio-flags/reset` → дефолты.
+- **ActivityLog:** каждая смена/сброс пишет событие `admin_radio_flag_changed`
+  в `user_events` с `key`, `old_value`, `new_value`, `changed_by` (+ TG-алерт
+  админам штатно через notifyAdmins).
+- **UI:** `pulse-frontend/src/pages/admin/RadioTab.tsx` (таба «Радио» в
+  Admin.tsx рядом с «Календарь»). 5 контролов: тумблер авточтения, селект
+  провайдера, два селекта голосов (видны при провайдере minimax), селект
+  режима, кнопка сброса. Красная плашка «MINIMAX_API_KEY не задан» — ровно
+  при `voice_provider === 'minimax' && !minimax_configured`.
+- **Раскатка изменений (двойной кэш):** сервисный TTL 60 с + фронт useQuery
+  5 мин → худший случай ~6 минут до подхвата юзерами. Подсказка об этом есть
+  в UI админки; «чинить» немедленным push не требуется (зафиксировано в ТЗ).
+- **Диалекты:** upsert строго по паттерну calendar/settings — SQLite
+  `INSERT OR REPLACE`, PG `ON CONFLICT (key) DO UPDATE`.
 
 ## SSE-пайплайн и событие `news`
 
@@ -176,9 +225,9 @@ fallback). Payload:
 ## Фронтенд (ТЗ-43, в проде)
 
 Репо `pulse-frontend`. Всё радио-специфичное — под `src/lib/radio/`, `src/types/radio.ts`,
-`src/hooks/useRadio*`, `src/pages/RadioPage.tsx`. Роут `/radio` (lazy-чанк) в App.tsx,
-пункт «Радио» в NavBar (первым после «Главная», массив общий для десктопа и бургера)
-и в Footer («Продукт»).
+`src/hooks/useRadio*`, `src/pages/RadioPage.tsx`. Роут `/radio` (lazy-чанк) в App.tsx.
+Пункты «Радио» в NavBar/Footer временно убраны (коммит `f6b3f21` pulse-frontend,
+2026-09-22) — тестирование по прямой ссылке `/radio`; возврат в меню — отдельным решением.
 
 ### Адаптеры (`src/lib/radio/`)
 
@@ -326,9 +375,11 @@ CSS-переменные прототипа заменены на тему Pulse
 
 ## Настройки
 
-### Серверные (этот документ, выше — контракт `GET /api/radio/config`)
+### Серверные (этот документ: контракт `GET /api/radio/config` + раздел
+«Управление флагами из админки», ТЗ-45)
 
-Глобальные, одинаковые для всех юзеров, меняются деплоем.
+Глобальные, одинаковые для всех юзеров, меняются из табы «Радио» админки
+(без деплоя), хранятся в `_radio_settings`.
 
 ### Юзерские (план, реализация — ТЗ-43/44; localStorage `pulse-radio-config-v1`)
 
@@ -374,10 +425,10 @@ CSS-переменные прототипа заменены на тему Pulse
 
 ## Роадмап
 
-- **v1 (ТЗ-42+43+44):** страница `/radio`, пункт «Радио» в NavBar первым после
-  «Главная» (текст, без иконки/бейджа) + Footer «Продукт».
-- **v2:** виджет на главной, управление серверными флагами из админки (запись
-  в БД), алерты котировок/портфеля (когда появится общий поток алертов Pulse).
+- **v1 (ТЗ-42+43+44):** страница `/radio` (прямая ссылка; пункт в NavBar/Footer
+  убран временно — см. выше).
+- **v2:** виджет на главной, алерты котировок/портфеля (когда появится общий
+  поток алертов Pulse). ~~Управление серверными флагами из админки~~ — сделано в ТЗ-45.
 - **v3:** пуши «новое в эфире», утренний ритуал в TG/email, авторизация SSE.
 - **Далёкое:** крупные сделки и IPO, экспорт подкаста дня в файл.
 
@@ -390,7 +441,7 @@ CSS-переменные прототипа заменены на тему Pulse
 | Оценка только числом, без словесных категорий | Число уже есть в БД (`tag_impact[].score`), категории — выдумка поверх данных |
 | `GET /api/radio/config` с authMiddleware, не admin | Флаги нужны каждому юзеру страницы; `/api/features` boolean-only |
 | Broadcast `news` из News Processor, не из cron | Иначе payload пустой и фильтрация по тегам мертва (блокер Б1 ревью) |
-| Дефолты флагов в коде, откат деплоем | v1 без админки флагов; скорость отката важнее гибкости |
+| Флаги в БД `_radio_settings` + таба «Радио» в админке (ТЗ-45) | Изменение без деплоя, аудит смен в activityLog; цена — двойной кэш, раскатка ~6 мин |
 | Minimax через серверный прокси | Ключ в браузере = скомпрометирован; плюс единая точка метрик/лимитов |
 
 ## Связи
@@ -398,7 +449,7 @@ CSS-переменные прототипа заменены на тему Pulse
 - DEPLOYMENT.md — env-таблица (`MINIMAX_API_KEY`), правила установки ключей.
 - ARCHITECTURE.md §Real-time Updates (SSE) — payload `news` и история фикса.
 - RADIO.md (пакет радио) — продуктовый контекст и сценарии.
-- ТЗ-42/43/44, REVIEW_RADIO_TZ42_V31 — исходные ТЗ и вердикт техлида.
+- ТЗ-42/43/44/45, REVIEW_RADIO_TZ42_V31 — исходные ТЗ и вердикт техлида.
 - Прототип-донор `radio-app/` — песочница, в прод не переносится целиком
   (переносятся 10 компонентов, useSpeech с genRef, greeting/scripts/share/sound/
   summary/config — карта в ТЗ-44 задача 3).
