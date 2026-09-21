@@ -25,6 +25,14 @@ const MINIMAX_MODEL = 'speech-02-hd';
 const TTS_TIMEOUT_MS = 30_000;
 const MAX_TEXT_LENGTH = 2000;
 
+// Boot-лог состояния TTS (по образцу webPush.ts): без ключа сервер не молчит —
+// каждый запрос давал бы 503, причина должна быть видна в логах сразу.
+console.log(
+  process.env.MINIMAX_API_KEY
+    ? '[Radio] MINIMAX ready'
+    : '[Radio] MINIMAX_API_KEY not set, /api/radio/tts returns 503'
+);
+
 // Серверные флаги радио (ТЗ-42, задача 2). Дефолты в коде.
 const RADIO_FLAGS = {
   radio_auto_read_enabled: true,
@@ -69,6 +77,12 @@ router.post('/tts', authMiddleware, radioTtsLimiter, async (req: AuthRequest, re
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TTS_TIMEOUT_MS);
+  // Клиент отключился во время ожидания Minimax — гасим upstream-запрос,
+  // не ждём остаток таймаута и не считаем трафик (writableEnded — ответ уже
+  // отправлен, это штатное закрытие, а не разрыв).
+  res.on('close', () => {
+    if (!res.writableEnded) controller.abort();
+  });
   try {
     const upstream = await fetch(MINIMAX_TTS_URL, {
       method: 'POST',
