@@ -15,7 +15,7 @@
 | Этап | Состояние | Дата |
 |---|---|---|
 | ТЗ-42 backend: TTS-прокси, флаги, SSE из News Processor | ✅ на проде | 2026-09-21 |
-| ТЗ-43 frontend: страница `/radio`, адаптеры, хуки | — | — |
+| ТЗ-43 frontend: страница `/radio`, адаптеры, хуки | ✅ на проде (коммит `b176c5f` pulse-frontend) | 2026-09-21 |
 | ТЗ-44 frontend: перенос UI и голосового движка | — | — |
 
 ## Концепция подачи (как будет выглядеть эфир)
@@ -172,6 +172,76 @@ fallback). Payload:
   никогда; боевой ключ установлен 2026-09-21 (бэкап `.env.bak-minimax`),
   баланс кабинета Minimax держать под контролем, при ротации — правка одной
   строки в `.env` + `docker compose up -d backend`.
+
+## Фронтенд (ТЗ-43, в проде)
+
+Репо `pulse-frontend`. Всё радио-специфичное — под `src/lib/radio/`, `src/types/radio.ts`,
+`src/hooks/useRadio*`, `src/pages/RadioPage.tsx`. Роут `/radio` (lazy-чанк) в App.tsx,
+пункт «Радио» в NavBar (первым после «Главная», массив общий для десктопа и бургера)
+и в Footer («Продукт»).
+
+### Адаптеры (`src/lib/radio/`)
+
+Единственное место, где Pulse-DTO превращается в радио-модель; тесты —
+`__tests__/radioAdapters.test.ts` (22 кейса).
+
+- **`tagMap.ts`** — `fetchUserTags()` (`GET /api/user/tags`), `buildTagMap()`,
+  `tagName()` (неизвестный id → сам id, ничего не ломаем).
+- **`newsAdapter.ts` — `adaptPulseToNewsItem(article, userTagIds, tagMap)`.**
+  Ключевое правило score (RADIO.md):
+  1. Берём `tag_impact` **только по тегам юзера**, score = max |score|;
+  2. если у юзера по этой новости нет impacts → `|sentiment_score| ?? 0`;
+  3. **решающее правило:** если impacts по тегам юзера есть, но score = 0
+     (LLM-фолбэк на бэке), оставляем 0 — sentiment НЕ подставляем (иначе фолбэк
+     выглядел бы как реальная оценка).
+  `reprint = source_count > 1`. `buildImpactLines()` — строки «<тег>: +N — reasoning»:
+  пустые reasoning пропускаются, теги юзера идут первыми по |score|.
+- **`calendarAdapter.ts`** — `adaptCalendarToday()`: события дня `date === server_date`
+  из ответа `GET /api/calendar`, плоский список, время из заголовка regex
+  `/(\d{1,2})[:.](\d{2})/` → `HH:MM`, без времени — в конец сортировки.
+- **`buildReflectReasoning.ts`** — цепочка фразы «Что это значит»: ① reasoning по тегу
+  юзера (с префиксом «По вашей теме <name>: ») → ② чужой тег с max |score| →
+  ③ второй абзац `sentiment_reasoning` (сплит по `\n\n`) → ④ детерминированный
+  дефолт (хэш от id, фразы из прототипа `scripts.ts`).
+
+### Хуки (`src/hooks/`)
+
+- **`useRadioConfig`** — `useQuery(['radio','config'])`, staleTime 5 мин
+  (фронт не чаще раза в 5 минут, критерий приёмки); `DEFAULT_RADIO_CONFIG`
+  идентичен серверному дефолту. Сейчас прогревает кэш, значения заберёт движок ТЗ-44.
+- **`useRadioSse`** — `EventSource(API_BASE + '/news/stream')`; событие `news`
+  пропускается только если `matched_tags ∩ userTagIds` непуст; `refresh` →
+  `invalidateQueries(['radio','feed'])`; `ping`/`connected` игнор; reconnect 5 с.
+  StrictMode-safe: колбэк в ref, cleanup `es.close()`.
+
+### Страница (`src/pages/RadioPage.tsx`)
+
+- **Гость** → CTA с `openAuthModal('login', { returnUrl: '/radio' })` (паттерн ActivityMap).
+- **Авторизован без тегов** → заглушка «Радио молчит» + CTA в `/portfolio`
+  (настройки тегов) + «послушать общее саммари» (`GET /api/user/summary-global`).
+- **Лента:** baseFeed = `GET /api/news` (`useQuery(['radio','feed'])`, staleTime 2 мин)
+  + liveItems из SSE. Склейка: live сверху, дедуп по id через `seenIdsRef`,
+  лимит 40 (`MAX_FEED`). Свежая SSE-новость подсвечивается 4 с (`FRESH_HIGHLIGHT_MS`,
+  периодическая чистка setInterval 1 с).
+- **Карточка** (`RadioCard`): score-чип цветом — ≥8.5 красный, ≥7 жёлтый, иначе серый;
+  при score = 0 чипа нет. Чип «ПЕРЕПЕЧАТКА ×N» при `source_count > 1`. Блок
+  «Что это значит»: абзацы `sentiment_reasoning` + строки `buildImpactLines()`,
+  пустые поля не рендерятся. Кнопка «▶ слушать» → `onEntryStart`.
+- **Прочитанность:** `handleEntryStart(id)` — оптимистично в `readIds` +
+  `POST /api/news/:id/read` (body `{}` — сигнатура `api.post(path, body)` требует
+  body), при ошибке revert. Прочитанные выпадают из ленты мгновенно. Скип после
+  старта тоже считается прочитанным — v1 без opt-out (RADIO.md §3.1).
+- **`scorePhrase(score)`** (экспорт) — «Оценка N из десяти», `null` при 0;
+  переиспользует голосовой движок ТЗ-44.
+
+### Гейты и деплой фронта
+
+`npx vitest run` (127 тестов, из них 22 радио) + `npm run build` (tsc + vite).
+Прод-сборка строго по DEPLOYMENT.md: sed-патч 4 файлов на `pulse.inside-trade.ru` →
+`VITE_TOPICS_ENABLED=true npm run build` → проверка `grep -c onrender = 0` и
+инлайна флага (`isTopicsEnabled("true")` в чанке CascadesPage) →
+`git checkout --` патча → `COPYFILE_DISABLE=1 tar` → scp → на сервере
+`rm -rf /opt/pulse/frontend/dist/assets` + распаковка поверх.
 
 ## Настройки
 
