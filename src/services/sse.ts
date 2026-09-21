@@ -69,6 +69,11 @@ export function broadcastNews(article: any): void {
     published_at: article.published_at,
     sentiment: article.sentiment,
     matched_tags: article.matched_tags || [],
+    // ТЗ-42 задача 3: событие news теперь формируется в News Processor ПОСЛЕ
+    // записи обработанных полей — клиентская фильтрация по тегам работает.
+    tag_impact: article.tag_impact || [],
+    sentiment_reasoning: article.sentiment_reasoning || '',
+    source_count: article.source_count || 1,
     url: article.url,
   });
 

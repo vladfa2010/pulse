@@ -145,3 +145,21 @@ export const globalSummaryRefreshLimiter = rateLimit({
   skip: (req) => req.query.refresh !== '1',
   validate: { trustProxy: false },
 });
+
+// ─── Radio TTS — прокси Minimax, per-user (ТЗ-42) ──────────────────────────
+// Полный эфир (8 карточек, подкаст-режим до 5 сегментов на карточку + привет-
+// ствие/календарь/саммари) — это ~50–60 запросов. Порог с запасом: обычное
+// прослушивание его не достигает, абуз — упирается в 429.
+// Монтируется ПОСЛЕ authMiddleware — key по userId.
+export const radioTtsLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000, // 5 минут
+  max: 100,                  // 100 сегментов озвучки / 5 минут на пользователя
+  message: {
+    error: 'Слишком много запросов озвучки. Попробуйте через несколько минут.',
+    retryAfter: '5 minutes',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => (req as any).user?.userId || req.ip || 'unknown',
+  validate: { trustProxy: false },
+});

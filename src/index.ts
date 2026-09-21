@@ -35,6 +35,7 @@ import paymentRoutes from './routes/payment';
 import plansRoutes from './routes/plans';
 import promoRoutes from './routes/promo';
 import featuresRoutes from './routes/features';
+import radioRoutes from './routes/radio';
 import userRoutes from './routes/user';
 import globalSummaryRoutes from './routes/globalSummary';
 import { startGlobalSummaryCron } from './services/globalSummary';
@@ -2346,6 +2347,7 @@ app.use('/api/payment', paymentRoutes); // POST /api/payment/create, /confirm
 app.use('/api/plans', plansRoutes);     // GET /api/plans
 app.use('/api/promo/validate', promoValidateLimiter, promoRoutes); // GET /api/promo/validate
 app.use('/api/features', featuresRoutes); // GET /api/features
+app.use('/api/radio', radioRoutes);   // POST /api/radio/tts, GET /api/radio/config (ТЗ-42)
 app.use('/api/user', userRoutes);       // GET/POST/DELETE /api/user/tags
 app.use('/api/user', globalSummaryRoutes); // GET /api/user/summary-global
 app.use('/api/user', notificationsRouter); // Notification matrix (GET/PUT /notification-matrix, quiet-hours)

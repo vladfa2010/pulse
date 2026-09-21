@@ -19,6 +19,7 @@ import { isGarbageText } from '../utils/translationGuard';
 import { smartMatchTagsBatch, analyzeUnifiedBatch, UnifiedResult, matchTagsByKeywords } from './smartTagMatcher';
 import { getAllTagNames } from './tagManager';
 import { sendNewArticlePush } from './push';
+import { broadcastNews } from './sse';
 import { slugify } from '../utils/slugify';
 import { populateNewsTagLinksBatch, EnrichmentTask } from './enrichment';
 import { embedAndClusterBatch } from './clustering';
@@ -36,6 +37,10 @@ interface RawArticle {
   source_id: string;
   content_hash: string;
   matched_tags: string[];
+  // ТЗ-42 задача 3: нужны для SSE-payload (broadcast из процессора)
+  published_at?: string | Date;
+  url?: string;
+  source_count?: number;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -227,7 +232,8 @@ async function selectRawArticles(limit: number): Promise<RawArticle[]> {
   const result = await query(`
     SELECT
       id, title_original, summary_original, lang_original,
-      source, source_id, content_hash, matched_tags
+      source, source_id, content_hash, matched_tags,
+      published_at, url, source_count
     FROM news
     WHERE (needs_translation = TRUE AND COALESCE(llm_attempts, 0) < 10)
        OR (matched_tags = '{}'::text[] AND sentiment_source IS NULL)
@@ -251,6 +257,9 @@ async function selectRawArticles(limit: number): Promise<RawArticle[]> {
     source_id: row.source_id,
     content_hash: row.content_hash,
     matched_tags: row.matched_tags || [],
+    published_at: row.published_at,
+    url: row.url,
+    source_count: row.source_count,
   }));
 }
 
@@ -516,6 +525,30 @@ const ROW_COLS = [
   ['id', 'uuid'], ['needs_translation', 'boolean'], ['slug', 'text'],
 ] as const;
 
+// ═══════════════════════════════════════════════════════════════════════════
+// SSE broadcast ПОСЛЕ записи обработанных полей (ТЗ-42, задача 3).
+// Раньше broadcastNews вызывался из cron.ts при вставке СЫРОЙ новости —
+// payload приходил с пустыми matched_tags и без tag_impact, клиентская
+// фильтрация по тегам была мертва. Теперь событие news формируется здесь,
+// после UPDATE: matched_tags / tag_impact / sentiment_reasoning заполнены.
+// broadcastNews сам рано выходит, если слушателей нет — нагрузки нет.
+// ═══════════════════════════════════════════════════════════════════════════
+function broadcastProcessedArticle(a: RawArticle, matchedTags: string[], s: UnifiedResult): void {
+  broadcastNews({
+    id: a.id,
+    title_ru: (a as any).title_ru ?? a.title_original,
+    summary_ru: (a as any).summary_ru ?? a.summary_original ?? '',
+    source: a.source,
+    published_at: a.published_at,
+    sentiment: s.sentiment,
+    matched_tags: matchedTags,
+    tag_impact: s.tag_impacts || [],
+    sentiment_reasoning: s.reasoning || '',
+    source_count: a.source_count || 1,
+    url: a.url,
+  });
+}
+
 async function saveProcessedArticles(
   articles: RawArticle[],
   matchedTagsList: string[][],
@@ -640,6 +673,13 @@ async function saveProcessedArticles(
         });
       }
     }
+
+    // ТЗ-42 задача 3: SSE news-событие с заполненными тегами/импактами —
+    // только для статей, реально попавших в UPDATE (есть sentiment-результат)
+    for (let i = 0; i < articles.length; i++) {
+      if (!sentimentResults[i]) continue;
+      broadcastProcessedArticle(articles[i], matchedTagsList[i], sentimentResults[i]);
+    }
   } catch (err: any) {
     console.error('[NewsProcessor] bulk update failed, falling back to per-article:', err.message);
     await saveProcessedArticlesPerArticle(articles, matchedTagsList, sentimentResults);
@@ -729,6 +769,9 @@ async function saveProcessedArticlesPerArticle(
         slug,
       ]);
       updated++;
+
+      // ТЗ-42 задача 3: SSE news-событие после успешного UPDATE статьи
+      broadcastProcessedArticle(a, matchedTagsList[i], s);
 
       if (matchedTagsList[i].length > 0) {
         const pushTitle = (a as any).title_ru || a.title_original || 'Новая новость';

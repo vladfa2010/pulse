@@ -29,7 +29,8 @@ const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
 import { populateNewsTagLinksBatch, EnrichmentTask } from './enrichment';
 import { sendSubscriptionReminders } from './subscription';
-import { broadcastNews } from './sse';
+// ТЗ-42 задача 3: broadcastNews перенесён в News Processor — сырой broadcast
+// при INSERT убран (событие news теперь приходит с заполненными тегами).
 import { analyzeUnifiedBatch, UnifiedResult } from './smartTagMatcher';
 import { freezeHeatmapRecentDays } from './heatmapDaily';
 import { embedAndClusterBatch } from './clustering';      // ТЗ-92, задача 4
@@ -225,7 +226,8 @@ async function processArticlesLocked() {
               [newId, a.title, isRu ? a.title : null, isRu ? a.summary : null, a.source, a.sourceId, a.url, urlNormalized, contentHash, JSON.stringify([a.source]), 1, a.publishedAt.toISOString(), a.lang, isRu ? 0 : 1]
             );
             saved++;
-            broadcastNews({ id: newId, title_ru: isRu ? a.title : a.title, summary_ru: a.summary || '', source: a.source, published_at: a.publishedAt, sentiment: null, matched_tags: [], url: a.url });
+            // ТЗ-42 задача 3: сырой broadcast при INSERT убран — событие news
+            // теперь формируется в News Processor с заполненными тегами.
           }
         } else {
           // PostgreSQL: INSERT с ON CONFLICT (content_hash) DO UPDATE
@@ -248,7 +250,8 @@ async function processArticlesLocked() {
           if (result.rows.length > 0 && result.rows[0].is_insert === true) {
             saved++;
             const newsId = result.rows[0].id;
-            broadcastNews({ id: newsId || null, title_ru: a.title, summary_ru: a.summary || '', source: a.source, published_at: a.publishedAt, sentiment: null, matched_tags: [], url: a.url });
+            // ТЗ-42 задача 3: сырой broadcast при INSERT убран — событие news
+            // теперь формируется в News Processor с заполненными тегами.
 
             // Batch enrichment placeholder (tags will be populated by News Processor)
             enrichmentTasks.push({
