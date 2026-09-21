@@ -37,6 +37,9 @@ interface RawArticle {
   source_id: string;
   content_hash: string;
   matched_tags: string[];
+  // Заполняются в конвейере процессора (translateArticles и далее)
+  title_ru?: string;
+  summary_ru?: string;
   // ТЗ-42 задача 3: нужны для SSE-payload (broadcast из процессора)
   published_at?: string | Date;
   url?: string;
@@ -536,8 +539,8 @@ const ROW_COLS = [
 function broadcastProcessedArticle(a: RawArticle, matchedTags: string[], s: UnifiedResult): void {
   broadcastNews({
     id: a.id,
-    title_ru: (a as any).title_ru ?? a.title_original,
-    summary_ru: (a as any).summary_ru ?? a.summary_original ?? '',
+    title_ru: a.title_ru ?? a.title_original,
+    summary_ru: a.summary_ru ?? a.summary_original ?? '',
     source: a.source,
     published_at: a.published_at,
     sentiment: s.sentiment,
