@@ -216,6 +216,7 @@ npm run build   # выход в dist/
 | `RESEND_API_KEY` | `(скрыт)` | Resend API ключ |
 | `TELEGRAM_BOT_TOKEN` | `(скрыт)` | Telegram Bot токен |
 | `ENCRYPTION_KEY` | `(скрыт)` | 64 hex-символов (32 байта) для AES-256-GCM шифрования API-токенов брокеров. Обязателен для фичи портфелей. |
+| `MINIMAX_API_KEY` | **не задан** | Minimax TTS для радио (`POST /api/radio/tts`, ТЗ-42). Без ключа endpoint отвечает 503 `tts_not_configured`, радио работает на браузерном SpeechSynthesis. ⚠️ Ключ из прототипа radio-app скомпрометирован — не использовать. При установке: добавить в `.env` И в явный список `environment:` backend-сервиса в `docker-compose.yml` (см. инцидент «ключ в .env ≠ ключ в контейнере» ниже). |
 
 ### Почта и системные алерты (ТЗ-09, 2026-09-16)
 

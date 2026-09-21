@@ -2319,6 +2319,7 @@ GET /api/news/stream
 |---> event: connected — начальное приветствие
 |---> event: ping      — heartbeat каждые 30s
 |---> event: refresh   — NewsSourceManager сохранил новые статьи
+|---> event: news      — статья обработана News Processor (ТЗ-42)
 ```
 
 - `NewsSourceManager.run()` выставляет флаг `hasNewArticles`, если RSS/Finnhub сохранили статьи.
@@ -2326,6 +2327,14 @@ GET /api/news/stream
 - Frontend `useSseNews.ts` подключается к потоку на `Home.tsx` для всех пользователей.
 - При получении `refresh` вызывается `queryClient.refetchQueries()` для активных каруселей:
   `globalNews`, `unreadNews`, `historyNews`.
+- **ТЗ-42 (2026-09-21):** `event: news` формируется в `News Processor` ПОСЛЕ UPDATE
+  обработанных полей (`broadcastProcessedArticle`, `newsProcessor.ts`) — payload
+  содержит заполненные `matched_tags`, `tag_impact`, `sentiment_reasoning`, `source_count`.
+  Раньше broadcast шёл из `cron.ts` при сыром INSERT с пустыми `matched_tags` — клиентская
+  фильтрация по тегам была неработоспособна. Сайт не зависит от мгновенного сырого
+  broadcast (карточки рендерятся по `refresh`), поэтому перенос безопасен.
+- Радио-эндпоинты (ТЗ-42): `POST /api/radio/tts` (прокси Minimax, per-user лимит
+  100/5мин) и `GET /api/radio/config` (5 серверных флагов радио, authMiddleware).
 
 ### News Detail Modal
 
