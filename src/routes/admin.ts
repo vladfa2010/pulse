@@ -25,6 +25,13 @@ import {
 import { listAllFeatures, createFeature, updateFeature } from './features';
 import { getPromoByCode } from '../services/promo';
 import { logAdminChangedPlan, logAdminExtendedSubscription } from '../services/activityLog';
+import {
+  getRadioFlags,
+  setRadioFlag,
+  resetRadioFlags,
+  MINIMAX_VOICE_IDS,
+  RadioFlagError,
+} from '../services/radioSettings';
 import { nowSql } from '../utils/nowSql';
 import { getUserId } from '../utils/users';
 import {
@@ -1486,6 +1493,56 @@ router.put('/calendar/settings', adminMiddleware, async (req: AuthRequest, res) 
   } catch (err: any) {
     console.error('[Admin] Calendar settings put error:', err.message);
     res.status(500).json({ error: 'Failed to update calendar settings' });
+  }
+});
+
+// ═══ Radio flags (ТЗ-45) — управление runtime-флагами радио из админки ═══
+
+// GET /api/admin/radio-flags — эффективные значения + статус ключа Minimax
+// + список допустимых голосов (админка не хардкодит whitelist).
+router.get('/radio-flags', adminMiddleware, async (_req: AuthRequest, res) => {
+  try {
+    const flags = await getRadioFlags();
+    res.json({
+      flags,
+      minimax_configured: !!process.env.MINIMAX_API_KEY,
+      allowed_voices: MINIMAX_VOICE_IDS,
+    });
+  } catch (err: any) {
+    console.error('[Admin] Radio flags get error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch radio flags' });
+  }
+});
+
+// PUT /api/admin/radio-flags — body { key, value } → setRadioFlag.
+// 400 на невалидный ключ/значение (whitelist + валидация в сервисе).
+router.put('/radio-flags', adminMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const { key, value } = req.body || {};
+    if (typeof key !== 'string' || key.length === 0) {
+      return res.status(400).json({ error: 'key is required' });
+    }
+    const result = await setRadioFlag(key, value, req.user!.userId);
+    const flags = await getRadioFlags();
+    res.json({ success: true, key, old_value: result.oldValue, new_value: result.newValue, flags });
+  } catch (err: any) {
+    if (err instanceof RadioFlagError) {
+      return res.status(400).json({ error: err.message });
+    }
+    console.error('[Admin] Radio flags put error:', err.message);
+    res.status(500).json({ error: 'Failed to update radio flag' });
+  }
+});
+
+// POST /api/admin/radio-flags/reset — удалить все строки, дефолты применятся сами.
+router.post('/radio-flags/reset', adminMiddleware, async (req: AuthRequest, res) => {
+  try {
+    await resetRadioFlags(req.user!.userId);
+    const flags = await getRadioFlags();
+    res.json({ success: true, flags });
+  } catch (err: any) {
+    console.error('[Admin] Radio flags reset error:', err.message);
+    res.status(500).json({ error: 'Failed to reset radio flags' });
   }
 });
 

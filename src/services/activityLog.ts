@@ -187,3 +187,21 @@ export async function logAdminExtendedSubscription(
     months_added: monthsAdded,
   });
 }
+
+/**
+ * Админ изменил runtime-флаг радио (ТЗ-45). userId = id админа —
+ * событие про действие админа, как у admin_changed_plan.
+ */
+export async function logAdminRadioFlagChanged(
+  adminId: string,
+  key: string,
+  oldValue: string,
+  newValue: string
+): Promise<void> {
+  return logUserEvent(adminId, 'admin_radio_flag_changed', {
+    key,
+    old_value: oldValue,
+    new_value: newValue,
+    changed_by: adminId,
+  });
+}

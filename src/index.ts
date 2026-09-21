@@ -52,6 +52,7 @@ import tagMarketRoutes from './routes/tagMarket';
 import sentimentRoutes from './routes/sentiment';
 import calendarRoutes from './routes/calendar';
 import { runCalendarV2Migrations } from './services/calendar';
+import { runRadioMigrations } from './services/radioSettings';
 import appRoutes from './routes/app';
 import { authMiddleware, AuthRequest } from './middleware/auth';
 import { apiLimiter, authLimiter, webhookLimiter, forgotPasswordLimiter, passwordResetFlowLimiter, promoValidateLimiter } from './middleware/rateLimit';
@@ -3619,6 +3620,13 @@ async function start() {
     await runCalendarV2Migrations();
   } catch (e: any) {
     console.error('[Calendar] V2 migration failed:', e.message);
+  }
+
+  // ─── Radio settings: таблица _radio_settings (ТЗ-45) ────────────────────
+  try {
+    await runRadioMigrations();
+  } catch (e: any) {
+    console.error('[RadioSettings] Migration failed:', e.message);
   }
 
   // ─── Деплой-проверка новостных данных ─────────────────────────────────

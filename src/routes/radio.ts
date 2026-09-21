@@ -10,14 +10,16 @@
  *   GET  /api/radio/config → Серверные флаги радио (для любого авторизованного
  *                            пользователя, НЕ adminMiddleware — блокер Б2 ревью)
  *
- * Управление флагами (админка, запись в БД) — не входит в v1: значения меняются
- * правкой дефолтов ниже и деплоем (откат за минуту — зафиксированный trade-off).
+ * Управление флагами (админка, запись в БД) — ТЗ-45: таблица `_radio_settings`,
+ * сервис `src/services/radioSettings.ts`, admin endpoints `/api/admin/radio-flags`.
+ * Дефолты ниже остались только как fallback-список голосов для TTS.
  */
 
 import { Router } from 'express';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { radioTtsLimiter } from '../middleware/rateLimit';
 import { recordTtsResult } from '../services/radioMetrics';
+import { getRadioFlags } from '../services/radioSettings';
 
 const router = Router();
 
@@ -44,22 +46,23 @@ console.log(
     : '[Radio] MINIMAX_API_KEY not set, /api/radio/tts returns 503'
 );
 
-// Серверные флаги радио (ТЗ-42, задача 2). Дефолты в коде.
-const RADIO_FLAGS = {
-  radio_auto_read_enabled: true,
-  radio_voice_provider: 'browser',
-  radio_minimax_host_voice: 'presenter_male',
-  radio_minimax_guest_voice: 'presenter_female',
-  radio_default_mode: 'reflect',
-} as const;
-
 // GET /api/radio/config — флаги радио для фронта каждого юзера.
 // Существующий публичный GET /api/features не подходит — boolean-only registry.
 // Флаги глобальные и одинаковые для всех — кэшируем на 5 мин (= useQuery TTL,
 // ТЗ-43), чтобы прокси/CDN не долбили бэк ревалидациями.
-router.get('/config', authMiddleware, (req: AuthRequest, res) => {
+// ТЗ-45: значения из БД (_radio_settings, сервис с кэшем TTL 60 с),
+// формат ответа не менялся (префикс radio_) + новое поле minimax_configured.
+router.get('/config', authMiddleware, async (_req: AuthRequest, res) => {
+  const flags = await getRadioFlags();
   res.set('Cache-Control', 'public, max-age=300');
-  res.json(RADIO_FLAGS);
+  res.json({
+    radio_auto_read_enabled: flags.auto_read_enabled,
+    radio_voice_provider: flags.voice_provider,
+    radio_minimax_host_voice: flags.minimax_host_voice,
+    radio_minimax_guest_voice: flags.minimax_guest_voice,
+    radio_default_mode: flags.default_mode,
+    minimax_configured: !!process.env.MINIMAX_API_KEY,
+  });
 });
 
 // POST /api/radio/tts — прокси Minimax TTS.
@@ -94,6 +97,8 @@ router.post('/tts', authMiddleware, radioTtsLimiter, async (req: AuthRequest, re
     return;
   }
 
+  // Голос по умолчанию — из флагов БД (ТЗ-45), не из code-defaults
+  const flags = await getRadioFlags();
   const ttsStartedAt = Date.now();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TTS_TIMEOUT_MS);
@@ -114,7 +119,7 @@ router.post('/tts', authMiddleware, radioTtsLimiter, async (req: AuthRequest, re
         model: MINIMAX_MODEL,
         text: text.trim(),
         voice_setting: {
-          voice_id: voice_id || RADIO_FLAGS.radio_minimax_host_voice,
+          voice_id: voice_id || flags.minimax_host_voice,
           speed: speed ?? 1.0,
           pitch: pitch ?? 0,
         },

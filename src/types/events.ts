@@ -32,6 +32,7 @@ export const USER_EVENT_TYPES = [
   'page_view_portfolio',
   'portfolio_add_clicked',
   'portfolio_created',
+  'admin_radio_flag_changed',
 ] as const;
 
 export type UserEventType = typeof USER_EVENT_TYPES[number];

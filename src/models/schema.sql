@@ -868,6 +868,16 @@ CREATE TABLE IF NOT EXISTS calendar_settings (
 );
 
 -- ============================================================
+-- 21d. _radio_settings — runtime-флаги радио (ТЗ-45)
+-- Конвенция: всё радио носит префикс _radio_. Ключи без префикса radio_
+-- (в ответе /api/radio/config префикс добавляется кодом — контракт ТЗ-42).
+-- ============================================================
+CREATE TABLE IF NOT EXISTS _radio_settings (
+  key   TEXT PRIMARY KEY,
+  value TEXT
+);
+
+-- ============================================================
 -- 22. calendar_meta — snapshot metadata (single row, id = 1)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS calendar_meta (
