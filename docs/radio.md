@@ -16,7 +16,7 @@
 |---|---|---|
 | ТЗ-42 backend: TTS-прокси, флаги, SSE из News Processor | ✅ на проде | 2026-09-21 |
 | ТЗ-43 frontend: страница `/radio`, адаптеры, хуки | ✅ на проде (коммит `b176c5f` pulse-frontend) | 2026-09-21 |
-| ТЗ-44 frontend: перенос UI и голосового движка | — | — |
+| ТЗ-44 frontend: перенос UI и голосового движка | ✅ на проде (коммит `3db7434` pulse-frontend) | 2026-09-21 |
 
 ## Концепция подачи (как будет выглядеть эфир)
 
@@ -242,6 +242,87 @@ fallback). Payload:
 инлайна флага (`isTopicsEnabled("true")` в чанке CascadesPage) →
 `git checkout --` патча → `COPYFILE_DISABLE=1 tar` → scp → на сервере
 `rm -rf /opt/pulse/frontend/dist/assets` + распаковка поверх.
+
+## Голосовой движок и UI эфира (ТЗ-44, в проде)
+
+Порт отлаженного прототипа `radio-app/` на тему Pulse. Ключевой код —
+`src/hooks/useSpeech.ts` (genRef!), `src/lib/radio/scripts.ts`, 10 компонентов
+`src/components/radio/`.
+
+### useSpeech — очередь озвучки с поколениями (genRef)
+
+Перенесён ЦЕЛИКОМ из прототипа: `genRef` бампится на любом stopAll/скипе;
+все async-колбэки (fetch .then/.catch, audio.onended/onerror, utterance
+onend/onerror) с устаревшей генерацией выходят молча. Ревью-правило: любое
+«упрощение» колбэков — блокер (ТЗ-44 §5).
+
+- **Minimax-ветка** — `POST /api/radio/tts` через `lib/radio/ttsApi.ts`
+  (`serverTTS`), ключ в браузере не существует. Провайдер и голоса ролей —
+  из серверного конфига. Пауза/резюме — `audioRef.pause/play`.
+- **503 tts_not_configured** → авто-фолбэк на браузерный SpeechSynthesis в
+  рамках того же сегмента, наружу — `minimaxDown` (пометка в настройках).
+- **502 tts_upstream** → сегмент пропускается, очередь продолжается.
+- **skip = вся новость** (не сегмент) — зафиксировано поведение прототипа.
+- `enqueue(item, label, mode)` дедупит по id карточки; `speakCustom(label,
+  segments)` — саммари/приветствие; reasoning для режима «мысли» строится
+  через `buildReflectReasoning()` (ТЗ-43) на момент постановки в очередь.
+- Браузерная ветка: RU-голоса (auto = первый/второй русский), при общем
+  голосе на обе роли аналитик тембром ниже (pitch 0.82); пауза/резюме —
+  `speechSynthesis.pause/resume`.
+
+### Режимы и тексты (`lib/radio/`)
+
+- `scripts.ts` — `buildSegments(item, mode, reflectReasoning)`:
+  text (1 сегмент) / reflect (новость + reasoning) / podcast (5 сегментов,
+  host+guest; открывающая реплика по bucket-у score ≥8.5/≥7/иное; «Размышление. »
+  срезается из реплики аналитика). `scorePhrase` — «Оценка N и N из десяти»
+  (8.5 → «8 и 5»), score = 0 → фразы нет. Реплики ведущего 1:1 прототип.
+- `greeting.ts`, `sound.ts`, `share.ts` — порты без правок (beepCritical
+  вызывается при score ≥ 8.5; шеринг — navigator.share, фолбэк буфер).
+- `summary.ts` — клиентский фолбэк, когда LLM-эндпоинты недоступны:
+  buildPersonalSummary / buildMarketSummary / buildQuotesSegments. Сюжетность =
+  `!reprint` (storyKey в Pulse нет). Заодно исправлена инверсия лидер/аутсайдер
+  прототипа (лидер = max changePct).
+- `config.ts` — локальный конфиг `pulse-radio-config-v1`: blocks (7),
+  threshold, newsPace, broadcastLimit, summaryTopN. Удалено по ТЗ-44:
+  minimaxKey, userTags, voiceProvider, minimax-голоса, дефолтные режимы.
+- `calendarAdapter.ts` дополнен `buildCalendarSegments` / `nextEventLine`
+  (голосовые строки календаря; в прототипе жили в lib/calendar.ts).
+
+### Компоненты (`components/radio/`, 10 шт.)
+
+Header, TickerBar, Watchlist, NewsFeed (score-чип ≥8.5 красный / ≥7 жёлтый /
+серый, при 0 нет чипа; «Что это значит» из ТЗ-43), QueuePanel, CalendarPanel
+(данные calendarAdapter, статус past/soon по сравнению с текущим времени),
+SummaryBar (4 кнопки → эндпоинты; прогресс накопления свежих), PlayerBar
+(транспорт ▶ Эфир·N / ⏸ / ⏭ / ■ / очередь / ↗ / ⚙), SettingsPanel (режим на
+сессию, browser-голоса, темп, «пилик», пометка minimaxDown), AdminPanel
+(блоки + параметры; «Авточтение» — kill-switch поверх серверного флага).
+CSS-переменные прототипа заменены на тему Pulse; keyframes эфира
+(radio-ticker, radio-news-in, radio-onair-dot, radio-live-dot, radio-eq-bar)
+— в `src/index.css`.
+
+### Сценарии RadioPage (финальная сборка)
+
+1. **Запуск:** приветствие (время суток, день, настроение, счётчик) →
+   ближайшее событие календаря → непрочитанные по убыванию score (лимит
+   5/8/12), label «эфир · N из M» — только визуальный.
+2. **Фон:** SSE-новость → подсветка 4 с + пилик (≥8.5 тройной) → авточтение
+   при `radio_auto_read_enabled` AND `blocks.autoRead`; фильтра важности нет.
+3. **Саммари:** «Моё» → `/api/user/summary?hours=12`; «Рынка» →
+   `/api/user/summary-global` (накопление свежих non-reprint до threshold,
+   повтор без refresh=1 — в логах бэка `cached: true`); при ошибке эндпоинтов
+   — клиентский фолбэк summary.ts. «Что сегодня» — buildCalendarSegments;
+   «Котировки» — buildQuotesSegments (watchlist).
+4. **Плеер:** быстрые «стоп→эфир→стоп→эфир» = один голос (genRef-регрессия).
+5. **Watchlist** — Binance-поллинг 5 с, TODO: уйти на `/api/market/*`.
+
+### Гейты
+
+`npx vitest run` — 153 теста (26 новых: scripts/summary/calendar-строки);
+`npm run build` (tsc + vite). Деплой фронта — по регламенту DEPLOYMENT.md
+(sed-патч → VITE_TOPICS_ENABLED=true → grep-проверки → tar/scp → распаковка
+поверх /opt/pulse/frontend/dist).
 
 ## Настройки
 
