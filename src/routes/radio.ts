@@ -17,6 +17,7 @@
 import { Router } from 'express';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { radioTtsLimiter } from '../middleware/rateLimit';
+import { recordTtsResult } from '../services/radioMetrics';
 
 const router = Router();
 
@@ -24,6 +25,16 @@ const MINIMAX_TTS_URL = 'https://api.minimax.io/v1/t2a_v2';
 const MINIMAX_MODEL = 'speech-02-hd';
 const TTS_TIMEOUT_MS = 30_000;
 const MAX_TEXT_LENGTH = 2000;
+
+// Белый список голосов speech-02-hd (из прототипа radio-app/src/lib/minimax.ts).
+// Без него чужой voice_id уезжал бы в Minimax → 502 вместо понятного 400.
+const MINIMAX_VOICE_IDS = new Set([
+  'presenter_male', 'presenter_female',
+  'audiobook_male_1', 'audiobook_female_1',
+  'audiobook_male_2', 'audiobook_female_2',
+  'male-qn-qingse', 'female-shaonv',
+  'male-qn-jingying', 'female-yujie',
+]);
 
 // Boot-лог состояния TTS (по образцу webPush.ts): без ключа сервер не молчит —
 // каждый запрос давал бы 503, причина должна быть видна в логах сразу.
@@ -44,7 +55,10 @@ const RADIO_FLAGS = {
 
 // GET /api/radio/config — флаги радио для фронта каждого юзера.
 // Существующий публичный GET /api/features не подходит — boolean-only registry.
-router.get('/config', authMiddleware, (_req: AuthRequest, res) => {
+// Флаги глобальные и одинаковые для всех — кэшируем на 5 мин (= useQuery TTL,
+// ТЗ-43), чтобы прокси/CDN не долбили бэк ревалидациями.
+router.get('/config', authMiddleware, (req: AuthRequest, res) => {
+  res.set('Cache-Control', 'public, max-age=300');
   res.json(RADIO_FLAGS);
 });
 
@@ -60,6 +74,10 @@ router.post('/tts', authMiddleware, radioTtsLimiter, async (req: AuthRequest, re
     res.status(400).json({ error: 'invalid_text', maxLength: MAX_TEXT_LENGTH });
     return;
   }
+  if (voice_id !== undefined && (typeof voice_id !== 'string' || !MINIMAX_VOICE_IDS.has(voice_id))) {
+    res.status(400).json({ error: 'invalid_voice_id', allowed: [...MINIMAX_VOICE_IDS] });
+    return;
+  }
   if (speed !== undefined && (typeof speed !== 'number' || speed < 0.5 || speed > 2.0)) {
     res.status(400).json({ error: 'invalid_speed', min: 0.5, max: 2.0 });
     return;
@@ -71,10 +89,12 @@ router.post('/tts', authMiddleware, radioTtsLimiter, async (req: AuthRequest, re
 
   const apiKey = process.env.MINIMAX_API_KEY;
   if (!apiKey) {
+    recordTtsResult('503');
     res.status(503).json({ error: 'tts_not_configured' });
     return;
   }
 
+  const ttsStartedAt = Date.now();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TTS_TIMEOUT_MS);
   // Клиент отключился во время ожидания Minimax — гасим upstream-запрос,
@@ -109,6 +129,7 @@ router.post('/tts', authMiddleware, radioTtsLimiter, async (req: AuthRequest, re
 
     if (!upstream.ok) {
       console.error(`[RadioTTS] Minimax HTTP ${upstream.status}`);
+      recordTtsResult('502', Date.now() - ttsStartedAt);
       res.status(502).json({ error: 'tts_upstream' });
       return;
     }
@@ -116,12 +137,14 @@ router.post('/tts', authMiddleware, radioTtsLimiter, async (req: AuthRequest, re
     const data: any = await upstream.json();
     if (data?.base_resp?.status_code !== 0 || !data?.data?.audio) {
       console.error(`[RadioTTS] Minimax error: ${data?.base_resp?.status_msg || 'no audio'}`);
+      recordTtsResult('502', Date.now() - ttsStartedAt);
       res.status(502).json({ error: 'tts_upstream' });
       return;
     }
 
     // Minimax отдаёт mp3 hex-encoded в data.audio — декодируем, отдаём бинарно
     const audio = Buffer.from(data.data.audio, 'hex');
+    recordTtsResult('ok', Date.now() - ttsStartedAt);
     res.set('Content-Type', 'audio/mpeg');
     res.set('Content-Length', String(audio.length));
     res.send(audio);
@@ -131,6 +154,7 @@ router.post('/tts', authMiddleware, radioTtsLimiter, async (req: AuthRequest, re
     } else {
       console.error('[RadioTTS] Upstream call failed:', err.message);
     }
+    recordTtsResult('502', Date.now() - ttsStartedAt);
     res.status(502).json({ error: 'tts_upstream' });
   } finally {
     clearTimeout(timeout);

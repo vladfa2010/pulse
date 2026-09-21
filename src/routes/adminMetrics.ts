@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { adminMiddleware } from './admin';
 import { query } from '../config/db';
 import { nowSql } from '../utils/nowSql';
+import { getRadioTtsMetrics } from '../services/radioMetrics';
 
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
@@ -719,6 +720,8 @@ const handlers: Record<string, (period: number) => Promise<any>> = {
   promos: getPromos,
   engagement: getEngagement,
   churn: getChurn,
+  // Radio TTS — in-memory с момента старта процесса (period игнорируется)
+  radio: async (_period: number) => getRadioTtsMetrics(),
 };
 
 router.get('/metrics', adminMiddleware, async (req, res) => {

@@ -152,6 +152,9 @@ export const globalSummaryRefreshLimiter = rateLimit({
 // 100 запросов / минуту на пользователя: полный эфир любого режима проходит
 // с запасом, устойчивый абуз (тысячи сегментов/час) — упирается в 429.
 // Монтируется ПОСЛЕ authMiddleware — key по userId.
+// validate.trustProxy=false — корректно для прямого VDS (Caddy → backend без
+// подмены X-Forwarded-For). При появлении CDN/Cloudflare перед Caddy —
+// переключить на доверенный proxy-конфиг, иначе лимит станет считать по IP CDN.
 export const radioTtsLimiter = rateLimit({
   windowMs: 60 * 1000,     // 1 минута
   max: 100,                  // 100 сегментов озвучки / минуту на пользователя
