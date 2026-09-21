@@ -46,12 +46,7 @@ router.get('/config', authMiddleware, (_req: AuthRequest, res) => {
 // Нет MINIMAX_API_KEY → 503 tts_not_configured; ошибка апстрима → 502 tts_upstream.
 // Лимитер ПОСЛЕ authMiddleware — per-user (keyGenerator по userId).
 router.post('/tts', authMiddleware, radioTtsLimiter, async (req: AuthRequest, res) => {
-  const apiKey = process.env.MINIMAX_API_KEY;
-  if (!apiKey) {
-    res.status(503).json({ error: 'tts_not_configured' });
-    return;
-  }
-
+  // Сначала валидация входа (400 независимо от наличия ключа), потом конфигурация
   const { text, voice_id, speed, pitch } = req.body || {};
   if (typeof text !== 'string' || text.trim().length === 0 || text.length > MAX_TEXT_LENGTH) {
     res.status(400).json({ error: 'invalid_text', maxLength: MAX_TEXT_LENGTH });
@@ -63,6 +58,12 @@ router.post('/tts', authMiddleware, radioTtsLimiter, async (req: AuthRequest, re
   }
   if (pitch !== undefined && (typeof pitch !== 'number' || pitch < -12 || pitch > 12)) {
     res.status(400).json({ error: 'invalid_pitch', min: -12, max: 12 });
+    return;
+  }
+
+  const apiKey = process.env.MINIMAX_API_KEY;
+  if (!apiKey) {
+    res.status(503).json({ error: 'tts_not_configured' });
     return;
   }
 
