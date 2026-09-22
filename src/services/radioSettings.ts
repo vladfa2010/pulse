@@ -26,7 +26,9 @@ import { logAdminRadioFlagChanged } from './activityLog';
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
 export interface RadioFlags {
-  auto_read_enabled: boolean;
+  /** Kill-switch всего сервиса радио (админ). Авточтение — юзерская настройка,
+   * сюда она больше не относится (ТЗ-46). */
+  service_enabled: boolean;
   voice_provider: 'browser' | 'minimax';
   minimax_host_voice: string;
   minimax_guest_voice: string;
@@ -34,7 +36,7 @@ export interface RadioFlags {
 }
 
 export const RADIO_FLAG_DEFAULTS: RadioFlags = {
-  auto_read_enabled: true,
+  service_enabled: true,
   voice_provider: 'browser',
   minimax_host_voice: 'presenter_male',
   minimax_guest_voice: 'presenter_female',
@@ -134,9 +136,9 @@ export async function getRadioFlags(): Promise<RadioFlags> {
   // Дефолты применяются к отсутствующим ключам — частично заполненная
   // таблица (после ручной правки/reset) не роняет ответ.
   const flags: RadioFlags = {
-    auto_read_enabled: dbValues.get('auto_read_enabled') === undefined
-      ? RADIO_FLAG_DEFAULTS.auto_read_enabled
-      : dbValues.get('auto_read_enabled') === 'true',
+    service_enabled: dbValues.get('service_enabled') === undefined
+      ? RADIO_FLAG_DEFAULTS.service_enabled
+      : dbValues.get('service_enabled') === 'true',
     voice_provider: (dbValues.get('voice_provider') ?? RADIO_FLAG_DEFAULTS.voice_provider) as RadioFlags['voice_provider'],
     minimax_host_voice: dbValues.get('minimax_host_voice') ?? RADIO_FLAG_DEFAULTS.minimax_host_voice,
     minimax_guest_voice: dbValues.get('minimax_guest_voice') ?? RADIO_FLAG_DEFAULTS.minimax_guest_voice,
@@ -162,9 +164,9 @@ export async function setRadioFlag(
   const flagKey = key as keyof RadioFlags;
   let serialized: string;
   switch (flagKey) {
-    case 'auto_read_enabled':
+    case 'service_enabled':
       if (typeof value !== 'boolean') {
-        throw new RadioFlagError('auto_read_enabled must be a boolean');
+        throw new RadioFlagError('service_enabled must be a boolean');
       }
       serialized = String(value);
       break;
@@ -192,8 +194,8 @@ export async function setRadioFlag(
   }
 
   const current = await getRadioFlags();
-  const oldValue = flagKey === 'auto_read_enabled'
-    ? String(current.auto_read_enabled)
+  const oldValue = flagKey === 'service_enabled'
+    ? String(current.service_enabled)
     : String(current[flagKey]);
 
   if (USE_SQLITE) {

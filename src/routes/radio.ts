@@ -56,7 +56,7 @@ router.get('/config', authMiddleware, async (_req: AuthRequest, res) => {
   const flags = await getRadioFlags();
   res.set('Cache-Control', 'public, max-age=300');
   res.json({
-    radio_auto_read_enabled: flags.auto_read_enabled,
+    radio_service_enabled: flags.service_enabled,
     radio_voice_provider: flags.voice_provider,
     radio_minimax_host_voice: flags.minimax_host_voice,
     radio_minimax_guest_voice: flags.minimax_guest_voice,
@@ -69,8 +69,20 @@ router.get('/config', authMiddleware, async (_req: AuthRequest, res) => {
 // Body: { text, voice_id?, speed?, pitch? } → 200 audio/mpeg (mp3).
 // Ограничения: text ≤ 2000 символов, speed 0.5–2.0, pitch −12..+12.
 // Нет MINIMAX_API_KEY → 503 tts_not_configured; ошибка апстрима → 502 tts_upstream.
+// Сервис выключен админом → 503 radio_service_disabled (ТЗ-46): код отличен от
+// tts_not_configured, фронт НЕ фолбэчит на браузерный голос, а останавливает эфир.
 // Лимитер ПОСЛЕ authMiddleware — per-user (keyGenerator по userId).
 router.post('/tts', authMiddleware, radioTtsLimiter, async (req: AuthRequest, res) => {
+  // Kill-switch сервиса — в начале handler, до валидации входа и до проверки ключа:
+  // иначе выключенное админом радио продолжало бы звучать браузерным TTS на фронте.
+  // В TTS-метрики (radioMetrics) НЕ пишем: это политическое отклонение, не сбой
+  // upstream (зафиксировано в ТЗ-46 §5; учёт таких запросов — ТЗ-47).
+  const flags = await getRadioFlags();
+  if (!flags.service_enabled) {
+    res.status(503).json({ error: 'radio_service_disabled' });
+    return;
+  }
+
   // Сначала валидация входа (400 независимо от наличия ключа), потом конфигурация
   const { text, voice_id, speed, pitch } = req.body || {};
   if (typeof text !== 'string' || text.trim().length === 0 || text.length > MAX_TEXT_LENGTH) {
@@ -98,7 +110,6 @@ router.post('/tts', authMiddleware, radioTtsLimiter, async (req: AuthRequest, re
   }
 
   // Голос по умолчанию — из флагов БД (ТЗ-45), не из code-defaults
-  const flags = await getRadioFlags();
   const ttsStartedAt = Date.now();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TTS_TIMEOUT_MS);
