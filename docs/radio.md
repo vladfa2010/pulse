@@ -12,9 +12,12 @@
 **ТЗ-49 (автоплей → SettingsPanel)** ✅ · **ТЗ-50 (синхронизация счётчика
 непрочитанных)** ✅ · **ТЗ-53 (порядок блоков в автоэфире)** ✅ · **ТЗ-54
 (гарантия порядка саммари + защита от race)** ✅ · **ТЗ-55 (кэш крона
-бесплатно + свежий обзор отдельной кнопкой)** ✅.
+бесплатно + свежий обзор отдельной кнопкой)** ✅ · **ТЗ-56 (watchlist через
+Finam: тикеры из активных тегов портфеля)** ✅.
 Ревью техлида: `REVIEW_RADIO_TZ42_V31_2026-09-21.md`
-(блокеры Б1/Б2 закрыты в ТЗ-42).
+(блокеры Б1/Б2 закрыты в ТЗ-42). Аудит ТЗ-56 перед реализацией: 2 критичных
+бага в исходном ТЗ (`req.user.id` вместо `userId`, прямой fetch с кукой
+вместо api-клиента) — исправлены при реализации.
 
 ## Статус
 
@@ -32,6 +35,8 @@
 | ТЗ-53 порядок автоэфира: приветствие → общее саммари → персональное → топ новостей → календарь | ✅ на проде (frontend `bfed6b5`) | 2026-09-23 |
 | ТЗ-54 review-фиксы ТЗ-53: await саммари рынка (Promise из readMarketSummary), guard от двойного ▶ эфир, тест pickedIds | ✅ на проде (frontend `abc665b`) | 2026-09-23 |
 | ТЗ-55 саммари рынка из кэша крона (0 LLM, `/summary-global/cached`) + «свежий обзор» отдельной кнопкой | ✅ на проде (backend `c7ecf7a`, frontend `ad614ed`) | 2026-09-23 |
+| ТЗ-55 fix: спиннер кэша крона — fetchMarketCached переведён на api-клиент (Bearer; куку authMiddleware не читает) | ✅ на проде (frontend `24ded8f`) | 2026-09-23 |
+| ТЗ-56 watchlist котировок через Finam: тикеры активных тегов портфеля, поллинг 60 с, удалён Binance-хук и фейк-sparkline | ✅ на проде (backend `be3c66a`, frontend `6893233`) | 2026-09-24 |
 
 ## Матрица переключателей (ТЗ-46)
 
@@ -87,8 +92,10 @@ pulse-backend
 Зависимости данных (существующие эндпоинты Pulse — НЕ части радио):
 `GET /api/news` (непрочитанные по тегам), `POST /api/news/:id/read`,
 `GET /api/user/tags`, `GET /api/user/summary`, `GET /api/user/summary-global` (LLM, refresh), `GET /api/user/summary-global/cached` (read-only кэш крона, 204 если нет — ТЗ-55),
+`GET /api/market/watchlist-quotes` (котировки наблюдения, auth, ТЗ-56),
 `GET /api/calendar`, `GET /api/news/stream` (SSE). Источники контента и их
-смыслы — в `cascades.md`, `topics.md`, ARCHITECTURE.md §News.
+смыслы — в `cascades.md`, `topics.md`, ARCHITECTURE.md §News. Рынок —
+`docs/market-data.md` (единый провайдер Finam, кэши TTL).
 
 ## API радио
 
@@ -238,6 +245,76 @@ fallback). Payload:
   без user_id. Авторизация SSE (токен в query, как у фактчека) — отдельная
   задача, не блокирует.
 
+## Watchlist котировок через Finam (ТЗ-56, backend `be3c66a`, frontend `6893233`)
+
+До ТЗ-56 наблюдение в `/radio` было хардкодом 4 крипт (BTC/ETH/SOL/BNB) с
+прямым поллингом Binance раз в 5 с и фейковым sparkline (`Math.sin`) — техдолг
+с TODO в коде. Теперь watchlist строится на **тикерах активных тегов портфеля**
+юзера и идёт через единый market-провайдер.
+
+### Бэкенд
+
+- **Роут `GET /api/market/watchlist-quotes`** (`src/routes/marketPublic.ts`,
+  authMiddleware):
+  1. Активные теги юзера: `portfolios JOIN user_defined_tags`,
+     `is_frozen = FALSE`, порядок — алфавит по `tag_name`
+     (индекс `idx_portfolios_user_frozen`, UNIQUE(user_id, tag_id) — дублей нет).
+  2. Резолв инструмента из `enriched_data` — тот же паттерн, что
+     `buildInstrumentsForTags` (news-chart): `symbol` («TICKER@MIC») или пара
+     `ticker + mic`; повреждённый JSON → тег пропускается.
+  3. Цены батчем `marketRouter.getCurrentPricesBatch` (Finam, concurrency 10,
+     дедуп по `TICKER@MIC`), кэш ответа **2 мин по user_id** (in-memory Map).
+  4. `currency` по MIC для озвучки: `MISX → RUB`, `XNGS/XNYS → USD`, иначе null.
+  - **Pre-check до батча:** нет ключа Finam или окно обслуживания
+    (05:00–06:15 МСК) → сразу **503 `market_unavailable`** (иначе batch глотал
+    бы ошибки и maintenance выглядел бы как «пустой список»).
+  - Тикер без цены от Finam — пропускается (частичный ответ, 200).
+  - Без активных тегов / без тикеров → 200 `{ quotes: [] }` (фронт показывает
+    подсказку «Добавьте теги в портфеле»).
+- **`getCurrentPrice` теперь возвращает `{ price, changePct }`**
+  (`finamMarketAdapter.QuoteWithChange`): `change_pct` из Finam
+  `/quotes/latest`, фолбэк `change / prev_close * 100`, иначе 0.
+  Кэш цен `TTL_PRICE_MS` 1 мин → **2 мин** (по запросу владельца; синхрон с
+  кэшем роута). Потребители обновлены: `marketRouter` (single + batch),
+  `brokerPortfolioService` (`PositionWithPrice.changePct` — для будущего UI
+  портфеля). MOEX ISS adapter не зарегистрирован в роутере — его сигнатура
+  старая, TODO при возврате (Д3 ТЗ-56). Admin healthcheck `/providers/status`
+  не затронут (probe игнорирует возврат).
+
+### Фронтенд
+
+- **`useFinamWatchlist(isLoggedIn)`** (`src/hooks/useFinamWatchlist.ts`) —
+  опрос раз в **60 с через единый api-клиент** (`api.get` — Bearer-заголовок).
+  ⚠️ Прямой `fetch` с `credentials: 'include'` НЕ работает: authMiddleware
+  читает токен только из заголовка (тот же баг, что был в fetchMarketCached
+  ТЗ-55). Гейт по `isLoggedIn` — гостю запросы не нужны.
+  Состояния: `quotes / offline / empty / lastUpdate / error`. Ошибка
+  (network, 5xx, 503) → последний успешный ответ + плашка «офлайн с HH:MM».
+  Пустой список → `empty` (подсказка про теги портфеля). Опрос не паузится на
+  скрытой вкладке (Chrome может дросселировать setInterval до 1/мин — с
+  периодом 60 с незаметно).
+- **`Watchlist.tsx`** принимает `state: WatchlistState`: без sparkline и без
+  подписи про источник. `live` в Header = `!offline && lastUpdate !== null`
+  («котировки live» / «котировки офлайн»).
+- **Озвучка (`buildQuotesSegments`, `lib/radio/summary.ts`):** все тикеры
+  подряд (порядок — алфавит tag_name из API) + финальная фраза «лидер дня /
+  слабее всех». Валюта из `RadioQuote.currency` («рублей/долларов» — раньше
+  было захардкожено «долларов»). Если у всех `changePct === 0` — фраза
+  «заметных колебаний нет» вместо случайных лидеров (edge 17 ТЗ-56).
+- **`useMarket.ts` удалён** (Binance-поллинг + симуляция), `formatPrice`
+  переехал в существующий `src/lib/format.ts`. Тесты:
+  `useFinamWatchlist.test.ts` (5, jsdom + @testing-library/react — devDeps),
+  currency/all-flat в `radioScripts.test.ts`.
+
+### Эксплуатационные риски
+
+- Лимит Finam 200 req/min: кэш 2 мин на символ = 0.5 req/мин/символ;
+  30 уникальных тикеров = ~15 req/min суммарно по всем юзерам — запас большой.
+- Эфир «Котировки наблюдения» при ~30 тикерах — 5–7 мин озвучки; решение
+  владельца (топ-N — отдельная задача, если станет тяжело).
+- `watchlistCache` in-memory: после ребута VDS первый запрос юзера = miss
+  (SQL + Finam), дальше штатно.
+
 ## Эксплуатация
 
 - **`MINIMAX_API_KEY`** — env, только сервер. При установке: `.env` сервера И
@@ -309,6 +386,10 @@ fallback). Payload:
   пропускается только если `matched_tags ∩ userTagIds` непуст; `refresh` →
   `invalidateQueries(['radio','feed'])`; `ping`/`connected` игнор; reconnect 5 с.
   StrictMode-safe: колбэк в ref, cleanup `es.close()`.
+- **`useFinamWatchlist`** — котировки наблюдения (ТЗ-56, см. отдельный раздел
+  ниже): `/api/market/watchlist-quotes` раз в 60 с через api-клиент,
+  offline-fallback на последний успешный ответ. Заменил удалённый
+  `useMarket` (Binance).
 
 ### Страница (`src/pages/RadioPage.tsx`)
 
@@ -398,7 +479,8 @@ onend/onerror) с устаревшей генерацией выходят мо�
 
 ### Компоненты (`components/radio/`, 10 шт.)
 
-Header, TickerBar, Watchlist, NewsFeed (score-чип ≥8.5 красный / ≥7 жёлтый /
+Header, TickerBar, Watchlist (ТЗ-56: state от useFinamWatchlist, плашка
+«офлайн», без sparkline), NewsFeed (score-чип ≥8.5 красный / ≥7 жёлтый /
 серый, при 0 нет чипа; «Что это значит» из ТЗ-43), QueuePanel, CalendarPanel
 (данные calendarAdapter, статус past/soon по сравнению с текущим времени),
 SummaryBar (4 кнопки → эндпоинты; прогресс накопления свежих), PlayerBar
@@ -437,11 +519,13 @@ CSS-переменные прототипа заменены на тему Pulse
    «Что сегодня» — buildCalendarSegments; «Котировки» — buildQuotesSegments
    (watchlist). В эфире звучит только кэш крона — LLM-триггера нет.
 4. **Плеер:** быстрые «стоп→эфир→стоп→эфир» = один голос (genRef-регрессия).
-5. **Watchlist** — Binance-поллинг 5 с, TODO: уйти на `/api/market/*`.
+5. **Watchlist** — Finam через `useFinamWatchlist` (ТЗ-56): тикеры активных
+   тегов портфеля, поллинг 60 с, offline-плашка; Binance-хук удалён.
 
 ### Гейты
 
-`npx vitest run` — 153 теста (26 новых: scripts/summary/calendar-строки);
+`npx vitest run` — 167 тестов (радио: adapters 22, scripts/summary 29,
+useFinamWatchlist 5, cascadeChart 7, factCheckInput 20);
 `npm run build` (tsc + vite). Деплой фронта — по регламенту DEPLOYMENT.md
 (sed-патч → VITE_TOPICS_ENABLED=true → grep-проверки → tar/scp → распаковка
 поверх /opt/pulse/frontend/dist).
@@ -480,8 +564,9 @@ SettingsPanel, ТЗ-49; **дефолт вкл с 2026-09-23** — решение
 
 - Severity и словесные категории (только число `score`).
 - `minimaxKey` в localStorage (ключ — только сервер).
-- `handleSpike` в watchlist (алерты — вне ТЗ-42/43/44; watchlist на Binance
-  временный, TODO в коде, уйдёт при подключении `/api/market/*`).
+- `handleSpike` в watchlist (алерты — вне ТЗ-42/43/44; watchlist был временным
+  на Binance — удалён целиком в ТЗ-56, заменён Finam-версией через
+  `/api/market/watchlist-quotes`).
 - Прямой вызов Minimax из фронта (`lib/minimax.ts` прототипа не переносится).
 
 ## Сценарии эфира (контракт для ТЗ-43/44)
@@ -496,8 +581,9 @@ SettingsPanel, ТЗ-49; **дефолт вкл с 2026-09-23** — решение
 3. **Саммари-кнопки:** «Моё саммари» → `/api/user/summary?hours=12`;
    «Саммари рынка» → `/api/user/summary-global/cached` (кэш крона, 0 LLM);
   «Свежий обзор» → `/api/user/summary-global` (LLM, кэш 6 ч, повтор без `refresh=1`);
-   «Что сегодня» → `/api/calendar`; «Котировки» → watchlist (v1 — публичные
-   крипто). Клиентский `summary.ts` — фолбэк, когда LLM-эндпоинты недоступны.
+   «Что сегодня» → `/api/calendar`; «Котировки» → watchlist (ТЗ-56: тикеры
+   активных тегов портфеля через Finam). Клиентский `summary.ts` — фолбэк,
+   когда LLM-эндпоинты недоступны.
 4. **Юзер без тегов:** заглушка «Радио молчит, потому что не знает ваших
    интересов» + CTA в настройки тегов Pulse + «послушать общее саммари»
    (`/api/user/summary-global`) — воронка лендинга.
@@ -527,6 +613,7 @@ SettingsPanel, ТЗ-49; **дефолт вкл с 2026-09-23** — решение
 | Порядок автоэфира: приветствие → общее → персональное → новости → календарь (ТЗ-53, frontend `bfed6b5`) | Один клик ▶ Эфир = полный сценарий «контекст → личная выжимка → детали → что смотреть дальше»; `market` не формируется заново (кэш, иначе fire-and-forget); новости из персонального саммари исключены из топа (`pickedIds`), чтобы не озвучивать дважды; calLine убрана из приветствия — календарь звучит целиком в конце |
 | Шаг 2 эфира — `await readMarketSummary()`, guard `speech.isSpeaking` (ТЗ-54, frontend `abc665b`) | Ревью ТЗ-53: fire-and-forget вклинивал саммари рынка в конец эфира (IIFE не возвращался наружу — await ждал undefined); двойное ▶ эфир гоняло два эфира параллельно. Guard readMarketSummary по `segments?.length` — market с пустыми сегментами рефетчится, а не молчит. ⚠️ Частично отменено ТЗ-55: await больше не нужен — шаг 2 перешёл на кэш крона, LLM из эфира исключён; guard `isSpeaking` оставлен |
 | Два источника саммари рынка: `marketCached` (кэш крона, 0 LLM) и `marketFresh` (LLM, порог свежих) — ТЗ-55, backend `c7ecf7a`, frontend `ad614ed` | Одна кнопка серая до 50 свежих = юзер без контекста + платный LLM на каждый клик. Разделение: жёлтая кнопка живёт с первого крона (~3 мин после boot), эфир использует только её (0 списаний Kimi); циановая «свежий обзор» — LLM. Read-only эндпоинт без лимитера (O(1) in-memory), 204 → фронт ретраит 30с × 60 попыток |
+| Watchlist котировок — Finam по активным тегам портфеля, не Binance-хардкод (ТЗ-56) | Крипто-хардкод с симуляцией цен — техдолг с TODO. Единый провайдер Finam уже обслуживает графики новостей и портфели — watchlist встаёт в ту же инфраструктуру (кэш 2 мин, лимит 200 req/min держится кэшем). Персонализация бесплатно: тикеры уже резолвятся в `enriched_data` тегов. Прямой fetch с кукой отвергнут — authMiddleware читает только Bearer, опрос строго через api-клиент |
 | Счётчик непрочитанных: optimistic readIds + invalidate ['radio','feed'] с дебаунсом 1 с + focus-рефетч, staleTime 30 с (ТЗ-50) | Баг «прослушал всё — плеер показывает непрочитано 40»: POST /read уходил на сервер, но кэш ленты (2 мин staleTime) не инвалидировался. Дебаунс — один рефетч после эфира вместо N; focus — актуальный счётчик при возврате на вкладку |
 | Minimax через серверный прокси | Ключ в браузере = скомпрометирован; плюс единая точка метрик/лимитов |
 
@@ -535,7 +622,10 @@ SettingsPanel, ТЗ-49; **дефолт вкл с 2026-09-23** — решение
 - DEPLOYMENT.md — env-таблица (`MINIMAX_API_KEY`), правила установки ключей.
 - ARCHITECTURE.md §Real-time Updates (SSE) — payload `news` и история фикса.
 - RADIO.md (пакет радио) — продуктовый контекст и сценарии.
-- ТЗ-42/43/44/45/46/47/49/50/53/54/55, REVIEW_RADIO_TZ42_V31 — исходные ТЗ и вердикт техлида.
+- `docs/market-data.md` — единый market-провайдер Finam (TTL-кэши, алиасы
+  MOEX→MISX/NASDAQ→XNGS/NYSE→XNYS); watchlist ТЗ-56 стоит на нём.
+- ТЗ-42/43/44/45/46/47/49/50/53/54/55/56, REVIEW_RADIO_TZ42_V31 — исходные
+  ТЗ и вердикт техлида; `TZ-56_RADIO_WATCHLIST_FINAM_2026-09-23.md` — ТЗ и аудит.
 - Прототип-донор `radio-app/` — песочница, в прод не переносится целиком
   (переносятся 10 компонентов, useSpeech с genRef, greeting/scripts/share/sound/
   summary/config — карта в ТЗ-44 задача 3).
