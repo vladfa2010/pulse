@@ -5,6 +5,8 @@
 
 import { Router, type Response } from 'express';
 import { query } from '../config/db';
+import { authMiddleware, type AuthRequest } from '../middleware/auth';
+import { hasFinamKey, isInMaintenanceWindow } from '../services/market/finamAuth';
 import * as marketRouter from '../services/market/marketRouter';
 import type { MarketCandle } from '../services/market/utils';
 import {
@@ -980,6 +982,147 @@ router.get('/topic', async (req, res) => {
   } catch (err: any) {
     console.error('[marketPublic] topic error:', err.message);
     return res.status(500).json({ error: 'topics_unavailable' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ТЗ-56: watchlist котировок для радио — тикеры из активных тегов портфеля
+// ═══════════════════════════════════════════════════════════════════════════
+
+const WATCHLIST_CACHE_TTL_MS = 2 * 60 * 1000; // синхрон с TTL_PRICE_MS (2 мин)
+
+interface WatchlistEntry {
+  symbol: string; // "SBER@MISX"
+  tag_id: string;
+  tag_name: string;
+  price: number;
+  changePct: number;
+  currency: 'RUB' | 'USD' | null; // для озвучки: рубли/доллары
+  ts: number;
+}
+
+const watchlistCache = new Map<string, { at: number; payload: WatchlistEntry[] }>();
+
+/** Валюта по MIC: MOEX → RUB, NASDAQ/NYSE → USD, прочее → null (без суффикса). */
+function currencyByMic(mic: string): 'RUB' | 'USD' | null {
+  const m = mic.toUpperCase();
+  if (m === 'MISX') return 'RUB';
+  if (m === 'XNGS' || m === 'XNYS') return 'USD';
+  return null;
+}
+
+/**
+ * GET /api/market/watchlist-quotes (auth)
+ *
+ * Тикеры из активных тегов юзера (`portfolios.is_frozen = FALSE`,
+ * `enriched_data.symbol` или `ticker + mic`). Цены через
+ * `marketRouter.getCurrentPricesBatch` (Finam, кэш 2 мин).
+ * Кэш ответа 2 мин по user_id.
+ *
+ * Используется фронтом: Watchlist в /radio + buildQuotesSegments в эфире.
+ * До батча — явный pre-check Finam (maintenance/нет ключа), иначе batch
+ * глотал бы ошибки и maintenance выглядел бы как «пустой список».
+ */
+router.get('/watchlist-quotes', authMiddleware, async (req: AuthRequest, res) => {
+  const userId = req.user?.userId; // auth.ts: req.user = { userId, email }
+  if (!userId) {
+    return res.status(401).json({ error: 'auth_required' });
+  }
+
+  if (!hasFinamKey() || isInMaintenanceWindow()) {
+    return res.status(503).json({ error: 'market_unavailable' });
+  }
+
+  // Cache hit
+  const cached = watchlistCache.get(userId);
+  if (cached && Date.now() - cached.at < WATCHLIST_CACHE_TTL_MS) {
+    res.setHeader('X-Cache', 'hit');
+    return res.json({ quotes: cached.payload, ts: cached.at });
+  }
+
+  try {
+    // 1. Активные теги юзера + enriched_data (порядок — алфавит по tag_name)
+    const tagRes = await query(
+      `SELECT p.tag_id, p.tag_name, udt.enriched_data
+       FROM portfolios p
+       JOIN user_defined_tags udt ON udt.tag_id = p.tag_id
+       WHERE p.user_id = $1 AND p.is_frozen = FALSE
+       ORDER BY p.tag_name ASC`,
+      [userId]
+    );
+
+    // 2. Резолв symbol (тот же паттерн, что buildInstrumentsForTags)
+    const items: { ticker: string; exchange: string; tagId: string; tagName: string; symbol: string }[] = [];
+    for (const row of tagRes.rows) {
+      let enriched = row.enriched_data;
+      if (typeof enriched === 'string') {
+        try { enriched = JSON.parse(enriched); } catch { enriched = null; }
+      }
+      if (!enriched || typeof enriched !== 'object') continue;
+
+      const symbol = enriched.symbol || null;
+      const ticker = enriched.ticker || null;
+      const mic = enriched.mic || null;
+
+      if (!symbol && !(ticker && mic)) continue;
+
+      let resolvedTicker: string;
+      let exchangeMic: string;
+      if (symbol) {
+        const parts = symbol.split('@');
+        if (parts.length !== 2) continue;
+        resolvedTicker = parts[0];
+        exchangeMic = parts[1];
+      } else {
+        resolvedTicker = ticker;
+        exchangeMic = mic;
+      }
+
+      items.push({
+        ticker: resolvedTicker,
+        exchange: exchangeMic,
+        tagId: row.tag_id,
+        tagName: row.tag_name,
+        symbol: symbol || `${resolvedTicker}@${exchangeMic}`,
+      });
+    }
+
+    // 3. Batch-запрос цен (кэш Finam 2 мин — дедупликация внутри)
+    let payload: WatchlistEntry[] = [];
+    if (items.length > 0) {
+      const priceItems = items.map((i) => ({ ticker: i.ticker, exchange: i.exchange }));
+      const priceMap = await marketRouter.getCurrentPricesBatch(priceItems);
+
+      for (const item of items) {
+        const key = `${item.ticker}@${item.exchange}`;
+        const quote = priceMap.get(key);
+        if (!quote) continue; // Finam не вернул цену — пропускаем
+        payload.push({
+          symbol: item.symbol,
+          tag_id: item.tagId,
+          tag_name: item.tagName,
+          price: quote.price,
+          changePct: quote.changePct,
+          currency: currencyByMic(item.exchange),
+          ts: Date.now(),
+        });
+      }
+    }
+
+    watchlistCache.set(userId, { at: Date.now(), payload });
+    res.setHeader('X-Cache', 'miss');
+    return res.json({ quotes: payload, ts: Date.now() });
+  } catch (err: any) {
+    console.error('[marketPublic] watchlist-quotes error:', err.message);
+    if (
+      err.code === 'finam_no_key' ||
+      err.code === 'finam_maintenance' ||
+      err.code === 'finam_auth_failed' ||
+      err.code === 'finam_rate_limited'
+    ) {
+      return res.status(503).json({ error: 'market_unavailable' });
+    }
+    return res.status(500).json({ error: 'watchlist_unavailable' });
   }
 });
 

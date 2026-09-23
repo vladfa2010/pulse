@@ -407,6 +407,7 @@ async function logUserEvent(userId: string, type: string, data: Record<string, a
 
 export interface PositionWithPrice extends BrokerPositionRow {
   currentPrice: number | null;
+  changePct: number | null; // ТЗ-56: дневное изменение % из котировки (для UI портфеля)
   cost: number | null;
   marketValue: number | null;
   pnl: number | null;
@@ -468,7 +469,9 @@ export async function getPortfolioSummary(userId: string, mode: 'by-broker' | 'c
 
   const pricedPositions = allPositions.map(p => {
     const priceKey = `${p.ticker}@${p.exchange}`;
-    const currentPrice = priceMap.get(priceKey) ?? null;
+    const quote = priceMap.get(priceKey) ?? null;
+    const currentPrice = quote?.price ?? null;
+    const changePct = quote?.changePct ?? null;
     const cost = p.avg_price !== null ? p.quantity * p.avg_price : null;
     const marketValue = currentPrice !== null ? p.quantity * currentPrice : null;
     const pnl = cost !== null && marketValue !== null ? marketValue - cost : null;
@@ -476,6 +479,7 @@ export async function getPortfolioSummary(userId: string, mode: 'by-broker' | 'c
     return {
       ...p,
       currentPrice,
+      changePct,
       cost,
       marketValue,
       pnl,

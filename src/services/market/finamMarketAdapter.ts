@@ -52,7 +52,7 @@ const TTL_DAILY_MS = 15 * 60 * 1000;               // daily candles
 const TTL_WEEKLY_MS = 15 * 60 * 1000;              // weekly candles
 const TTL_INTRADAY_TODAY_MS = 60 * 1000;           // 5-min for the current day
 const TTL_INTRADAY_PAST_MS = 365 * 24 * 3600 * 1000; // 5-min for past days (immutable)
-const TTL_PRICE_MS = 60 * 1000;                    // latest quote
+const TTL_PRICE_MS = 120 * 1000;               // ТЗ-56: 2 мин (по запросу владельца)
 const TTL_EMPTY_MS = 15 * 60 * 1000;               // empty results cached too (invalid tickers)
 
 interface CacheEntry<T> {
@@ -63,7 +63,7 @@ interface CacheEntry<T> {
 const dailyCache = new Map<string, CacheEntry<MarketCandle[]>>();
 const weeklyCache = new Map<string, CacheEntry<MarketCandle[]>>();
 const intradayCache = new Map<string, CacheEntry<MarketCandle[]>>();
-const priceCache = new Map<string, CacheEntry<number | null>>();
+const priceCache = new Map<string, CacheEntry<QuoteWithChange | null>>();
 
 function cacheKey(ticker: string, exchange: string, suffix: string): string {
   return `${ticker.toUpperCase()}|${exchange.toUpperCase()}|${suffix}`;
@@ -219,7 +219,26 @@ export async function getIntraday5minRange(
   return candles;
 }
 
-export async function getCurrentPrice(ticker: string, exchange: string): Promise<number | null> {
+export interface QuoteWithChange {
+  price: number;      // last
+  changePct: number;  // 24h % (0 если Finam не вернул)
+}
+
+/** ТЗ-56: парсит change_pct из Finam /quotes/latest.
+ *  Приоритет: явное поле change_pct. Фолбэк: change / prev_close * 100. */
+function parseChangePct(quote: any): number {
+  if (!quote) return 0;
+  if (quote.change_pct !== undefined && quote.change_pct !== null) {
+    const v = parseFloat(String(quote.change_pct.value ?? quote.change_pct));
+    return Number.isFinite(v) ? v : 0;
+  }
+  const change = parseDecimal(quote.change);
+  const prevClose = parseDecimal(quote.prev_close);
+  if (prevClose > 0) return (change / prevClose) * 100;
+  return 0;
+}
+
+export async function getCurrentPrice(ticker: string, exchange: string): Promise<QuoteWithChange | null> {
   assertReady();
   const mic = await resolveMic(exchange);
   if (!mic) return null;
@@ -235,9 +254,13 @@ export async function getCurrentPrice(ticker: string, exchange: string): Promise
     })
   );
   const last = parseDecimal(res.data?.quote?.last);
-  const price = last > 0 ? last : null;
-  priceCache.set(key, { data: price, expiresAt: Date.now() + TTL_PRICE_MS });
-  return price;
+  if (last <= 0) {
+    priceCache.set(key, { data: null, expiresAt: Date.now() + TTL_PRICE_MS });
+    return null;
+  }
+  const result: QuoteWithChange = { price: last, changePct: parseChangePct(res.data?.quote) };
+  priceCache.set(key, { data: result, expiresAt: Date.now() + TTL_PRICE_MS });
+  return result;
 }
 
 // --- Discovery helpers (used by admin tab, TZ-2) ---

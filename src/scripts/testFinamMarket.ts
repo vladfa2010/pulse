@@ -30,8 +30,8 @@ async function main() {
   console.log('router provider:', viaRouter.provider, 'candles:', viaRouter.candles.length);
 
   const px = await finam.getCurrentPrice('SBER', 'MOEX');
-  console.log('SBER price:', px);
-  if (!px || px <= 0) throw new Error('no current price');
+  console.log('SBER quote:', px);
+  if (!px || px.price <= 0) throw new Error('no current price');
 
   // cache check: second call must be instant (TTL)
   const t0 = Date.now();

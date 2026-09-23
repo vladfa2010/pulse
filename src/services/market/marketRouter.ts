@@ -12,6 +12,7 @@
  */
 
 import * as finamMarketAdapter from './finamMarketAdapter';
+import type { QuoteWithChange } from './finamMarketAdapter';
 import type { MarketCandle } from './utils';
 
 export const SUPPORTED_EXCHANGES = ['MOEX', 'NASDAQ', 'NYSE'];
@@ -21,7 +22,7 @@ export interface MarketProvider {
   getWeeklyCandles?(ticker: string, exchange: string, weeks?: number): Promise<MarketCandle[]>;
   getIntraday5min(ticker: string, exchange: string, date: string): Promise<MarketCandle[]>;
   getIntraday5minRange?(ticker: string, exchange: string, startDate: string, endDate: string): Promise<MarketCandle[]>;
-  getCurrentPrice(ticker: string, exchange: string): Promise<number | null>;
+  getCurrentPrice(ticker: string, exchange: string): Promise<QuoteWithChange | null>;
 }
 
 export type ServedBy = 'finam';
@@ -93,21 +94,21 @@ export async function getWeeklyCandles(
 export async function getCurrentPrice(
   exchange: string,
   ticker: string
-): Promise<{ price: number | null; provider: ServedBy }> {
+): Promise<{ quote: QuoteWithChange | null; provider: ServedBy }> {
   try {
     const provider = await resolveProvider(exchange);
-    const price = await provider.getCurrentPrice(ticker.toUpperCase(), exchange.toUpperCase());
-    return { price, provider: 'finam' };
+    const quote = await provider.getCurrentPrice(ticker.toUpperCase(), exchange.toUpperCase());
+    return { quote, provider: 'finam' };
   } catch (err: any) {
     console.error(`[MarketRouter] getCurrentPrice failed for ${ticker}@${exchange}:`, err.message);
-    return { price: null, provider: 'finam' }; // batch price fetches must not throw (existing contract)
+    return { quote: null, provider: 'finam' }; // batch price fetches must not throw (existing contract)
   }
 }
 
 export async function getCurrentPricesBatch(
   items: { ticker: string; exchange: string }[]
-): Promise<Map<string, number | null>> {
-  const result = new Map<string, number | null>();
+): Promise<Map<string, QuoteWithChange | null>> {
+  const result = new Map<string, QuoteWithChange | null>();
   const uniqueItems = new Map<string, { ticker: string; exchange: string }>();
 
   for (const item of items) {
@@ -124,8 +125,8 @@ export async function getCurrentPricesBatch(
     for (const item of chunk) {
       const key = `${item.ticker}@${item.exchange}`;
       try {
-        const { price } = await getCurrentPrice(item.exchange, item.ticker);
-        result.set(key, price);
+        const { quote } = await getCurrentPrice(item.exchange, item.ticker);
+        result.set(key, quote);
       } catch (err: any) {
         console.error(`[MarketRouter] getCurrentPrice failed for ${key}:`, err.message);
         result.set(key, null);
