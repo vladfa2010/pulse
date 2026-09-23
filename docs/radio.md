@@ -524,7 +524,7 @@ SettingsPanel, ТЗ-49; **дефолт вкл с 2026-09-23** — решение
 - DEPLOYMENT.md — env-таблица (`MINIMAX_API_KEY`), правила установки ключей.
 - ARCHITECTURE.md §Real-time Updates (SSE) — payload `news` и история фикса.
 - RADIO.md (пакет радио) — продуктовый контекст и сценарии.
-- ТЗ-42/43/44/45/46/47/49, REVIEW_RADIO_TZ42_V31 — исходные ТЗ и вердикт техлида.
+- ТЗ-42/43/44/45/46/47/49/50/53, REVIEW_RADIO_TZ42_V31 — исходные ТЗ и вердикт техлида.
 - Прототип-донор `radio-app/` — песочница, в прод не переносится целиком
   (переносятся 10 компонентов, useSpeech с genRef, greeting/scripts/share/sound/
   summary/config — карта в ТЗ-44 задача 3).
