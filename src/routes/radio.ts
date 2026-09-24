@@ -6,7 +6,7 @@
  * Радио — тонкий голосовой рендер поверх данных Pulse (RADIO.md v4).
  * Этот роут — весь новый backend радио:
  *
- *   POST /api/radio/tts    → Прокси Minimax speech-02-hd (ключ только на сервере)
+ *   POST /api/radio/tts    → Прокси Minimax TTS (модель в env MINIMAX_TTS_MODEL, дефолт speech-2.8-hd, ключ только на сервере)
  *   GET  /api/radio/config → Серверные флаги радио (для любого авторизованного
  *                            пользователя, НЕ adminMiddleware — блокер Б2 ревью)
  *
@@ -24,11 +24,15 @@ import { getRadioFlags } from '../services/radioSettings';
 const router = Router();
 
 const MINIMAX_TTS_URL = 'https://api.minimax.io/v1/t2a_v2';
-const MINIMAX_MODEL = 'speech-02-hd';
+// ТЗ-61: модель выбирается через env MINIMAX_TTS_MODEL. Дефолт — speech-2.8-hd
+// (последняя HD: 40 языков, 10 эмоций, sound tags для пауз). Проверено на ключе:
+// обе модели (2.8-hd и 02-hd) отвечают 200 на t2a_v2. Откат на старую —
+// задать MINIMAX_TTS_MODEL=speech-02-hd в env, без деплоя.
+const MINIMAX_MODEL = process.env.MINIMAX_TTS_MODEL ?? 'speech-2.8-hd';
 const TTS_TIMEOUT_MS = 30_000;
 const MAX_TEXT_LENGTH = 2000;
 
-// Белый список голосов speech-02-hd (из прототипа radio-app/src/lib/minimax.ts).
+// Белый список голосов Minimax TTS (из прототипа radio-app/src/lib/minimax.ts). Все 8 совместимы и с 2.8-hd.
 // Без него чужой voice_id уезжал бы в Minimax → 502 вместо понятного 400.
 const MINIMAX_VOICE_IDS = new Set([
   'presenter_male', 'presenter_female',
@@ -42,7 +46,7 @@ const MINIMAX_VOICE_IDS = new Set([
 // каждый запрос давал бы 503, причина должна быть видна в логах сразу.
 console.log(
   process.env.MINIMAX_API_KEY
-    ? '[Radio] MINIMAX ready'
+    ? `[Radio] MINIMAX ready (model=${MINIMAX_MODEL}, voices=${MINIMAX_VOICE_IDS.size})`
     : '[Radio] MINIMAX_API_KEY not set, /api/radio/tts returns 503'
 );
 

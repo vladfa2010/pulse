@@ -116,10 +116,20 @@ pulse-backend
   `speed` 0.5–2.0 (400 `invalid_speed`); `pitch` −12…+12 (400 `invalid_pitch`);
   `voice_id` — только из белого списка (400 `invalid_voice_id` со списком
   `allowed`). Дефолт voice_id — `radio_minimax_host_voice` из конфига.
-- **Апстрим:** `POST https://api.minimax.io/v1/t2a_v2`, модель `speech-02-hd`,
+- **Апстрим:** `POST https://api.minimax.io/v1/t2a_v2`, модель по умолчанию
+  `speech-2.8-hd` (ТЗ-61; выбор через env `MINIMAX_TTS_MODEL`),
   таймаут 30 с (AbortController), `audio_setting`: mp3 / 32 kHz / 128 kbps.
   Разрыв соединения с клиентом гасит upstream-fetch сразу
   (`res.on('close')` + guard `writableEnded`).
+- **Модели TTS** (проверены боевым ключом, обе отвечают 200 на `t2a_v2`):
+
+  | Модель | Статус | Языки | Эмоции | Sound tags |
+  |---|---|---|---|---|
+  | `speech-2.8-hd` (дефолт) | current | 40 | 10 | ✅ |
+  | `speech-02-hd` | legacy | 24 | 7 | ❌ |
+
+  Откат: `MINIMAX_TTS_MODEL=speech-02-hd` в env → recreate, без деплоя.
+  Boot-лог: `[Radio] MINIMAX ready (model=…, voices=8)`.
 - **Ошибки:** 502 `tts_upstream` (HTTP-статус, `base_resp.status_code != 0`,
   нет `data.audio`, таймаут, сетевой сбой); 503 `tts_not_configured`
   (нет `MINIMAX_API_KEY`); 503 `radio_service_disabled` (сервис выключен
@@ -320,8 +330,13 @@ fallback). Payload:
 - **`MINIMAX_API_KEY`** — env, только сервер. При установке: `.env` сервера И
   явный `environment:` backend-сервиса в `docker-compose.yml` (ключ в `.env` без
   правки compose контейнеру недоступен — см. DEPLOYMENT.md). Boot-лог:
-  `[Radio] MINIMAX ready` / `[Radio] MINIMAX_API_KEY not set, /api/radio/tts
-  returns 503`.
+  `[Radio] MINIMAX ready (model=…, voices=8)` / `[Radio] MINIMAX_API_KEY not
+  set, /api/radio/tts returns 503`.
+- **`MINIMAX_TTS_MODEL`** — env (ТЗ-61), дефолт `speech-2.8-hd`. Модель Minimax
+  TTS. Откат на legacy: `speech-02-hd`. Проверено ключом: обе 200 на `t2a_v2`.
+  В `docker-compose.yml` проброшен как `MINIMAX_TTS_MODEL: ${MINIMAX_TTS_MODEL:-}`.
+- **`MINIMAX_CHAT_MODEL`** — env (ТЗ-57 v2), без дефолта: chat-модель для диалога
+  сводки (`/api/market/market-dialog`). Не задана → 204 → plain fallback.
 - **Метрики:** `GET /api/admin/metrics?section=radio` (adminMiddleware) —
   `total/ok/err_502/err_503`, `rate_502_pct`, `rate_503_pct`, `p95_latency_ms`,
   `avg_latency_ms`; окно латентности — последние 500 попыток, in-memory с
