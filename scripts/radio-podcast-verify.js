@@ -57,4 +57,17 @@ ok('logRadioPodcastConfig — no-throw без env', () => {
   logRadioPodcastConfig();
 });
 
-console.log(`[verify] radioPodcast: ${passed}/8 OK`);
+// ТЗ-58: диалог с персонажами Михаил/Татьяна — парсится как обычный role/text
+ok('ТЗ-58: Михаил/Татьяна + прощание парсятся (whitelist ролей без изменений)', () => {
+  const r = parseDialogResponse(`{"dialog":[
+    {"role":"host","text":"Здравствуйте. Сегодня у нас в студии Татьяна — наш аналитик."},
+    {"role":"guest","text":"Привет, Михаил. Начнём с торговли."},
+    {"role":"host","text":"Подытожим ключевое. Продолжаем следить для вас за рынком."}
+  ]}`);
+  assert.strictEqual(r.length, 3);
+  assert.strictEqual(r[0].role, 'host');
+  assert.strictEqual(r[1].role, 'guest');
+  assert.ok(r[2].text.includes('Продолжаем следить'), 'прощание сохранено в тексте');
+});
+
+console.log(`[verify] radioPodcast: ${passed}/9 OK`);
