@@ -70,4 +70,22 @@ ok('ТЗ-58: Михаил/Татьяна + прощание парсятся (wh
   assert.ok(r[2].text.includes('Продолжаем следить'), 'прощание сохранено в тексте');
 });
 
-console.log(`[verify] radioPodcast: ${passed}/9 OK`);
+// Hotfix прод: M2.x (MiniMax-M2.5) — reasoning-модель, в content ответ приходит
+// с <think>...</think> перед JSON. Парсер обязан снимать.
+ok('hotfix: <think>-блок reasoning-модели снимается перед парсингом', () => {
+  const r = parseDialogResponse(`<think>
+Мне нужно превратить сводку в диалог Михаила и Татьяны.
+Подумаю о структуре: приветствие, три темы, подытог.
+</think>
+{"dialog":[{"role":"host","text":"Здравствуйте. Сегодня у нас в студии Татьяна."},{"role":"guest","text":"Привет, Михаил. Начнём."}]}`);
+  assert.strictEqual(r.length, 2);
+  assert.strictEqual(r[0].role, 'host');
+  assert.ok(!JSON.stringify(r).includes('think'), 'think не просочился в сегменты');
+});
+
+ok('hotfix: <answer>-обёртка снимается', () => {
+  const r = parseDialogResponse(`<answer>{"dialog":[{"role":"host","text":"OK"}]}</answer>`);
+  assert.deepStrictEqual(r, [{ role: 'host', text: 'OK' }]);
+});
+
+console.log(`[verify] radioPodcast: ${passed}/11 OK`);

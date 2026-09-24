@@ -77,9 +77,13 @@ function cacheSet(summary: string, segments: RadioSegment[]): void {
   });
 }
 
-/** Парсит ответ Minimax. Допускает обёртку ```json ... ```. Строгий whitelist ролей. */
+/** Парсит ответ Minimax. Допускает обёртку ```json ... ``` и reasoning-блок
+ * <think>...</think> (M2.x — reasoning-модели, мысли идут перед ответом).
+ * Также снимает <answer>...</answer>. Строгий whitelist ролей. */
 export function parseDialogResponse(raw: string): RadioSegment[] {
   let text = raw.trim();
+  text = text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+  text = text.replace(/^<answer>\s*/i, '').replace(/\s*<\/answer>$/i, '').trim();
   text = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
   const json = JSON.parse(text);
   if (!json || !Array.isArray(json.dialog)) {
@@ -130,7 +134,7 @@ async function generateDialog(summary: string): Promise<RadioSegment[] | null> {
             { role: 'system', content: SYSTEM_PROMPT },
             { role: 'user', content: summary },
           ],
-          max_tokens: 2000, // ТЗ-58: 6-8 реплик — 800 обрезало бы JSON на длинных диалогах
+          max_tokens: 4000, // ТЗ-58: 6-8 реплик; M2.x — reasoning-модель, <think> тоже тратит лимит
           temperature: 0.4,
         }),
         signal: controller.signal,
