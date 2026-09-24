@@ -1,0 +1,191 @@
+/**
+ * PULSE — Радио: генерация диалога из общей сводки рынка (ТЗ-57 v2).
+ *
+ * Берёт готовый `summary` (строка) из кэша globalSummary (Kimi, крон 6ч —
+ * бесплатно), отправляет в Minimax chat с промптом «преврати в подкаст».
+ * Кэш диалога 6ч в in-memory Map. In-flight lock: конкурентные запросы
+ * = один вызов LLM.
+ *
+ * Fallback-контракт: функция НИКОГДА не бросает. Любая ошибка → null
+ * (роут вернёт 204, фронт озвучит plain text).
+ *
+ * Модель — env MINIMAX_CHAT_MODEL (не хардкодится: список моделей Minimax
+ * меняется; утверждение v1 про "M2-her" не подтверждено).
+ */
+import { getCachedGlobalSummary } from './globalSummary';
+import type { RadioSegment } from '../types/radio';
+
+const MINIMAX_CHAT_URL = 'https://api.minimax.io/v1/chat/completions';
+const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6ч — как у кэша крона
+const REQUEST_TIMEOUT_MS = 30_000;
+const CACHE_MAX = 50;
+
+const SYSTEM_PROMPT = `Ты — редактор финансового радиоподкаста PULSE.
+Преврати сводку новостей ниже в диалог ведущего и аналитика для устной подачи в эфире.
+
+Формат:
+- 5-7 реплик (host, guest, host, guest, …)
+- host открывает эфир и представляет темы
+- guest отвечает по существу, без воды, с конкретными выводами
+- host задаёт уточняющие вопросы
+- последняя реплика — host подытоживает
+
+Тон: уверенный аналитический, без markdown, без эмодзи, без ссылок.
+Цифры до десяти — словами ("три процента", не "3%").
+Символы валют и процентов — словами.
+Спецсимволы (@, &, →, {}) — словами или убери.
+Аббревиатуры расшифруй при первом упоминании (ЦБ, ЕС, ОПЕК).
+Списки переведи в связные предложения.
+Добавь короткие связки между абзацами.
+Ничего не добавляй от себя — только то, что есть в сводке.
+
+Верни ТОЛЬКО валидный JSON, без markdown-обёрток:
+{"dialog":[{"role":"host","text":"…"},{"role":"guest","text":"…"}]}`;
+
+interface CacheEntry {
+  segments: RadioSegment[];
+  expiresAt: number;
+}
+
+const cache = new Map<string, CacheEntry>();
+let inflight: Promise<RadioSegment[] | null> | null = null;
+
+/** Ключ кэша — первые 200 символов сводки (сводка одна на всех юзеров). */
+function cacheKey(summary: string): string {
+  return summary.slice(0, 200).replace(/\s+/g, ' ').trim();
+}
+
+function cacheGet(summary: string): RadioSegment[] | null {
+  const key = cacheKey(summary);
+  const hit = cache.get(key);
+  if (!hit) return null;
+  if (Date.now() > hit.expiresAt) {
+    cache.delete(key);
+    return null;
+  }
+  return hit.segments;
+}
+
+function cacheSet(summary: string, segments: RadioSegment[]): void {
+  if (cache.size >= CACHE_MAX) {
+    const firstKey = cache.keys().next().value;
+    if (firstKey !== undefined) cache.delete(firstKey);
+  }
+  cache.set(cacheKey(summary), {
+    segments,
+    expiresAt: Date.now() + CACHE_TTL_MS,
+  });
+}
+
+/** Парсит ответ Minimax. Допускает обёртку ```json ... ```. Строгий whitelist ролей. */
+export function parseDialogResponse(raw: string): RadioSegment[] {
+  let text = raw.trim();
+  text = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+  const json = JSON.parse(text);
+  if (!json || !Array.isArray(json.dialog)) {
+    throw new Error('Minimax returned invalid JSON: missing dialog[]');
+  }
+  return json.dialog.map((seg: any, i: number): RadioSegment => {
+    if (typeof seg.text !== 'string' || !seg.text.trim()) {
+      throw new Error(`Invalid segment ${i}: empty text`);
+    }
+    const role = seg.role === 'guest' ? 'guest' : 'host';
+    return { role, text: seg.text.trim() };
+  });
+}
+
+/** Boot-лог — вызывается один раз из index.ts при старте. */
+export function logRadioPodcastConfig(): void {
+  const hasKey = Boolean(process.env.MINIMAX_API_KEY);
+  const model = process.env.MINIMAX_CHAT_MODEL;
+  if (hasKey && model) {
+    console.log(`[RadioPodcast] Minimax chat ready (model=${model})`);
+  } else {
+    console.log(
+      `[RadioPodcast] chat disabled: MINIMAX_API_KEY=${hasKey ? 'set' : 'MISSING'}, ` +
+        `MINIMAX_CHAT_MODEL=${model ?? 'MISSING'} — /api/market/market-dialog returns 204`
+    );
+  }
+}
+
+async function generateDialog(summary: string): Promise<RadioSegment[] | null> {
+  const apiKey = process.env.MINIMAX_API_KEY;
+  const model = process.env.MINIMAX_CHAT_MODEL;
+  if (!apiKey || !model) return null;
+
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    let upstream: Response;
+    try {
+      upstream = await fetch(MINIMAX_CHAT_URL, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: 'system', content: SYSTEM_PROMPT },
+            { role: 'user', content: summary },
+          ],
+          max_tokens: 800,
+          temperature: 0.4,
+        }),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+
+    if (!upstream.ok) {
+      console.error(`[RadioPodcast] Minimax chat HTTP ${upstream.status}`);
+      return null;
+    }
+    const data: any = await upstream.json();
+    const raw = data?.choices?.[0]?.message?.content;
+    if (typeof raw !== 'string' || !raw.trim()) {
+      console.warn('[RadioPodcast] Minimax returned empty content');
+      return null;
+    }
+    const segments = parseDialogResponse(raw);
+    if (segments.length === 0) {
+      console.warn('[RadioPodcast] Minimax returned empty dialog[]');
+      return null;
+    }
+    console.log(`[RadioPodcast] dialog generated: ${segments.length} segments`);
+    cacheSet(summary, segments);
+    return segments;
+  } catch (err: any) {
+    console.error('[RadioPodcast] Minimax chat error:', err?.message ?? err);
+    return null;
+  }
+}
+
+/**
+ * Главная функция. Возвращает диалог или null (нет сводки / нет конфигурации /
+ * ошибка Minimax). Не бросает. In-flight lock — параллельные вызовы ждут
+ * один и тот же результат.
+ */
+export async function getMarketDialog(): Promise<RadioSegment[] | null> {
+  const cached = getCachedGlobalSummary();
+  if (!cached || !cached.summary) return null;
+
+  const hit = cacheGet(cached.summary);
+  if (hit) {
+    console.log(`[RadioPodcast] dialog cache hit (${hit.length} segments)`);
+    return hit;
+  }
+
+  if (inflight) return inflight;
+  inflight = generateDialog(cached.summary).finally(() => {
+    inflight = null;
+  });
+  return inflight;
+}
+
+/** Для verify-скрипта: очистить кэш. */
+export function invalidatePodcastCache(): void {
+  cache.clear();
+}

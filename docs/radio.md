@@ -571,7 +571,8 @@ SettingsPanel, ТЗ-49; **дефолт вкл с 2026-09-23** — решение
 
 ## Сценарии эфира (контракт для ТЗ-43/44)
 
-1. **Запуск (ТЗ-53):** приветствие → общее саммари рынка → персональное саммари
+1. **Запуск (ТЗ-53):** приветствие → общее саммари рынка (**ТЗ-57:** диалог
+   host+guest через Minimax chat, fallback на plain text) → персональное саммари
    (без интересов — пропуск) → топ непрочитанных по убыванию score (лимит
    5/8/12, без новостей из саммари) → полный календарь. Анонс «эфир · N из M» —
    только визуальный label плеера.
@@ -587,6 +588,35 @@ SettingsPanel, ТЗ-49; **дефолт вкл с 2026-09-23** — решение
 4. **Юзер без тегов:** заглушка «Радио молчит, потому что не знает ваших
    интересов» + CTA в настройки тегов Pulse + «послушать общее саммари»
    (`/api/user/summary-global`) — воронка лендинга.
+
+## Диалог общей сводки рынка (ТЗ-57, в проде)
+
+Шаг 2 эфира озвучивает общую сводку не plain text одним голосом, а **диалогом**
+ведущий+аналитик (5-7 реплик, голоса по `role` через существующий T2A).
+
+**Пайплайн:** кэш крона (`globalSummary.ts`, Kimi, бесплатно) → `services/radioPodcast.ts`
+ берёт `cached.summary` (строка), дёргает **Minimax chat**
+(`POST https://api.minimax.io/v1/chat/completions`, нативный fetch, как в `routes/radio.ts`),
+промпт требует вернуть `{"dialog":[{role,text}]}` → парсится строгим `parseDialogResponse`
+(whitelist ролей host/guest, снимается ```json-обёртка) → кэш 6ч в in-memory Map,
+ключ — первые 200 символов сводки → фронт озвучивает `speakCustom('Саммари: диалог', segments)`.
+
+- **Endpoint:** `GET /api/market/market-dialog` (auth, Bearer). 204 если: кэша
+  крона нет / не задан `MINIMAX_API_KEY` или `MINIMAX_CHAT_MODEL` / Minimax
+  ошибся. Сервис никогда не бросает — fallback на plain text во фронте.
+- **Env:** `MINIMAX_CHAT_MODEL` (новая) — имя chat-модели, **не хардкодится**
+  (список моделей Minimax меняется; проверить `GET /api.minimax.io/v1/models`
+  с тем же ключом). Boot-лог: `logRadioPodcastConfig()` из `index.ts`.
+- **In-flight lock:** конкурентные запросы = один вызов LLM (паттерн globalSummary).
+- **Фронт:** `lib/radio/fetchMarketDialog.ts` — через api-клиент (Bearer) +
+  гость-чек `safeStorage` (гость запрос не делает; у него шаг 2 молчит, как раньше).
+  Префетч в стейт `marketDialog` при появлении `marketCached` — к запуску эфира
+  диалог уже готов. В `startBroadcast` страховочный `await fetchMarketDialog()`.
+- **Гейты:** бэк `npm run verify:radioPodcast` (8 проверок чистых функций);
+  фронт `fetchMarketDialog.test.ts` (5 тестов, мок api-клиента).
+- Исправленная спека: `TZ-57_RADIO_MARKET_DIALOG_v2.md` (аудит v1 нашёл: fetch
+  с `credentials:'include'` → вечный 401; неверный путь импорта типа; непроверенная
+  модель `M2-her`; тесты на отсутствующем vitest-бэке).
 
 ## Роадмап
 

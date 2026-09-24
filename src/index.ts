@@ -46,6 +46,8 @@ import adminMetricsRoutes from './routes/adminMetrics';
 import adminLegacyRoutes from './routes/adminLegacy';
 import marketRoutes from './routes/market';
 import marketPublicRoutes from './routes/marketPublic';
+import marketDialogRoutes from './routes/marketDialog';
+import { logRadioPodcastConfig } from './services/radioPodcast';
 import publicStatsRoutes from './routes/publicStats';
 import newsHeatmapRoutes from './routes/newsHeatmap';
 import tagMarketRoutes from './routes/tagMarket';
@@ -2341,6 +2343,7 @@ app.use('/api/news', newsRoutes);       // GET /api/news, /api/news/:tag (дол
 app.use('/api/news', factCheckRoutes);  // POST/GET /api/news/:id/fact-check
 app.use('/api/fact-check', factCheckRequestsRoutes); // Ad-hoc фактчекинг (TZ_FACTCHECK_PAGE v1.3)
 app.use('/api/market', marketPublicRoutes); // Public market data: /api/market/news-chart (TZ-3)
+app.use('/api/market', marketDialogRoutes); // GET /api/market/market-dialog — диалог сводки host+guest (ТЗ-57)
 app.use('/api/public', publicStatsRoutes); // GET /api/public/efficiency — публичный «Объём информации» (ТЗ-56)
 app.use('/api/news_heatmap', newsHeatmapRoutes); // News heatmap (TZ 11.11)
 app.use('/api/calendar', calendarRoutes); // Public investor calendar
@@ -4014,6 +4017,7 @@ async function start() {
     if (!shuttingDown) {
       startDigestCron(); // TG digest cron (every hour)
       startGlobalSummaryCron({ isShuttingDown: () => shuttingDown }); // TZ: global AI summary every 6 hours MSK
+      logRadioPodcastConfig(); // ТЗ-57: boot-лог конфигурации Minimax chat (модель в env)
       startPortfolioSyncWorker(); // Broker portfolio sync (every 15 min MSK)
       startFactCheckCron(); // Fact-check worker (every 10s)
       startFactCheckRequestCron(); // Ad-hoc fact-check worker (TZ_FACTCHECK_PAGE v1.3, every 5s)
