@@ -37,6 +37,12 @@ Finam: тикеры из активных тегов портфеля)** ✅.
 | ТЗ-55 саммари рынка из кэша крона (0 LLM, `/summary-global/cached`) + «свежий обзор» отдельной кнопкой | ✅ на проде (backend `c7ecf7a`, frontend `ad614ed`) | 2026-09-23 |
 | ТЗ-55 fix: спиннер кэша крона — fetchMarketCached переведён на api-клиент (Bearer; куку authMiddleware не читает) | ✅ на проде (frontend `24ded8f`) | 2026-09-23 |
 | ТЗ-56 watchlist котировок через Finam: тикеры активных тегов портфеля, поллинг 60 с, удалён Binance-хук и фейк-sparkline | ✅ на проде (backend `be3c66a`, frontend `6893233`) | 2026-09-24 |
+| ТЗ-57 v2 общая сводка как диалог host+guest через Minimax chat (`/api/market/market-dialog`, 6ч кэш, in-flight lock) | ✅ на проде (backend `5ae069d`, frontend `02a90c4`) | 2026-09-24 |
+| ТЗ-58 персонажи Михаил/Татьяна, прощание «Продолжаем следить для вас за рынком», max_tokens 4000 | ✅ на проде (backend `640b276`) | 2026-09-24 |
+| Hotfix `3fe6938`: парсер снимает `<think>/<answer>` (MiniMax-M2.5 — reasoning-модель) | ✅ на проде | 2026-09-24 |
+| ТЗ-59 префетч mp3 диалога + конвейер с единым кешем (0 мс между репликами) | ✅ на проде (frontend `0c80ce4`) | 2026-09-25 |
+| ТЗ-61 TTS `speech-02-hd` → `speech-2.8-hd` через env `MINIMAX_TTS_MODEL` | ✅ на проде (backend `77bc128`) | 2026-09-25 |
+| ТЗ-61.5 (опц.) sound tags `<#N#>` паузы в диалоге | ⬜ бэклог | — |
 
 ## Матрица переключателей (ТЗ-46)
 
@@ -97,6 +103,62 @@ pulse-backend
 смыслы — в `cascades.md`, `topics.md`, ARCHITECTURE.md §News. Рынок —
 `docs/market-data.md` (единый провайдер Finam, кэши TTL).
 
+## Сквозная логика эфира (2026-09-26, актуальная)
+
+Как данные превращаются в звук — полный путь от крона до колонок:
+
+```
+[крон 00/06/12/18 МСК] globalSummary.ts (Kimi, ~50 мин на 200 статей)
+   → in-memory кэш сводки { summary: string, TTL 6ч10м }
+        │  warm-up через 3 мин после boot; recreate контейнера = пустой кэш
+        │  до следующей генерации (эфир в это время играет plain)
+        ▼
+[HTTP] GET /api/market/market-dialog (auth, Bearer)
+   services/radioPodcast.ts:
+   1. getCachedGlobalSummary() — нет кэша → null → 204 → фронт fallback plain
+   2. in-memory кэш диалога 6ч, ключ = первые 200 символов сводки
+   3. in-flight lock — конкурентные юзеры = один вызов LLM
+   4. Minimax chat (MINIMAX_CHAT_MODEL=MiniMax-M2.5, env):
+      SYSTEM_PROMPT (ТЗ-58: Михаил+Татьяна, 6-8 реплик)
+      → max_tokens 4000 (reasoning-модель тратит лимит на <think>)
+      → parseDialogResponse: снимает <think>/<answer>/```json,
+        строгий whitelist ролей host|guest
+   5. Ошибка/нет env → null → 204 (сервис никогда не бросает)
+        ▼
+[фронт] RadioPage
+   1. marketCached появился → fetchMarketDialog() → стейт marketDialog
+   2. через 5 сек: префетч (C) — Promise.all всех реплик в mp3Cache
+      (голоса из /api/radio/config, темп = speech.rate, pitch при
+      одинаковых голосах +2 — ключи совпадают с плеером)
+   3. ▶ Эфир → шаг 2 speakCustom('Саммари: диалог', segments)
+        ▼
+[озвучка] useSpeech.speakSegment() по каждому сегменту
+   1. конвейер (B): следующий сегмент догружается в mp3Cache,
+      пока играет текущий
+   2. loadMp3(text, voice, speed, pitch) — cache hit → 0 мс,
+      miss → POST /api/radio/tts
+   3. POST /api/radio/tts (auth, лимит 100/мин/юзер) → Minimax T2A
+      (MINIMAX_TTS_MODEL, дефолт speech-2.8-hd, env — ТЗ-61)
+   4. Blob mp3 → Audio.play(); guest = presenter_female (+2 полутона
+      если голоса совпадают), host = presenter_male
+   5. Ошибки: 503 radio_service_disabled → стоп эфира + заглушка;
+      503 tts_not_configured → фолбэк на браузерный синтез;
+      502 → сегмент пропускается, очередь идёт
+```
+
+Ключевые кеши и их границы:
+
+| Кеш | Где | TTL | Инвалидция |
+|---|---|---|---|
+| Сводка рынка | бэк in-memory | 6ч10м | recreate контейнера (до warm-up 3 мин + ~50 мин генерации) |
+| Диалог (JSON сегментов) | бэк in-memory | 6ч | recreate; смена сводки → новый ключ |
+| mp3 сегментов | фронт in-memory (Map) | сессия | LRU 32; непереживает reload |
+
+Отказоустойчивость (каждый шаг деградирует, ничего не падает):
+204/ошибка диалога → plain-монолог кэша крона → нет кэша крона → шаг 2 молчит,
+остальные шаги эфира идут. Minimax TTS недоступен → браузерный синтез →
+голосовой движок недоступен → текст на экране.
+
 ## API радио
 
 ### `POST /api/radio/tts` — прокси Minimax TTS
@@ -129,7 +191,7 @@ pulse-backend
   | `speech-02-hd` | legacy | 24 | 7 | ❌ |
 
   Откат: `MINIMAX_TTS_MODEL=speech-02-hd` в env → recreate, без деплоя.
-  Boot-лог: `[Radio] MINIMAX ready (model=…, voices=8)`.
+  Boot-лог: `[Radio] MINIMAX ready (model=…, voices=10)`.
 - **Ошибки:** 502 `tts_upstream` (HTTP-статус, `base_resp.status_code != 0`,
   нет `data.audio`, таймаут, сетевой сбой); 503 `tts_not_configured`
   (нет `MINIMAX_API_KEY`); 503 `radio_service_disabled` (сервис выключен
@@ -330,7 +392,7 @@ fallback). Payload:
 - **`MINIMAX_API_KEY`** — env, только сервер. При установке: `.env` сервера И
   явный `environment:` backend-сервиса в `docker-compose.yml` (ключ в `.env` без
   правки compose контейнеру недоступен — см. DEPLOYMENT.md). Boot-лог:
-  `[Radio] MINIMAX ready (model=…, voices=8)` / `[Radio] MINIMAX_API_KEY not
+  `[Radio] MINIMAX ready (model=…, voices=10)` / `[Radio] MINIMAX_API_KEY not
   set, /api/radio/tts returns 503`.
 - **`MINIMAX_TTS_MODEL`** — env (ТЗ-61), дефолт `speech-2.8-hd`. Модель Minimax
   TTS. Откат на legacy: `speech-02-hd`. Проверено ключом: обе 200 на `t2a_v2`.
@@ -607,7 +669,7 @@ SettingsPanel, ТЗ-49; **дефолт вкл с 2026-09-23** — решение
 ## Диалог общей сводки рынка (ТЗ-57, в проде)
 
 Шаг 2 эфира озвучивает общую сводку не plain text одним голосом, а **диалогом**
-ведущий+аналитик (5-7 реплик, голоса по `role` через существующий T2A).
+ведущий+аналитик (6-8 реплик, голоса по `role` через существующий T2A).
 
 **Пайплайн:** кэш крона (`globalSummary.ts`, Kimi, бесплатно) → `services/radioPodcast.ts`
  берёт `cached.summary` (строка), дёргает **Minimax chat**
@@ -627,7 +689,8 @@ SettingsPanel, ТЗ-49; **дефолт вкл с 2026-09-23** — решение
   гость-чек `safeStorage` (гость запрос не делает; у него шаг 2 молчит, как раньше).
   Префетч в стейт `marketDialog` при появлении `marketCached` — к запуску эфира
   диалог уже готов. В `startBroadcast` страховочный `await fetchMarketDialog()`.
-- **Гейты:** бэк `npm run verify:radioPodcast` (9 проверок чистых функций);
+- **Гейты:** бэк `npm run verify:radioPodcast` (11 проверок чистых функций,
+  включая съём `<think>` и `<answer>`);
   фронт `fetchMarketDialog.test.ts` (5 тестов, мок api-клиента).
 - Исправленная спека: `TZ-57_RADIO_MARKET_DIALOG_v2.md` (аудит v1 нашёл: fetch
   с `credentials:'include'` → вечный 401; неверный путь импорта типа; непроверенная
@@ -648,6 +711,37 @@ SettingsPanel, ТЗ-49; **дефолт вкл с 2026-09-23** — решение
 Важно: при деплое правок промпта — `recreate` контейнера (не `restart`), иначе
 in-memory кэш 6ч отдаст старые диалоги. Голоса host/guest — прежние
 (presenter_male/female, ТЗ-44), имена звучат только в тексте.
+
+### Кеш mp3: префетч (C) + конвейер (B) — ТЗ-59
+
+Проблема: каждый сегмент ждал TTFB Minimax (1-3 сек) прямо во время эфира —
+9-27 сек тишины на диалоге. Решение — единый кеш mp3 с двумя путями наполнения:
+
+- **`lib/radio/mp3Cache.ts`** — `Map<key, Promise<Blob>>`, ключ =
+  `text + voice_id + speed + pitch` (pitch в ключе, иначе фолбэк тембром +2
+  ломал дедупликацию). LRU 32 записи (~10 МБ), failed-промисы вытесняются
+  для retry, параллельные `load()` с одним ключом = один сетевой запрос.
+  Abort-signal намеренно не поддерживается: общий промис нельзя оборвать
+  одному потребителю — стоп/скиp отбрасывает результат через gen-check.
+- **Префетч (C), `RadioPage`** — через 5 сек после появления `marketDialog`
+  все сегменты грузятся параллельно (`Promise.all`). Голоса берутся из
+  серверного конфига (`/api/radio/config`), темп — текущий `speech.rate` —
+  ключи совпадают с плеером, кеш общий.
+- **Конвейер (B), `useSpeech.speakSegment`** — пока играет текущий сегмент,
+  догружается следующий (включая первый сегмент следующей карточки очереди).
+  Playback идёт через `loadMp3` — cache hit = 0 мс между репликами.
+
+Итог: залогиненный юзер жмёт ▶ Эфир через 5+ сек после входа — диалог играет
+вплотную. Сразу после входа — первый сегмент ждёт TTFB, остальное подхватывает
+конвейер. Тесты: `mp3Cache.test.ts` (6 тестов: дедуп, eviction, retry, pitch).
+
+### Модель TTS — ТЗ-61
+
+Модель озвучки выбирается env `MINIMAX_TTS_MODEL`, дефолт `speech-2.8-hd`
+(проверено ключом: обе модели 200 на `t2a_v2`). Откат на `speech-02-hd` —
+одна строка в `/opt/pulse/.env` + recreate, без деплоя. Boot-лог:
+`[Radio] MINIMAX ready (model=…, voices=10)`. Фронт модель не знает —
+выбирает бэк. Тембр Михаила/Татьяны может отличаться от 02-hd (риск Р1 ТЗ-61).
 
 ## Роадмап
 
