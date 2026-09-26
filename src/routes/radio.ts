@@ -16,7 +16,8 @@
  */
 
 import { Router } from 'express';
-import { authMiddleware, AuthRequest } from '../middleware/auth';
+import { AuthRequest } from '../middleware/auth';
+import { optionalAuth } from '../middleware/optionalAuth';
 import { radioTtsLimiter, checkRateLimit } from '../middleware/rateLimit';
 import { recordTtsResult } from '../services/radioMetrics';
 import { getRadioFlags } from '../services/radioSettings';
@@ -49,7 +50,8 @@ console.log(
 // ТЗ-43), чтобы прокси/CDN не долбили бэк ревалидациями.
 // ТЗ-45: значения из БД (_radio_settings, сервис с кэшем TTL 60 с),
 // формат ответа не менялся (префикс radio_) + новое поле minimax_configured.
-router.get('/config', authMiddleware, async (_req: AuthRequest, res) => {
+// ТЗ-64: authMiddleware → optionalAuth — гость читает те же флаги (дефолты).
+router.get('/config', optionalAuth, async (_req: AuthRequest, res) => {
   const flags = await getRadioFlags();
   res.set('Cache-Control', 'public, max-age=300');
   res.json({
@@ -70,14 +72,14 @@ router.get('/config', authMiddleware, async (_req: AuthRequest, res) => {
 // tts_not_configured, фронт НЕ фолбэчит на браузерный голос, а останавливает эфир.
 // Ответ маркируется X-Radio-Cache: HIT | MISS (фронт игнорирует, для диагностики).
 //
-// Цепочка (ТЗ-63):
-//   authMiddleware → kill-switch → валидация → cache hit? (отдать, лимитер НЕ трогаем)
+// Цепочка (ТЗ-63, auth шаг обновлён в ТЗ-64):
+//   optionalAuth → kill-switch → валидация → cache hit? (отдать, лимитер НЕ трогаем)
 //     → apiKey check → radioTtsLimiter (checkRateLimit, ТОЛЬКО на cache miss)
 //     → getOrFetchMp3 (single-flight: параллельные miss с одним ключом = 1 upstream)
 //     → upstream Minimax T2A (fetchAndDecodeMinimax — бросает при ошибке, кэш не пишем).
 //
-// Лимитер ПОСЛЕ authMiddleware — key по userId; вызывается вручную из handler.
-router.post('/tts', authMiddleware, async (req: AuthRequest, res) => {
+// Лимитер ПОСЛЕ optionalAuth — key по userId || IP (гость); вызывается вручную из handler.
+router.post('/tts', optionalAuth, async (req: AuthRequest, res) => {
   // Kill-switch сервиса — в начале handler, до валидации входа и до проверки ключа:
   // иначе выключенное админом радио продолжало бы звучать браузерным TTS на фронте.
   // В TTS-метрики (radioMetrics) НЕ пишем: это политическое отклонение, не сбой

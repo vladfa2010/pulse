@@ -527,7 +527,11 @@ fallback). Payload:
 
 ### Страница (`src/pages/RadioPage.tsx`)
 
-- **Гость** → CTA с `openAuthModal('login', { returnUrl: '/radio' })` (паттерн ActivityMap).
+- **Гость (ТЗ-64)** → полноценный общий эфир без login-gate: приветствие
+  (с гостевым CTA из `buildGreeting`), диалог сводки, календарь.
+  Персональное деградирует само: feed/tags/SSE-guarded по isLoggedIn,
+  watchlist при `false` = INITIAL без запросов, «◉ моё саммари» скрыт
+  (`SummaryBar isLoggedIn`). Кнопка «Войти» — в шапке (не блок).
 - **Авторизован без тегов** → заглушка «Радио молчит» + CTA в `/portfolio`
   (настройки тегов) + «послушать общее саммари» (`GET /api/user/summary-global`).
 - **Лента:** baseFeed = `GET /api/news` (`useQuery(['radio','feed'])`, staleTime 2 мин)
@@ -736,15 +740,16 @@ SettingsPanel, ТЗ-49; **дефолт вкл с 2026-09-23** — решение
 (аудит F1; греется кроном сводки через `primeMarketDialog`, не лениво),
 ключ — первые 200 символов сводки → фронт озвучивает `speakCustom('Саммари: диалог', segments)`.
 
-- **Endpoint:** `GET /api/market/market-dialog` (auth, Bearer). 204 если: кэша
+- **Endpoint:** `GET /api/market/market-dialog` (**публичный с ТЗ-64** — optionalAuth,
+  Bearer опционален). 204 если: кэша
   крона нет / не задан `MINIMAX_API_KEY` или `MINIMAX_CHAT_MODEL` / Minimax
   ошибся. Сервис никогда не бросает — fallback на plain text во фронте.
 - **Env:** `MINIMAX_CHAT_MODEL` (новая) — имя chat-модели, **не хардкодится**
   (список моделей Minimax меняется; проверить `GET /api.minimax.io/v1/models`
   с тем же ключом). Boot-лог: `logRadioPodcastConfig()` из `index.ts`.
 - **In-flight lock:** конкурентные запросы = один вызов LLM (паттерн globalSummary).
-- **Фронт:** `lib/radio/fetchMarketDialog.ts` — через api-клиент (Bearer) +
-  гость-чек `safeStorage` (гость запрос не делает; у него шаг 2 молчит, как раньше).
+- **Фронт:** `lib/radio/fetchMarketDialog.ts` — через api-клиент (Bearer при
+  наличии токена; ТЗ-64 endpoint публичный — гость дёргает без токена).
   Префетч в стейт `marketDialog` при появлении `marketCached` — к запуску эфира
   диалог уже готов. В `startBroadcast` страховочный `await fetchMarketDialog()`.
 - **Гейты:** бэк `npm run verify:radioPodcast` (11 проверок чистых функций,
@@ -883,6 +888,33 @@ Minimax. Пять находок аудита и архитектурная пр
   `src/middleware/admin.ts` (re-export сохранён). Намеренно **не** сделано:
   metricsCenter / cronRegistry (проблемы 3/4/6 ТЗ-66) — ROI низкий, текущие
   логи достаточны.
+
+## Публичный эфир для гостей — ТЗ-64 (2026-09-27)
+
+Радио открыто гостям: снят login-gate с `/radio`, гость слушает общий эфир
+(приветствие с гостевым CTA → диалог сводки → календарь). Персональные блоки
+деградируют сами по `isLoggedIn`-guard'ам. Prerequisite — ТЗ-63 (mp3-кеш):
+без него 1000 гостей = 9000 upstream T2A, с ним hit rate ~99% после первого эфира.
+
+- **`src/middleware/optionalAuth.ts`** — пропускает без токена; валидный токен →
+  `req.user`; битый/протухший → молча как гость (НЕ 401). Извлечение токена —
+  общий хелпер `extractToken` из `auth.ts` (не дублируем логику).
+- **Публичные роуты:** `/api/radio/tts`, `/api/radio/config`,
+  `/api/market/market-dialog` — `authMiddleware` → `optionalAuth`.
+  Лимитер `/tts` без изменений: `userId || IP` (гость → по IP, 100/мин на miss).
+  Kill-switch `service_enabled` первым check в handler — гостей тоже отключает.
+- **Сводка гостю — НОВЫЙ роут НЕ нужен:** публичный `/api/public/summary-global`
+  (ТЗ-55) уже отдаёт тот же кэш (`getCachedGlobalSummary`, read-only, 404 если
+  пусто). `fetchMarketCached` ходит туда для всех — единый кодовый путь без
+  ветки по токену.
+- **Фронт:** login-gate убран; `buildGreeting(unread, d, isLoggedIn)` — гостю
+  после стандартного приветствия добавляется CTA-блок со sound tag `<#0.5#>`
+  (пауза speech-2.8-hd, ключ кеша включает текст); календарь греется для гостя
+  (`/api/calendar` публичный); «◉ моё саммари» скрыт (`SummaryBar isLoggedIn`).
+- **LLM-расход:** гость НЕ триггерит генерацию — globalSummary read-only,
+  диалог общий с in-flight lock (аудит F1: греется кроном вообще до юзеров).
+- **Долги:** CAPTCHA/анти-abuse, аналитика гостей, гостевые настройки голоса —
+  вне ТЗ-64.
 
 ## Роадмап
 

@@ -63,6 +63,15 @@ export interface AuthRequest extends Request {
   user?: { userId: string; email: string };
 }
 
+// Извлечь сырой JWT из Authorization: Bearer или ?token= (SSE).
+// Общий хелпер authMiddleware и optionalAuth (ТЗ-64) — чтобы правка
+// извлечения в одном месте не разъезжалась во втором.
+export function extractToken(req: Request): string | undefined {
+  const authHeader = req.headers.authorization;
+  const queryToken = typeof req.query?.token === 'string' ? req.query.token : undefined;
+  return authHeader ? authHeader.replace('Bearer ', '') : queryToken;
+}
+
 /**
  * authMiddleware — проверяет JWT токен
  *
@@ -75,15 +84,10 @@ export interface AuthRequest extends Request {
 export function authMiddleware(req: AuthRequest, res: Response, next: NextFunction) {
   try {
     // Извлекаем токен из заголовка Authorization или из query (?token=...) для SSE
-    const authHeader = req.headers.authorization;
-    const queryToken = typeof req.query?.token === 'string' ? req.query.token : undefined;
-
-    const rawToken = authHeader ? authHeader.replace('Bearer ', '') : queryToken;
-    if (!rawToken) {
+    const token = extractToken(req);
+    if (!token) {
       return res.status(401).json({ error: 'No token provided' });
     }
-
-    const token = rawToken;
 
     // Верифицируем токен (jwt.verify проверяет подпись и exp)
     // Если токен протух или подпись неверна → выбросит ошибку
