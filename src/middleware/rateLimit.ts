@@ -11,6 +11,7 @@
  */
 
 import rateLimit from 'express-rate-limit';
+import { Request, Response } from 'express';
 
 // ─── Auth endpoints — защита от брутфорса ─────────────────────────────────
 // 15 попыток за 15 минут на IP
@@ -151,7 +152,11 @@ export const globalSummaryRefreshLimiter = rateLimit({
 // лимит обязан пропускать основной сценарий «запуска эфира» без 429.
 // 100 запросов / минуту на пользователя: полный эфир любого режима проходит
 // с запасом, устойчивый абуз (тысячи сегментов/час) — упирается в 429.
-// Монтируется ПОСЛЕ authMiddleware — key по userId.
+// ТЗ-63: лимитер БОЛЬШЕ не монтируется как middleware — handler /api/radio/tts
+// вызывает его через checkRateLimit() ТОЛЬКО при cache miss (cache hit бесплатен,
+// иначе активный юзер с mp3-кешем упирался бы в 429).
+// key по userId (req.user после authMiddleware — при ручном вызове из handler
+// authMiddleware уже отработал).
 // validate.trustProxy=false — корректно для прямого VDS (Caddy → backend без
 // подмены X-Forwarded-For). При появлении CDN/Cloudflare перед Caddy —
 // переключить на доверенный proxy-конфиг, иначе лимит станет считать по IP CDN.
@@ -167,3 +172,49 @@ export const radioTtsLimiter = rateLimit({
   keyGenerator: (req) => (req as any).user?.userId || req.ip || 'unknown',
   validate: { trustProxy: false },
 });
+
+/**
+ * ТЗ-63: ручная проверка лимитера. Возвращает Promise<boolean>:
+ *  - true — лимитер разрешил (next() вызван), продолжаем.
+ *  - false — лимитер уже отправил 429, обработчик должен выйти.
+ *
+ * Используется в handler'ах, где запросы нужно считать УСЛОВНО
+ * (например, после cache check — cache hit пропускаем без лимита).
+ *
+ * Защита по res.headersSent (аудит замечание 1): корректность исходной версии
+ * зависела от недокументированного тайминга express-rate-limit (next() раньше
+ * setImmediate через promise-микротаски). Теперь false резолвится ТОЛЬКО если
+ * лимитер реально отправил 429 (headersSent); иначе ждём ещё один тик.
+ * Худший случай — лишний 429 вместо пропущенного cache miss: безопаснее
+ * в сторону «запретить» для rate limiter.
+ */
+export function checkRateLimit(
+  req: Request,
+  res: Response,
+  limiter: ReturnType<typeof rateLimit>,
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    let resolved = false;
+    limiter(req, res, () => {
+      if (resolved) return;
+      resolved = true;
+      resolve(true);
+    });
+    setImmediate(() => {
+      if (resolved) return;
+      if (res.headersSent) {
+        resolved = true;
+        resolve(false);
+        return;
+      }
+      // Headers ещё не ушли — лимитер ещё работает, ждём ещё тик.
+      // Если и через 2 тика headers не отправлены — лимитер вызвал next()
+      // (но не успел до нашего первого setImmediate) — резолвим true.
+      setImmediate(() => {
+        if (resolved) return;
+        resolved = true;
+        resolve(res.headersSent ? false : true);
+      });
+    });
+  });
+}

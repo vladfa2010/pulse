@@ -170,7 +170,8 @@ pulse-backend
 (ТЗ-46, kill-switch админа) — **стоп эфира без фолбэка**, фронт показывает
 заглушку (иначе выключенное радио звучало бы браузерным голосом в обход).
 
-- **Auth:** Bearer (401 без токена) → `radioTtsLimiter` (429 за пределами).
+- **Auth:** Bearer (401 без токена). Лимитер — внутри handler при cache miss
+  (см. «Лимитер» ниже).
 - **Body:** `{ text, voice_id?, speed?, pitch? }`
 - **Ответ:** 200 `audio/mpeg` (mp3 бинарно); Minimax отдаёт hex в `data.audio`
   — декодируем сервером.
@@ -180,9 +181,10 @@ pulse-backend
   `allowed`). Дефолт voice_id — `radio_minimax_host_voice` из конфига.
 - **Апстрим:** `POST https://api.minimax.io/v1/t2a_v2`, модель по умолчанию
   `speech-2.8-hd` (ТЗ-61; выбор через env `MINIMAX_TTS_MODEL`),
-  таймаут 30 с (AbortController), `audio_setting`: mp3 / 32 kHz / 128 kbps.
-  Разрыв соединения с клиентом гасит upstream-fetch сразу
-  (`res.on('close')` + guard `writableEnded`).
+  таймаут 30 с (AbortController внутри fetcher'а). Разрыв соединения с клиентом
+  upstream **не** гасит (ТЗ-63 аудит замечание 2): single-flight fetch общий,
+  abort одного ждущего завалил бы всех; результат дописывается в кэш.
+  `audio_setting`: mp3 / 32 kHz / 128 kbps.
 - **Модели TTS** (проверены боевым ключом, обе отвечают 200 на `t2a_v2`):
 
   | Модель | Статус | Языки | Эмоции | Sound tags |
@@ -202,10 +204,15 @@ pulse-backend
   `audiobook_male_1/2`, `audiobook_female_1/2`, `male-qn-qingse`,
   `female-shaonv`, `male-qn-jingying`, `female-yujie`. Одинаковый голос на обе
   роли подкаста → аналитик выше на +2 полутона (подача темпом/питчем, ТЗ-44).
-- **Лимитер:** 100 запросов/минуту **per-user** (key по `userId`, монтируется
-  ПОСЛЕ authMiddleware). Подкаст = 5 сегментов × 8 новостей = 40 запросов за
-  сессию — проходит с запасом 2.5×. Устойчивый абуз упирается в 429.
-- **Латентность:** базовая p95 ≈ 2.3 с на коротком тексте (замер 2026-09-21).
+- **Лимитер:** 100 запросов/минуту **per-user** (key по `userId`). ТЗ-63:
+  лимитер больше не middleware — handler вызывает его через `checkRateLimit()`
+  **только при cache miss** (cache hit бесплатен). Подкаст = 5 сегментов × 8
+  новостей = 40 запросов за сессию — проходит с запасом 2.5×. Устойчивый абуз
+  упирается в 429.
+- **Кеш:** `X-Radio-Cache: HIT | MISS` в ответе (диагностика, фронт игнорирует).
+  Детали — раздел «Backend mp3-кеш» ниже.
+- **Латентность:** базовая p95 ≈ 2.3 с на коротком тексте (замер 2026-09-21);
+  cache hit — миллисекунды.
 
 ### `GET /api/radio/config` — серверные флаги радио
 
@@ -742,6 +749,48 @@ in-memory кэш 6ч отдаст старые диалоги. Голоса host
 одна строка в `/opt/pulse/.env` + recreate, без деплоя. Boot-лог:
 `[Radio] MINIMAX ready (model=…, voices=10)`. Фронт модель не знает —
 выбирает бэк. Тембр Михаила/Татьяны может отличаться от 02-hd (риск Р1 ТЗ-61).
+
+### Backend mp3-кеш — ТЗ-63
+
+Зачем: `POST /api/radio/tts` дёргал Minimax на каждый запрос (TTFB 1–3 с + деньги).
+При масштабировании радио на гостей (ТЗ-64) это $-критично. Решение —
+per-process in-memory кеш (`src/services/radioMp3Cache.ts`), один сегмент для
+всех юзеров генерируется 1 раз за TTL. Только радио: ни таблиц БД, ни миграций.
+
+- **Ключ:** `MODEL \x00 text.trim() \x00 voice_id \x00 speed \x00 pitch`.
+  MODEL в ключе (аудит зам. 3) — защита от hot-swap модели: mp3 старой модели
+  не отдаются под новой. `MINIMAX_TTS_MODEL` — единый источник в
+  `radioMp3Cache.ts`, radio.ts импортирует (дефолт не дублируется).
+- **TTL 6ч** — синхронизирован с кэшами диалога (`radioPodcast`) и `globalSummary`;
+  протухшие вытесняются лениво при `cacheGet`. **Лимиты:** 256 записей / 80 МБ
+  (≈14 диалогов: 9 сегм × 2 голоса × ~300 КБ), FIFO eviction с LRU-touch.
+- **Single-flight:** `inflight Map` — N параллельных miss с одним ключом = 1
+  upstream-вызов; на error кэш **не** пишется (инвариант «не отравить»).
+- **Цепочка handler:** kill-switch → валидация → apiKey → cache hit? (отдать,
+  `recordTtsResult('ok', lat, 'hit')`, лимитер не трогаем) → `checkRateLimit`
+  (ТОЛЬКО на miss) → `getOrFetchMp3` → `fetchAndDecodeMinimax` (бросает при
+  ошибке → 502, кэш не пишется). Ответ маркируется `X-Radio-Cache: HIT|MISS`.
+- **Лимитер** (`checkRateLimit` в `rateLimit.ts`): обёртка над лимитером с
+  промисом; false резолвится только при `res.headersSent` (лимитер реально
+  отправил 429), иначе ждём второй тик (аудит зам. 1 — защита от тайминга
+  express-rate-limit). Худший кейс — лишний 429, а не пропущенный miss.
+- **AbortController** создаётся внутри fetcher'а (аудит зам. 2): shared
+  single-flight fetch не отменяется по disconnect отдельных ждущих; отключение
+  клиента во время T2A (1–3 с) upstream не рубит — результат дописывается в
+  кэш. Предохранитель — таймаут 30 с.
+- **Метрики:** `recordTtsResult` принимает `source: 'hit'|'miss'|'unknown'`
+  (дефолт 'unknown' — старые call-sites валидны); в админке
+  `/api/admin/metrics?section=radio` появились `cache_hit`, `cache_miss`;
+  эксплуатационный лог каждые 100 запросов печатает `cache(hit/miss)=N/M`.
+- **Клиентский кеш ТЗ-59 не тронут** — он убирает сетевой RTT, серверный —
+  деньги/TTFB на shared-сегментах; дублирование оправдано.
+- **Долги (вне ТЗ-63):** admin-endpoint для `clearRadioMp3Cache()` (Д2),
+  stats кеша в админке (Д4, `getRadioMp3CacheStats()` экспортирован),
+  pre-warm при boot (Д3, кеш пуст после recreate ~до первого эфира).
+- **Воспроизводимость:** при recreate контейнера кеш пуст (in-memory) — первый
+  эфир после рестарта снова платный, дальше hit. Verify:
+  `npm run verify:radioMp3Cache` (17 проверок: miss/hit, single-flight,
+  различие ключей, eviction 80 МБ, error-инвариант).
 
 ## Роадмап
 
