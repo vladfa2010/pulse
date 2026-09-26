@@ -2361,7 +2361,7 @@ app.use('/api/translate', translateRoutes);
 app.use('/api/webhook', webhookLimiter, webhookRoutes); // Высокий лимит для YuKassa
 app.use('/api/admin', adminRoutes);     // GET /api/admin/users, /stats
 app.use('/api/admin', adminMetricsRoutes); // GET /api/admin/metrics?section=...
-app.use('/api/admin', adminRadioCacheRoutes); // ТЗ-65: /api/admin/radio/mp3-cache/* (dashboard MP3-кеша)
+app.use('/api/admin/radio/mp3-cache', adminRadioCacheRoutes); // ТЗ-65: dashboard MP3-кеша (stats/history/top-keys/clear/prewarm)
 // ТЗ-118: dual mount. Legacy-префикс '/admin' удалить в Задаче 3.
 app.use(['/admin', '/api/admin'], adminLegacyRoutes); // legacy admin UI endpoints (moved from index.ts)
 
