@@ -43,6 +43,7 @@ import translateRoutes from './routes/translate';
 import webhookRoutes from './routes/webhook';
 import adminRoutes, { adminMiddleware } from './routes/admin';
 import adminMetricsRoutes from './routes/adminMetrics';
+import adminRadioCacheRoutes from './routes/adminRadioCache'; // ТЗ-65
 import adminLegacyRoutes from './routes/adminLegacy';
 import marketRoutes from './routes/market';
 import marketPublicRoutes from './routes/marketPublic';
@@ -61,6 +62,7 @@ import { apiLimiter, authLimiter, webhookLimiter, forgotPasswordLimiter, passwor
 import { startCron, startHeatmapFreezeCron, startClusteringCron, startTopicsNamingCron } from './services/cron';   // startCron (RSS) отключен (TZ_REMOVE_DUPLICATE_RSS_CRON); heatmap freeze — TZ-49; clustering — ТЗ-92 (флаг CLUSTERING_ENABLED); topics naming — ТЗ-115 (флаг TOPICS_ENABLED)
 import { sendWeeklyReportForUser } from './services/reports'; // ← Еженедельные репорты (manual + API)
 import { startDigestCron, sendAllDigests, setDigestEnabled } from './services/digest'; // ← дайджест (каждый час) — через notification matrix
+import { startRadioCacheMaintenance } from './services/radioMp3CacheMaintenance'; // ТЗ-65: snapshot истории 60с + алерты 5м
 import { startPortfolioSyncWorker } from './services/portfolioSync/worker';
 import { encryptionKeyConfigured } from './services/crypto';
 import notificationsRouter from './routes/notifications';
@@ -2359,6 +2361,7 @@ app.use('/api/translate', translateRoutes);
 app.use('/api/webhook', webhookLimiter, webhookRoutes); // Высокий лимит для YuKassa
 app.use('/api/admin', adminRoutes);     // GET /api/admin/users, /stats
 app.use('/api/admin', adminMetricsRoutes); // GET /api/admin/metrics?section=...
+app.use('/api/admin', adminRadioCacheRoutes); // ТЗ-65: /api/admin/radio/mp3-cache/* (dashboard MP3-кеша)
 // ТЗ-118: dual mount. Legacy-префикс '/admin' удалить в Задаче 3.
 app.use(['/admin', '/api/admin'], adminLegacyRoutes); // legacy admin UI endpoints (moved from index.ts)
 
@@ -4024,6 +4027,7 @@ async function start() {
       startHeatmapFreezeCron({ isShuttingDown: () => shuttingDown }); // News heatmap freeze — ежедневно 00:05 MSK (TZ-49)
       startClusteringCron({ isShuttingDown: () => shuttingDown }); // ТЗ-92: catch-up кластеризации (*/15) + сюжеты (ежечасно), флаг CLUSTERING_ENABLED
       startTopicsNamingCron({ isShuttingDown: () => shuttingDown }); // ТЗ-115: нейминг тем 04:10 МСК, флаг TOPICS_ENABLED
+      startRadioCacheMaintenance({ isShuttingDown: () => shuttingDown }); // ТЗ-65: snapshot истории 60с + алерты 5м
     }
 
     // Sentiment Index — daily reset of vote_count_today / streak at 00:00 MSK (21:00 UTC)

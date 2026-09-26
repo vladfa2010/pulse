@@ -28,7 +28,9 @@ import {
 
 const router = Router();
 
-const MINIMAX_TTS_URL = 'https://api.minimax.io/v1/t2a_v2';
+// ТЗ-65: экспортировано для prewarm (radioMp3CachePrewarm.ts) — один источник
+// URL/логики декодирования для всего TTS-стека.
+export const MINIMAX_TTS_URL = 'https://api.minimax.io/v1/t2a_v2';
 // ТЗ-61: модель выбирается через env MINIMAX_TTS_MODEL. Дефолт — speech-2.8-hd
 // (последняя HD: 40 языков, 10 эмоций, sound tags для пауз). Проверено на ключе:
 // обе модели (2.8-hd и 02-hd) отвечают 200 на t2a_v2. Откат на старую —
@@ -192,8 +194,10 @@ router.post('/tts', authMiddleware, async (req: AuthRequest, res) => {
  * БРОСАЕТ ошибку при !upstream.ok или при data.base_resp.status_code !== 0,
  * чтобы getOrFetchMp3 НЕ записал мусор в кэш (инвариант «upstream error →
  * пробрасываем, кэш НЕ пишем»). Возвращает декодированный mp3-буфер.
+ *
+ * ТЗ-65: экспортирован — переиспользуется prewarm'ом кеша.
  */
-async function fetchAndDecodeMinimax(
+export async function fetchAndDecodeMinimax(
   apiKey: string,
   text: string,
   voiceId: string,

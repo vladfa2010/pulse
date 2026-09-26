@@ -50,6 +50,10 @@ const MAX_TOTAL_BYTES = 80 * 1024 * 1024;  // 80 МБ ≈ 14 диалогов (9
 
 const cache = new Map<string, CacheEntry>();
 const inflight = new Map<string, Promise<Buffer>>();
+// ТЗ-65, блок 4: счётчик hit'ов по ключу для top-keys в админке.
+// Растёт с числом уникальных текстов (~500-2000/день, риск Р2 ТЗ-65),
+// сбрасывается в clearRadioMp3Cache() и при recreate.
+const topKeys = new Map<string, number>();
 let currentSize = 0;
 
 function makeKey(text: string, voiceId: string, speed: number, pitch: number): string {
@@ -80,6 +84,8 @@ function cacheGet(key: string): Buffer | null {
   // LRU touch — переставить в конец Map (insertion order = порядок вытеснения).
   cache.delete(key);
   cache.set(key, hit);
+  // ТЗ-65: инкремент счётчика для top-keys в админке
+  topKeys.set(key, (topKeys.get(key) ?? 0) + 1);
   return hit.buffer;
 }
 
@@ -164,5 +170,25 @@ export function getRadioMp3CacheStats(): {
 export function clearRadioMp3Cache(): void {
   cache.clear();
   inflight.clear();
+  topKeys.clear(); // ТЗ-65
   currentSize = 0;
+}
+
+/**
+ * ТЗ-65, блок 4: top-N ключей по числу hit'ов (для админ-дашборда).
+ * bytes берётся из живого кэша — для вытесненных записей 0.
+ */
+export function getTopKeys(limit = 10): { key: string; hits: number; bytes: number }[] {
+  const result: { key: string; hits: number; bytes: number }[] = [];
+  for (const [key, hits] of topKeys) {
+    const entry = cache.get(key);
+    result.push({ key, hits, bytes: entry?.size ?? 0 });
+  }
+  result.sort((a, b) => b.hits - a.hits);
+  return result.slice(0, limit);
+}
+
+/** Сброс счётчиков top-keys (при clear кеша счётчики тоже сбрасываются). */
+export function resetTopKeys(): void {
+  topKeys.clear();
 }

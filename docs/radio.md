@@ -285,6 +285,51 @@ key/value-таблица + ensure-миграция из кода + upsert в д�
 - **Раскатка изменений (двойной кэш):** сервисный TTL 60 с + фронт useQuery
   5 мин → худший случай ~6 минут до подхвата юзерами. Подсказка об этом есть
   в UI админки; «чинить» немедленным push не требуется (зафиксировано в ТЗ).
+
+## Dashboard MP3-кеша в админке (ТЗ-65)
+
+Расширение таба «Радио»: dashboard поверх backend-кеша (ТЗ-63). In-memory,
+без миграций БД. Компонент `pulse-frontend/src/components/admin/Mp3CacheDashboard.tsx`,
+вставлен в `RadioTab.tsx`; роут `src/routes/adminRadioCache.ts`, монтируется
+в `index.ts` сразу после adminMetricsRoutes (все endpoint'ы под `adminMiddleware`).
+
+**Endpoint'ы** (`/api/admin/radio/mp3-cache/*`):
+- `GET /stats` — live: `getRadioMp3CacheStats()` + `getRadioTtsMetrics()` +
+  cumulative hitRate. Polling фронтом каждые 5 сек.
+- `GET /history` — ring buffer snapshot'ов за 24ч (`getHistory()`).
+- `GET /top-keys?limit=N` — top-N ключей по hit count (`getTopKeys()`).
+- `POST /clear` — `clearRadioMp3Cache()` (сбрасывает и topKeys) + лог с userId
+  админа. Poison recovery за 1 клик.
+- `POST /prewarm` — прогрев (`prewarmCommonSegments()`): стандартные сегменты
+  + **текущий диалог сводки** (getMarketDialog, 9 реплик × host/guest голоса —
+  реально горячие ключи). Темп 1.05 = дефолт плеера юзера. Параллелизм 3,
+  upstream — тот же `fetchAndDecodeMinimax` (radio.ts), счётчики hit/miss не
+  засоряются.
+
+**Сервисы:**
+- `radioMp3CacheHistory.ts` — ring buffer 1440 точек (24ч × 60 мин),
+  snapshot каждую минуту (setInterval, не node-cron — per-process, локи
+  не нужны). hitRate в точке — delta-based за минуту.
+- `radioCacheAlerts.ts` — каждые 5 мин проверка порогов → TG через
+  `notifyAdminsSystemAlert`, debounce 1ч на тип. Env:
+  `RADIO_CACHE_ALERT_ENABLED` (def true), `_HIT_RATE_MIN` (50, алерт только
+  при total > 100 — иначе холодный старт после recreate дал бы ложные),
+  `_BYTES_MAX_PCT` (90), `_INFLIGHT_MAX` (50).
+- `radioMp3CacheMaintenance.ts` — `startRadioCacheMaintenance({isShuttingDown})`,
+  регистрируется в index.ts рядом с остальными кронами.
+- Правка `radioMp3Cache.ts` — `topKeys: Map<key, hitCount>`, инкремент в
+  `cacheGet` на hit, сброс в `clearRadioMp3Cache()`.
+
+**UI:** live-карточки (записи/размер/inflight + прогресс-бары cyan/amber/red),
+lifetime-статистика (hit/miss/total/p95), график recharts 24ч (hit rate слева
+0–100%, entries/inflight справа), таблица top-10 текстов (в ключе берётся
+только `parts[1]` — текст без MODEL/voice/speed/pitch), кнопки «Прогреть
+кэш» / «Обновить всё» / «Очистить кэш» с confirm-диалогами.
+
+**Долги (вне ТЗ-65):** история > 24ч и persist в БД (Д1/Д2), кастомные пороги
+алертов через UI (Д3), prewarm кастомных текстов (Д4), графики per-key (Д5),
+периодический reset topKeys (Р2 — Map растёт ~500-2000 ключей/день, при
+recreate очищается). Verify: `npm run verify:radioCacheDashboard` (11 проверок).
 - **Диалекты:** upsert строго по паттерну calendar/settings — SQLite
   `INSERT OR REPLACE`, PG `ON CONFLICT (key) DO UPDATE`.
 
@@ -784,9 +829,10 @@ per-process in-memory кеш (`src/services/radioMp3Cache.ts`), один сег�
   эксплуатационный лог каждые 100 запросов печатает `cache(hit/miss)=N/M`.
 - **Клиентский кеш ТЗ-59 не тронут** — он убирает сетевой RTT, серверный —
   деньги/TTFB на shared-сегментах; дублирование оправдано.
-- **Долги (вне ТЗ-63):** admin-endpoint для `clearRadioMp3Cache()` (Д2),
-  stats кеша в админке (Д4, `getRadioMp3CacheStats()` экспортирован),
-  pre-warm при boot (Д3, кеш пуст после recreate ~до первого эфира).
+- **Долги ТЗ-63 (вне его скоупа):** pre-warm при boot (Д3, кеш пуст после
+  recreate ~до первого эфира). ~~admin-endpoint для `clearRadioMp3Cache()` (Д2)~~
+  и ~~stats кеша в админке (Д4)~~ — **сделано в ТЗ-65** (dashboard MP3-кеша,
+  см. ниже).
 - **Воспроизводимость:** при recreate контейнера кеш пуст (in-memory) — первый
   эфир после рестарта снова платный, дальше hit. Verify:
   `npm run verify:radioMp3Cache` (17 проверок: miss/hit, single-flight,
