@@ -33,7 +33,10 @@
 // Единый источник модели TTS (ТЗ-61): radio.ts импортирует эту константу,
 // дефолт не дублируется. Смена модели = recreate контейнера = кэш пуст,
 // плюс MODEL участвует в ключе — двойная защита от рассинхрона голосов.
-export const MINIMAX_TTS_MODEL = process.env.MINIMAX_TTS_MODEL ?? 'speech-2.8-hd';
+// ||, а не ??: compose-маппинг MINIMAX_TTS_MODEL: ${MINIMAX_TTS_MODEL} при
+// отсутствии переменной в .env прокидывает ПУСТУЮ строку — она не nullish
+// и уезжала бы в Minimax как model="" (найдено смоуком ТЗ-63).
+export const MINIMAX_TTS_MODEL = process.env.MINIMAX_TTS_MODEL || 'speech-2.8-hd';
 
 interface CacheEntry {
   buffer: Buffer;
