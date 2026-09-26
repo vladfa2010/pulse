@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import bcrypt from 'bcrypt';
-import { authMiddleware, AuthRequest } from '../middleware/auth';
+import { AuthRequest } from '../middleware/auth';
 import { query } from '../config/db';
 import { validate } from '../middleware/validate';
 import {
@@ -66,34 +66,10 @@ import {
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
-// Middleware: check is_admin flag in database
-export function adminMiddleware(req: AuthRequest, res: any, next: any) {
-  authMiddleware(req, res, async () => {
-    try {
-      const userId = req.user?.userId;
-      if (!userId) {
-        return res.status(401).json({ error: 'Authentication required' });
-      }
-
-      const result = await query(
-        'SELECT is_admin FROM users WHERE id = $1',
-        [userId]
-      );
-
-      const isAdmin = USE_SQLITE
-        ? (result.rows[0]?.is_admin === 1)
-        : (result.rows[0]?.is_admin === true);
-
-      if (!isAdmin) {
-        return res.status(403).json({ error: 'Admin access required' });
-      }
-
-      next();
-    } catch {
-      res.status(500).json({ error: 'Admin check failed' });
-    }
-  });
-}
+// Middleware вынесен в src/middleware/admin.ts (ТЗ-66-lite);
+// re-export сохраняет существующие импорты из '../routes/admin'.
+import { adminMiddleware } from '../middleware/admin';
+export { adminMiddleware };
 
 // GET /api/admin/users — list all users with payment totals
 router.get('/users', adminMiddleware, async (_req, res) => {

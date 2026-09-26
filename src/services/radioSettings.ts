@@ -43,16 +43,11 @@ export const RADIO_FLAG_DEFAULTS: RadioFlags = {
   default_mode: 'reflect',
 };
 
-// Белый список голосов speech-02-hd (из RADIO.md / radio.ts ТЗ-42).
+// Белый список голосов — единый источник в config/radio (ТЗ-66-lite).
 // Свободный ввод id запрещён — опечатка уронит TTS; переименование голоса
-// Minimax лечится мини-коммитом с обновлением этого списка (зафиксировано в ТЗ-45 §4).
-export const MINIMAX_VOICE_IDS: readonly string[] = [
-  'presenter_male', 'presenter_female',
-  'audiobook_male_1', 'audiobook_female_1',
-  'audiobook_male_2', 'audiobook_female_2',
-  'male-qn-qingse', 'female-shaonv',
-  'male-qn-jingying', 'female-yujie',
-];
+// Minimax лечится мини-коммитом с обновлением списка в config/radio.ts.
+export { MINIMAX_VOICE_IDS } from '../config/radio';
+import { MINIMAX_VOICE_IDS } from '../config/radio';
 
 const VOICE_PROVIDERS = ['browser', 'minimax'] as const;
 const DEFAULT_MODES = ['text', 'reflect', 'podcast'] as const;

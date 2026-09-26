@@ -16,7 +16,11 @@ import { getCachedGlobalSummary } from './globalSummary';
 import type { RadioSegment } from '../types/radio';
 
 const MINIMAX_CHAT_URL = 'https://api.minimax.io/v1/chat/completions';
-const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6ч — как у кэша крона
+// TTL диалога — с запасом над TTL сводки (6ч+10мин): диалог генерируется
+// кроном в паре со сводкой, окно 6ч30м гасит крайний случай «TTL диалога
+// истёк, а сводка ещё жива» → стохастическая перегенерация (temperature 0.4)
+// меняла бы тексты и обнуляла бы mp3-кеш (аудит кеша, находка 1).
+const CACHE_TTL_MS = 6 * 60 * 60 * 1000 + 30 * 60 * 1000; // 6ч30м
 const REQUEST_TIMEOUT_MS = 30_000;
 const CACHE_MAX = 50;
 
@@ -168,25 +172,48 @@ async function generateDialog(summary: string): Promise<RadioSegment[] | null> {
 }
 
 /**
+ * Единая точка получения диалога по сводке с single-flight: параллельные
+ * вызовы (крон-прогрев, юзерские запросы) делят один upstream-вызов.
+ * Не бросает — null при ошибке.
+ */
+async function ensureDialog(summary: string): Promise<RadioSegment[] | null> {
+  const hit = cacheGet(summary);
+  if (hit) return hit;
+  if (inflight) return inflight;
+  inflight = generateDialog(summary).finally(() => {
+    inflight = null;
+  });
+  return inflight;
+}
+
+/**
  * Главная функция. Возвращает диалог или null (нет сводки / нет конфигурации /
- * ошибка Minimax). Не бросает. In-flight lock — параллельные вызовы ждут
- * один и тот же результат.
+ * ошибка Minimax). Не бросает.
  */
 export async function getMarketDialog(): Promise<RadioSegment[] | null> {
   const cached = getCachedGlobalSummary();
   if (!cached || !cached.summary) return null;
-
-  const hit = cacheGet(cached.summary);
-  if (hit) {
-    console.log(`[RadioPodcast] dialog cache hit (${hit.length} segments)`);
-    return hit;
+  const dialog = await ensureDialog(cached.summary);
+  if (dialog) {
+    console.log(`[RadioPodcast] dialog served (${dialog.length} segments)`);
   }
+  return dialog;
+}
 
-  if (inflight) return inflight;
-  inflight = generateDialog(cached.summary).finally(() => {
-    inflight = null;
-  });
-  return inflight;
+/**
+ * Аудит кеша, находка 1: крон сводки прогревает диалог СРАЗУ после генерации
+ * сводки. Тексты диалога стабильны весь 6-часовой период → ключи mp3-кеша
+ * не меняются → один cold-прогон T2A на период, а не на каждую перегенерацию.
+ * Общий single-flight с getMarketDialog — дубль chat-вызова невозможен.
+ * Не бросает; возвращает число сегментов (0 при ошибке).
+ */
+export async function primeMarketDialog(summary: string): Promise<number> {
+  try {
+    const dialog = await ensureDialog(summary);
+    return dialog?.length ?? 0;
+  } catch {
+    return 0;
+  }
 }
 
 /** Для verify-скрипта: очистить кэш. */

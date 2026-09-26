@@ -112,11 +112,13 @@ pulse-backend
    → in-memory кэш сводки { summary: string, TTL 6ч10м }
         │  warm-up через 3 мин после boot; recreate контейнера = пустой кэш
         │  до следующей генерации (эфир в это время играет plain)
+        │  после успешной генерации — primeMarketDialog(summary):
+        │  диалог греется сразу, первый слушатель не ждёт LLM (аудит F1)
         ▼
 [HTTP] GET /api/market/market-dialog (auth, Bearer)
    services/radioPodcast.ts:
    1. getCachedGlobalSummary() — нет кэша → null → 204 → фронт fallback plain
-   2. in-memory кэш диалога 6ч, ключ = первые 200 символов сводки
+   2. in-memory кэш диалога 6ч30м (аудит F1), ключ = первые 200 символов сводки
    3. in-flight lock — конкурентные юзеры = один вызов LLM
    4. Minimax chat (MINIMAX_CHAT_MODEL=MiniMax-M2.5, env):
       SYSTEM_PROMPT (ТЗ-58: Михаил+Татьяна, 6-8 реплик)
@@ -151,8 +153,9 @@ pulse-backend
 | Кеш | Где | TTL | Инвалидция |
 |---|---|---|---|
 | Сводка рынка | бэк in-memory | 6ч10м | recreate контейнера (до warm-up 3 мин + ~50 мин генерации) |
-| Диалог (JSON сегментов) | бэк in-memory | 6ч | recreate; смена сводки → новый ключ |
-| mp3 сегментов | фронт in-memory (Map) | сессия | LRU 32; непереживает reload |
+| Диалог (JSON сегментов) | бэк in-memory | 6ч30м | recreate; генерится кроном сводки (`primeMarketDialog`), стохастическая перегенерация после протухания TTL |
+| mp3 сегментов (бэк) | бэк in-memory | 24ч | лениво при cacheGet; `POST /clear` из админки |
+| mp3 сегментов (фронт) | браузер in-memory (Map) | сессия | LRU 64; непереживает reload |
 
 Отказоустойчивость (каждый шаг деградирует, ничего не падает):
 204/ошибка диалога → plain-монолог кэша крона → нет кэша крона → шаг 2 молчит,
@@ -301,8 +304,10 @@ key/value-таблица + ensure-миграция из кода + upsert в д�
 - `POST /clear` — `clearRadioMp3Cache()` (сбрасывает и topKeys) + лог с userId
   админа. Poison recovery за 1 клик.
 - `POST /prewarm` — прогрев (`prewarmCommonSegments()`): стандартные сегменты
-  + **текущий диалог сводки** (getMarketDialog, 9 реплик × host/guest голоса —
-  реально горячие ключи). Темп 1.05 = дефолт плеера юзера. Параллелизм 3,
+  + **текущий диалог сводки** (getMarketDialog, 9 реплик — каждая голосом
+  своей роли host/guest). Темп 1.05 = дефолт плеера юзера. **Pitch повторяет
+  правило плеера** (аудит F2): если обе роли — один голос, аналитик греется
+  с pitch 2, иначе 0; ключ дедупа включает pitch. Параллелизм 3,
   upstream — тот же `fetchAndDecodeMinimax` (radio.ts), счётчики hit/miss не
   засоряются.
 
@@ -727,7 +732,8 @@ SettingsPanel, ТЗ-49; **дефолт вкл с 2026-09-23** — решение
  берёт `cached.summary` (строка), дёргает **Minimax chat**
 (`POST https://api.minimax.io/v1/chat/completions`, нативный fetch, как в `routes/radio.ts`),
 промпт требует вернуть `{"dialog":[{role,text}]}` → парсится строгим `parseDialogResponse`
-(whitelist ролей host/guest, снимается ```json-обёртка) → кэш 6ч в in-memory Map,
+(whitelist ролей host/guest, снимается ```json-обёртка) → кэш 6ч30м в in-memory Map
+(аудит F1; греется кроном сводки через `primeMarketDialog`, не лениво),
 ключ — первые 200 символов сводки → фронт озвучивает `speakCustom('Саммари: диалог', segments)`.
 
 - **Endpoint:** `GET /api/market/market-dialog` (auth, Bearer). 204 если: кэша
@@ -805,9 +811,11 @@ per-process in-memory кеш (`src/services/radioMp3Cache.ts`), один сег�
 - **Ключ:** `MODEL \x00 text.trim() \x00 voice_id \x00 speed \x00 pitch`.
   MODEL в ключе (аудит зам. 3) — защита от hot-swap модели: mp3 старой модели
   не отдаются под новой. `MINIMAX_TTS_MODEL` — единый источник в
-  `radioMp3Cache.ts`, radio.ts импортирует (дефолт не дублируется).
-- **TTL 6ч** — синхронизирован с кэшами диалога (`radioPodcast`) и `globalSummary`;
-  протухшие вытесняются лениво при `cacheGet`. **Лимиты:** 256 записей / 80 МБ
+  `config/radio.ts` (ТЗ-66-lite), `radioMp3Cache.ts`/`radio.ts` импортируют.
+- **TTL 24ч** (аудит F4) — mp3 живёт дольше сводки/диалога (6ч): диалог
+  меняется, но общие фразы и повторяющиеся тексты продолжают отдаваться из
+  кэша; MODEL в ключе защищает от рассинхрона при смене модели.
+  Протухшие вытесняются лениво при `cacheGet`. **Лимиты:** 256 записей / 80 МБ
   (≈14 диалогов: 9 сегм × 2 голоса × ~300 КБ), FIFO eviction с LRU-touch.
 - **Single-flight:** `inflight Map` — N параллельных miss с одним ключом = 1
   upstream-вызов; на error кэш **не** пишется (инвариант «не отравить»).
@@ -837,6 +845,44 @@ per-process in-memory кеш (`src/services/radioMp3Cache.ts`), один сег�
   эфир после рестарта снова платный, дальше hit. Verify:
   `npm run verify:radioMp3Cache` (17 проверок: miss/hit, single-flight,
   различие ключей, eviction 80 МБ, error-инвариант).
+
+## Аудит кеша радио — F1–F5 + ТЗ-66-lite (2026-09-26)
+
+Экономика кеша: цель — максимум ответов из кэша при минимуме запросов к
+Minimax. Пять находок аудита и архитектурная правка:
+
+- **F1 — диалог греется вместе со сводкой.** Раньше диалог (`getMarketDialog`)
+  генерировался лениво по первому запросу юзера → каждый раз после протухания
+  TTL первый слушатель ждал chat-генерацию. Теперь крон `globalSummary` после
+  успешной генерации сводки вызывает `primeMarketDialog(summary)`
+  (`radioPodcast.ts`) — диалог готов до первого юзера. TTL диалога поднят
+  6ч → **6ч30м**: крон перегенерирует сводку не в момент протухания, а в
+  половине часа, а оставшиеся ~30 мин стохастически доигрывают старый диалог
+  (сглаживание burst-генераций). Ошибка диалога не ломает крон (локальный
+  try/catch, лог `dialog priming skipped`).
+- **F2 — prewarm грел неверный pitch.** Плеер при равных голосах ролей
+  просит pitch 2 для «аналитика», prewarm грел pitch 0 → гарантированный MISS
+  на каждой реплике. Теперь pitch считается по правилу плеера и входит в
+  ключ дедупа (`text\x00voice\x00pitch`).
+- **F3 — race hit/miss в метриках.** При single-flight N параллельных miss с
+  одним ключом: один ушёл в upstream, остальные дождались и получили
+  `{hit: true}` — но handler писал 'miss' и заголовок `X-Radio-Cache: MISS`.
+  Теперь handler берёт флаг `racedHit` из результата `getOrFetchMp3` —
+  метрика и заголовок отражают реальный источник.
+- **F4 — TTL mp3-кэша 6ч → 24ч.** Синхронизация TTL mp3 с TTL диалога не
+  давала экономии на повторах: диалог менялся раз в 6ч, mp3 протухал вместе
+  с ним. Общие фразы и неизменные сегменты теперь живут сутки; MODEL в ключе
+  страхует от выдачи старой модели.
+- **F5 — фронт LRU 32 → 64.** Эфир префетчит до ~40 сегментов (5 блоков × 8
+  новостей), при лимите 32 LRU вытеснял ещё горячие сегменты. 64 ≈ 20 МБ —
+  безопасно для мобильных.
+- **ТЗ-66-lite — единый конфиг.** Статические константы Minimax (URL, модель,
+  белый список голосов) собраны в `src/config/radio.ts`; `routes/radio.ts`,
+  `services/radioMp3Cache.ts`, `services/radioSettings.ts` импортируют оттуда.
+  `adminMiddleware` перенесён из `routes/admin.ts` в
+  `src/middleware/admin.ts` (re-export сохранён). Намеренно **не** сделано:
+  metricsCenter / cronRegistry (проблемы 3/4/6 ТЗ-66) — ROI низкий, текущие
+  логи достаточны.
 
 ## Роадмап
 

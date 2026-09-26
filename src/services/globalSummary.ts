@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { query } from '../config/db';
 import { nowSql } from '../utils/nowSql';
+import { primeMarketDialog } from './radioPodcast'; // аудит кеша F1: диалог в паре со сводкой
 
 const KIMI_API_KEY = process.env.KIMI_API_KEY;
 const KIMI_MODEL = process.env.KIMI_MODEL || 'kimi-k2.6';
@@ -390,6 +391,20 @@ export function startGlobalSummaryCron(options: { isShuttingDown: () => boolean 
           const result = await generateGlobalSummary({ refresh: true });
           articlesCount = result.articlesCount;
           console.log(`[GlobalSummaryCron] success, articles=${articlesCount}`);
+
+          // Аудит кеша, находка 1: диалог сводки генерируем В ПАРЕ со сводкой —
+          // тексты стабильны весь период, mp3-кеш прогревается один раз.
+          // Не ломает крон: ошибка диалога ловится внутри primeMarketDialog.
+          try {
+            const segs = await primeMarketDialog(result.summary);
+            if (segs > 0) {
+              console.log(`[GlobalSummaryCron] dialog primed (${segs} segments)`);
+            } else {
+              console.warn('[GlobalSummaryCron] dialog priming skipped (no config/upstream error)');
+            }
+          } catch (e: any) {
+            console.error('[GlobalSummaryCron] dialog priming error:', e?.message);
+          }
           break;
         } catch (err: any) {
           errors.push(err?.message || String(err));

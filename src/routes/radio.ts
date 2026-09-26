@@ -21,40 +21,25 @@ import { radioTtsLimiter, checkRateLimit } from '../middleware/rateLimit';
 import { recordTtsResult } from '../services/radioMetrics';
 import { getRadioFlags } from '../services/radioSettings';
 import {
+  MINIMAX_TTS_URL,
   MINIMAX_TTS_MODEL,
+  MINIMAX_VOICE_IDS_SET,
+} from '../config/radio'; // ТЗ-66-lite: единый источник констант
+import {
   cacheGetPublic,
   getOrFetchMp3,
 } from '../services/radioMp3Cache';
 
 const router = Router();
 
-// ТЗ-65: экспортировано для prewarm (radioMp3CachePrewarm.ts) — один источник
-// URL/логики декодирования для всего TTS-стека.
-export const MINIMAX_TTS_URL = 'https://api.minimax.io/v1/t2a_v2';
-// ТЗ-61: модель выбирается через env MINIMAX_TTS_MODEL. Дефолт — speech-2.8-hd
-// (последняя HD: 40 языков, 10 эмоций, sound tags для пауз). Проверено на ключе:
-// обе модели (2.8-hd и 02-hd) отвечают 200 на t2a_v2. Откат на старую —
-// задать MINIMAX_TTS_MODEL=speech-02-hd в env, без деплоя.
-// Значение импортируется из radioMp3Cache.ts (единый источник, ТЗ-63 аудит):
-// участвует и в upstream-запросе, и в ключе mp3-кеша.
 const TTS_TIMEOUT_MS = 30_000;
 const MAX_TEXT_LENGTH = 2000;
-
-// Белый список голосов Minimax TTS (из прототипа radio-app/src/lib/minimax.ts). Все 8 совместимы и с 2.8-hd.
-// Без него чужой voice_id уезжал бы в Minimax → 502 вместо понятного 400.
-const MINIMAX_VOICE_IDS = new Set([
-  'presenter_male', 'presenter_female',
-  'audiobook_male_1', 'audiobook_female_1',
-  'audiobook_male_2', 'audiobook_female_2',
-  'male-qn-qingse', 'female-shaonv',
-  'male-qn-jingying', 'female-yujie',
-]);
 
 // Boot-лог состояния TTS (по образцу webPush.ts): без ключа сервер не молчит —
 // каждый запрос давал бы 503, причина должна быть видна в логах сразу.
 console.log(
   process.env.MINIMAX_API_KEY
-    ? `[Radio] MINIMAX ready (model=${MINIMAX_TTS_MODEL}, voices=${MINIMAX_VOICE_IDS.size})`
+    ? `[Radio] MINIMAX ready (model=${MINIMAX_TTS_MODEL}, voices=${MINIMAX_VOICE_IDS_SET.size})`
     : '[Radio] MINIMAX_API_KEY not set, /api/radio/tts returns 503'
 );
 
@@ -109,8 +94,8 @@ router.post('/tts', authMiddleware, async (req: AuthRequest, res) => {
     res.status(400).json({ error: 'invalid_text', maxLength: MAX_TEXT_LENGTH });
     return;
   }
-  if (voice_id !== undefined && (typeof voice_id !== 'string' || !MINIMAX_VOICE_IDS.has(voice_id))) {
-    res.status(400).json({ error: 'invalid_voice_id', allowed: [...MINIMAX_VOICE_IDS] });
+  if (voice_id !== undefined && (typeof voice_id !== 'string' || !MINIMAX_VOICE_IDS_SET.has(voice_id))) {
+    res.status(400).json({ error: 'invalid_voice_id', allowed: [...MINIMAX_VOICE_IDS_SET] });
     return;
   }
   if (speed !== undefined && (typeof speed !== 'number' || speed < 0.5 || speed > 2.0)) {
@@ -158,7 +143,10 @@ router.post('/tts', authMiddleware, async (req: AuthRequest, res) => {
     // abort одного caller'а завалил бы всех, кто делит promise. Отключение
     // клиента во время T2A (1–3 с) upstream не рубит: результат дописывается
     // в кэш и пойдёт следующим. Предохранитель — только таймаут 30 с.
-    const { buffer } = await getOrFetchMp3(
+    // Аудит F3: hit-флаг из getOrFetchMp3 — если между cacheGetPublic и
+    // сюда другой запрос заполнил кеш (гонка), честно отчитываемся как HIT
+    // (upstream не дёргался, метрика hit rate не занижается).
+    const { buffer, hit: racedHit } = await getOrFetchMp3(
       text,
       effectiveVoiceId,
       effectiveSpeed,
@@ -172,10 +160,10 @@ router.post('/tts', authMiddleware, async (req: AuthRequest, res) => {
       },
     );
 
-    recordTtsResult('ok', Date.now() - ttsStartedAt, 'miss');
+    recordTtsResult('ok', Date.now() - ttsStartedAt, racedHit ? 'hit' : 'miss');
     res.set('Content-Type', 'audio/mpeg');
     res.set('Content-Length', String(buffer.length));
-    res.set('X-Radio-Cache', 'MISS');
+    res.set('X-Radio-Cache', racedHit ? 'HIT' : 'MISS');
     res.send(buffer);
   } catch (err: any) {
     if (err?.name === 'AbortError') {

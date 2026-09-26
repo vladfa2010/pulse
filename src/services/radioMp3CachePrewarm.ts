@@ -15,8 +15,9 @@
  * источник URL/модели/декодирования). Параллелизм ограничен 3 (не свалить
  * Minimax). Счётчики hit/miss не трогаем (метрики пишет handler /tts).
  *
- * Голоса — из radioSettings (ТЗ-45), темп 1.05 = дефолт юзерского плеера
- * (ключ кеша совпадёт с реальными запросами юзеров).
+ * Голоса — из radioSettings (ТЗ-45), темп 1.05 = дефолт юзерского плеера.
+ * Pitch повторяет правило плеера (аудит F2), чтобы ключ кеша совпадал с
+ * реальными запросами юзеров.
  */
 
 import { getOrFetchMp3 } from './radioMp3Cache';
@@ -26,8 +27,14 @@ import { fetchAndDecodeMinimax } from '../routes/radio';
 
 const TTS_TIMEOUT_MS = 30_000;
 const PREWARM_SPEED = 1.05;
-const PREWARM_PITCH = 0;
 const CONCURRENCY = 3;
+
+// Pitch-правило плеера (useSpeech.ts / RadioPage.tsx): если обе роли — один
+// голос, «аналитик» звучит выше (pitch 2). Повторяем здесь, чтобы кэш-ключ
+// совпадал с реальными запросами юзеров (аудит F2: раньше prewarm грел
+// pitch=0, плеер просил pitch=2 → MISS на каждой новой реплике).
+const GUEST_PITCH_SAME_VOICE = 2;
+const HOST_PITCH = 0;
 
 // Стандартные сегменты эфира (захардкожены — риск Р8 ТЗ-65, дальше можно
 // вынести в env RADIO_CACHE_PREWARM_TEXTS)
@@ -46,13 +53,13 @@ export interface PrewarmResult {
   segments: number; // всего пар текст×голос в очереди
 }
 
-async function warmSegment(text: string, voiceId: string): Promise<'ok' | 'skipped' | 'error'> {
+async function warmSegment(text: string, voiceId: string, pitch: number): Promise<'ok' | 'skipped' | 'error'> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TTS_TIMEOUT_MS);
   try {
-    const r = await getOrFetchMp3(text, voiceId, PREWARM_SPEED, PREWARM_PITCH, () =>
+    const r = await getOrFetchMp3(text, voiceId, PREWARM_SPEED, pitch, () =>
       fetchAndDecodeMinimax(
-        process.env.MINIMAX_API_KEY || '', text, voiceId, PREWARM_SPEED, PREWARM_PITCH,
+        process.env.MINIMAX_API_KEY || '', text, voiceId, PREWARM_SPEED, pitch,
         controller.signal,
       )
     );
@@ -66,30 +73,48 @@ async function warmSegment(text: string, voiceId: string): Promise<'ok' | 'skipp
 
 export async function prewarmCommonSegments(): Promise<PrewarmResult> {
   const flags = await getRadioFlags();
-  const voiceIds = [flags.minimax_host_voice];
-  if (flags.minimax_guest_voice !== flags.minimax_host_voice) {
-    voiceIds.push(flags.minimax_guest_voice);
-  }
+  const sameVoice = flags.minimax_guest_voice === flags.minimax_host_voice;
+  const guestPitch = sameVoice ? GUEST_PITCH_SAME_VOICE : 0;
+  // [голос, pitch] для каждой роли — общие фразы греем голосом ведущего
+  const roleVoices: { voiceId: string; pitch: number }[] = [
+    { voiceId: flags.minimax_host_voice, pitch: HOST_PITCH },
+    { voiceId: flags.minimax_guest_voice, pitch: guestPitch },
+  ];
 
   const texts = [...COMMON_SEGMENTS];
-  // Диалог сводки — если он уже сгенерирован (кеш 6ч), греем его реплики
+  // Диалог сводки — если он уже сгенерирован (кеш 6ч), греем его реплики.
+  // Каждая реплика — голосом своей роли с pitch роли.
   const dialog = await getMarketDialog();
+  const dialogPairs: { text: string; voiceId: string; pitch: number }[] = [];
   if (dialog && dialog.length > 0) {
     for (const seg of dialog) {
-      if (seg.text && seg.text.trim().length > 0) texts.push(seg.text);
+      const text = seg.text?.trim();
+      if (!text) continue;
+      dialogPairs.push({
+        text: seg.text,
+        voiceId: seg.role === 'guest' ? flags.minimax_guest_voice : flags.minimax_host_voice,
+        pitch: seg.role === 'guest' ? guestPitch : HOST_PITCH,
+      });
     }
   }
 
-  // Собрать все пары (текст × голос), дедупликация
+  // Общие фразы — по всем уникальным (голос, pitch) парам
   const seen = new Set<string>();
-  const queue: { text: string; voiceId: string }[] = [];
-  for (const text of texts) {
-    for (const voiceId of voiceIds) {
-      const k = `${text.trim()}\x00${voiceId}`;
+  const queue: { text: string; voiceId: string; pitch: number }[] = [];
+  for (const { voiceId, pitch } of roleVoices) {
+    for (const text of texts) {
+      const k = `${text.trim()}\x00${voiceId}\x00${pitch}`;
       if (seen.has(k)) continue;
       seen.add(k);
-      queue.push({ text, voiceId });
+      queue.push({ text, voiceId, pitch });
     }
+  }
+  // Реплики диалога — со своими парами (дедуп против уже нагретого)
+  for (const p of dialogPairs) {
+    const k = `${p.text.trim()}\x00${p.voiceId}\x00${p.pitch}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    queue.push(p);
   }
 
   const result: PrewarmResult = { ok: 0, skipped: 0, errors: 0, segments: queue.length };
@@ -98,7 +123,7 @@ export async function prewarmCommonSegments(): Promise<PrewarmResult> {
     while (queue.length > 0) {
       const seg = queue.shift();
       if (!seg) return;
-      const r = await warmSegment(seg.text, seg.voiceId);
+      const r = await warmSegment(seg.text, seg.voiceId, seg.pitch);
       result[r === 'ok' ? 'ok' : r === 'skipped' ? 'skipped' : 'errors']++;
     }
   });
