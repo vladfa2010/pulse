@@ -933,6 +933,11 @@ play/pause, hover крестика); legacy PlayerBar на `/radio` не тро�
   цикла в ТЗ). `dismissed` сбрасывается при новом ▶ на /radio — плеер
   возвращается (в ТЗ сброса не было, «вернуть плеер» не работало бы).
 - **Контент внизу:** `padding-bottom: 80px` на body пока плеер виден (Р2 ТЗ).
+- **ТЗ-67-HOTFIX (`310147d`):** (1) `everStarted` — sticky ref: после ■ плеер
+  остаётся в IDLE, исчезает только по ✕; (2) убран race в `useSpeech`:
+  присваивания opts-ref'ов на каждом ре-рендере затирали `updateOptions`
+  дефолтами → после навигации provider сбрасывался в browser и голос менялся.
+  `updateOptions` — единственный writer.
 - **Долги:** persistence после F5 (Д1), drag-to-dismiss (Д2), split Context
   на state/actions при росте потребителей (Д6), горячие клавиши (Д4).
 
