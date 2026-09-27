@@ -938,6 +938,13 @@ play/pause, hover крестика); legacy PlayerBar на `/radio` не тро�
   присваивания opts-ref'ов на каждом ре-рендере затирали `updateOptions`
   дефолтами → после навигации provider сбрасывался в browser и голос менялся.
   `updateOptions` — единственный writer.
+- **ТЗ-67-FIX (`9b2d373`):** iOS safe area — `bottom: calc(16px +
+  env(safe-area-inset-bottom))`, не перекрывает home indicator.
+- **ТЗ-67-HOTFIX-2 (`c7a156d`):** `transform: translateZ(0)` у `.gpu-content`
+  (main) создавал containing block для `position: fixed` — плеер висел в конце
+  документа, а не внизу viewport. Плеер вынесен sibling Layout (вне main).
+  Аудит: ~30 fixed-модалок внутри main теоретически подвержены той же
+  особенности (покрыты inset-0, latent) — отдельный долг.
 - **Долги:** persistence после F5 (Д1), drag-to-dismiss (Д2), split Context
   на state/actions при росте потребителей (Д6), горячие клавиши (Д4).
 
