@@ -51,6 +51,7 @@ Finam: тикеры из активных тегов портфеля)** ✅.
 | Сервис радио целиком (kill-switch) | админ | `_radio_settings.service_enabled` → таба «Радио» |
 | Авточтение новостей | юзер | `RadioLocalConfig.autoRead` (localStorage) → SettingsPanel (тумблер «Автоплей новых», ТЗ-49) |
 | Провайдер, голоса, режим по умолчанию | админ | `_radio_settings` → таба «Радио» |
+| Фоновая музыка между новостями (kill-switch) | админ | `_radio_settings.music_enabled` → таба «Радио» (ТЗ70; вкл локально юзером — иконка ♪/SettingsPanel, `localStorage.pulse_music_enabled`) |
 | Режим сессии, browser-голоса, темп | юзер | localStorage/сессия → SettingsPanel |
 
 Эффективное авточтение = только `blocks.autoRead` (юзер, **дефолт
@@ -997,6 +998,93 @@ play/pause, hover крестика); legacy PlayerBar на `/radio` не тро�
 - **Известная особенность:** probe ~11–15 из 15 словарных голосов за первый
   заход (нестабильные сетевые ошибки → inAccount undefined = без метки,
   перезамер при рефетче кэша раз в сутки).
+
+## Фоновая музыка в эфире — TZ70 (2026-09-28)
+
+Между блоками новостей, когда юзер всё прочитал и ждёт следующую новость,
+в эфире играет случайный трек из локальной папки `/opt/pulse/music` на VDS.
+v1: без WebAudio API, без адаптивности (shuffle), файлы загружает админ.
+
+- **Триггер (все условия):** `radio_flags.music_enabled` (админ, kill-switch)
+  && `localStorage.pulse_music_enabled` (юзер, дефолт вкл) &&
+  `!speech.isSpeaking` && `unreadCount === 0`. Глобально на всех страницах
+  (дух ТЗ-67 «слушать и изучать платформу`), не только /radio.
+- **Сценарий:** fetch `/api/radio/music/next` → `{ url: null }` → тишина,
+  **без интро-фразы** (graceful degradation, юзер не узнает о функции).
+  Трек есть → один раз за idle-сессию фраза ведущего (`speakCustom`,
+  голос minimax_host_voice) → `<audio>.play()`. Трек доиграл → следующий
+  (без фразы). Прерывание (SSE-новость / ▶ эфира / флаг выкл) → fade-out
+  volume 1.0→0 за 1.5 с (30 шагов × 50 мс), затем pause. Новая idle-сессия
+  после прерывания начинается снова с фразы.
+- **Бэк:**
+  - `src/config/radio.ts` — `PULSE_MUSIC_DIR` (env, дефолт /opt/pulse/music),
+    regex имени `N_title_YY_tempo_genre.mp3` (genre `[a-z0-9]+`), лимиты:
+    50 файлов / 50 МБ на файл / 2 ГБ папка (disk-cap H-1) / 200 символов
+    имени / 10 range-parts.
+  - `src/services/radioMusic.ts` — `listMusicFiles()` (in-memory кэш TTL 30 с,
+    заодно shuffle-order round-robin без повторов), `pickRandomMusic()`,
+    `parseMusicFilename()`, `validateMusicFilename()` (H-4: null byte /
+    separator / length / hidden / regex — единая точка для всех роутов),
+    `getMusicFolderSize()` (H-1), `hasMp3MagicBytes()` (ID3 / 0xFFFB /
+    0xFFF3 / 0xFFF2 — второй слой поверх nosniff), `ensureMusicDir()`
+    (mkdir при старте, idempotent).
+  - Публичные роуты (`routes/radio.ts`, optionalAuth + radioMusicLimiter
+    100/мин, ключ userId||IP): `GET /music/next` (пусто → 200 `{url:null}`,
+    не 404), `GET /music/list` (админ-диагностика), `GET /music/file/:filename`
+    (Range support, `nosniff` + `inline` + `Accept-Ranges`, Cache-Control
+    1 ч; Content-Length НЕ ставим руками — sendFile сам, иначе конфликт с 206;
+    >10 range-parts → 416).
+  - Админ-роуты (`routes/admin.ts`, adminMiddleware): `POST /music/upload`
+    (multer, field 'file'; fileFilter = validateMusicFilename → 400
+    invalid_filename; duplicate → 409 (H-3, fs.access в diskStorage.filename);
+    magic bytes → 400 not_an_mp3; 413 file_too_large / folder_too_large;
+    count > 50 → 400 too_many_files), `DELETE /music/:filename`,
+    `PATCH /music/:filename` (rename, target exists → 409).
+  - Флаг `music_enabled: boolean` в `RadioFlags` (radioSettings.ts), дефолт
+    true; публично отдаётся как `radio_music_enabled` в `/api/radio/config`.
+  - **Лимитер** `radioMusicLimiter` в `middleware/rateLimit.ts`.
+- **Инфраструктура (критично):** `/opt/pulse/docker-compose.yml` — bind-mount
+  `/opt/pulse/music:/opt/pulse/music` у backend (без него треки писались бы в
+  overlay-слой контейнера и терялись при recreate). Бэкап compose:
+  `docker-compose.yml.bak-tz70`. Папка создаётся кодом при старте, но mount
+  должен быть в compose. Загрузка руками: `scp` в `/opt/pulse/music/`.
+- **Фронт:**
+  - `src/lib/radio/musicUserFlag.ts` — единый `localStorage
+    .pulse_music_enabled` (дефолт вкл) + событие `pulse_music_toggled`
+    (текущее окно) + `storage` (другие табы); `useMusicUserFlag()` реактивен.
+  - `src/hooks/useMusicOnIdle.ts` — машина состояний (см. сценарий выше);
+    deps эффекта сужены до isSpeaking/speakCustom (весь объект speech давал
+    бы перезапуски на каждый рендер контекста).
+  - `src/components/MusicOnIdleWrapper.tsx` — тонкий wrapper, монтируется в
+    App.tsx sibling'ом к GlobalPlayerBar внутри SpeechProvider (где есть и
+    UnreadCountContext).
+  - Иконка ♪ в `GlobalPlayerBar` (быстрый toggle) + секция «Музыка в эфире»
+    в `SettingsPanel` — оба пишут в общий ключ и реактивно синхронизированы.
+  - `components/admin/MusicLibraryTab.tsx` — вкладка в табе «Радио»
+    (между VoicePicker и Mp3CacheDashboard): drop-zone upload (multipart,
+    `adminApi.postForm` — Content-Type НЕ ставим руками, boundary браузер),
+    rename/delete, превью через публичный `/api/radio/music/file/...`,
+    polling 30 с (M-3 аудита). Toggle kill-switch в блоке флагов RadioTab.
+  - `adminApi.postForm` в `lib/api.ts` — multipart POST, таймаут 120 с,
+    err.code/err.reason из тела ошибки.
+- **Гейты:** бэк `node scripts/verify-radio-music.js` — 22 проверки (парсер,
+  валидация H-4, magic bytes, флаги, presence роутов, заголовки, лимитер).
+  Фронт: 6 юнит-тестов `musicUserFlag.test.tsx` (итого 188/188), tsc.
+- **Смоук на VDS (23/23, `809efa1` + volume):** пустая папка → list `[]` /
+  next `{url:null}`; трек на хосте виден через bind-mount (list/next/file
+  200/206, nosniff + accept-ranges); traversal/hidden → 400; 11 range-parts →
+  416; upload bad name → 400, fake mp3 (HTML) → 400 not_an_mp3, duplicate →
+  409, guest → 401; delete → 200 / повторно 404; флаг `music_enabled` в
+  config + PUT radio-flags false/true работает.
+- **Особенности эксплуатации:** список треков кэшируется 30 с (после scp на
+  хост трек появится в next/list до 30 с — TTL; upload через админку
+  инвалидирует кэш мгновенно). Rate-limit 100/мин на юзера — за NAT все
+  юзеры одним IP делят лимит (v1 приемлемо, гости редко слушают музыку).
+  Без треков — полная тишина, никаких следов функционала в UI.
+- **Security (аудит SECURITY_TZ70_AUDIT):** закрыто H-1 (disk-cap 2 ГБ),
+  H-2 (nosniff + inline), H-3 (duplicate 409), H-4 (validateMusicFilename),
+  M-1 (rate-limit + range-parts лимит), M-2 (masked logging — только коды,
+  без путей), M-3 (polling 30 с). Magic bytes — дополнение поверх аудита.
 
 ## Роадмап
 
