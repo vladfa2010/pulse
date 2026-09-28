@@ -132,7 +132,12 @@ async function runMigration(sql: string, name: string) {
 // ═══════════════════════════════════════════════════════════════════════════
 // Middleware — обработка входящих запросов
 // ═══════════════════════════════════════════════════════════════════════════
-app.set('trust proxy', true); // Required for X-Forwarded-For behind Render proxy
+// Доверяем ровно один прокси-хоп (Caddy на VDS / Render-прокси на Render).
+// НЕ `true`: `true` доверяет всей цепочке X-Forwarded-For, и req.ip для каждого
+// запроса становится IP последнего прокси (Caddy-контейнер) → ВСЕ rate-limit
+// бакеты (apiLimiter и др.) складываются в один общий на весь сайт.
+// С `1` req.ip = правый элемент XFF = реальный IP клиента, который дописывает Caddy.
+app.set('trust proxy', 1);
 app.use(cors());
 // TZ_FACTCHECK_PAGE §15 п.1: 15 МБ глобально (base64 файлов ≈ +33% к размеру);
 // Premium-гейт на POST /api/fact-check смягчает риск
@@ -207,7 +212,7 @@ app.get('/debug/version', async (req, res) => {
     if (fs.existsSync(gitPath)) {
       commit = fs.readFileSync(gitPath, 'utf-8').trim().substring(0, 7);
     }
-    res.json({ commit, full: commit === 'unknown' ? null : fs.readFileSync(gitPath, 'utf-8').trim() });
+    res.json({ commit, full: commit === 'unknown' ? null : fs.readFileSync(gitPath, 'utf-8').trim(), ip: req.ip });
   } catch {
     res.json({ commit: 'unknown', full: null });
   }
