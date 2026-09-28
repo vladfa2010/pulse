@@ -31,7 +31,9 @@ import {
 import {
   PULSE_MUSIC_DIR,
   PULSE_MUSIC_RANGE_PARTS_LIMIT,
-} from '../config/radio'; // TZ70: фоновая музыка
+  PULSE_SFX_DIR,
+  PULSE_SFX_RANGE_PARTS_LIMIT,
+} from '../config/radio'; // TZ70: фоновая музыка / TZ71: SFX
 import {
   cacheGetPublic,
   getOrFetchMp3,
@@ -41,6 +43,11 @@ import {
   pickRandomMusic,
   validateMusicFilename,
 } from '../services/radioMusic';
+import {
+  listSfxFiles,
+  pickRandomSfx,
+  validateSfxFilename,
+} from '../services/radioSfx';
 
 const router = Router();
 
@@ -315,6 +322,88 @@ router.get('/music/file/:filename', optionalAuth, radioMusicLimiter, async (req,
       return res.status(404).json({ error: 'not_found' });
     }
     console.error('[RadioMusic] sendFile:', { code: err?.code });
+    res.status(500).json({ error: 'send_failed' });
+  }
+});
+
+// ═══ TZ71: SFX — звуковые эффекты («пилик» о новой новости) ═══
+// Симметрично music: гости слушают тоже (optionalAuth), пустая папка → { url: null }
+// (тишина, не 404). Тот же radioMusicLimiter — SFX-запросы редкие и лёгкие.
+
+const SFX_CONTENT_TYPES: Record<string, string> = {
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+  '.ogg': 'audio/ogg',
+};
+
+// GET /api/radio/sfx/next — случайный SFX (true-random, повторы допустимы)
+router.get('/sfx/next', optionalAuth, radioMusicLimiter, async (_req, res) => {
+  try {
+    const file = await pickRandomSfx();
+    if (!file) return res.json({ url: null });
+    res.json({ url: `/api/radio/sfx/file/${encodeURIComponent(file.filename)}` });
+  } catch (err: any) {
+    // M-2: не утекаем paths — только код ошибки
+    console.error('[RadioSfx] pickRandom:', { code: err?.code });
+    res.json({ url: null });
+  }
+});
+
+// GET /api/radio/sfx/list — список (SfxLibraryTab + диагностика)
+router.get('/sfx/list', optionalAuth, radioMusicLimiter, async (_req, res) => {
+  try {
+    const files = await listSfxFiles();
+    res.json({ files });
+  } catch (err: any) {
+    console.error('[RadioSfx] list:', { code: err?.code });
+    res.status(500).json({ error: 'list_failed' });
+  }
+});
+
+// GET /api/radio/sfx/file/:filename — стрим (Range support).
+// Security: H-4 (validateSfxFilename), H-2 (nosniff + inline), M-1 (range-parts).
+router.get('/sfx/file/:filename', optionalAuth, radioMusicLimiter, async (req, res) => {
+  const filename = req.params.filename;
+
+  const validation = validateSfxFilename(filename);
+  if (!validation.ok) {
+    return res.status(400).json({ error: 'invalid_filename', reason: validation.reason });
+  }
+
+  const filepath = path.resolve(PULSE_SFX_DIR, filename);
+  // defense-in-depth: filepath обязан остаться внутри SFX_DIR
+  if (!filepath.startsWith(PULSE_SFX_DIR + path.sep)) {
+    return res.status(400).json({ error: 'invalid_filename' });
+  }
+
+  try {
+    const stat = await fs.stat(filepath);
+    if (!stat.isFile()) return res.status(404).json({ error: 'not_found' });
+
+    // M-1: лимит на количество range-parts в одном запросе
+    const rangeHeader = req.headers.range;
+    if (rangeHeader) {
+      const parts = rangeHeader.replace(/^bytes=/, '').split(',');
+      if (parts.length > PULSE_SFX_RANGE_PARTS_LIMIT) {
+        return res.status(416).json({
+          error: 'too_many_range_parts',
+          limit: PULSE_SFX_RANGE_PARTS_LIMIT,
+        });
+      }
+    }
+
+    const ext = path.extname(filename).toLowerCase();
+    res.set('Content-Type', SFX_CONTENT_TYPES[ext] || 'application/octet-stream');
+    res.set('Accept-Ranges', 'bytes');
+    res.set('Cache-Control', 'public, max-age=3600');
+    res.set('X-Content-Type-Options', 'nosniff');
+    res.set('Content-Disposition', 'inline');
+    res.sendFile(filepath);
+  } catch (err: any) {
+    if (err?.code === 'ENOENT') {
+      return res.status(404).json({ error: 'not_found' });
+    }
+    console.error('[RadioSfx] sendFile:', { code: err?.code });
     res.status(500).json({ error: 'send_failed' });
   }
 });

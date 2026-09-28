@@ -80,3 +80,14 @@ export const PULSE_MUSIC_MAX_FILES = 50;
 export const PULSE_MUSIC_MAX_FILE_SIZE = 50 * 1024 * 1024;        // 50 МБ на файл
 export const PULSE_MUSIC_MAX_FOLDER_SIZE = 2 * 1024 * 1024 * 1024; // 2 ГБ — disk cap (H-1)
 export const PULSE_MUSIC_RANGE_PARTS_LIMIT = 10; // max range-parts в одном Range header (M-1)
+
+// ═══ TZ71: SFX-библиотека («пилик» из файлов вместо синтетического тона) ═══
+// Папка проброшена в контейнер bind-mount'ом (/opt/pulse/sfx) — см. TZ70 music.
+// Имя проще чем у музыки: [a-z0-9_]+.(mp3|wav|ogg) — метаданных в имени нет.
+export const PULSE_SFX_DIR = process.env.PULSE_SFX_DIR || '/opt/pulse/sfx';
+export const PULSE_SFX_FILENAME_REGEX = /^[a-z0-9_]+\.(mp3|wav|ogg)$/i;
+export const PULSE_SFX_MAX_FILENAME_LEN = 100;
+export const PULSE_SFX_MAX_FILES = 20;                 // SFX — короткие cue, библиотека маленькая
+export const PULSE_SFX_MAX_FILE_SIZE = 2 * 1024 * 1024;        // 2 МБ (≤3 сек звука)
+export const PULSE_SFX_MAX_FOLDER_SIZE = 100 * 1024 * 1024;    // 100 МБ — disk cap (H-1)
+export const PULSE_SFX_RANGE_PARTS_LIMIT = 10; // тот же лимит, что у music (M-1)

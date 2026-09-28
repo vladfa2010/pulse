@@ -57,6 +57,7 @@ import calendarRoutes from './routes/calendar';
 import { runCalendarV2Migrations } from './services/calendar';
 import { runRadioMigrations } from './services/radioSettings';
 import { ensureMusicDir } from './services/radioMusic'; // TZ70: папка фоновой музыки
+import { ensureSfxDir } from './services/radioSfx'; // TZ71: папка SFX
 import appRoutes from './routes/app';
 import { authMiddleware, AuthRequest } from './middleware/auth';
 import { apiLimiter, authLimiter, webhookLimiter, forgotPasswordLimiter, passwordResetFlowLimiter, promoValidateLimiter } from './middleware/rateLimit';
@@ -3646,6 +3647,13 @@ async function start() {
     await ensureMusicDir();
   } catch (e: any) {
     console.error('[RadioMusic] ensure dir failed:', { code: e?.code });
+  }
+
+  // ─── TZ71: папка SFX радио (idempotent) ────────────────────────────────
+  try {
+    await ensureSfxDir();
+  } catch (e: any) {
+    console.error('[RadioSfx] ensure dir failed:', { code: e?.code });
   }
 
   // ─── Деплой-проверка новостных данных ─────────────────────────────────

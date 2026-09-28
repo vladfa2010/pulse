@@ -182,7 +182,112 @@ async function main() {
     assert.match(s, /ensureMusicDir\(\)/);
   });
 
-  console.log(`\n[verify] radioMusic: ${passed} проверок пройдено${process.exitCode ? ' (ЕСТЬ ПАДЕНИЯ)' : ''}`);
+  // ═══ TZ71: SFX Library ═══
+  console.log('[verify] radioSfx (TZ71)');
+
+  const {
+    PULSE_SFX_DIR,
+    PULSE_SFX_FILENAME_REGEX,
+    PULSE_SFX_MAX_FILENAME_LEN,
+    PULSE_SFX_MAX_FILES,
+    PULSE_SFX_MAX_FILE_SIZE,
+    PULSE_SFX_MAX_FOLDER_SIZE,
+    PULSE_SFX_RANGE_PARTS_LIMIT,
+  } = require('../dist/config/radio');
+  const {
+    validateSfxFilename,
+    hasSfxMagicBytes,
+  } = require('../dist/services/radioSfx');
+
+  // ─── validateSfxFilename (H-4) ────────────────────────────────────────────
+  await ok('sfx validate: валидные имена (mp3/wav/ogg, регистр)', () => {
+    assert.deepStrictEqual(validateSfxFilename('news_cue.mp3'), { ok: true });
+    assert.deepStrictEqual(validateSfxFilename('Cue1.mp3'), { ok: true });
+    assert.deepStrictEqual(validateSfxFilename('1_alert.mp3'), { ok: true });
+    assert.deepStrictEqual(validateSfxFilename('1_alert.wav'), { ok: true });
+    assert.deepStrictEqual(validateSfxFilename('alert_v2.OGG'), { ok: true });
+  });
+  await ok('sfx validate: path traversal / null byte / hidden / overlong', () => {
+    assert.deepStrictEqual(validateSfxFilename('../etc/passwd.mp3'), { ok: false, reason: 'path_separator' });
+    assert.deepStrictEqual(validateSfxFilename('X\x00.mp3'), { ok: false, reason: 'null_byte' });
+    assert.deepStrictEqual(validateSfxFilename('.hidden.mp3'), { ok: false, reason: 'hidden_file' });
+    assert.deepStrictEqual(
+      validateSfxFilename('a'.repeat(PULSE_SFX_MAX_FILENAME_LEN + 1) + '.mp3'),
+      { ok: false, reason: 'invalid_length' },
+    );
+  });
+  await ok('sfx validate: regex mismatch (пробелы, дефисы, другие расширения)', () => {
+    assert.deepStrictEqual(validateSfxFilename('my cue.mp3'), { ok: false, reason: 'regex_mismatch' });
+    assert.deepStrictEqual(validateSfxFilename('my-cue.mp3'), { ok: false, reason: 'regex_mismatch' });
+    assert.deepStrictEqual(validateSfxFilename('cue.flac'), { ok: false, reason: 'regex_mismatch' });
+  });
+
+  // ─── Magic bytes по формату ───────────────────────────────────────────────
+  await ok('hasSfxMagicBytes: mp3 / wav / ogg / мусор', () => {
+    assert.strictEqual(hasSfxMagicBytes(Buffer.from('ID3\x04\x00\x00'), 'a.mp3'), true);
+    assert.strictEqual(hasSfxMagicBytes(Buffer.from([0xff, 0xfb, 0x90]), 'a.mp3'), true);
+    assert.strictEqual(hasSfxMagicBytes(Buffer.from('RIFF\x24\x08\x00\x00WAVEfmt '), 'a.wav'), true);
+    assert.strictEqual(hasSfxMagicBytes(Buffer.from('OggS\x00\x02\x00\x00'), 'a.ogg'), true);
+    assert.strictEqual(hasSfxMagicBytes(Buffer.from('<html><'), 'a.mp3'), false);
+    assert.strictEqual(hasSfxMagicBytes(Buffer.from('OggS\x00\x02'), 'a.mp3'), false); // не mp3-сигнатура
+    assert.strictEqual(hasSfxMagicBytes(Buffer.from([0x00, 0x01]), 'a.wav'), false);   // слишком короткий
+  });
+
+  // ─── Роуты radio.ts ───────────────────────────────────────────────────────
+  await ok('routes/radio.ts: sfx/next, sfx/list, sfx/file присутствуют + optionalAuth + лимитер', () => {
+    const s = src('routes/radio.ts');
+    for (const r of ['/sfx/next', '/sfx/list', '/sfx/file/:filename']) {
+      const re = new RegExp(`router\\.get\\('${r.replace('/', '\\/').replace(':filename', ':filename')}'`);
+      assert.match(s, re, `${r}: роут не найден`);
+      const line = s.split('\n').find((l) => l.includes(`router.get('${r}'`));
+      assert.ok(line.includes('optionalAuth'), `${r}: нет optionalAuth`);
+      assert.ok(line.includes('radioMusicLimiter'), `${r}: нет radioMusicLimiter`);
+    }
+  });
+  await ok('sfx/file: security-заголовки + path defense + content-type по расширению', () => {
+    const s = src('routes/radio.ts');
+    assert.match(s, /validateSfxFilename\(filename\)/);
+    assert.match(s, /path\.resolve\(PULSE_SFX_DIR, filename\)/);
+    assert.match(s, /filepath\.startsWith\(PULSE_SFX_DIR \+ path\.sep\)/);
+    assert.match(s, /SFX_CONTENT_TYPES/);
+    assert.match(s, /too_many_range_parts/);
+  });
+
+  // ─── Роуты admin.ts ───────────────────────────────────────────────────────
+  await ok('routes/admin.ts: upload/delete/patch sfx присутствуют', () => {
+    const s = src('routes/admin.ts');
+    assert.match(s, /router\.post\('\/radio\/sfx\/upload'/);
+    assert.match(s, /router\.delete\('\/radio\/sfx\/:filename'/);
+    assert.match(s, /router\.patch\('\/radio\/sfx\/:filename'/);
+  });
+  await ok('sfx upload: disk-cap + duplicate + magic bytes + count limit', () => {
+    const s = src('routes/admin.ts');
+    assert.match(s, /router\.post\('\/radio\/sfx\/upload', adminMiddleware/);
+    assert.match(s, /PULSE_SFX_MAX_FOLDER_SIZE/);
+    assert.match(s, /hasSfxMagicBytes/);
+    assert.match(s, /not_an_audio/);
+    assert.match(s, /PULSE_SFX_MAX_FILES/);
+    assert.match(s, /duplicate_filename/);
+  });
+
+  // ─── Конфиг ───────────────────────────────────────────────────────────────
+  await ok('config/radio.ts: sfx-лимиты разумны', () => {
+    assert.strictEqual(PULSE_SFX_MAX_FILES, 20);
+    assert.strictEqual(PULSE_SFX_MAX_FILE_SIZE, 2 * 1024 * 1024);
+    assert.strictEqual(PULSE_SFX_MAX_FOLDER_SIZE, 100 * 1024 * 1024);
+    assert.strictEqual(PULSE_SFX_RANGE_PARTS_LIMIT, 10);
+    assert.strictEqual(PULSE_SFX_MAX_FILENAME_LEN, 100);
+    assert.ok(PULSE_SFX_DIR.length > 0);
+    assert.ok(PULSE_SFX_FILENAME_REGEX.test('news_cue.mp3'));
+    assert.ok(!PULSE_SFX_FILENAME_REGEX.test('my-cue.mp3'));
+  });
+
+  // ─── Boot ─────────────────────────────────────────────────────────────────
+  await ok('index.ts: ensureSfxDir() при старте', () => {
+    assert.match(src('index.ts'), /ensureSfxDir\(\)/);
+  });
+
+  console.log(`\n[verify] radioMusic+radioSfx: ${passed} проверок пройдено${process.exitCode ? ' (ЕСТЬ ПАДЕНИЯ)' : ''}`);
 }
 
 main().catch((e) => { console.error('FATAL', e); process.exit(1); });

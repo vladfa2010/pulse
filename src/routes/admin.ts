@@ -47,6 +47,11 @@ import {
   PULSE_MUSIC_MAX_FILE_SIZE,
   PULSE_MUSIC_MAX_FILES,
   PULSE_MUSIC_MAX_FOLDER_SIZE,
+  // TZ71: SFX Library
+  PULSE_SFX_DIR,
+  PULSE_SFX_MAX_FILE_SIZE,
+  PULSE_SFX_MAX_FILES,
+  PULSE_SFX_MAX_FOLDER_SIZE,
 } from '../config/radio';
 import {
   listMusicFiles,
@@ -56,6 +61,14 @@ import {
   getMusicFolderSize,
   hasMp3MagicBytes,
 } from '../services/radioMusic';
+// TZ71: SFX Library — upload/rename/delete звуковых эффектов
+import {
+  listSfxFiles,
+  invalidateSfxCache,
+  validateSfxFilename,
+  getSfxFolderSize,
+  hasSfxMagicBytes,
+} from '../services/radioSfx';
 import { nowSql } from '../utils/nowSql';
 import { getUserId } from '../utils/users';
 import {
@@ -1779,6 +1792,175 @@ router.patch('/radio/music/:filename', adminMiddleware, async (req, res) => {
     res.json({ ok: true, filename: newFilename });
   } catch (err: any) {
     console.error('[Admin] Music rename error:', { code: err?.code });
+    res.status(500).json({ error: 'rename_failed' });
+  }
+});
+
+// ═══ TZ71: SFX Library — загрузка и управление звуковыми эффектами ═══
+// Security симметрично music: H-1 disk-cap 100 МБ, H-3 duplicate-check,
+// H-4 validateSfxFilename, magic bytes по формату (mp3/wav/ogg), M-2 masked logging.
+// Имя без метаданных: [a-z0-9_]+.(mp3|wav|ogg) — см. config/radio.ts.
+
+// H-3: race-condition protection — если файл уже существует → 409 conflict.
+const sfxUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, PULSE_SFX_DIR),
+    filename: async (_req, file, cb) => {
+      try {
+        await fs.access(path.join(PULSE_SFX_DIR, file.originalname));
+        return cb(new Error('duplicate_filename'), '');
+      } catch {
+        cb(null, file.originalname);
+      }
+    },
+  }),
+  limits: { fileSize: PULSE_SFX_MAX_FILE_SIZE },
+  fileFilter: (_req, file, cb) => {
+    // H-4: усиленная валидация имени (regex + null byte + separator + length)
+    const validation = validateSfxFilename(file.originalname);
+    if (!validation.ok) {
+      return cb(new Error(`invalid_filename:${validation.reason}`));
+    }
+    cb(null, true);
+  },
+});
+
+// POST /api/admin/radio/sfx/upload — multipart, field 'file'
+router.post('/radio/sfx/upload', adminMiddleware, async (req, res) => {
+  sfxUpload.single('file')(req, res, async (err: any) => {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(413).json({ error: 'file_too_large', limit: PULSE_SFX_MAX_FILE_SIZE });
+      }
+      if (typeof err.message === 'string' && err.message.startsWith('invalid_filename:')) {
+        const reason = err.message.split(':')[1];
+        return res.status(400).json({
+          error: 'invalid_filename',
+          reason,
+          message: 'Имя файла: строчные латинские буквы, цифры и подчёркивания, расширение .mp3/.wav/.ogg (например news_cue.mp3)',
+        });
+      }
+      if (err.message === 'duplicate_filename') {
+        return res.status(409).json({
+          error: 'duplicate_filename',
+          message: 'Файл уже существует, используйте PATCH для переименования',
+        });
+      }
+      // M-2: err.message не утекаем в response — только код/тип в логи
+      console.error('[Admin] Sfx upload error:', { code: err?.code, type: err?.constructor?.name });
+      return res.status(400).json({ error: 'upload_failed' });
+    }
+    if (!req.file) return res.status(400).json({ error: 'no_file' });
+
+    const uploadedPath = path.join(PULSE_SFX_DIR, req.file.filename);
+
+    // H-4: повторная валидация (defense-in-depth поверх multer fileFilter)
+    const validation = validateSfxFilename(req.file.filename);
+    if (!validation.ok) {
+      await fs.unlink(uploadedPath).catch(() => {});
+      return res.status(400).json({ error: 'invalid_filename', reason: validation.reason });
+    }
+
+    // Magic bytes (второй слой поверх nosniff): сигнатура должна совпадать с расширением
+    try {
+      const fd = await fs.open(uploadedPath, 'r');
+      const head = Buffer.alloc(12);
+      await fd.read(head, 0, 12, 0);
+      await fd.close();
+      if (!hasSfxMagicBytes(head, req.file.filename)) {
+        await fs.unlink(uploadedPath).catch(() => {});
+        return res.status(400).json({ error: 'not_an_audio' });
+      }
+    } catch (readErr: any) {
+      await fs.unlink(uploadedPath).catch(() => {});
+      console.error('[Admin] Sfx upload magic-bytes check:', { code: readErr?.code });
+      return res.status(500).json({ error: 'upload_failed' });
+    }
+
+    // H-1: disk-cap. Считаем ПОСЛЕ сохранения — при превышении удаляем и отказываем
+    const folderSize = await getSfxFolderSize();
+    if (folderSize > PULSE_SFX_MAX_FOLDER_SIZE) {
+      await fs.unlink(uploadedPath).catch(() => {});
+      invalidateSfxCache();
+      return res.status(413).json({
+        error: 'folder_too_large',
+        limit: PULSE_SFX_MAX_FOLDER_SIZE,
+        current: folderSize,
+      });
+    }
+
+    // count check (после disk-cap, чтобы приоритет был на размере)
+    const files = await listSfxFiles();
+    if (files.length > PULSE_SFX_MAX_FILES) {
+      await fs.unlink(uploadedPath).catch(() => {});
+      invalidateSfxCache();
+      return res.status(400).json({ error: 'too_many_files', limit: PULSE_SFX_MAX_FILES });
+    }
+
+    invalidateSfxCache();
+    res.json({ ok: true, filename: req.file.filename });
+  });
+});
+
+// DELETE /api/admin/radio/sfx/:filename
+router.delete('/radio/sfx/:filename', adminMiddleware, async (req, res) => {
+  const filename = req.params.filename;
+  const validation = validateSfxFilename(filename);
+  if (!validation.ok) {
+    return res.status(400).json({ error: 'invalid_filename', reason: validation.reason });
+  }
+  const filepath = path.resolve(PULSE_SFX_DIR, filename);
+  if (!filepath.startsWith(PULSE_SFX_DIR + path.sep)) {
+    return res.status(400).json({ error: 'invalid_filename' });
+  }
+  try {
+    await fs.unlink(filepath);
+    invalidateSfxCache();
+    res.json({ ok: true });
+  } catch (err: any) {
+    if (err?.code === 'ENOENT') {
+      return res.status(404).json({ error: 'not_found' });
+    }
+    console.error('[Admin] Sfx delete error:', { code: err?.code });
+    res.status(500).json({ error: 'delete_failed' });
+  }
+});
+
+// PATCH /api/admin/radio/sfx/:filename — переименование
+router.patch('/radio/sfx/:filename', adminMiddleware, async (req, res) => {
+  const filename = req.params.filename;
+  const newFilename = req.body?.newFilename;
+
+  const oldValidation = validateSfxFilename(filename);
+  if (!oldValidation.ok) {
+    return res.status(400).json({ error: 'invalid_filename', reason: oldValidation.reason, target: 'old' });
+  }
+  if (typeof newFilename !== 'string') {
+    return res.status(400).json({ error: 'invalid_filename_format' });
+  }
+  const newValidation = validateSfxFilename(newFilename);
+  if (!newValidation.ok) {
+    return res.status(400).json({ error: 'invalid_filename', reason: newValidation.reason, target: 'new' });
+  }
+
+  const oldPath = path.resolve(PULSE_SFX_DIR, filename);
+  const newPath = path.resolve(PULSE_SFX_DIR, newFilename);
+  if (!oldPath.startsWith(PULSE_SFX_DIR + path.sep) || !newPath.startsWith(PULSE_SFX_DIR + path.sep)) {
+    return res.status(400).json({ error: 'invalid_filename' });
+  }
+  try {
+    // fs.rename перезаписал бы существующий файл — отдаём 409 conflict
+    try {
+      await fs.access(newPath);
+      return res.status(409).json({ error: 'target_filename_exists', target: newFilename });
+    } catch {
+      // OK — целевой файл не существует
+    }
+    await fs.rename(oldPath, newPath);
+    invalidateSfxCache();
+    res.json({ ok: true, filename: newFilename });
+  } catch (err: any) {
+    console.error('[Admin] Sfx rename error:', { code: err?.code });
     res.status(500).json({ error: 'rename_failed' });
   }
 });
