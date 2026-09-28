@@ -33,6 +33,8 @@ export interface RadioFlags {
   minimax_host_voice: string;
   minimax_guest_voice: string;
   default_mode: 'text' | 'reflect' | 'podcast';
+  /** TZ70: глобальный kill-switch фоновой музыки между новостями (админ). */
+  music_enabled: boolean;
 }
 
 export const RADIO_FLAG_DEFAULTS: RadioFlags = {
@@ -41,6 +43,7 @@ export const RADIO_FLAG_DEFAULTS: RadioFlags = {
   minimax_host_voice: 'presenter_male',
   minimax_guest_voice: 'presenter_female',
   default_mode: 'reflect',
+  music_enabled: true,
 };
 
 // Белый список голосов — единый источник в config/radio (ТЗ-66-lite).
@@ -112,7 +115,7 @@ async function seedDefaultsIfEmpty(): Promise<void> {
       );
     }
   }
-  console.log('[RadioSettings] Seeded 5 default flags into _radio_settings');
+  console.log(`[RadioSettings] Seeded ${Object.keys(RADIO_FLAG_DEFAULTS).length} default flags into _radio_settings`);
 }
 
 export async function getRadioFlags(): Promise<RadioFlags> {
@@ -138,6 +141,9 @@ export async function getRadioFlags(): Promise<RadioFlags> {
     minimax_host_voice: dbValues.get('minimax_host_voice') ?? RADIO_FLAG_DEFAULTS.minimax_host_voice,
     minimax_guest_voice: dbValues.get('minimax_guest_voice') ?? RADIO_FLAG_DEFAULTS.minimax_guest_voice,
     default_mode: (dbValues.get('default_mode') ?? RADIO_FLAG_DEFAULTS.default_mode) as RadioFlags['default_mode'],
+    music_enabled: dbValues.get('music_enabled') === undefined
+      ? RADIO_FLAG_DEFAULTS.music_enabled
+      : dbValues.get('music_enabled') === 'true',
   };
 
   flagsCache = { flags, at: Date.now() };
@@ -183,6 +189,12 @@ export async function setRadioFlag(
         throw new RadioFlagError(`default_mode must be one of: ${DEFAULT_MODES.join(', ')}`);
       }
       serialized = value;
+      break;
+    case 'music_enabled':
+      if (typeof value !== 'boolean') {
+        throw new RadioFlagError('music_enabled must be a boolean');
+      }
+      serialized = String(value);
       break;
     default:
       throw new RadioFlagError(`unknown key: ${key}`);

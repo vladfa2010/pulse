@@ -65,3 +65,18 @@ export const MINIMAX_VOICES: Record<string, MinimaxVoiceMeta> = {
 export const MINIMAX_VOICE_IDS: readonly string[] = Object.keys(MINIMAX_VOICES);
 
 export const MINIMAX_VOICE_IDS_SET: ReadonlySet<string> = new Set(MINIMAX_VOICE_IDS);
+
+// ═══ TZ70: фоновая музыка между блоками новостей ═══
+// Папка с треками. На VDS проброшена в контейнер через bind-mount
+// (/opt/pulse/docker-compose.yml: /opt/pulse/music:/opt/pulse/music) — без mount
+// файлы писались бы в overlay-слой и терялись бы при recreate контейнера.
+export const PULSE_MUSIC_DIR = process.env.PULSE_MUSIC_DIR || '/opt/pulse/music';
+
+// Имя файла несёт метаданные: N_title_YY_tempo_genre.mp3
+// (пример: 3_market_pulse_26_fast_dubstep.mp3).
+export const PULSE_MUSIC_FILENAME_REGEX = /^(\d+)_(.+?)(\d{2})_(slow|medium|fast)_([a-z0-9]+)\.mp3$/;
+export const PULSE_MUSIC_MAX_FILENAME_LEN = 200; // H-4: overlong input отсекаем
+export const PULSE_MUSIC_MAX_FILES = 50;
+export const PULSE_MUSIC_MAX_FILE_SIZE = 50 * 1024 * 1024;        // 50 МБ на файл
+export const PULSE_MUSIC_MAX_FOLDER_SIZE = 2 * 1024 * 1024 * 1024; // 2 ГБ — disk cap (H-1)
+export const PULSE_MUSIC_RANGE_PARTS_LIMIT = 10; // max range-parts в одном Range header (M-1)
