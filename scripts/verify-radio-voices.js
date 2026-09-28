@@ -108,6 +108,23 @@ async function main() {
     assert.strictEqual(v.gender, 'm');
     assert.ok(v.labelRu.length > 0);
   });
+  await ok('merge: gender из description, если имени недостаточно', () => {
+    const v = mergeVoiceMeta('English_expressive_narrator', {
+      voice_name: 'Expressive Narrator',
+      description: ['An expressive adult male voice with a British accent.'],
+    }, 'system');
+    assert.strictEqual(v.gender, 'm');
+  });
+
+  // ─── pickVoiceList — реальные структуры ответа Minimax ─────────────────
+  await ok('pickVoiceList: system_voice / клонированный массив / null / старые ключи', async () => {
+    const { pickVoiceList } = require('../dist/services/radioVoices');
+    assert.strictEqual(pickVoiceList({ system_voice: [1, 2] }, 'system').length, 2);
+    assert.strictEqual(pickVoiceList({ voice_cloning: [3] }, 'voice_cloning').length, 1);
+    assert.deepStrictEqual(pickVoiceList({ voice_generation: null }, 'voice_generation'), []);
+    assert.strictEqual(pickVoiceList({ voice_list: [4] }, 'system').length, 1);
+    assert.deepStrictEqual(pickVoiceList({ base_resp: {} }, 'system'), []);
+  });
 
   // ─── getAvailableVoices: minimax-ветка + merge + probe + кэш ───────────
   await ok('minimax-ветка: 3 типа, probe словарных голосов, кэш 24ч', async () => {
@@ -116,15 +133,16 @@ async function main() {
     let ttsCalls = 0;
     stubFetch({
       'https://api.minimax.io/v1/get_voice system': () => {
-        // Реальная структура: массив под ключом = voice_type.
-        return { json: { system: [
+        // Реальная структура: system → data.system_voice (332 голоса у Minimax).
+        return { json: { system_voice: [
           { voice_id: 'presenter_male', voice_name: 'Presenter Male' },
           { voice_id: 'audiobook_male_2', voice_name: 'Audiobook Male 2' },
-          { voice_id: 'Spanish_Lively_Man', voice_name: 'Spanish Lively Man' },
+          { voice_id: 'Spanish_Lively_Man', voice_name: 'Spanish Lively Man',
+            description: ['An expressive adult male voice.'] },
         ] } };
       },
       'https://api.minimax.io/v1/get_voice voice_cloning': { json: { voice_cloning: [] } },
-      'https://api.minimax.io/v1/get_voice voice_generation': { json: { voice_generation: [] } },
+      'https://api.minimax.io/v1/get_voice voice_generation': { json: { voice_generation: null } },
       'https://api.minimax.io/v1/t2a_v2': (url, opts) => {
         ttsCalls++;
         // Все словарные голоса кроме audiobook_male_2 — доступны.

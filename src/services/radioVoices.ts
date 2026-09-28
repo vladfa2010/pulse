@@ -95,9 +95,7 @@ async function fetchFromMinimax(apiKey: string): Promise<MinimaxVoiceMeta[]> {
       throw new Error(`POST /v1/get_voice voice_type=${voiceType} → ${resp.status}`);
     }
     const data: any = await resp.json();
-    // Реальная структура ответа (проверено 2026-09-28): массив лежит под ключом,
-    // равным запрошенному типу — { system: [...], voice_cloning: [...], ... }.
-    const list: any[] = data?.[voiceType] ?? data?.voice_list ?? data?.voices ?? [];
+    const list = pickVoiceList(data, voiceType);
     for (const v of list) {
       const voiceId: string = v.voice_id ?? v.id;
       if (!voiceId) continue;
@@ -109,6 +107,23 @@ async function fetchFromMinimax(apiKey: string): Promise<MinimaxVoiceMeta[]> {
   return allVoices;
 }
 
+/**
+ * Реальная структура ответа (проверено 2026-09-28): голоса под ключом
+ * system_voice для system, под ключом = voice_type для клонированных;
+ * voice_generation может быть null. Держим и старые варианты voice_list/voices.
+ */
+export function pickVoiceList(
+  data: any,
+  voiceType: string,
+): any[] {
+  const direct = data?.[voiceType];
+  if (Array.isArray(direct)) return direct;
+  if (Array.isArray(data?.system_voice) && voiceType === 'system') return data.system_voice;
+  if (Array.isArray(data?.voice_list)) return data.voice_list;
+  if (Array.isArray(data?.voices)) return data.voices;
+  return [];
+}
+
 /** Merge записи Minimax с локальным словарём метаданных (экспортировано для тестов). */
 export function mergeVoiceMeta(
   voiceId: string,
@@ -117,11 +132,16 @@ export function mergeVoiceMeta(
 ): MinimaxVoiceMeta {
   const local = (MINIMAX_VOICES as Record<string, MinimaxVoiceMeta>)[voiceId];
   const name: string = apiVoice?.voice_name ?? voiceId;
+  // description — string[] («An expressive adult male voice…») — точный
+  // источник для эвристики gender, если голоса нет в словаре.
+  const description = Array.isArray(apiVoice?.description)
+    ? apiVoice.description.join(' ')
+    : String(apiVoice?.description ?? '');
   return {
     id: voiceId,
     labelRu: local?.labelRu ?? humanize(voiceId),
     labelEn: local?.labelEn ?? name,
-    gender: local?.gender ?? inferGender(name),
+    gender: local?.gender ?? inferGender(`${name} ${description}`),
     age: local?.age ?? 'middle',
     language: local?.language ?? inferLanguages(voiceId),
     tone: local?.tone ?? 'neutral',
@@ -231,7 +251,7 @@ export async function getCustomVoices(
     });
     if (!resp.ok) throw new Error(`get_voice ${voiceType} → ${resp.status}`);
     const data: any = await resp.json();
-    return data?.voice_list ?? data?.voices ?? [];
+    return pickVoiceList(data, voiceType);
   };
   const [cloned, generated] = await Promise.all([
     fetchType('voice_cloning'),
