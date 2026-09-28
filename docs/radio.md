@@ -948,6 +948,56 @@ play/pause, hover крестика); legacy PlayerBar на `/radio` не тро�
 - **Долги:** persistence после F5 (Д1), drag-to-dismiss (Д2), split Context
   на state/actions при росте потребителей (Д6), горячие клавиши (Д4).
 
+## Выбор голосов в админке — ТЗ68 (2026-09-28)
+
+В табе «Радио» админки — `VoicePicker`: сетка голосов по семействам с ▶
+превью, фильтр «Все/Доступные», красная метка для голосов вне тарифа,
+сохранение в runtime-флаги (`PUT /api/admin/radio-flags`, тот же механизм
+что и в ТЗ-45 — юзеры подхватывают за ~5 мин без деплоя).
+
+- **`src/config/radio.ts`** — словарь `MINIMAX_VOICES` (15 голосов:
+  presenter/audiobook/qn/English_Graceful_Lady) с метаданными
+  (labelRu/labelEn/gender/age/language/tone). Только реально существующие
+  голоса: словарь одновременно является production-whitelist'ом
+  (`MINIMAX_VOICE_IDS`/`_SET` — производные; валидация флагов в
+  `radioSettings.ts` и `/tts` продолжает работать). В словарь нельзя
+  добавлять голосы «по документации» без probe'а — 10 English_* из ранней
+  редакции ТЗ вернули 2054 и были удалены (`e4edeb1`).
+- **`src/services/radioVoices.ts`** — `getAvailableVoices()`: POST
+  `/v1/get_voice` × 3 типа (system/voice_cloning/voice_generation), кэш 24ч
+  in-memory, fallback на статический словарь (source: 'static'). Парсинг
+  ответа — `pickVoiceList`: реальный API кладёт список под `system_voice`
+  (332 голоса), клонированные под `voice_cloning`, `voice_generation` может
+  быть null. **Каталог ≠ доступные аккаунту**: словарные голоса
+  (presenter_male и др.) в каталоге ОТСУТСТВУЮТ, но работают через t2a_v2 —
+  поэтому словарь всегда добавляется поверх каталога (дедуп по id).
+  Probe: для всех словарных голосов тихий t2a_v2 («Тест», concurrency 8,
+  ~24 платных символа раз в сутки) → `inAccount` true/2054→false/undefined.
+  `generatePreviewMp3` — синхронный TTS без кэша; 2054 бросает
+  `VoiceNotInAccountError` (HEX-декодирование audio, не base64).
+- **Роуты (`src/routes/admin.ts`, adminMiddleware):**
+  `GET /api/admin/radio/voices` ({voices, source, count}),
+  `POST /api/admin/radio/voices/preview` (mp3; 400 на пустой/>1000 text;
+  503 minimax_not_configured; 503 voice_not_in_account для 2054),
+  `GET /api/admin/radio/voices/custom` (cloned/generated, заглушка ТЗ69).
+  Rate-limit на preview нет — adminMiddleware достаточно (доверенная среда).
+  Жёсткий whitelist voice_id НЕ применяем — смысл ТЗ в пробе голосов вне
+  списка; защиту эфира держит словарь (сохранение недоступного голоса
+  заблокировано на фронте кнопкой save disabled).
+- **Фронт:** `components/admin/VoicePicker.tsx` (превью через
+  `adminApi.postBlob` — POST с Blob-ответом, таймаут 60с, единая точка
+  auth/401/429; без хардкода URL), чистые helpers в
+  `lib/admin/voicePickerUtils.ts` (группировка/фильтр, 5 юнит-тестов).
+- **Гейты:** `npm run verify:radioVoices` — 17 проверок (словарь, merge,
+  эвристики, кэш, fallback, hex, 2054) со стаббингом fetch.
+- **Смоук на VDS (`e4edeb1`):** /voices 200 (343 голоса: 332 каталог + 15
+  словаря − пересечения, source minimax), превью presenter_male 200
+  (ID3-заголовок), Russian_Reliable_Man → 503 voice_not_in_account, пустой
+  text → 400, без токена → 401.
+- **Известная особенность:** probe ~11–15 из 15 словарных голосов за первый
+  заход (нестабильные сетевые ошибки → inAccount undefined = без метки,
+  перезамер при рефетче кэша раз в сутки).
+
 ## Роадмап
 
 - **v1 (ТЗ-42+43+44):** страница `/radio` (прямая ссылка; пункт в NavBar/Footer
