@@ -133,10 +133,9 @@ async function main() {
     let ttsCalls = 0;
     stubFetch({
       'https://api.minimax.io/v1/get_voice system': () => {
-        // Реальная структура: system → data.system_voice (332 голоса у Minimax).
+        // Реальная структура: system → data.system_voice. В каталоге НЕТ
+        // словарных голосов (presenter_male и др. — аккаунтные, не каталожные).
         return { json: { system_voice: [
-          { voice_id: 'presenter_male', voice_name: 'Presenter Male' },
-          { voice_id: 'audiobook_male_2', voice_name: 'Audiobook Male 2' },
           { voice_id: 'Spanish_Lively_Man', voice_name: 'Spanish Lively Man',
             description: ['An expressive adult male voice.'] },
         ] } };
@@ -159,15 +158,20 @@ async function main() {
     assert.strictEqual(
       fetchLog.filter((k) => k.includes('/get_voice')).length, 3, 'должно быть 3 вызова get_voice',
     );
+    // Каталог (1) + словарь целиком (24, минус пересечения) — без дублей.
+    const ids = r1.voices.map((v) => v.id);
+    assert.strictEqual(new Set(ids).size, ids.length, 'дубли голосов');
+    assert.ok(ids.includes('Spanish_Lively_Man'), 'каталожный голос');
+    // Словарные голоса добавлены поверх каталога, даже если каталог их не знает.
     const pm = r1.voices.find((v) => v.id === 'presenter_male');
     assert.strictEqual(pm.labelRu, 'Михаил');
-    assert.strictEqual(pm.inAccount, true);
+    assert.strictEqual(pm.voiceType, 'system');
     const am2 = r1.voices.find((v) => v.id === 'audiobook_male_2');
     assert.strictEqual(am2.inAccount, false);
     const es = r1.voices.find((v) => v.id === 'Spanish_Lively_Man');
     assert.strictEqual(es.inAccount, undefined); // вне словаря — не пробуем
-    // Пробуются только словарные голоса, реально присутствующие в ответе API (2 шт.).
-    assert.strictEqual(ttsCalls, 2, 'probe должен идти ровно по словарным голосам ответа');
+    // Probe идёт ровно по всем словарным голосам.
+    assert.strictEqual(ttsCalls, Object.keys(MINIMAX_VOICES).length, 'probe не всех словарных');
 
     // Кэш: повторный вызов без сети.
     const netCalls = fetchLog.length;

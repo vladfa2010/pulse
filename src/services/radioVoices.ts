@@ -103,6 +103,15 @@ async function fetchFromMinimax(apiKey: string): Promise<MinimaxVoiceMeta[]> {
     }
   }
 
+  // Словарные голоса — известные голоса аккаунта (работают через t2a_v2), но их
+  // НЕТ в каталоге get_voice (каталог ≠ доступные аккаунту). Всегда добавляем
+  // их поверх каталога, чтобы админка видела и кураторские, и каталожные.
+  for (const meta of Object.values(MINIMAX_VOICES)) {
+    if (!allVoices.some((v) => v.id === meta.id)) {
+      allVoices.push({ ...meta, voiceType: 'system' });
+    }
+  }
+
   await probeInAccount(allVoices, apiKey);
   return allVoices;
 }
