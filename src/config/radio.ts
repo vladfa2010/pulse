@@ -55,18 +55,10 @@ export const MINIMAX_VOICES: Record<string, MinimaxVoiceMeta> = {
   'male-qn-jingying': { id: 'male-qn-jingying', labelRu: 'ЦзинИн',  labelEn: 'Male Jingying', gender: 'm', age: 'young', language: ['zh'], tone: 'neutral',   voiceType: 'system' },
   'female-shaonv':    { id: 'female-shaonv',    labelRu: 'Шаонюй',  labelEn: 'Female Shaonv', gender: 'f', age: 'young', language: ['zh'], tone: 'energetic', voiceType: 'system' },
   'female-yujie':     { id: 'female-yujie',     labelRu: 'Юйцзе',   labelEn: 'Female Yujie',  gender: 'f', age: 'young', language: ['zh'], tone: 'neutral',   voiceType: 'system' },
-  // English_* — мультиязычное семейство (поддерживает и русский текст)
-  English_Graceful_Lady: { id: 'English_Graceful_Lady', labelRu: 'Graceful Lady', labelEn: 'English Graceful Lady', gender: 'f', age: 'middle', language: ['en', 'ru'], tone: 'calm',    voiceType: 'system' },
-  English_Proactive_Girl: { id: 'English_Proactive_Girl', labelRu: 'Proactive Girl', labelEn: 'English Proactive Girl', gender: 'f', age: 'young', language: ['en', 'ru'], tone: 'energetic', voiceType: 'system' },
-  English_Cheerful_Girl: { id: 'English_Cheerful_Girl', labelRu: 'Cheerful Girl', labelEn: 'English Cheerful Girl', gender: 'f', age: 'young', language: ['en', 'ru'], tone: 'energetic', voiceType: 'system' },
-  English_Lively_Girl: { id: 'English_Lively_Girl', labelRu: 'Lively Girl', labelEn: 'English Lively Girl', gender: 'f', age: 'young', language: ['en', 'ru'], tone: 'energetic', voiceType: 'system' },
-  English_Gentle_Girl: { id: 'English_Gentle_Girl', labelRu: 'Gentle Girl', labelEn: 'English Gentleful Girl', gender: 'f', age: 'young', language: ['en', 'ru'], tone: 'calm',    voiceType: 'system' },
-  English_Friendly_Guy: { id: 'English_Friendly_Guy', labelRu: 'Friendly Guy', labelEn: 'English Friendly Guy', gender: 'm', age: 'young', language: ['en', 'ru'], tone: 'warm',    voiceType: 'system' },
-  English_Calm_Guy: { id: 'English_Calm_Guy', labelRu: 'Calm Guy', labelEn: 'English Calm Guy', gender: 'm', age: 'middle', language: ['en', 'ru'], tone: 'calm',    voiceType: 'system' },
-  English_Casual_Guy: { id: 'English_Casual_Guy', labelRu: 'Casual Guy', labelEn: 'English Casual Guy', gender: 'm', age: 'young', language: ['en', 'ru'], tone: 'neutral', voiceType: 'system' },
-  English_Lively_Guy: { id: 'English_Lively_Guy', labelRu: 'Lively Guy', labelEn: 'English Lively Guy', gender: 'm', age: 'young', language: ['en', 'ru'], tone: 'energetic', voiceType: 'system' },
-  English_Rational_Man: { id: 'English_Rational_Man', labelRu: 'Rational Man', labelEn: 'English Rational Man', gender: 'm', age: 'middle', language: ['en', 'ru'], tone: 'neutral', voiceType: 'system' },
-  English_Mature_Man: { id: 'English_Mature_Man', labelRu: 'Mature Man', labelEn: 'English Mature Man', gender: 'm', age: 'mature', language: ['en', 'ru'], tone: 'calm',    voiceType: 'system' },
+  // English_* — мультиязычное семейство. В словарь включаем ТОЛЬКО подтверждённые
+  // probe'ом голоса (2026-09-28): Graceful_Lady реально работает; прочие
+  // английские имена из ранней редакции ТЗ вернули 2054 и были удалены.
+  English_Graceful_Lady: { id: 'English_Graceful_Lady', labelRu: 'Graceful Lady', labelEn: 'English Graceful Lady', gender: 'f', age: 'middle', language: ['en', 'ru'], tone: 'calm', voiceType: 'system' },
 };
 
 // Валидация voice_id (radioSettings + routes/radio.ts) — производная от словаря.
