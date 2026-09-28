@@ -1,5 +1,8 @@
 import { Router } from 'express';
 import bcrypt from 'bcrypt';
+import multer from 'multer';
+import { promises as fs } from 'fs';
+import * as path from 'path';
 import { AuthRequest } from '../middleware/auth';
 import { query } from '../config/db';
 import { validate } from '../middleware/validate';
@@ -38,6 +41,21 @@ import {
   getCustomVoices,
   VoiceNotInAccountError,
 } from '../services/radioVoices';
+// TZ70: Music Library — upload/rename/delete фоновых треков радио
+import {
+  PULSE_MUSIC_DIR,
+  PULSE_MUSIC_MAX_FILE_SIZE,
+  PULSE_MUSIC_MAX_FILES,
+  PULSE_MUSIC_MAX_FOLDER_SIZE,
+} from '../config/radio';
+import {
+  listMusicFiles,
+  invalidateMusicCache,
+  parseMusicFilename,
+  validateMusicFilename,
+  getMusicFolderSize,
+  hasMp3MagicBytes,
+} from '../services/radioMusic';
 import { nowSql } from '../utils/nowSql';
 import { getUserId } from '../utils/users';
 import {
@@ -1590,6 +1608,178 @@ router.get('/radio/voices/custom', adminMiddleware, async (_req: AuthRequest, re
   } catch (err: any) {
     console.error('[Admin] Custom voices error:', err.message);
     res.status(500).json({ error: 'fetch_custom_voices_failed' });
+  }
+});
+
+// ═══ TZ70: Music Library — загрузка и управление фоновыми треками радио ═══
+// Security (аудит 2026-09-28): H-1 disk-cap 2 ГБ, H-3 duplicate-check при upload,
+// H-4 validateMusicFilename (null byte / separator / length / hidden), M-2 masked
+// logging (только коды ошибок, без paths из err.message).
+// Имя файла несёт метаданные: N_title_YY_tempo_genre.mp3 — см. config/radio.ts.
+
+// H-3: race-condition protection — если файл уже существует → 409 conflict.
+// multer.diskStorage.filename с async-проверкой fs.access перед записью.
+const musicUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, PULSE_MUSIC_DIR),
+    filename: async (_req, file, cb) => {
+      try {
+        await fs.access(path.join(PULSE_MUSIC_DIR, file.originalname));
+        return cb(new Error('duplicate_filename'), '');
+      } catch {
+        cb(null, file.originalname);
+      }
+    },
+  }),
+  limits: { fileSize: PULSE_MUSIC_MAX_FILE_SIZE },
+  fileFilter: (_req, file, cb) => {
+    // H-4: усиленная валидация имени (regex + null byte + separator + length)
+    const validation = validateMusicFilename(file.originalname);
+    if (!validation.ok) {
+      return cb(new Error(`invalid_filename:${validation.reason}`));
+    }
+    cb(null, true);
+  },
+});
+
+// POST /api/admin/radio/music/upload — multipart, field 'file'
+router.post('/radio/music/upload', adminMiddleware, async (req, res) => {
+  musicUpload.single('file')(req, res, async (err: any) => {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(413).json({ error: 'file_too_large', limit: PULSE_MUSIC_MAX_FILE_SIZE });
+      }
+      if (typeof err.message === 'string' && err.message.startsWith('invalid_filename:')) {
+        const reason = err.message.split(':')[1];
+        return res.status(400).json({
+          error: 'invalid_filename',
+          reason,
+          message: 'Имя файла должно быть: N_title_YY_tempo_genre.mp3 (например 3_mysong_26_slow_rnb.mp3)',
+        });
+      }
+      if (err.message === 'duplicate_filename') {
+        return res.status(409).json({
+          error: 'duplicate_filename',
+          message: 'Файл уже существует, используйте PATCH для переименования',
+        });
+      }
+      // M-2: err.message не утекаем в response — только код/тип в логи
+      console.error('[Admin] Music upload error:', { code: err?.code, type: err?.constructor?.name });
+      return res.status(400).json({ error: 'upload_failed' });
+    }
+    if (!req.file) return res.status(400).json({ error: 'no_file' });
+
+    const uploadedPath = path.join(PULSE_MUSIC_DIR, req.file.filename);
+
+    // H-4: повторная валидация (defense-in-depth поверх multer fileFilter)
+    const validation = validateMusicFilename(req.file.filename);
+    if (!validation.ok) {
+      await fs.unlink(uploadedPath).catch(() => {});
+      return res.status(400).json({ error: 'invalid_filename', reason: validation.reason });
+    }
+
+    // Magic bytes (второй слой поверх nosniff): реально ли это mp3
+    try {
+      const fd = await fs.open(uploadedPath, 'r');
+      const head = Buffer.alloc(3);
+      await fd.read(head, 0, 3, 0);
+      await fd.close();
+      if (!hasMp3MagicBytes(head)) {
+        await fs.unlink(uploadedPath).catch(() => {});
+        return res.status(400).json({ error: 'not_an_mp3' });
+      }
+    } catch (readErr: any) {
+      await fs.unlink(uploadedPath).catch(() => {});
+      console.error('[Admin] Music upload magic-bytes check:', { code: readErr?.code });
+      return res.status(500).json({ error: 'upload_failed' });
+    }
+
+    // H-1: disk-cap. Считаем ПОСЛЕ сохранения — при превышении удаляем и отказываем
+    const folderSize = await getMusicFolderSize();
+    if (folderSize > PULSE_MUSIC_MAX_FOLDER_SIZE) {
+      await fs.unlink(uploadedPath).catch(() => {});
+      invalidateMusicCache();
+      return res.status(413).json({
+        error: 'folder_too_large',
+        limit: PULSE_MUSIC_MAX_FOLDER_SIZE,
+        current: folderSize,
+      });
+    }
+
+    // count check (после disk-cap, чтобы приоритет был на размере)
+    const files = await listMusicFiles();
+    if (files.length > PULSE_MUSIC_MAX_FILES) {
+      await fs.unlink(uploadedPath).catch(() => {});
+      invalidateMusicCache();
+      return res.status(400).json({ error: 'too_many_files', limit: PULSE_MUSIC_MAX_FILES });
+    }
+
+    invalidateMusicCache();
+    const meta = parseMusicFilename(req.file.filename);
+    res.json({ ok: true, filename: req.file.filename, metadata: meta });
+  });
+});
+
+// DELETE /api/admin/radio/music/:filename
+router.delete('/radio/music/:filename', adminMiddleware, async (req, res) => {
+  const filename = req.params.filename;
+  const validation = validateMusicFilename(filename);
+  if (!validation.ok) {
+    return res.status(400).json({ error: 'invalid_filename', reason: validation.reason });
+  }
+  const filepath = path.resolve(PULSE_MUSIC_DIR, filename);
+  if (!filepath.startsWith(PULSE_MUSIC_DIR + path.sep)) {
+    return res.status(400).json({ error: 'invalid_filename' });
+  }
+  try {
+    await fs.unlink(filepath);
+    invalidateMusicCache();
+    res.json({ ok: true });
+  } catch (err: any) {
+    if (err?.code === 'ENOENT') {
+      return res.status(404).json({ error: 'not_found' });
+    }
+    console.error('[Admin] Music delete error:', { code: err?.code });
+    res.status(500).json({ error: 'delete_failed' });
+  }
+});
+
+// PATCH /api/admin/radio/music/:filename — переименование (коррекция метаданных)
+router.patch('/radio/music/:filename', adminMiddleware, async (req, res) => {
+  const filename = req.params.filename;
+  const newFilename = req.body?.newFilename;
+
+  const oldValidation = validateMusicFilename(filename);
+  if (!oldValidation.ok) {
+    return res.status(400).json({ error: 'invalid_filename', reason: oldValidation.reason, target: 'old' });
+  }
+  if (typeof newFilename !== 'string') {
+    return res.status(400).json({ error: 'invalid_filename_format' });
+  }
+  const newValidation = validateMusicFilename(newFilename);
+  if (!newValidation.ok) {
+    return res.status(400).json({ error: 'invalid_filename', reason: newValidation.reason, target: 'new' });
+  }
+
+  const oldPath = path.resolve(PULSE_MUSIC_DIR, filename);
+  const newPath = path.resolve(PULSE_MUSIC_DIR, newFilename);
+  if (!oldPath.startsWith(PULSE_MUSIC_DIR + path.sep) || !newPath.startsWith(PULSE_MUSIC_DIR + path.sep)) {
+    return res.status(400).json({ error: 'invalid_filename' });
+  }
+  try {
+    // fs.rename перезаписал бы существующий файл — отдаём 409 conflict
+    try {
+      await fs.access(newPath);
+      return res.status(409).json({ error: 'target_filename_exists', target: newFilename });
+    } catch {
+      // OK — целевой файл не существует
+    }
+    await fs.rename(oldPath, newPath);
+    invalidateMusicCache();
+    res.json({ ok: true, filename: newFilename });
+  } catch (err: any) {
+    console.error('[Admin] Music rename error:', { code: err?.code });
+    res.status(500).json({ error: 'rename_failed' });
   }
 });
 

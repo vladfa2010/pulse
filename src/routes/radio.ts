@@ -16,9 +16,11 @@
  */
 
 import { Router } from 'express';
+import { promises as fs } from 'fs';
+import * as path from 'path';
 import { AuthRequest } from '../middleware/auth';
 import { optionalAuth } from '../middleware/optionalAuth';
-import { radioTtsLimiter, checkRateLimit } from '../middleware/rateLimit';
+import { radioTtsLimiter, radioMusicLimiter, checkRateLimit } from '../middleware/rateLimit';
 import { recordTtsResult } from '../services/radioMetrics';
 import { getRadioFlags } from '../services/radioSettings';
 import {
@@ -27,9 +29,18 @@ import {
   MINIMAX_VOICE_IDS_SET,
 } from '../config/radio'; // ТЗ-66-lite: единый источник констант
 import {
+  PULSE_MUSIC_DIR,
+  PULSE_MUSIC_RANGE_PARTS_LIMIT,
+} from '../config/radio'; // TZ70: фоновая музыка
+import {
   cacheGetPublic,
   getOrFetchMp3,
 } from '../services/radioMp3Cache';
+import {
+  listMusicFiles,
+  pickRandomMusic,
+  validateMusicFilename,
+} from '../services/radioMusic';
 
 const router = Router();
 
@@ -60,6 +71,7 @@ router.get('/config', optionalAuth, async (_req: AuthRequest, res) => {
     radio_minimax_host_voice: flags.minimax_host_voice,
     radio_minimax_guest_voice: flags.minimax_guest_voice,
     radio_default_mode: flags.default_mode,
+    radio_music_enabled: flags.music_enabled,
     minimax_configured: !!process.env.MINIMAX_API_KEY,
   });
 });
@@ -223,5 +235,88 @@ export async function fetchAndDecodeMinimax(
 
   return Buffer.from(data.data.audio, 'hex');
 }
+
+// ═══ TZ70: фоновая музыка между блоками новостей ═══
+// Гости слушают тоже (optionalAuth, как ТЗ-64). Пустая папка → 200 { url: null }
+// (не 404: клиент не должен считать это ошибкой — просто тишина в эфире).
+
+// GET /api/radio/music/next — следующий трек (shuffle без повторов до полного обхода)
+router.get('/music/next', optionalAuth, radioMusicLimiter, async (_req, res) => {
+  try {
+    const track = await pickRandomMusic();
+    if (!track) return res.json({ url: null });
+    res.json({
+      url: `/api/radio/music/file/${encodeURIComponent(track.filename)}`,
+      title: track.title,
+      year: track.year,
+      tempo: track.tempo,
+      genre: track.genre,
+    });
+  } catch (err: any) {
+    // M-2: не утекаем paths — только код ошибки
+    console.error('[RadioMusic] pickRandom:', { code: err?.code });
+    res.json({ url: null });
+  }
+});
+
+// GET /api/radio/music/list — список треков (админка MusicLibraryTab + диагностика)
+router.get('/music/list', optionalAuth, radioMusicLimiter, async (_req, res) => {
+  try {
+    const files = await listMusicFiles();
+    res.json({ files });
+  } catch (err: any) {
+    console.error('[RadioMusic] list:', { code: err?.code });
+    res.status(500).json({ error: 'list_failed' });
+  }
+});
+
+// GET /api/radio/music/file/:filename — стрим mp3 (Range support).
+// Security: H-4 (validateMusicFilename), H-2 (nosniff + inline), M-1 (range-parts
+// лимит 10 → 416, rate-limit выше). Content-Length НЕ ставим руками — sendFile
+// сам отдаёт 200/206 с корректной длиной (ручной конфликтовал бы с Range).
+router.get('/music/file/:filename', optionalAuth, radioMusicLimiter, async (req, res) => {
+  const filename = req.params.filename;
+
+  const validation = validateMusicFilename(filename);
+  if (!validation.ok) {
+    return res.status(400).json({ error: 'invalid_filename', reason: validation.reason });
+  }
+
+  const filepath = path.resolve(PULSE_MUSIC_DIR, filename);
+  // defense-in-depth: filepath обязан остаться внутри MUSIC_DIR
+  if (!filepath.startsWith(PULSE_MUSIC_DIR + path.sep)) {
+    return res.status(400).json({ error: 'invalid_filename' });
+  }
+
+  try {
+    const stat = await fs.stat(filepath);
+    if (!stat.isFile()) return res.status(404).json({ error: 'not_found' });
+
+    // M-1: лимит на количество range-parts в одном запросе
+    const rangeHeader = req.headers.range;
+    if (rangeHeader) {
+      const parts = rangeHeader.replace(/^bytes=/, '').split(',');
+      if (parts.length > PULSE_MUSIC_RANGE_PARTS_LIMIT) {
+        return res.status(416).json({
+          error: 'too_many_range_parts',
+          limit: PULSE_MUSIC_RANGE_PARTS_LIMIT,
+        });
+      }
+    }
+
+    res.set('Content-Type', 'audio/mpeg');
+    res.set('Accept-Ranges', 'bytes');
+    res.set('Cache-Control', 'public, max-age=3600');
+    res.set('X-Content-Type-Options', 'nosniff');
+    res.set('Content-Disposition', 'inline');
+    res.sendFile(filepath);
+  } catch (err: any) {
+    if (err?.code === 'ENOENT') {
+      return res.status(404).json({ error: 'not_found' });
+    }
+    console.error('[RadioMusic] sendFile:', { code: err?.code });
+    res.status(500).json({ error: 'send_failed' });
+  }
+});
 
 export default router;

@@ -173,6 +173,23 @@ export const radioTtsLimiter = rateLimit({
   validate: { trustProxy: false },
 });
 
+// ─── Radio music — фоновые треки (TZ70) ────────────────────────────────────
+// 100 req/мин на юзера (или IP для гостя). Раздача mp3 идёт через Range-запросы
+// аудио-элемента; polling /music/list у админки — 1 запрос / 30 с. Лимит
+// закрывает M-1 (slow-loris/DoS на статике), ключ — как у TTS (userId || IP).
+export const radioMusicLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 100,
+  message: {
+    error: 'rate_limited',
+    retryAfter: '1 minute',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => (req as any).user?.userId || req.ip || 'unknown',
+  validate: { trustProxy: false },
+});
+
 /**
  * ТЗ-63: ручная проверка лимитера. Возвращает Promise<boolean>:
  *  - true — лимитер разрешил (next() вызван), продолжаем.
