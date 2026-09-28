@@ -178,7 +178,7 @@ app.get('/health', async (req, res) => {
 });
 
 app.get('/api/health', (req, res) => {
-  res.json({ ok: true, uptime: process.uptime() });
+  res.json({ ok: true, uptime: process.uptime(), ip: req.ip });
 });
 
 // Slow request log — excludes health endpoints (monitoring noise)
