@@ -95,7 +95,9 @@ async function fetchFromMinimax(apiKey: string): Promise<MinimaxVoiceMeta[]> {
       throw new Error(`POST /v1/get_voice voice_type=${voiceType} → ${resp.status}`);
     }
     const data: any = await resp.json();
-    const list: any[] = data?.voice_list ?? data?.voices ?? [];
+    // Реальная структура ответа (проверено 2026-09-28): массив лежит под ключом,
+    // равным запрошенному типу — { system: [...], voice_cloning: [...], ... }.
+    const list: any[] = data?.[voiceType] ?? data?.voice_list ?? data?.voices ?? [];
     for (const v of list) {
       const voiceId: string = v.voice_id ?? v.id;
       if (!voiceId) continue;

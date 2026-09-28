@@ -116,7 +116,8 @@ async function main() {
     let ttsCalls = 0;
     stubFetch({
       'https://api.minimax.io/v1/get_voice system': () => {
-        return { json: { voice_list: [
+        // Реальная структура: массив под ключом = voice_type.
+        return { json: { system: [
           { voice_id: 'presenter_male', voice_name: 'Presenter Male' },
           { voice_id: 'audiobook_male_2', voice_name: 'Audiobook Male 2' },
           { voice_id: 'Spanish_Lively_Man', voice_name: 'Spanish Lively Man' },
