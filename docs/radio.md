@@ -1086,6 +1086,70 @@ v1: без WebAudio API, без адаптивности (shuffle), файлы �
   M-1 (rate-limit + range-parts лимит), M-2 (masked logging — только коды,
   без путей), M-3 (polling 30 с). Magic bytes — дополнение поверх аудита.
 
+## WebAudio pipeline + SFX-библиотека — TZ71 (2026-09-28)
+
+Единый `AudioContext` на сессию вместо разрозненных `<audio>`: музыка (TZ70)
+и TTS (useSpeech) раньше жили в двух независимых элементах — музыка просто
+обрывалась на новости. Теперь три gain-канала в одном миксе.
+
+- **Архитектура (`pulse-frontend/src/services/audioContext.ts`):** singleton
+  `AudioContext` + `musicGain` (0.3) / `sfxGain` (1.0) / `ttsGain` (1.0) →
+  destination. Персистентные `<audio>`-элементы каналов (`getMusicElement` /
+  `getSfxElement` / `getTtsElement`) — по одному `MediaElementAudioSourceNode`
+  на элемент (создавать source на каждый `new Audio()` утекало бы узлами).
+  `fadeOutMusic(onComplete?)` / `fadeInMusic(target)` — `linearRamp` на audio
+  thread (sample-precise вместо setInterval по volume), перед каждым fade —
+  `cancelScheduledValues` (иначе рампы суммировались бы). `stopMusicGain` —
+  мгновенный ноль (тумблер OFF).
+- **Жизненный цикл (`contexts/AudioContextContext.tsx`):** lazy init по первому
+  user gesture (click/keydown/touchstart) + `resumeAudio()` на
+  `visibilitychange` (Chrome суспендит контекст фоновых вкладок — без resume
+  gain-рампы не двигаются: `currentTime` заморожен). Provider — обёртка над
+  SpeechProvider в App.tsx.
+- **Музыка (`useMusicOnIdle`):** fade-out 1.5 с при прерывании, далее `pause()`
+  **без сброса src/currentTime** — возврат в idle resume того же трека с того
+  же места (fade-in 3 с, решение TZ71 #9/#10). Новый fetch `/music/next` только
+  при естественном окончании трека.
+- **TTS (`useSpeech`):** минимакс-сегменты играют персистентным ttsGain-элементом
+  (`audio.src = blobUrl` per segment, lifecycle/genRef не менялись).
+- **SFX-cue:** `lib/radio/sfx.ts` `playSfxCueFromLibrary()` — `GET /radio/sfx/next`
+  → случайный файл из библиотеки через sfxGain; **фолбэк на синтетический
+  `beep()`** (sound.ts) при пустой папке/ошибке сети. RadioPage: обычная новость
+  → SFX-файл (beep как фолбэк), важная (score ≥ 8.5) → прежний `beepCritical()`.
+  sound.ts теперь тоже идёт через общий контекст/sfxGain (единый уровень громкости).
+- **Бэк (симметрично TZ70, отдельный сервис — НЕ обобщение radioMusic):**
+  - `src/config/radio.ts` — `PULSE_SFX_DIR` (env, дефолт /opt/pulse/sfx), regex
+    `[a-z0-9_]+.(mp3|wav|ogg)` (i), лимиты: 20 файлов / 2 МБ на файл / 100 МБ
+    папка (H-1) / 100 символов имени / 10 range-parts.
+  - `src/services/radioSfx.ts` — `listSfxFiles()` (кэш TTL 30 с), `pickRandomSfx()`
+    (true-random, повторы допустимы), `validateSfxFilename()` (H-4 — единая точка),
+    `getSfxFolderSize()` (H-1), `hasSfxMagicBytes(buf, filename)` — сигнатура
+    **по расширению**: mp3 (ID3 / 0xFFFB / 0xFFF3 / 0xFFF2), wav (RIFF+WAVE,
+    ≥12 байт), ogg (OggS), `ensureSfxDir()`.
+  - Публичные роуты (optionalAuth + radioMusicLimiter): `GET /sfx/next`,
+    `/sfx/list`, `/sfx/file/:filename` (Content-Type по расширению: audio/mpeg,
+    audio/wav, audio/ogg; Range/nosniff/inline как у music).
+  - Админ-роуты: `POST/DELETE/PATCH /radio/sfx/{...}` — upload через multer
+    (fileFilter = validateSfxFilename → 400 invalid_filename; duplicate → 409;
+    magic bytes по формату → 400 not_an_audio; 413 file_too_large (2 МБ) /
+    folder_too_large (100 МБ); count > 20 → 400 too_many_files).
+  - Почему отдельный сервис, а не `radioAudio.ts` из ТЗ: у music метаданные
+    в имени + round-robin, у sfx — нет; обобщение сломало бы TZ70
+    verify-скрипт и размазало различия по kind-ветвлениям.
+- **Инфраструктура:** bind-mount `/opt/pulse/sfx:/opt/pulse/sfx` в compose
+  (бэкап `docker-compose.yml.bak-tz71`); папка создаётся кодом при старте.
+- **Фронт-админка:** `components/admin/SfxLibraryTab.tsx` (upload с
+  progress-bar TZ70 v3, rename/delete, превью; polling 30 с) — в табе «Радио»
+  над Music Library.
+- **Гейты:** бэк `verify-radio-music.js` — 32 проверки (music 22 + sfx 10).
+  Фронт: `sfx.test.ts` (+5: склейка URL, фолбэки), итого 193/193, tsc.
+- **Аудит ТЗ (отклонения от TZ71):** хук `useNewsCue` со своим SSE-подключением
+  и своей очередью новостей **не реализован** — он дублировал бы существующие
+  `useRadioSse` + авточтение (ТЗ-47) и приводил бы к двойной озвучке; очередь
+  новостей уже решает speech-контекст (MAX_QUEUE 30). SFX-cue встроен в
+  существующий `handleSseNews`. Fade/очередь «новость дочитывается» достигаются
+  существующей машиной: isSpeaking → interrupt музыки → idle → resume.
+
 ## Роадмап
 
 - **v1 (ТЗ-42+43+44):** страница `/radio` (прямая ссылка; пункт в NavBar/Footer
