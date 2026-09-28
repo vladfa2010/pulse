@@ -32,6 +32,12 @@ import {
   MINIMAX_VOICE_IDS,
   RadioFlagError,
 } from '../services/radioSettings';
+import {
+  getAvailableVoices,
+  generatePreviewMp3,
+  getCustomVoices,
+  VoiceNotInAccountError,
+} from '../services/radioVoices';
 import { nowSql } from '../utils/nowSql';
 import { getUserId } from '../utils/users';
 import {
@@ -1519,6 +1525,71 @@ router.post('/radio-flags/reset', adminMiddleware, async (req: AuthRequest, res)
   } catch (err: any) {
     console.error('[Admin] Radio flags reset error:', err.message);
     res.status(500).json({ error: 'Failed to reset radio flags' });
+  }
+});
+
+// ═══ ТЗ68: Голоса TTS — динамический список, preview, custom voices ═══
+
+// GET /api/admin/radio/voices — список голосов Minimax (POST /v1/get_voice × 3 типа)
+// + merge с метаданными MINIMAX_VOICES + probe доступности в аккаунте. Кэш 24ч.
+// source: 'minimax' | 'static' (fallback, если API недоступен).
+router.get('/radio/voices', adminMiddleware, async (_req: AuthRequest, res) => {
+  try {
+    const { voices, source } = await getAvailableVoices(process.env.MINIMAX_API_KEY);
+    res.json({ voices, source, count: voices.length });
+  } catch (err: any) {
+    console.error('[Admin] Radio voices error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch voices' });
+  }
+});
+
+// POST /api/admin/radio/voices/preview — генерация mp3 для тестового прослушивания.
+// Без кэша (превью всегда свежее), без rate-limit (adminMiddleware достаточно).
+// Жёсткий whitelist voice_id НЕ применяем — смысл ТЗ в пробе голосов вне списка;
+// недоступный в аккаунте голос отсекается по status_code 2054 → 503.
+router.post('/radio/voices/preview', adminMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const { voice_id, text, speed = 1.05, pitch = 0 } = req.body || {};
+    if (typeof text !== 'string' || text.trim().length === 0) {
+      return res.status(400).json({ error: 'invalid_text', message: 'text required (1-1000 chars)' });
+    }
+    if (text.length > 1000) {
+      return res.status(400).json({ error: 'text_too_long', limit: 1000 });
+    }
+    const voiceId = typeof voice_id === 'string' && voice_id ? voice_id : 'presenter_male';
+    const apiKey = process.env.MINIMAX_API_KEY;
+    if (!apiKey) {
+      return res.status(503).json({ error: 'minimax_not_configured' });
+    }
+
+    const buf = await generatePreviewMp3(text, voiceId, Number(speed) || 1, Number(pitch) || 0, apiKey);
+    res.set('Content-Type', 'audio/mpeg');
+    res.set('Cache-Control', 'no-store');
+    res.send(buf);
+  } catch (err: any) {
+    if (err instanceof VoiceNotInAccountError) {
+      return res.status(503).json({
+        error: 'voice_not_in_account',
+        status_code: 2054,
+        message: 'Голос не доступен на текущем плане Minimax',
+      });
+    }
+    console.error('[Admin] Voice preview error:', err.message);
+    res.status(500).json({ error: 'preview_failed', detail: String(err.message).slice(0, 200) });
+  }
+});
+
+// GET /api/admin/radio/voices/custom — клонированные/сгенерированные голоса.
+// Заглушка для ТЗ69: на текущем тарифе Minimax обычно пустые (plan not support).
+router.get('/radio/voices/custom', adminMiddleware, async (_req: AuthRequest, res) => {
+  try {
+    const apiKey = process.env.MINIMAX_API_KEY;
+    if (!apiKey) return res.status(503).json({ error: 'minimax_not_configured' });
+    const { cloned, generated } = await getCustomVoices(apiKey);
+    res.json({ cloned, generated, planSupport: { clone: 'unsupported', design: 'unsupported' } });
+  } catch (err: any) {
+    console.error('[Admin] Custom voices error:', err.message);
+    res.status(500).json({ error: 'fetch_custom_voices_failed' });
   }
 });
 

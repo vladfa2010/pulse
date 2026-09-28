@@ -33,7 +33,8 @@
     "verify:clusteringVeto": "npm run build && node scripts/clustering-veto-verify.js",
     "verify:radioPodcast": "npm run build && node scripts/radio-podcast-verify.js",
     "verify:radioMp3Cache": "npm run build && node scripts/verify-radio-mp3-cache.js",
-    "verify:radioCacheDashboard": "npm run build && node scripts/verify-radio-cache-dashboard.js"
+    "verify:radioCacheDashboard": "npm run build && node scripts/verify-radio-cache-dashboard.js",
+    "verify:radioVoices": "npm run build && node scripts/verify-radio-voices.js"
   },
   "keywords": [
     "news",
