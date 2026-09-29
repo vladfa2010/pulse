@@ -1157,6 +1157,45 @@ v1: без WebAudio API, без адаптивности (shuffle), файлы �
   существующий `handleSseNews`. Fade/очередь «новость дочитывается» достигаются
   существующей машиной: isSpeaking → interrupt музыки → idle → resume.
 
+## Music-on-Idle: исправление автозапуска музыки — TZ73 (2026-09-29, фронт)
+
+Репорт «музыку залил, галочка включена, новости прослушал — тишина». Два
+независимых root cause (оба фронт):
+
+- **Bug #1 — idle никогда не наступал.** Условие было `!isSpeaking &&
+  unreadCount === 0`, но `unreadCount` (UnreadCountContext) инкрементится
+  SSE-событиями и НЕ сбрасывается после прослушивания эфира — после первой
+  пачки новостей idle стабильно false. **S-1:** источник истины заменён на
+  реальную очередь эфира — `idle = !isSpeaking && speech.queue.length === 0`.
+  Важно: интро-флаг сбрасывается ТОЛЬКО по `queue.length > 0` (появились
+  новости), а не по `!isSpeaking` — иначе фраза сама себя перезапускала бы
+  (isSpeaking=true во время фразы → сброс → цикл интро). Это отклонение от
+  дифа TZ-73 (там баг).
+- **Bug #2 — autoplay-policy бесшумно.** `audio.play()` reject'ился без
+  логов. **S-2:** `console.warn/error` на все ветки (NotAllowedError,
+  пустая папка `{url:null}`, сеть, resume) — причина тишины видна в DevTools.
+
+Улучшения UX (вторым слоем того же коммита):
+
+- **S-3 `components/radio/MusicGate.tsx`** — обёртка плеера: любой клик
+  (onClickCapture, без stopPropagation — штатные действия плеера не ломаем)
+  резюмит AudioContext; пока контекст не готов, над плеером висит чип
+  «🔇 КЛИК → ЗВУК».
+- **S-4** `useRadioConfig`: `refetchOnWindowFocus: true` — админский toggle
+  флага виден юзеру при возврате на вкладку, а не через 5 минут staleTime.
+- **S-5** `lib/radio/radioFlagsSync.ts` — cross-tab broadcast через
+  localStorage `storage`-событие + CustomEvent: RadioTab и VoicePicker зовут
+  `broadcastRadioFlagsChange()` после PUT `/api/admin/radio-flags`, открытые
+  вкладки инвалидируют `['radio','config']` мгновенно. Private mode — try/catch.
+  Полноценная замена — SSE flags-changed (TZ-72 P1-1), слои совместимы.
+
+Файлы: `hooks/useMusicOnIdle.ts` (S-1+S-2), `components/radio/MusicGate.tsx`
+(новый), `components/radio/GlobalPlayerBar.tsx` (обёртка), `hooks/useRadioConfig.ts`
+(S-4+S-5), `lib/radio/radioFlagsSync.ts` (новый), `pages/admin/RadioTab.tsx` +
+`components/admin/VoicePicker.tsx` (broadcast). Опциональный `resetUnread` в
+`useSpeech.stopAll` из ТЗ не внесён — useMusicOnIdle больше не зависит от
+UnreadCountContext вообще.
+
 ## Роадмап
 
 - **v1 (ТЗ-42+43+44):** страница `/radio` (прямая ссылка; пункт в NavBar/Footer
