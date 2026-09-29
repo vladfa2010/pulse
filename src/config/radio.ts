@@ -77,7 +77,7 @@ export const PULSE_MUSIC_DIR = process.env.PULSE_MUSIC_DIR || '/opt/pulse/music'
 export const PULSE_MUSIC_FILENAME_REGEX = /^(\d+)_(.+?)(\d{2})_(slow|medium|fast)_([a-z0-9]+)\.mp3$/;
 export const PULSE_MUSIC_MAX_FILENAME_LEN = 200; // H-4: overlong input отсекаем
 export const PULSE_MUSIC_MAX_FILES = 50;
-export const PULSE_MUSIC_MAX_FILE_SIZE = 50 * 1024 * 1024;        // 50 МБ на файл
+export const PULSE_MUSIC_MAX_FILE_SIZE = 10 * 1024 * 1024;        // 10 МБ на файл
 export const PULSE_MUSIC_MAX_FOLDER_SIZE = 2 * 1024 * 1024 * 1024; // 2 ГБ — disk cap (H-1)
 export const PULSE_MUSIC_RANGE_PARTS_LIMIT = 10; // max range-parts в одном Range header (M-1)
 

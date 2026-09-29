@@ -1019,7 +1019,7 @@ v1: без WebAudio API, без адаптивности (shuffle), файлы �
 - **Бэк:**
   - `src/config/radio.ts` — `PULSE_MUSIC_DIR` (env, дефолт /opt/pulse/music),
     regex имени `N_title_YY_tempo_genre.mp3` (genre `[a-z0-9]+`), лимиты:
-    50 файлов / 50 МБ на файл / 2 ГБ папка (disk-cap H-1) / 200 символов
+    50 файлов / 10 МБ на файл / 2 ГБ папка (disk-cap H-1) / 200 символов
     имени / 10 range-parts.
   - `src/services/radioMusic.ts` — `listMusicFiles()` (in-memory кэш TTL 30 с,
     заодно shuffle-order round-robin без повторов), `pickRandomMusic()`,
