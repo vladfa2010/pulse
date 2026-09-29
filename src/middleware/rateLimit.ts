@@ -82,10 +82,30 @@ export const apiLimiter = rateLimit({
     if (path === '/api/news/stream' || path === '/api/sentiment/stream') return true;
     // Webhook'и имеют свой собственный лимитер
     if (path.startsWith('/api/webhook/')) return true;
+    // Админка имеет свой собственный лимитер (adminLimiter, 3×)
+    if (path.startsWith('/api/admin')) return true;
     // Статус-страница и debug
     if (path === '/' || path === '/debug/version') return true;
     return false;
   },
+  validate: { trustProxy: false },
+});
+
+// ─── Admin API — отдельный лимит (3× от apiLimiter) ────────────────────────
+// Админка: табы дёргают списки/метрики, upload/progress-polling, превью
+// голосов — суммарно легко упирается в общие 300/15min. Просьба владельца:
+// лимит операций админки увеличен втрое. apiLimiter для /api/admin НЕ считает
+// (skip ниже), иначе двойной учёт съел бы выигрыш.
+export const adminLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,  // 15 минут
+  max: 900,                     // 900 запросов (3 × 300)
+  message: {
+    error: 'Слишком много запросов админки. Попробуйте позже.',
+    retryAfter: '15 minutes',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => (req as any).user?.userId || req.ip || 'unknown',
   validate: { trustProxy: false },
 });
 

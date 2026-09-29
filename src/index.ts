@@ -60,7 +60,7 @@ import { ensureMusicDir } from './services/radioMusic'; // TZ70: папка фо
 import { ensureSfxDir } from './services/radioSfx'; // TZ71: папка SFX
 import appRoutes from './routes/app';
 import { authMiddleware, AuthRequest } from './middleware/auth';
-import { apiLimiter, authLimiter, webhookLimiter, forgotPasswordLimiter, passwordResetFlowLimiter, promoValidateLimiter } from './middleware/rateLimit';
+import { apiLimiter, authLimiter, webhookLimiter, forgotPasswordLimiter, passwordResetFlowLimiter, promoValidateLimiter, adminLimiter } from './middleware/rateLimit';
 import { startCron, startHeatmapFreezeCron, startClusteringCron, startTopicsNamingCron } from './services/cron';   // startCron (RSS) отключен (TZ_REMOVE_DUPLICATE_RSS_CRON); heatmap freeze — TZ-49; clustering — ТЗ-92 (флаг CLUSTERING_ENABLED); topics naming — ТЗ-115 (флаг TOPICS_ENABLED)
 import { sendWeeklyReportForUser } from './services/reports'; // ← Еженедельные репорты (manual + API)
 import { startDigestCron, sendAllDigests, setDigestEnabled } from './services/digest'; // ← дайджест (каждый час) — через notification matrix
@@ -2366,9 +2366,9 @@ app.use('/api/user', globalSummaryRoutes); // GET /api/user/summary-global
 app.use('/api/user', notificationsRouter); // Notification matrix (GET/PUT /notification-matrix, quiet-hours)
 app.use('/api/translate', translateRoutes);
 app.use('/api/webhook', webhookLimiter, webhookRoutes); // Высокий лимит для YuKassa
-app.use('/api/admin', adminRoutes);     // GET /api/admin/users, /stats
-app.use('/api/admin', adminMetricsRoutes); // GET /api/admin/metrics?section=...
-app.use('/api/admin/radio/mp3-cache', adminRadioCacheRoutes); // ТЗ-65: dashboard MP3-кеша (stats/history/top-keys/clear/prewarm)
+app.use('/api/admin', adminLimiter, adminRoutes);     // GET /api/admin/users, /stats
+app.use('/api/admin', adminLimiter, adminMetricsRoutes); // GET /api/admin/metrics?section=...
+app.use('/api/admin/radio/mp3-cache', adminLimiter, adminRadioCacheRoutes); // ТЗ-65: dashboard MP3-кеша (stats/history/top-keys/clear/prewarm)
 // ТЗ-118: dual mount. Legacy-префикс '/admin' удалить в Задаче 3.
 app.use(['/admin', '/api/admin'], adminLegacyRoutes); // legacy admin UI endpoints (moved from index.ts)
 

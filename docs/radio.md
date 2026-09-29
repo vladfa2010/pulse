@@ -92,7 +92,8 @@ pulse-backend
 ├── src/services/radioMetrics.ts   in-memory метрики TTS (см. «Эксплуатация»)
 ├── src/services/newsProcessor.ts  broadcastProcessedArticle() — SSE news ПОСЛЕ UPDATE
 ├── src/services/sse.ts            payload события news (расширен ТЗ-42)
-├── src/middleware/rateLimit.ts    radioTtsLimiter 100/мин per-user
+├── src/middleware/rateLimit.ts    radioTtsLimiter 100/мин per-user,
+│                                  adminLimiter 900/15мин (админ-API, 3× apiLimiter)
 └── src/index.ts                   app.use('/api/radio', radioRoutes); runRadioMigrations()
 ```
 
@@ -1067,6 +1068,12 @@ v1: без WebAudio API, без адаптивности (shuffle), файлы �
     polling 30 с (M-3 аудита). Toggle kill-switch в блоке флагов RadioTab.
   - `adminApi.postForm` в `lib/api.ts` — multipart POST, таймаут 120 с,
     err.code/err.reason из тела ошибки.
+- **Лимитер админки:** админ-API (`/api/admin/*`, включая upload музыки/SFX,
+  метрики, mp3-cache dashboard) идёт через отдельный `adminLimiter`
+  (`middleware/rateLimit.ts`): 900 запросов / 15 мин (3× от общего apiLimiter
+  300/15min). apiLimiter для `/api/admin` не считает (skip), иначе двойной
+  учёт съедал бы выигрыш. Ключ — `userId || IP` (adminMiddleware внутри
+  роутов отрабатывает позже, поэтому фактически ключ по IP).
 - **Гейты:** бэк `node scripts/verify-radio-music.js` — 22 проверки (парсер,
   валидация H-4, magic bytes, флаги, presence роутов, заголовки, лимитер).
   Фронт: 6 юнит-тестов `musicUserFlag.test.tsx` (итого 188/188), tsc.
