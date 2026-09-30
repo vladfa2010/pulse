@@ -226,6 +226,23 @@ export const lmsUploadLimiter = rateLimit({
   validate: { trustProxy: false },
 });
 
+// ─── LMS: скачивание открытых (is_free) материалов (ТЗ-100 v4) ──────────────
+// Анонимная публичная поверхность → лимит по IP. 30 скачиваний/час —
+// защита от хотлинка на 302-signedUrl (TTL 1ч), основной поток юзеров
+// не упирается. Ключ — IP (эндпоинт доступен без авторизации).
+export const lmsFreeDownloadLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 час
+  max: 30,
+  message: {
+    error: 'Слишком много скачиваний. Попробуйте через час.',
+    retryAfter: '1 hour',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.ip || 'unknown',
+  validate: { trustProxy: false },
+});
+
 /**
  * ТЗ-63: ручная проверка лимитера. Возвращает Promise<boolean>:
  *  - true — лимитер разрешил (next() вызван), продолжаем.

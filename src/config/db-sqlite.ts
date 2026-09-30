@@ -78,7 +78,6 @@ export async function query(text: string, params?: any[]): Promise<{ rows: any[]
     .replace(/SERIAL/g, 'INTEGER')
     .replace(/::text\[\]/g, '')
     .replace(/::jsonb/g, '')
-    .replace(/ON CONFLICT DO NOTHING/g, 'OR IGNORE')
     .replace(/COALESCE\(/g, 'COALESCE(')
     .replace(/INTERVAL '/g, '')
     .replace(/' days'/g, " days")
@@ -89,6 +88,26 @@ export async function query(text: string, params?: any[]): Promise<{ rows: any[]
     .replace(/CURRENT_TIMESTAMP \+ INTERVAL '/g, "datetime('now', '")
     .replace(/NOW\(\)/g, "datetime('now')")
     .replace(/\s*USING GIN\s*/g, ' '); // remove GIN index clause (SQLite has no GIN)
+
+  // SQLite не поддерживает ADD COLUMN IF NOT EXISTS — эмулируем через PRAGMA table_info
+  const alterMatch = sql.match(/^\s*ALTER\s+TABLE\s+([\w"]+)\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+([\w"]+)\s+(.+?);?\s*$/i);
+  if (alterMatch) {
+    const tableName = alterMatch[1].replace(/"/g, '');
+    const colName = alterMatch[2].replace(/"/g, '');
+    const colInfo = db.exec(`PRAGMA table_info("${tableName}")`)[0];
+    const existing = colInfo ? colInfo.values.map((v: any[]) => String(v[1])) : [];
+    if (existing.includes(colName)) {
+      return { rows: [], rowCount: 0 };
+    }
+    sql = `ALTER TABLE "${tableName}" ADD COLUMN "${colName}" ${alterMatch[3]}`;
+  }
+
+  // ON CONFLICT DO NOTHING → INSERT OR IGNORE (OR IGNORE после VALUES — синтаксическая ошибка SQLite)
+  if (/^\s*INSERT\b/i.test(sql) && /\bON CONFLICT\b/i.test(sql)) {
+    sql = sql
+      .replace(/\s*ON CONFLICT(\s*\([^)]*\))?\s*DO NOTHING\s*;?\s*$/i, '')
+      .replace(/^\s*INSERT\b/i, 'INSERT OR IGNORE');
+  }
 
   try {
     const isWrite = /^(INSERT|UPDATE|DELETE|REPLACE|CREATE|DROP|ALTER|BEGIN|COMMIT|ROLLBACK)/i.test(sql.trim());

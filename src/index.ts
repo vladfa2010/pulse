@@ -59,6 +59,8 @@ import { runRadioMigrations } from './services/radioSettings';
 import { ensureMusicDir } from './services/radioMusic'; // TZ70: папка фоновой музыки
 import { ensureSfxDir } from './services/radioSfx'; // TZ71: папка SFX
 import appRoutes from './routes/app';
+import adminEducationRoutes from './routes/adminEducation'; // ТЗ-101: админка LMS «Образование»
+import educationRoutes from './routes/education';           // ТЗ-100 Задача 2: публичный API LMS
 import { authMiddleware, AuthRequest } from './middleware/auth';
 import { bootstrapStorage } from './services/storage/driver'; // ТЗ-100 v15: LMS storage bootstrap
 import { mediaGuard } from './services/storage/media';       // ТЗ-100 v15: отдача файлов /media
@@ -2421,6 +2423,7 @@ app.use('/api/news_heatmap', newsHeatmapRoutes); // News heatmap (TZ 11.11)
 app.use('/api/calendar', calendarRoutes); // Public investor calendar
 app.use('/api/payment', paymentRoutes); // POST /api/payment/create, /confirm
 app.use('/api/plans', plansRoutes);     // GET /api/plans
+app.use('/api/education', educationRoutes); // ТЗ-100 Задача 2: витрина LMS (apiLimiter применится автоматически)
 app.use('/api/promo/validate', promoValidateLimiter, promoRoutes); // GET /api/promo/validate
 app.use('/api/features', featuresRoutes); // GET /api/features
 app.use('/api/radio', radioRoutes);   // POST /api/radio/tts, GET /api/radio/config (ТЗ-42)
@@ -2432,6 +2435,7 @@ app.use('/api/webhook', webhookLimiter, webhookRoutes); // Высокий лим
 app.use('/api/admin', adminLimiter, adminRoutes);     // GET /api/admin/users, /stats
 app.use('/api/admin', adminLimiter, adminMetricsRoutes); // GET /api/admin/metrics?section=...
 app.use('/api/admin/radio/mp3-cache', adminLimiter, adminRadioCacheRoutes); // ТЗ-65: dashboard MP3-кеша (stats/history/top-keys/clear/prewarm)
+app.use('/api/admin/education', adminLimiter, adminEducationRoutes); // ТЗ-101: LMS «Образование» (все методы за adminMiddleware)
 // ТЗ-118: dual mount. Legacy-префикс '/admin' удалить в Задаче 3.
 app.use(['/admin', '/api/admin'], adminLegacyRoutes); // legacy admin UI endpoints (moved from index.ts)
 

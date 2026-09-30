@@ -33,6 +33,15 @@ export const USER_EVENT_TYPES = [
   'portfolio_add_clicked',
   'portfolio_created',
   'admin_radio_flag_changed',
+  // LMS «Образование» (ТЗ-101): события от userId АДМИНА — аудит кто/когда/что.
+  'education.course_created',
+  'education.course_updated',
+  'education.course_published',
+  'education.course_archived',
+  'education.course_deleted',
+  'education.course_restored',
+  'education.enroll_admin',
+  'education.unenroll_admin',
 ] as const;
 
 export type UserEventType = typeof USER_EVENT_TYPES[number];

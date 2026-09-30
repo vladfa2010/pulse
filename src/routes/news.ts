@@ -509,7 +509,37 @@ router.get('/by-slug/:slugOrId', async (req: AuthRequest, res) => {
       return res.status(404).json({ error: 'News not found' });
     }
 
-    res.json(result.rows[0]);
+    // ТЗ-100 Задача 2: прикреплённые курсы из news_course_links (до 3,
+    // только published + не удалённые + public — hidden не прикрепляются, v9).
+    // Существующие поля ответа НЕ меняются — только добавляем attached_courses.
+    const newsRow = result.rows[0];
+    try {
+      const coursesR = await query(
+        `SELECT c.id, c.slug, c.title, c.type, c.price, c.cover_url, c.badges, c.size
+         FROM news_course_links l
+         JOIN courses c ON c.id = l.course_id
+         WHERE l.news_id = $1
+           AND c.status = 'published' AND c.deleted_at IS NULL AND c.visibility = 'public'
+         ORDER BY l.position ASC
+         LIMIT 3`,
+        [newsRow.id],
+      );
+      newsRow.attached_courses = coursesR.rows.map((c: any) => ({
+        id: c.id,
+        slug: c.slug,
+        title: c.title,
+        type: c.type,
+        price: Number(c.price),
+        cover_url: c.cover_url,
+        badges: typeof c.badges === 'string' ? JSON.parse(c.badges || '[]') : (c.badges || []),
+        size: c.size,
+      }));
+    } catch (e: any) {
+      console.warn('[News] attached_courses lookup failed:', e?.message);
+      newsRow.attached_courses = [];
+    }
+
+    res.json(newsRow);
   } catch (err: any) {
     console.error('[News] By slug error:', err.message);
     res.status(500).json({ error: 'Failed to fetch news' });
