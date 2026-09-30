@@ -909,7 +909,17 @@ app.post('/migrate-lms', async (req, res) => {
     }
 
     const sql = fs.readFileSync(sqlPath, 'utf-8');
-    const statements = sql.split(';').filter((s: string) => s.trim());
+    // Вырезаем SQL-комментарии ДО split(';'): иначе точка с запятой внутри
+    // комментария («…идемпотентна; …») режет следующий за ним CREATE TABLE
+    // пополам → syntax error. Строковых литералов с '--' в миграции нет.
+    const cleaned = sql
+      .split('\n')
+      .map((l: string) => {
+        const i = l.indexOf('--');
+        return i >= 0 ? l.slice(0, i) : l;
+      })
+      .join('\n');
+    const statements = cleaned.split(';').filter((s: string) => s.trim());
     const results: string[] = [];
 
     for (const stmt of statements) {
