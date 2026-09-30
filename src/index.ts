@@ -60,6 +60,8 @@ import { ensureMusicDir } from './services/radioMusic'; // TZ70: папка фо
 import { ensureSfxDir } from './services/radioSfx'; // TZ71: папка SFX
 import appRoutes from './routes/app';
 import { authMiddleware, AuthRequest } from './middleware/auth';
+import { bootstrapStorage } from './services/storage/driver'; // ТЗ-100 v15: LMS storage bootstrap
+import { mediaGuard } from './services/storage/media';       // ТЗ-100 v15: отдача файлов /media
 import { apiLimiter, authLimiter, webhookLimiter, forgotPasswordLimiter, passwordResetFlowLimiter, promoValidateLimiter, adminLimiter } from './middleware/rateLimit';
 import { startCron, startHeatmapFreezeCron, startClusteringCron, startTopicsNamingCron } from './services/cron';   // startCron (RSS) отключен (TZ_REMOVE_DUPLICATE_RSS_CRON); heatmap freeze — TZ-49; clustering — ТЗ-92 (флаг CLUSTERING_ENABLED); topics naming — ТЗ-115 (флаг TOPICS_ENABLED)
 import { sendWeeklyReportForUser } from './services/reports'; // ← Еженедельные репорты (manual + API)
@@ -193,6 +195,11 @@ app.use((req, res, next) => {
   });
   next();
 });
+
+// ТЗ-100 v15 §1а: отдача файлов LMS-хранилища. Монтируется ДО apiLimiter —
+// статика обложек/материалов не должна съедать общий лимит API.
+// Подпись (signed URL) проверяется внутри mediaGuard.
+app.use('/media', mediaGuard);
 
 app.use(apiLimiter);  // ← Rate limiting для всех API запросов (Task 4)
 
@@ -874,6 +881,52 @@ app.post('/migrate-set-null', async (req, res) => {
     res.json({ applied: true, old_rule: currentRule, new_rule: 'SET NULL', message: 'FK updated to ON DELETE SET NULL' });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// POST /migrate-lms?secret=KEY — LMS «Образование» (ТЗ-100 v15, Задача 1)
+// Применяет src/migrations/lms_v1.sql (PostgreSQL-диалект). Идемпотентна.
+// В SQLite-режиме таблицы создаёт initSQLiteSchema() — endpoint пропускается.
+// ═══════════════════════════════════════════════════════════════════════════
+app.post('/migrate-lms', async (req, res) => {
+  const secret = req.headers['x-trigger-secret'] || req.query.secret;
+  if (secret !== CRON_SECRET_KEY) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  if (USE_SQLITE) {
+    return res.json({ skipped: true, message: 'SQLite mode: LMS schema is created by initSQLiteSchema()' });
+  }
+
+  try {
+    const fs = await import('fs');
+    const path = await import('path');
+    // __dirname = /app/dist; lms_v1.sql копируется в dist/migrations через Dockerfile
+    const sqlPath = path.join(__dirname, 'migrations', 'lms_v1.sql');
+    if (!fs.existsSync(sqlPath)) {
+      return res.status(500).json({ error: `lms_v1.sql not found at ${sqlPath}` });
+    }
+
+    const sql = fs.readFileSync(sqlPath, 'utf-8');
+    const statements = sql.split(';').filter((s: string) => s.trim());
+    const results: string[] = [];
+
+    for (const stmt of statements) {
+      try {
+        await query(stmt + ';');
+        results.push(`OK: ${stmt.trim().substring(0, 60)}`);
+      } catch (e: any) {
+        // Игнорируем «already exists» — объект создан ранее (идемпотентность)
+        if (!e.message?.includes('already exists')) {
+          results.push(`WARN: ${e.message?.substring(0, 100)}`);
+        }
+      }
+    }
+
+    res.json({ success: true, applied: results.length, details: results });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
@@ -3080,6 +3133,11 @@ app.use((req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 async function start() {
   let shuttingDown = false;
+
+  // ТЗ-100 v15 §1а: bootstrap каталогов uploads (courses/ materials/ ugc/ tmp/
+  // quarantine/) + очистка сирот/просроченного trash. Fire-and-forget —
+  // не блокируем listen (healthcheck Render'а).
+  bootstrapStorage().catch((e: any) => console.warn('[Storage] bootstrap failed:', e?.message));
 
   // Start HTTP server immediately so /health is available and Render can route traffic
   // before migrations finish. Migrations and background jobs run in parallel.

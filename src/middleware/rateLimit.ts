@@ -210,6 +210,22 @@ export const radioMusicLimiter = rateLimit({
   validate: { trustProxy: false },
 });
 
+// ─── LMS uploads — загрузка файлов образования (ТЗ-100 v11, S6) ─────────────
+// 20 файлов/час на пользователя (критерий 18(2): 21-я загрузка за час → 429).
+// Используется upload-эндпоинтами ТЗ-101 (обложки, материалы) и ТЗ-102 (UGC).
+export const lmsUploadLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 час
+  max: 20,
+  message: {
+    error: 'Слишком много загрузок. Лимит 20 файлов в час.',
+    retryAfter: '1 hour',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => (req as any).user?.userId || req.ip || 'unknown',
+  validate: { trustProxy: false },
+});
+
 /**
  * ТЗ-63: ручная проверка лимитера. Возвращает Promise<boolean>:
  *  - true — лимитер разрешил (next() вызван), продолжаем.

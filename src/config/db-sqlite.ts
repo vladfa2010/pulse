@@ -681,6 +681,129 @@ export async function initSQLiteSchema(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_fact_check_requests_status ON fact_check_requests (status);
     CREATE INDEX IF NOT EXISTS idx_fact_check_requests_input_hash ON fact_check_requests (input_hash);
     CREATE INDEX IF NOT EXISTS idx_fact_check_requests_public ON fact_check_requests (is_public, status, created_at DESC);
+
+    -- ═══════════════════════════════════════════════════════════════════════
+    -- LMS «Образование» (ТЗ-100 v15, Задача 1) — зеркало src/migrations/lms_v1.sql
+    -- SQLite-диалект: UUID→TEXT, BOOLEAN→INTEGER, JSONB→TEXT, NOW()→datetime('now').
+    -- Добавлено в КОНЕЦ шаблона: порядок существующих CREATE TABLE не меняется.
+    -- ═══════════════════════════════════════════════════════════════════════
+
+    -- (v10) Категории курсов — ДО courses (FK category_id)
+    CREATE TABLE IF NOT EXISTS course_categories (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      position INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS courses (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      slug TEXT NOT NULL UNIQUE,
+      description TEXT NOT NULL DEFAULT '',
+      cover_url TEXT,
+      type TEXT NOT NULL DEFAULT 'course',
+      size TEXT NOT NULL DEFAULT 'standard',
+      price INTEGER NOT NULL DEFAULT 0,
+      badges TEXT NOT NULL DEFAULT '[]',
+      status TEXT NOT NULL DEFAULT 'draft',
+      visibility TEXT NOT NULL DEFAULT 'public',
+      subscription_unlock_mode TEXT NOT NULL DEFAULT 'full',
+      category_id TEXT REFERENCES course_categories(id) ON DELETE SET NULL,
+      author TEXT NOT NULL DEFAULT 'Редакция PULSE',
+      relevant_until TEXT,
+      source_type TEXT,
+      source_news_id TEXT REFERENCES news(id) ON DELETE SET NULL,
+      deleted_at TEXT,
+      created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_courses_status ON courses(status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_courses_category ON courses(category_id) WHERE deleted_at IS NULL;
+
+    -- Единая база тегов: те же tag_id, что у новостей/портфелей
+    CREATE TABLE IF NOT EXISTS course_tags (
+      course_id TEXT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+      tag_id TEXT NOT NULL,
+      PRIMARY KEY (course_id, tag_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS course_lessons (
+      id TEXT PRIMARY KEY,
+      course_id TEXT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+      position INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'text',
+      text_content TEXT,
+      video_source TEXT,
+      video_embed_url TEXT,
+      video_file_url TEXT,
+      duration_min INTEGER,
+      is_free_preview INTEGER NOT NULL DEFAULT 0,
+      unlock_after_days INTEGER NOT NULL DEFAULT 0,
+      UNIQUE (course_id, position)
+    );
+    CREATE INDEX IF NOT EXISTS idx_lessons_course ON course_lessons(course_id, position);
+
+    CREATE TABLE IF NOT EXISTS lesson_tests (
+      id TEXT PRIMARY KEY,
+      lesson_id TEXT NOT NULL REFERENCES course_lessons(id) ON DELETE CASCADE,
+      pass_score INTEGER NOT NULL DEFAULT 70,
+      is_blocking INTEGER NOT NULL DEFAULT 0,
+      questions TEXT NOT NULL DEFAULT '[]',
+      UNIQUE (lesson_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS course_materials (
+      id TEXT PRIMARY KEY,
+      course_id TEXT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL,
+      title TEXT NOT NULL,
+      url TEXT NOT NULL,
+      news_id TEXT REFERENCES news(id) ON DELETE CASCADE,
+      is_free INTEGER NOT NULL DEFAULT 0,
+      position INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS course_enrollments (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      course_id TEXT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+      source TEXT NOT NULL DEFAULT 'free',
+      payment_id TEXT REFERENCES payments(id) ON DELETE SET NULL,
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE (user_id, course_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS course_tariffs (
+      course_id TEXT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+      plan_id TEXT NOT NULL REFERENCES subscription_plans(id) ON DELETE CASCADE,
+      PRIMARY KEY (course_id, plan_id)
+    );
+
+    -- (v8) Шеринг пути: один активный шеринг на юзера, users НЕ трогаем
+    CREATE TABLE IF NOT EXISTS user_path_shares (
+      user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      token TEXT NOT NULL UNIQUE,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS lesson_progress (
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      lesson_id TEXT NOT NULL REFERENCES course_lessons(id) ON DELETE CASCADE,
+      completed_at TEXT DEFAULT (datetime('now')),
+      test_score INTEGER,
+      PRIMARY KEY (user_id, lesson_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS news_course_links (
+      news_id TEXT NOT NULL REFERENCES news(id) ON DELETE CASCADE,
+      course_id TEXT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+      position INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (news_id, course_id)
+    );
   `;
 
   const statements = schema.split(';').filter(s => s.trim());
