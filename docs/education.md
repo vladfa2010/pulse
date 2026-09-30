@@ -5,12 +5,66 @@
 `ТЗ-104` (симуляторы), `ТЗ-105` (программы), `ТЗ-107` (граф знаний).
 Порядок внедрения — по README пакета; этот документ ведётся по мере реализации.
 
-## Статус: шаг 1 (ТЗ-100 Задача 1 + 1а) — готово
+## Статус
 
-- Схема БД: 11 таблиц (`courses`, `course_categories`, `course_tags`,
-  `course_lessons`, `lesson_tests`, `course_materials`, `course_enrollments`,
-  `course_tariffs`, `user_path_shares`, `lesson_progress`, `news_course_links`).
-- Storage-драйвер файлов + единая точка проверки доступа.
+- ✅ **Шаг 1** (ТЗ-100 Задача 1 + 1а): схема БД (11 таблиц) + storage-драйвер.
+- ✅ **Шаг 2** (ТЗ-101 целиком + ТЗ-100 Задача 2 минимум): admin-API курсов,
+  таб «Образование» в админке (пиксельный перенос мокапа admin.html),
+  публичный контур витрины. Коммиты: бэкенд `25fe75c`, фронтенд `30bd9be`.
+- ⏭ Дальше: ТЗ-100 Задачи 4–6 (прохождение/«Мои курсы» в ЛК, оплата курсов
+  ЮKassa, шеринг пути), затем ТЗ-102 (UGC + ClamAV), ТЗ-103/105, ТЗ-104,
+  ТЗ-107 последним.
+
+## Шаг 2 — что реализовано
+
+**Admin API** (`src/routes/adminEducation.ts`, все роуты за `adminMiddleware`,
+монтирован на `/api/admin/education`): CRUD курсов (draft/published/archived,
+soft-delete с 409 при покупках, restore), уроки (создание/редактирование/
+удаление с пересчётом position, reorder), тесты (1..20 вопросов, 2..6 вариантов),
+материалы (файл через multipart+magic bytes / ссылка / новость, is_free),
+обложки (multer memory → file-type jpg/png/webp → sharp EXIF-strip ≤50 Мпикс),
+теги из единой базы (`GET /tags?q=` автодополнение, `PUT /tags` полная замена),
+категории (CRUD + reorder, удаление запрещено при живых курсах — 409),
+тарифы курса (`tariff_ids` полная замена), привязки к новостям (≤10),
+`POST /resolve-source` (строго домен PULSE: /news → 200, /cascades|/stories|
+/topics → 409 «раздел появится позже», чужое → 400), публикация с проверками
+422, управление слушателями (admin_grant идемпотентно, is_blocked → 422,
+отписка 204 без удаления прогресса), users-search/news-search.
+Санитизация `text_content` на записи (sanitize-html: whitelist тегов,
+https-only ссылки, img только /media/*, SVG/script вырезаются). Каждая мутация
+инвалидирует кэш витрины (`services/education/cache.ts`, in-memory, TTL 5 мин).
+
+**Публичный контур** (`src/routes/education.ts`, `/api/education`): витрина
+(полки hot/recommended/fresh + каталог, фильтры all/free/paid/hot/mine, topic,
+category с анти-энумерацией hidden), категории, карточка курса (публичная
+титульная, draft по `?preview_token=` админа, hidden → 404 чужим), урок
+(enrollment или is_free_preview; тест без correct; subscription_expired /
+locked_by_drip по tenure; 401/403 + `IDOR blocked` в логе), complete,
+«Мои курсы», материалы-download (302 на signedUrl; is_free анониму с
+лимитом 30/час по IP), «Курс в новостях». `GET /api/news/:slug` отдаёт
+`attached_courses` (≤3, published+public).
+
+**Фронтенд** (таб «Образование» в `/admin`): таблица курсов (обложки, ярлыки
+размера/типа, чип категории, фильтр «Потеряли источник», удалённые),
+модал создания, модал «Категории», редактор с 5 вкладками (Основное с
+тег-пикером, источником, тарифами, дрипом и видимостью; Уроки с пресетом
+дрипа и тест-редактором; Материалы; Новости; Записавшиеся). Пиксельный
+перенос мокапа `admin.html`. Компоненты: `src/pages/admin/EducationTab.tsx`
++ `src/components/admin/education/*`.
+
+**Известные TODO:** `subscriptionTenureDays` — fallback на `created_at`
+юзера (источник: `services/education/subscriptionTenure.ts`); «Мои курсы»
+в личном кабинете и покупка курсов — следующий этап; SQLite-адаптер
+исправлен для `ON CONFLICT DO NOTHING` (dev-режим).
+
+## Проверки шага 2
+
+- `node scripts/smoke-lms-step2.js` — 28 групп проверок × 2 прогона на
+  чистых БД (CRUD, валидации, publish, санитизация, cover 415/413, тарифы,
+  категории, resolve-source, enrollments, публичный API, drip, hidden,
+  preview_token) — зелёно. Фронтенд: tsc чисто, тесты 193/193, build ок.
+- Прод: бэкенд `25fe75c`, фронтенд `30bd9be`, `GET /api/education/courses`
+  отвечает (пустой каталог до появления контента).
 
 ## Схема БД
 
@@ -122,8 +176,8 @@ Volume: `/opt/pulse/uploads:/app/uploads` (bind-mount — переживает r
 ## Дорожная карта (следующие шаги)
 
 1. ~~Задача 1 + 1а: схема БД + storage-драйвер~~ ✅
-2. ТЗ-101: админка курсов/уроков/категорий (upload обложек/материалов через
-   драйвер, magic-bytes валидация, санитизация markdown).
-3. ТЗ-100 Задачи 2–6: публичный API, витрина (пиксельный перенос мокапа),
-   прохождение, оплата курсов через контур ЮKassa, шеринг пути.
+2. ~~ТЗ-101: админка курсов/уроков/категорий + публичный контур~~ ✅
+3. ТЗ-100 Задачи 4–6: «Мои курсы» в ЛК/прохождение (фронт), покупка курсов
+   через контур ЮKassa (`activatePaymentIfNeeded`, `product_type='course'`),
+   шеринг пути (`user_path_shares`).
 4. ТЗ-102 (UGC + ClamAV), ТЗ-103/105, ТЗ-104 по команде, ТЗ-107 последним.
