@@ -169,6 +169,25 @@ app.get('/health', async (req, res) => {
   const keyHex = process.env.ENCRYPTION_KEY || '';
   const keyValid = !!keyHex && keyHex.length === 64 && /^[0-9a-fA-F]+$/.test(keyHex);
 
+  // Сигнатура данных (инцидент 2026-10-01: контейнер из «не того» compose
+  // молча подключался к другому кластеру PG — news/users падали до уровня
+  // старого снапшота). Резкое расхождение counts с эталоном = тревога.
+  let dbSignature: { news: number; users: number; courses: number } | 'error' = 'error';
+  try {
+    const sig = await query(
+      `SELECT (SELECT count(*) FROM news) AS news,
+              (SELECT count(*) FROM users) AS users,
+              (SELECT count(*) FROM courses) AS courses`,
+    );
+    dbSignature = {
+      news: Number(sig.rows[0]?.news ?? 0),
+      users: Number(sig.rows[0]?.users ?? 0),
+      courses: Number(sig.rows[0]?.courses ?? 0),
+    };
+  } catch {
+    /* сигнатура недоступна — оставляем 'error' */
+  }
+
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
@@ -180,6 +199,7 @@ app.get('/health', async (req, res) => {
       length: keyHex.length,
       valid: keyValid,
     },
+    db: dbSignature,
   });
 });
 
@@ -3345,6 +3365,17 @@ async function start() {
           }
         }
         console.log('[PostgreSQL] Schema initialized');
+        // Сигнатура данных: резкое расхождение с эталоном (news ~190k, users ~50, courses ~3)
+        // означает подозрение на подключение «не к тому» кластеру БД (см. DEPLOYMENT.md, инцидент 2026-10-01)
+        try {
+          const sig = await query(
+            `SELECT (SELECT count(*) FROM news) AS news, (SELECT count(*) FROM users) AS users, (SELECT count(*) FROM courses) AS courses`
+          );
+          const r = sig.rows?.[0];
+          console.log(`[DB] data signature: news=${r?.news} users=${r?.users} courses=${r?.courses} (если цифры резко ниже эталона — проверьте, что база смонтирована правильно)`);
+        } catch (e: any) {
+          console.log('[DB] data signature unavailable:', e.message?.substring(0, 80));
+        }
       } else {
         console.error('[PostgreSQL] schema.sql NOT FOUND at', schemaPath);
       }
