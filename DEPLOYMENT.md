@@ -1,9 +1,9 @@
 # PULSE — Deployment Guide
 
 > Единый документ по инфраструктуре, деплою и окружению.
-> Последнее обновление: 2026-09-15 (инцидент «сборка из клона уронила env бэкенда» —
-> усилены предупреждения «compose только из /opt/pulse», см. раздел об инциденте
-> 2026-09-15 и «Обновление версии (процедура v2)»).
+> Последнее обновление: 2026-10-01 (инцидент «git pull снёс ручные правки
+> compose» → compose унифицирован: боевой конфиг в git, на сервере symlinks,
+> см. раздел «Инцидент 2026-10-01»; compose теперь безопасен из любого каталога).
 >
 > **⚡ СТАТУС:** работают **две идентичные параллельные среды** — это осознанное
 > текущее состояние, а не переходный этап миграции:
@@ -332,8 +332,8 @@ docker-compose up   # PostgreSQL 16 + Redis 7 + Backend
 
 ```
 /opt/pulse/
-├── docker-compose.yml   # стек: caddy + backend + postgres:18 (pgvector) + embeddings (TEI)
-│                        # ⚠️ БОЕВОЙ compose — все docker compose команды только из /opt/pulse
+├── docker-compose.yml   # ← SYMLINK на /opt/pulse/pulse/docker-compose.yml
+│                        # (единый боевой конфиг, источник правды — git)
 ├── .env                 # секреты (НЕ в git, chmod 600)
 ├── Caddyfile            # два домена (прод + sslip), прокси /api
 │                        # + ТЗ-118: временный блок @adminLegacyApi (прокси /admin/* и
@@ -341,7 +341,10 @@ docker-compose up   # PostgreSQL 16 + Redis 7 + Backend
 │                        #   ТЗ-118; бэкап до хотфикса — /opt/pulse/Caddyfile.bak-tz118)
 ├── frontend/dist/       # собранный фронт (API_BASE захардкожен → pulse.inside-trade.ru)
 ├── pulse/               # git-клон этого репозитория (источник сборки backend)
-│                        # ⚠️ его docker-compose.yml НЕ боевой — для compose не использовать
+│   ├── docker-compose.yml  # боевой стек целиком, закоммичен (caddy/postgres/
+│                        # embeddings/topics-worker + ClamAV-профиль; пути абсолютные)
+│   └── .env             # ← SYMLINK на /opt/pulse/.env (интерполяция ${VAR} compose)
+├── music/, sfx/, uploads/  # bind-mount'ы backend (треки радио, SFX, файлы LMS)
 ├── update-backend.sh    # каноническое обновление бэкенда (git pull + build из /opt/pulse)
 ├── update-frontend.sh   # каноническое обновление фронта
 ├── logs/                # логи бэкенда (volume)
@@ -358,10 +361,11 @@ docker-compose up   # PostgreSQL 16 + Redis 7 + Backend
   VAPID, Resend, Serper, Yandex Search) — те же значения, что у pulse-api на Render
   (источник — Render API). Доставлены на VPS 2026-09-09 (бэкапы: `.env.bak-20260909`,
   `docker-compose.yml.bak-20260909`).
-- ⚠️ **Ключ в .env ≠ ключ в контейнере**: docker-compose.yml передаёт переменные
-  явным списком в `environment:`. Новый ключ в .env без правки compose контейнеру
-  не виден. Проверено 2026-09-09: имена синхронизированы с кодом (Firebase —
-  `FIREBASE_SERVICE_ACCOUNT_BASE64`, НЕ `..._BASE`).
+- ✅ **Секреты в контейнер**: compose с 2026-10-01 подключает `/opt/pulse/.env`
+  через `env_file` (проброс всех ключей) + symlink `.env` в project dir
+  (интерполяция `${VAR}` в `environment:`). Новый ключ в .env виден контейнеру
+  без правки compose. До 2026-10-01 передавался только явный список — новый
+  ключ молча терялся (это предупреждение тогда было критичным).
 - ⚠️ **YuKassa webhook**: автопостановка требует OAuth-токена (его нет) — webhook
   добавляется вручную в кабинете ЮKassa: `https://pulse.inside-trade.ru/api/webhook/yookassa`.
   Проверить, что старая точка на Render отключена — иначе уведомления об оплатах
@@ -382,12 +386,13 @@ docker-compose up   # PostgreSQL 16 + Redis 7 + Backend
 
 ### ТЗ-91 (2026-09-10..11): семантические эмбеддинги новостей — фактическое состояние
 
-- ⚠️ **Боевой compose — `/opt/pulse/docker-compose.yml`, НЕ клон в `/opt/pulse/pulse`.**
-  Compose в git-клоне — упрощённый вариант (с redis, без caddy, без полного списка
-  секретов). Оба файла дают проекту имя `pulse` (имя каталога), поэтому команды
-  из клона управляют теми же контейнерами, но с ДРУГИМ конфигом (mount БД, env,
-  лимиты). Любые операции на проде — только `cd /opt/pulse && docker compose ...`.
-  Бэкап боевого compose: `/opt/pulse/docker-compose.yml.bak-tz91`.
+- **Compose — единый, в git** (с 2026-10-01): `/opt/pulse/docker-compose.yml` —
+  symlink на файл в git-клоне (`/opt/pulse/pulse/docker-compose.yml`), оба
+  пути дают один конфиг. История: до 2026-10-01 существовали ДВА разных
+  compose (боевой в /opt/pulse с ручными правками + упрощённый в клоне), оба
+  давали проекту имя `pulse` и управляли теми же контейнерами с разным
+  конфигом — повод для инцидентов 2026-09-15 и 2026-10-01 (см. выше).
+  Бэкап прежнего боевого compose: `/opt/pulse/docker-compose.yml.bak-20261001`.
 - **Postgres: `pgvector/pgvector:pg18`** (ТЗ-91, задача 2; в ТЗ было pg16 — фактический
   кластер 18.6, мажорная версия образа обязана совпадать с кластером).
   ⚠️ **`PGDATA: /var/lib/postgresql/18/docker` задан явно** — кластер лежит в подкаталоге
@@ -462,6 +467,38 @@ docker-compose up   # PostgreSQL 16 + Redis 7 + Backend
   как при первом импорте).
 - Правило: **никогда не использовать `docker compose down -v` на проде**;
   перед любыми операциями с volumes — свежий дамп (`backup-*.sql.gz`).
+
+### ⚠️ Инцидент 2026-10-01: git pull снёс ручные правки compose (env, volumes, музыка радио)
+
+Повторение инцидента 2026-09-15 по той же схеме: деплой запущен из git-клона
+(`cd /opt/pulse/pulse && docker compose up -d --build backend`), при этом
+боевой compose `/opt/pulse/docker-compose.yml` содержал **незакоммиченные**
+ручные правки (volume `/opt/pulse/music` для Music Library, LMS-env,
+тюнинг postgres). `git pull` в клоне перезаписал его урещённой версией из
+репозитория → контейнер пересоздался без `ENCRYPTION_KEY`, `SIGNED_URL_SECRET`,
+MINIMAX и пр. → crash-loop. Отдельными симптомами оказались: «пропавший»
+трек радио (файл цел на хосте, mount потерян) и отсутствующие LMS-таблицы
+(прод-миграции `/migrate-lms*` применяются вручную и не были зафиксированы).
+
+**Лечение и устранение класса инцидента (сделано 2026-10-01):**
+1. **Compose унифицирован** — боевой стек целиком закоммичен в git
+   (`pulse-backend/docker-compose.yml`): caddy + postgres + embeddings +
+   topics-worker + ClamAV-профиль, volumes music/sfx/uploads/clamav_run,
+   `env_file: /opt/pulse/.env`. Все пути абсолютные — конфиг не зависит от
+   каталога запуска. Redis-сервис удалён (в коде не используется).
+2. **Symlinks на сервере**: `/opt/pulse/docker-compose.yml` →
+   `/opt/pulse/pulse/docker-compose.yml` и `/opt/pulse/pulse/.env` →
+   `/opt/pulse/.env`. Compose из `/opt/pulse` и из клона — это ОДИН файл.
+   Золотое правило «только из /opt/pulse» больше не критично, но скрипты
+   (`update-backend.sh`, cron topics-worker) по-прежнему работают из /opt/pulse.
+3. **Правило: любые правки compose на сервере — немедленным коммитом в git.**
+   Ручной патч «на потом» = гарантированная потеря при следующем pull.
+4. `.env` обслуживает compose дважды: `env_file` (проброс в контейнер) и
+   symlink в project dir (интерполяция `${VAR}` в `environment:` — без symlink
+   явные ключи получили бы дефолты и перекрыли env_file).
+5. LMS-миграции (`/migrate-lms`, `/migrate-lms-ugc`, `/migrate-lms-matching`,
+   POST `?secret=CRON_SECRET_KEY`) применены на проде; runbook — в
+   `docs/education.md`.
 
 ### ⚠️ Инцидент 2026-09-15: сборка из git-клона уронила env бэкенда
 
@@ -625,14 +662,16 @@ docker logs pulse-backend --tail 100 -f        # логи
 docker compose restart backend                 # рестарт
 ```
 
-> 🚫 **ЗОЛОТОЕ ПРАВИЛО: все `docker compose` команды на проде — ТОЛЬКО из `/opt/pulse`.**
-> Команду никогда не запускать из `/opt/pulse/pulse` (git-клон) — там другой
-> docker-compose.yml (упрощённый, без полного списка секретов), оба файла дают
-> проекту имя `pulse` и управляют ТЕМИ ЖЕ контейнерами, но с ДРУГИМ конфигом
-> (env, mount БД, лимиты). Пересоздание контейнера из клона молча теряет
+> **Compose — один файл (с 2026-10-01):** `/opt/pulse/docker-compose.yml` —
+> symlink на закоммиченный конфиг в git-клоне, поэтому `docker compose` из
+> `/opt/pulse` и из `/opt/pulse/pulse` использует один и тот же конфиг.
+> Историческая справка (инциденты 2026-09-15 и 2026-10-01): раньше файлы
+> различались, и пересоздание контейнера из «не того» каталога молча теряло
 > переменные (`CRON_SECRET_KEY`, `ENCRYPTION_KEY`, Firebase и пр.) → crash-loop.
-> См. инцидент 2026-09-15 ниже. Канонические скрипты обновления на сервере:
+> Канонические скрипты обновления на сервере:
 > `/opt/pulse/update-backend.sh`, `/opt/pulse/update-frontend.sh`.
+> Правило, остающееся в силе: **правки compose на сервере — только через git**
+> (коммит + push + pull), ручные патчи запрещены.
 
 ⚠️ **ЗАПРЕЩЕНО на проде:** `docker compose down -v`, `docker volume rm`,
 `docker compose up -V` — удаляют данные postgres/TEI (инцидент 2026-09-11,
@@ -677,10 +716,11 @@ docker compose restart backend                 # рестарт
 
 #### 2. Backend — только если есть новые коммиты
 
-> 🚫 **Сборка — ТОЛЬКО из `/opt/pulse`** (боевой compose с полным env).
-> Ни в коем случае не запускать `docker compose up` из `/opt/pulse/pulse` —
-> пересоздаст контейнер без `CRON_SECRET_KEY` и др. → crash-loop (инцидент
-> 2026-09-15). Канонический вариант одной командой: `/opt/pulse/update-backend.sh`.
+> Compose единый (symlink), сборку можно запускать из `/opt/pulse` или клона —
+> конфиг одинаковый. Канонический вариант одной командой: `/opt/pulse/update-backend.sh`.
+> Если бэкенд после пересборки в статусе `Restarting` — смотреть
+> `docker logs pulse-backend --tail 30`; падение с `... environment variable
+> is required` = потерян env (см. инцидент 2026-10-01: env_file + symlink .env).
 
 ```bash
 # Проверка отставания (fetch + сколько коммитов позади):
@@ -697,10 +737,10 @@ docker compose restart backend                 # рестарт
 .kimi/vps-ssh.exp "docker logs pulse-backend --tail 30"   # старт и миграции без ошибок
 ```
 
-> Если бэкенд после пересборки в статусе `Restarting` — смотреть
-> `docker logs pulse-backend --tail 30`. Падение с
-> `... environment variable is required` = контейнер пересоздан не из боевого
-> compose → повторить сборку строго из `/opt/pulse` (см. золотое правило выше).
+> После выкатки с миграциями (новые таблицы) проверить, что они применены:
+> миграции LMS — вручную `POST /migrate-lms{,-ugc,-matching}?secret=CRON_SECRET_KEY`
+> из контейнера (`docker exec pulse-backend node -e "fetch(...)“`),
+> см. `docs/education.md`; остальные накатываются при boot из schema.sql.
 
 #### 3. Frontend — собирается НЕ на сервере (1 ГБ RAM не тянет сборку)
 
