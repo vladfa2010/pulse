@@ -42,6 +42,8 @@ export const USER_EVENT_TYPES = [
   'education.course_restored',
   'education.enroll_admin',
   'education.unenroll_admin',
+  // ТЗ-106: самозапись по подписке (source='subscription')
+  'education.enroll_subscribed',
   // ТЗ-102: модерация UGC — аудит решений админа (approve/reject)
   'education.moderation_approve',
   'education.moderation_reject',

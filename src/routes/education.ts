@@ -34,6 +34,7 @@ import {
 import { getMskDateString, addDays } from '../services/calendar'; // бизнес-дата МСК, как у календаря
 import { subscriptionTenureDays } from '../services/education/subscriptionTenure';
 import { logIdorBlocked } from '../services/education/access';
+import { logUserEvent } from '../services/activityLog';
 import { enqueueScan } from '../services/education/virusScan';
 import { putBufferQuarantine, signedUrl, StorageError } from '../services/storage/driver';
 
@@ -872,9 +873,10 @@ router.get('/my', authMiddleware, h(async (req, res) => {
 }));
 
 // ═══════════════════════════════════════════════════════════════════════════
-// POST /api/education/courses/:slug/enroll — самозапись на БЕСПЛАТНЫЙ курс.
-// source='free' (enum lms_v1). Идемпотентно (UNIQUE(user_id, course_id)).
-// Платные курсы — 409 (покупка — ТЗ-100 задачи 4-6, контур ЮKassa).
+// POST /api/education/courses/:slug/enroll — самозапись на курс.
+// price=0 → source='free'; price>0 + активная подписка с планом из
+// course_tariffs → source='subscription' (ТЗ-106 Задача 1); иначе 409.
+// Идемпотентно (UNIQUE(user_id, course_id), ON CONFLICT DO NOTHING).
 // hidden-курсы — 404 (анти-энумерация, как в карточке курса).
 // ═══════════════════════════════════════════════════════════════════════════
 router.post('/courses/:slug/enroll', authMiddleware, h(async (req, res) => {
@@ -889,16 +891,36 @@ router.post('/courses/:slug/enroll', authMiddleware, h(async (req, res) => {
   const c = courseR.rows[0];
   if (c.status !== 'published') return fail(res, 404, 'Курс не найден');
   if (c.visibility === 'hidden') return fail(res, 404, 'Курс не найден');
+
+  let source = 'free';
   if (Number(c.price) > 0) {
-    return fail(res, 409, 'Платный курс: запись открывается после покупки');
+    // Та же логика, что access_via_subscription в карточке курса:
+    // активная подписка (grace — флаг subscription_active) и план в course_tariffs.
+    const subscription = await getUserSubscription(userId);
+    const tariffR = await query(
+      `SELECT plan_id FROM course_tariffs WHERE course_id = $1`, [c.id],
+    );
+    const tariffIds = new Set(tariffR.rows.map((r: any) => r.plan_id));
+    const viaSubscription = !!(
+      subscription.active &&
+      subscription.plan !== 'free' &&
+      tariffIds.has(subscription.plan)
+    );
+    if (!viaSubscription) {
+      return fail(res, 409, 'Платный курс: запись открывается после покупки');
+    }
+    source = 'subscription';
   }
   await query(
     `INSERT INTO course_enrollments (user_id, course_id, source)
-     VALUES ($1, $2, 'free')
+     VALUES ($1, $2, $3)
      ON CONFLICT (user_id, course_id) DO NOTHING`,
-    [userId, c.id],
+    [userId, c.id, source],
   );
-  res.json({ enrolled: true, course_id: c.id });
+  if (source === 'subscription') {
+    logUserEvent(userId, 'education.enroll_subscribed', { course_id: c.id });
+  }
+  res.json({ enrolled: true, course_id: c.id, source });
 }));
 
 // ═══════════════════════════════════════════════════════════════════════════

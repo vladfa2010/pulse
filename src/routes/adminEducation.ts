@@ -175,7 +175,7 @@ const EMBED_DOMAINS = [
 export function isAllowedEmbedUrl(raw: string): boolean {
   try {
     const u = new URL(raw);
-    if (u.protocol !== 'https:' && u.protocol !== 'http:') return false;
+    if (u.protocol !== 'https:') return false;
     const host = u.hostname.toLowerCase();
     return EMBED_DOMAINS.some((d) => host === d || host.endsWith('.' + d));
   } catch {
@@ -217,7 +217,7 @@ function validateLessonPayload(body: any): LessonPayload | { error: string } {
     const embed = body.video_embed_url === null ? '' : String(body.video_embed_url).trim();
     if (embed) {
       if (!isAllowedEmbedUrl(embed)) {
-        return { error: 'video_embed_url — домен вне белого списка (youtube, vkvideo, vimeo)' };
+        return { error: 'video_embed_url — домен вне белого списка (youtube, vkvideo, vimeo) или не https' };
       }
       out.video_embed_url = embed;
       out.video_source = 'external_embed';
@@ -946,12 +946,35 @@ router.put('/courses/:id', h(async (req, res) => {
     if (missing.length > 0) {
       return fail(res, 400, `несуществующие или неактивные планы: ${missing.join(', ')}`);
     }
-    await query(`DELETE FROM course_tariffs WHERE course_id = $1`, [courseId]);
-    for (const planId of planIds) {
-      await query(
-        `INSERT INTO course_tariffs (course_id, plan_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-        [courseId, planId],
-      );
+    // Замена набора — в транзакции (ТЗ-106 Задача 3): падение между
+    // DELETE и INSERT не должно оставлять курс без тарифов. SQLite-режим
+    // (pool=null) — последовательно, как принято в этом файле.
+    if (pool) {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query(`DELETE FROM course_tariffs WHERE course_id = $1`, [courseId]);
+        for (const planId of planIds) {
+          await client.query(
+            `INSERT INTO course_tariffs (course_id, plan_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+            [courseId, planId],
+          );
+        }
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw err;
+      } finally {
+        client.release();
+      }
+    } else {
+      await query(`DELETE FROM course_tariffs WHERE course_id = $1`, [courseId]);
+      for (const planId of planIds) {
+        await query(
+          `INSERT INTO course_tariffs (course_id, plan_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+          [courseId, planId],
+        );
+      }
     }
   }
 
