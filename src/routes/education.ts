@@ -746,6 +746,74 @@ router.post('/lessons/:lessonId/complete', authMiddleware, h(async (req, res) =>
   res.json({ ok: true, passed: true });
 }));
 
+// ═══════════════════════════════════════════════════════════════════════════
+// POST /api/education/lessons/:lessonId/test — грейдинг ответов теста.
+// GET вырезает correct (критерий 4), поэтому подсчёт балла — только на бэке:
+// клиент шлёт индексы ответов, бэк сверяет с lesson_tests.questions и возвращает
+// score. Прогресс НЕ пишем — это делает POST /complete (там же проверка pass_score).
+// ═══════════════════════════════════════════════════════════════════════════
+router.post('/lessons/:lessonId/test', authMiddleware, h(async (req, res) => {
+  const lessonId = req.params.lessonId;
+  const userId = req.user!.userId;
+
+  const lessonR = await query(
+    `SELECT l.*, c.deleted_at, c.subscription_unlock_mode
+     FROM course_lessons l JOIN courses c ON c.id = l.course_id
+     WHERE l.id = $1`,
+    [lessonId],
+  );
+  if (lessonR.rows.length === 0 || lessonR.rows[0].deleted_at) {
+    return fail(res, 404, 'Урок не найден');
+  }
+  const lesson = lessonR.rows[0];
+
+  const enrollR = await query(
+    `SELECT source FROM course_enrollments WHERE user_id = $1 AND course_id = $2`,
+    [userId, lesson.course_id],
+  );
+  if (enrollR.rows.length === 0) {
+    logIdorBlocked(userId, 'lesson_test', lessonId);
+    return fail(res, 403, 'Запишитесь на курс, чтобы проходить тест');
+  }
+  if (enrollR.rows[0].source === 'subscription') {
+    const subscription = await getUserSubscription(userId);
+    if (!subscription.active) {
+      return fail(res, 403, 'subscription_expired');
+    }
+    if (lesson.subscription_unlock_mode === 'drip' && Number(lesson.unlock_after_days) > 0) {
+      const tenure = await subscriptionTenureDays(userId);
+      if (tenure < Number(lesson.unlock_after_days)) {
+        return res.status(403).json({
+          error: 'locked_by_drip',
+          reason: 'locked_by_drip',
+          unlock_in_days: Number(lesson.unlock_after_days) - tenure,
+        });
+      }
+    }
+  }
+
+  const testR = await query(`SELECT * FROM lesson_tests WHERE lesson_id = $1`, [lessonId]);
+  if (testR.rows.length === 0) return fail(res, 404, 'У урока нет теста');
+
+  const questions = parseDbJson<any[]>(testR.rows[0].questions) || [];
+  const answers = req.body?.answers;
+  if (!Array.isArray(answers) || answers.length !== questions.length) {
+    return fail(res, 400, `answers — массив из ${questions.length} индексов (по одному на вопрос)`);
+  }
+
+  let correctCount = 0;
+  for (let i = 0; i < questions.length; i++) {
+    const right = Number(questions[i]?.correct);
+    if (Number.isInteger(right) && Number(answers[i]) === right) correctCount += 1;
+  }
+  const testScore = questions.length > 0
+    ? Math.round((correctCount / questions.length) * 100)
+    : 100;
+  const passScore = Number(testR.rows[0].pass_score);
+
+  res.json({ test_score: testScore, pass_score: passScore, passed: testScore >= passScore });
+}));
+
 function nowSqlInline(): string {
   return process.env.USE_SQLITE === 'true' ? "datetime('now')" : 'NOW()';
 }

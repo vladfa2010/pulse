@@ -394,6 +394,18 @@ async function scenario(runLabel) {
     assert(r.status === 422 && r.json.passed === false, `complete 50<70 → 422, got ${r.status} ${r.text}`);
     r = await api('GET', `/api/education/lessons/${lesson1}`, { token: userJwt });
     assert(r.status === 403 && r.json.reason === 'test_blocked', `next урок → 403 test_blocked, got ${r.status} ${r.text}`);
+    // Грейдинг (POST /lessons/:id/test) — correct на клиент не отдаём
+    r = await api('POST', `/api/education/lessons/${lesson3}/test`, { body: { answers: [1] } });
+    assert(r.status === 401, `грейдинг аноним → 401, got ${r.status}`);
+    r = await api('POST', `/api/education/lessons/${lesson3}/test`, { token: userJwt, body: { answers: [0, 1] } });
+    assert(r.status === 400, `грейдинг неверная длина → 400, got ${r.status}`);
+    r = await api('POST', `/api/education/lessons/${lesson3}/test`, { token: userJwt, body: { answers: [0] } });
+    assert(r.status === 200 && r.json.test_score === 0 && r.json.passed === false,
+      `неверный ответ → 0/не пройден, got ${r.status} ${r.text}`);
+    r = await api('POST', `/api/education/lessons/${lesson3}/test`, { token: userJwt, body: { answers: [1] } });
+    assert(r.status === 200 && r.json.test_score === 100 && r.json.passed === true && r.json.pass_score === 70,
+      `верный ответ → 100/пройден, got ${r.status} ${r.text}`);
+    ok('грейдинг теста: 401 анониму, 400 по длине, подсчёт балла на бэке');
     r = await api('POST', `/api/education/lessons/${lesson3}/complete`, {
       token: userJwt, body: { test_score: 80 },
     });

@@ -294,6 +294,39 @@ secret=CRON_SECRET_KEY`, идемпотентна; SQLite → `{skipped:true}`).
 `CalendarTodayBlock` / `MatchedCourseChips` / «Мои предложения» в профиле
 (`SubmissionsTab`). Контракт автора UGC-материала: `submitted_by: {id, username}`.
 
+## Страница урока + грейдинг теста (реализовано)
+
+**Проблема:** программа курса на `CoursePage` рендерилась строками без ссылок —
+попасть в урок было невозможно. Добавлена страница урока и серверный грейдинг.
+
+**Бэк** (`src/routes/education.ts`):
+- `POST /api/education/lessons/:lessonId/test` — грейдинг ответов. GET вырезает
+  `correct` (критерий 4), клиент шлёт `{answers: [индексы]}` (по одному на
+  вопрос, иначе 400), бэк сверяет с `lesson_tests.questions` и возвращает
+  `{test_score, pass_score, passed}`. Прогресс НЕ пишется — это делает
+  `POST /complete` (там же валидация `test_score >= pass_score` → 422).
+  Доступ: запись обязательна (403), для source='subscription' — живость
+  подписки и drip-проверка.
+- GET `/lessons/:id` без изменений (весь контент, тест без correct, prev/next).
+
+**Фронт** (pulse-frontend):
+- `pages/LessonPage.tsx`, маршрут `/education/lesson/:id` (статический сегмент
+  `lesson` ранжируется выше `/education/:slug`). Состояния: loading / 404 /
+  401 (кнопка «Войти» через auth-modal) / 403 (subscription_expired,
+  locked_by_drip с «откроется через N дн.», test_blocked). Контент: видео
+  (embed-iframe, youtube watch→embed конвертация на клиенте), текст как HTML
+  (санитизирует бэк `sanitizeLessonHtml`), тест (радио-варианты → грейдинг →
+  при проходе автоматический `complete`), кнопка «Отметить пройденным» для
+  уроков без теста, навигация prev/next.
+- `CoursePage`: строка урока — ссылка, когда `(enrolled || is_free_preview) &&
+  !locked_by_drip`; иначе прежняя неактивная строка с замком/drip-плашкой.
+- `lib/api.ts`: ошибки HTTP теперь несут `err.data` — тело ответа целиком
+  (машиночитаемые `reason`/`unlock_in_days` из LMS и будущих эндпоинтов).
+- `lib/educationApi.ts`: `fetchLesson`, `submitLessonTest`, `completeLesson`.
+
+**Проверки:** smoke-lms-step2.js дополнен блоком грейдинга (401 анониму,
+400 по длине, подсчёт 0/100), 30 проверок × 2 прогона, зелёные.
+
 ## Дорожная карта (следующие шаги)
 
 1. ~~Задача 1 + 1а: схема БД + storage-драйвер~~ ✅
