@@ -380,8 +380,13 @@ docker-compose up   # PostgreSQL 16 + Redis 7 + Backend
 - **БД — снапшот Render на 2026-09-02.** Новые регистрации/действия пользователей
   на Render после этой даты на VPS не попали. Репликации нет (Render managed PG
   не даёт прав на logical replication) — только повторные дампы.
-- **Бэкапы ручные** (на Render делала платформа):
-  `docker exec pulse-postgres pg_dump -U pulse_user pulse | gzip > backup-$(date +%F).sql.gz`
+- **Бэкапы автоматические, ночные** (настроены 2026-10-01): cron `30 2 * * *`
+  запускает `/opt/pulse/backup-nightly.sh` → `/opt/pulse/backups/`:
+  `nightly-*.sql.gz` (plain-SQL дамп БД, ~400 МБ), `files-*.tar.gz`
+  (uploads + music + sfx, ~14 МБ). Ротация: 3 daily + 2 weekly (копия
+  по понедельникам). Лог: `/opt/pulse/logs/backup.log`. Перед любыми
+  рискованными операциями всё равно делать ручной дамп (§1 ниже) —
+  ночной бэкап может быть до 24 ч старше данных.
 - **root по паролю** — перевести на SSH-ключи, отключить password auth (задача открыта).
 
 ### ТЗ-91 (2026-09-10..11): семантические эмбеддинги новостей — фактическое состояние
@@ -740,6 +745,12 @@ docker compose restart backend                 # рестарт
 .kimi/vps-ssh.exp "docker exec pulse-postgres pg_dump -U pulse_user pulse | gzip > /opt/pulse/backup-\$(date +%F).sql.gz && ls -la /opt/pulse/backup-*.sql.gz | tail -1"
 ```
 
+> Ночные автобэкапы (`/opt/pulse/backups/nightly-*.sql.gz`, см. раздел
+> «ТЗ-91 → фактическое состояние») существуют, но могут быть до 24 ч
+> старше — перед рискованными операциями (миграции, правки volumes/compose,
+> слияние кластеров) ручной дамп обязателен. Восстановление из любого
+> plain-SQL дампа — §«Восстановление БД из бэкапа» ниже.
+
 #### 2. Backend — только если есть новые коммиты
 
 > Compose единый (symlink), сборку можно запускать из `/opt/pulse` или клона —
@@ -811,6 +822,14 @@ curl -s "https://pulse.inside-trade.ru/$REMOTE" | grep -c "pulse-api-bsov.onrend
 
 # 4.3. Backend жив через caddy:
 curl -s https://pulse.inside-trade.ru/api/health   # {"ok":true,...}
+
+# 4.4. Сигнатура данных БД (инцидент 2026-10-01 — «не тот» кластер PG):
+curl -s https://pulse.inside-trade.ru/health | python3 -m json.tool | grep -A4 '"db"'
+#    Эталон порядка: news ~190k, users ~50, courses ~3.
+#    Резкое падение (напр. news <160k или courses=0 на проде с курсами)
+#    = бэкенд подключился НЕ к боевому кластеру. НЕ продолжать работу,
+#    смотреть docker-compose.yml: mount postgres_data + PGDATA.
+#    Тот же показатель логируется при старте: docker logs pulse-backend | grep 'data signature'
 ```
 
 ### Восстановление БД из бэкапа
