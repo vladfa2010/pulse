@@ -1,56 +1,52 @@
-# PULSE — Full Stack (Backend + PostgreSQL + Redis)
-version: '3.8'
+# PULSE — боевой стек VPS (caddy + backend + postgres:18 + embeddings + clamav).
+#
+# ⚠️ ЕДИНСТВЕННЫЙ источник правды. На сервере этот файл (из git) лежит как
+# /opt/pulse/docker-compose.yml, а /opt/pulse/pulse/docker-compose.yml —
+# symlink сюда. Поэтому `docker compose` из /opt/pulse и из git-клона
+# использует ОДИН конфиг (инциденты 2026-09-15 и 2026-10-01: расхождение
+# боевого compose и compose клона теряло env/volumes → crash-loop).
+# Все пути абсолютные — файл не зависит от каталога запуска.
+#
+# Секреты: /opt/pulse/.env (chmod 600, вне git). Подключены дважды:
+# env_file — прямой проброс в контейнер; symlink /opt/pulse/pulse/.env →
+# /opt/pulse/.env — для интерполяции ${VAR} в блоке environment (явные ключи
+# environment перекрывают env_file, без symlink они получили бы дефолты).
 
 services:
   postgres:
-    # ТЗ-91, задача 2: pgvector той же мажорной версии, что и кластер (18).
-    # PGDATA указываем явно: действующий кластер лежит в подкаталоге 18/docker
-    # (наследие прежнего контейнера), volume postgres_data совместим — данные не трогаем.
+    # ТЗ-91: образ pgvector той же мажорной версии, что и кластер (18).
+    # PGDATA явно: действующий кластер лежит в data/18/docker (наследие
+    # образа postgres:18-alpine), volume postgres_data совместим.
     image: pgvector/pgvector:pg18
     container_name: pulse-postgres
     environment:
       POSTGRES_DB: pulse
       POSTGRES_USER: pulse_user
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-pulse_password}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
       PGDATA: /var/lib/postgresql/data/18/docker
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
+      - postgres_data:/var/lib/postgresql
+    command: >
+      postgres -c shared_buffers=128MB -c effective_cache_size=256MB
+      -c work_mem=4MB -c maintenance_work_mem=32MB -c max_connections=50
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U pulse_user -d pulse"]
       interval: 10s
       timeout: 5s
       retries: 5
-
-  redis:
-    image: redis:7-alpine
-    container_name: pulse-redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 320M
+    restart: unless-stopped
 
   backend:
-    build: .
+    build: /opt/pulse/pulse
     container_name: pulse-backend
-    # Все секреты VDS живут в /opt/pulse/.env (вне git). Подключаются дважды:
-    # env_file — прямой проброс в контейнер (SERPER/FINNHUB/VAPID/CRON_SECRET_KEY/
-    # MINIMAX/ENCRYPTION_KEY/SIGNED_URL_SECRET и т.д.); symlink .env в project dir
-    # — для интерполяции ${VAR} в блоке environment ниже. Только env_file НЕ
-    # достаточно: явные ключи environment перекрывают env_file, и без symlink
-    # они получили бы дефолты вроде change-me-in-production.
     env_file:
       - /opt/pulse/.env
     depends_on:
       postgres:
-        condition: service_healthy
-      redis:
         condition: service_healthy
     environment:
       PORT: 3001
@@ -59,88 +55,116 @@ services:
       DB_PORT: 5432
       DB_NAME: pulse
       DB_USER: pulse_user
-      DB_PASSWORD: ${DB_PASSWORD:-pulse_password}
-      REDIS_URL: redis://redis:6379
-      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      DB_PASSWORD: ${DB_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
       JWT_EXPIRES_IN: 7d
+      FRONTEND_URL: https://pulse.inside-trade.ru
+      BACKEND_URL: https://pulse.inside-trade.ru
+      KIMI_API_KEY: ${KIMI_API_KEY:-}
+      MINIMAX_API_KEY: ${MINIMAX_API_KEY:-}
+      MINIMAX_CHAT_MODEL: ${MINIMAX_CHAT_MODEL:-}
+      MINIMAX_TTS_MODEL: ${MINIMAX_TTS_MODEL:-}
+      CLUSTERING_ENABLED: ${CLUSTERING_ENABLED:-false}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_ADMIN_CHAT_ID: ${TELEGRAM_ADMIN_CHAT_ID:-}
       YOOKASSA_SHOP_ID: ${YOOKASSA_SHOP_ID:-}
       YOOKASSA_SECRET_KEY: ${YOOKASSA_SECRET_KEY:-}
-      SENDGRID_API_KEY: ${SENDGRID_API_KEY:-}
-      # ТЗ-09: без проброса этих переменных compose-запуск бэкенда получает
-      # EMAIL_PROVIDER='none' — почта молча выключена (инцидент 2026-09-16)
       EMAIL_PROVIDER: ${EMAIL_PROVIDER:-none}
-      RESEND_API_KEY: ${RESEND_API_KEY:-}
       EMAIL_FROM: ${EMAIL_FROM:-noreply@pulse.inside-trade.ru}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      SENDGRID_API_KEY: ${SENDGRID_API_KEY:-}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
       TRANSLATION_API_KEY: ${TRANSLATION_API_KEY:-}
       RSS_FETCH_INTERVAL: 15
-      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
-      # ТЗ-115: темы живут только на VPS — на Render переменной нет (крон не
-      # регистрируется, ручки отвечают 404 topics_disabled)
+      # ТЗ-115: темы только на VPS (на Render переменной нет)
       TOPICS_ENABLED: ${TOPICS_ENABLED:-false}
-      # ТЗ-102 v2 (S4): путь к unix-сокету clamd ( clamav-сервис, профиль av).
+      FINNHUB_API_KEY: ${FINNHUB_API_KEY:-}
+      FINAM_MARKET_SECRET: ${FINAM_MARKET_SECRET:-}
+      SERPER_API_KEY: ${SERPER_API_KEY:-}
+      YANDEX_SEARCH_API_KEY: ${YANDEX_SEARCH_API_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-}
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      FIREBASE_SERVICE_ACCOUNT_BASE64: ${FIREBASE_SERVICE_ACCOUNT_BASE64:-}
+      CRON_SECRET_KEY: ${CRON_SECRET_KEY}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      # ТЗ-100: LMS storage (local driver)
+      STORAGE_DRIVER: ${STORAGE_DRIVER:-local}
+      UPLOADS_DIR: ${UPLOADS_DIR:-/app/uploads}
+      SIGNED_URL_SECRET: ${SIGNED_URL_SECRET}
+      SIGNED_URL_TTL_SEC: ${SIGNED_URL_TTL_SEC:-3600}
+      # ТЗ-102 v2 (S4): путь к unix-сокету clamd (clamav-сервис, профиль av).
       # Без профиля каталог пуст — backend штатно деградирует: файлы висят в
-      # pending_scan, админке виден флаг «антивирус недоступен» (virusScan.ts).
-      # ВАЖНО: в одном mapping-е ключ environment один — второй блок compose
-      # отклонит («mapping key already defined»), поэтому CLAMAV_SOCKET живёт
-      # здесь, а не отдельным блоком.
+      # pending_scan, в админке флаг «антивирус недоступен» (virusScan.ts).
       CLAMAV_SOCKET: /run/clamav/clamd.sock
-    ports:
-      - "3001:3001"
     volumes:
-      - ./logs:/app/logs
-      # ТЗ-100: загруженные файлы LMS (обложки, материалы, UGC) — bind-mount
-      # вне дерева git, переживает redeploy и бэкапится одним tar.
-      - /opt/pulse/uploads:/app/uploads
-      # Music Library радио (ТЗ-70): треки лежат на хосте; без mount upload
-      # пишет в слой контейнера и теряется при пересоздании (инцидент
-      # 2026-10-01 — этот volume был пропатчен вручную и снесён git pull).
+      - /opt/pulse/logs:/app/logs
+      # TZ70: фоновая музыка радио + SFX (bind-mount, файлы живут на хосте)
       - /opt/pulse/music:/opt/pulse/music
-      # ТЗ-102 v2 (S4): unix-сокет clamd ( clamav-сервис, профиль av ).
-      # Без профиля каталог пуст — backend штатно деградирует (см. выше).
+      - /opt/pulse/sfx:/opt/pulse/sfx
+      # ТЗ-100: LMS uploads (bind-mount, бэкапится одним tar)
+      - /opt/pulse/uploads:/app/uploads
+      # ТЗ-102 v2 (S4): unix-сокет clamd (общий volume с clamav, ro)
       - clamav_run:/run/clamav:ro
+    deploy:
+      resources:
+        limits:
+          memory: 448M
     restart: unless-stopped
 
   # ТЗ-91 (этап 1) — TEI с Qwen3-Embedding-0.6B (dim 1024).
   # Порт наружу НЕ публикуем: бекенд ходит по внутренней сети (http://embeddings:80).
-  # depends_on у backend НЕ добавляем — этап 1 не должен мешать старту бекенда.
+  # depends_on у backend НЕ добавляем — этап 1 не должен мешать старту бэкенда.
   embeddings:
-    # digest закреплён после первого pull (ТЗ-91 v1.1): теги на ghcr.io перезаписываемы, digest — нет
+    # digest закреплён после первого pull (ТЗ-91 v1.1): теги на ghcr.io
+    # перезаписываемы, digest — нет
     image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9@sha256:ad950d30878eceb72aaf32024d26fa2b1d04a75304fa0b4776b49aa1941fea07
     container_name: pulse-embeddings
-    restart: unless-stopped
-    mem_limit: 3g        # v1.3: TEI RSS ~2,5–3 ГБ (fp32) — лимит с запасом
-    cpus: 1.0            # v1.3: 1 ядро контейнеру, 1 ядро проду
     volumes:
       - tei_data:/data
     command: >
       --model-id Qwen/Qwen3-Embedding-0.6B
       --max-client-batch-size 32
       --max-batch-tokens 4096
+      --tokenization-workers 4
     # dev: 16384 из ТЗ требует ~16 ГБ RAM при прогреве TEI (warmup-аллокация),
-    # на VDS 4 ГБ контейнер падает; 4096 проверено, RSS ~1,2–2,5 ГБ
+    # на малой VDS контейнер падал; 8192 при 22 потоках не влезали даже в 8G
+    # (рестарт-луп, проверено 2026-09-10) — max-batch-tokens держим 4096.
+    # RAYON_NUM_THREADS ограничивает потоки candle: без ограничения warmup-спайк
+    # RSS превышает лимит и процесс молча умирает (ExitCode 0, рестарт-луп).
+    environment:
+      - RAYON_NUM_THREADS=4
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:80/health || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 3G
+          cpus: "2.0"
+    restart: unless-stopped
 
-  # ТЗ-115, задача 2 — one-shot кластеризация тем (HDBSCAN по эмбеддингам).
-  # Не стартует с обычным `compose up -d` (профиль worker); запуск — хостовый
-  # cron на VPS: 40 3 * * * cd /opt/pulse && docker compose --profile worker run --rm topics-worker
-  topics-worker:
-    build: ./topics_worker
-    profiles: ["worker"]            # не стартует с обычным `compose up -d`
-    environment:
-      DATABASE_URL: postgres://pulse_user:${DB_PASSWORD:-pulse_password}@postgres:5432/pulse
-      TOPICS_WINDOW_DAYS: ${TOPICS_WINDOW_DAYS:-14}
-      TOPICS_MIN_CLUSTER_SIZE: ${TOPICS_MIN_CLUSTER_SIZE:-8}
-      TOPICS_MIN_SAMPLES: ${TOPICS_MIN_SAMPLES:-3}
-      TOPICS_PCA_DIMS: ${TOPICS_PCA_DIMS:-50}
-      TOPICS_JACCARD_THRESHOLD: ${TOPICS_JACCARD_THRESHOLD:-0.3}
-    depends_on: [postgres]
-    restart: "no"
-    mem_limit: 2g
+  caddy:
+    image: caddy:2-alpine
+    container_name: pulse-caddy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - /opt/pulse/Caddyfile:/etc/caddy/Caddyfile:ro
+      - /opt/pulse/frontend/dist:/srv/dist:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+    restart: unless-stopped
 
   # ТЗ-102 v2 (S4) — ClamAV для антивирусного сканирования UGC-файлов.
   # Профиль "av": НЕ стартует с обычным `compose up -d` — clamd с базами держит
@@ -171,9 +195,25 @@ services:
       retries: 5
       start_period: 300s
 
+  # ТЗ-115 — one-shot кластеризация тем (HDBSCAN по эмбеддингам, 03:40 МСК cron)
+  topics-worker:
+    build: /opt/pulse/pulse/topics_worker
+    profiles: ["worker"]
+    environment:
+      DATABASE_URL: postgres://pulse_user:${DB_PASSWORD}@postgres:5432/pulse
+      TOPICS_WINDOW_DAYS: ${TOPICS_WINDOW_DAYS:-14}
+      TOPICS_MIN_CLUSTER_SIZE: ${TOPICS_MIN_CLUSTER_SIZE:-8}
+      TOPICS_MIN_SAMPLES: ${TOPICS_MIN_SAMPLES:-3}
+      TOPICS_PCA_DIMS: ${TOPICS_PCA_DIMS:-50}
+      TOPICS_JACCARD_THRESHOLD: ${TOPICS_JACCARD_THRESHOLD:-0.3}
+    depends_on: [postgres]
+    restart: "no"
+    mem_limit: 2g
+
 volumes:
+  caddy_data:
+  caddy_config:
   postgres_data:
-  redis_data:
   tei_data:
   clamav_db:
   clamav_run:
