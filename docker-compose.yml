@@ -92,6 +92,10 @@ services:
       # ТЗ-100: загруженные файлы LMS (обложки, материалы, UGC) — bind-mount
       # вне дерева git, переживает redeploy и бэкапится одним tar.
       - /opt/pulse/uploads:/app/uploads
+      # Music Library радио (ТЗ-70): треки лежат на хосте; без mount upload
+      # пишет в слой контейнера и теряется при пересоздании (инцидент
+      # 2026-10-01 — этот volume был пропатчен вручную и снесён git pull).
+      - /opt/pulse/music:/opt/pulse/music
       # ТЗ-102 v2 (S4): unix-сокет clamd ( clamav-сервис, профиль av ).
       # Без профиля каталог пуст — backend штатно деградирует (см. выше).
       - clamav_run:/run/clamav:ro
