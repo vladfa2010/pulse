@@ -304,6 +304,20 @@ async function scenario(runLabel) {
     assert(onShelf, 'опубликованный курс виден на витрине');
     ok('критерий 4: publish 422 → урок → 200, курс на публичной витрине');
 
+    // ── Самозапись на бесплатный курс (POST /courses/:slug/enroll) ──────────
+    // subJwt: subscriber — чтобы не пересекаться с admin-grant ids.user ниже.
+    r = await api('POST', `/api/education/courses/${slug1}/enroll`);
+    assert(r.status === 401, `enroll без токена → 401, got ${r.status}`);
+    r = await api('POST', `/api/education/courses/${slug1}/enroll`, { token: subJwt });
+    assert(r.status === 200 && r.json.enrolled === true, `enroll на бесплатный → 200, got ${r.status}`);
+    r = await api('POST', `/api/education/courses/${slug1}/enroll`, { token: subJwt });
+    assert(r.status === 200, 'повторный enroll идемпотентен (UNIQUE user+course)');
+    r = await api('GET', `/api/education/courses/${slug1}`, { token: subJwt });
+    assert(!!r.json.my_enrollment, 'после enroll my_enrollment есть в карточке');
+    r = await api('POST', `/api/education/courses/purchased-course/enroll`, { token: subJwt });
+    assert(r.status === 409, `enroll на платный курс (5000 ₽) → 409, got ${r.status}`);
+    ok('самозапись: 401 анониму, 200+идемпотентно юзеру, 409 платному');
+
     // ── Критерий 5: embed-валидация ───────────────────────────────────────
     r = await api('PUT', `/api/admin/education/lessons/${lesson1}`, {
       token: adminJwt, body: { video_embed_url: 'https://evil.com/x' },

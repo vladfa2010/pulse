@@ -794,6 +794,36 @@ router.get('/my', authMiddleware, h(async (req, res) => {
 }));
 
 // ═══════════════════════════════════════════════════════════════════════════
+// POST /api/education/courses/:slug/enroll — самозапись на БЕСПЛАТНЫЙ курс.
+// source='free' (enum lms_v1). Идемпотентно (UNIQUE(user_id, course_id)).
+// Платные курсы — 409 (покупка — ТЗ-100 задачи 4-6, контур ЮKassa).
+// hidden-курсы — 404 (анти-энумерация, как в карточке курса).
+// ═══════════════════════════════════════════════════════════════════════════
+router.post('/courses/:slug/enroll', authMiddleware, h(async (req, res) => {
+  const userId = req.user!.userId;
+  const courseR = await query(
+    `SELECT id, title, price, status, visibility, deleted_at FROM courses WHERE slug = $1`,
+    [req.params.slug],
+  );
+  if (courseR.rows.length === 0 || courseR.rows[0].deleted_at) {
+    return fail(res, 404, 'Курс не найден');
+  }
+  const c = courseR.rows[0];
+  if (c.status !== 'published') return fail(res, 404, 'Курс не найден');
+  if (c.visibility === 'hidden') return fail(res, 404, 'Курс не найден');
+  if (Number(c.price) > 0) {
+    return fail(res, 409, 'Платный курс: запись открывается после покупки');
+  }
+  await query(
+    `INSERT INTO course_enrollments (user_id, course_id, source)
+     VALUES ($1, $2, 'free')
+     ON CONFLICT (user_id, course_id) DO NOTHING`,
+    [userId, c.id],
+  );
+  res.json({ enrolled: true, course_id: c.id });
+}));
+
+// ═══════════════════════════════════════════════════════════════════════════
 // GET /api/education/courses/:slug/news — «Курс в новостях» (свежие 5)
 // ═══════════════════════════════════════════════════════════════════════════
 router.get('/courses/:slug/news', h(async (req, res) => {
