@@ -74,6 +74,13 @@ services:
       - "3001:3001"
     volumes:
       - ./logs:/app/logs
+      # ТЗ-102 v2 (S4): unix-сокет clamd ( clamav-сервис, профиль av ).
+      # Без профиля каталог пуст — backend штатно деградирует: файлы висят в
+      # pending_scan, админке виден флаг «антивирус недоступен» (virusScan.ts).
+      - clamav_run:/run/clamav:ro
+    environment:
+      # Путь к сокету clamd (default в коде совпадает; явно — для наглядности)
+      CLAMAV_SOCKET: /run/clamav/clamd.sock
     restart: unless-stopped
 
   # ТЗ-91 (этап 1) — TEI с Qwen3-Embedding-0.6B (dim 1024).
@@ -117,7 +124,38 @@ services:
     restart: "no"
     mem_limit: 2g
 
+  # ТЗ-102 v2 (S4) — ClamAV для антивирусного сканирования UGC-файлов.
+  # Профиль "av": НЕ стартует с обычным `compose up -d` — clamd с базами держит
+  # ~1 ГБ RAM (риски ТЗ-102 §4); запуск на VDS по мере необходимости:
+  #   docker compose --profile av up -d clamav
+  # Сокет проброшен named-volume'ом clamav_run в backend (ro). depends_on у
+  # backend НЕ добавляем: недоступность clamd — штатная деградация (файлы в
+  # pending_scan + флаг av_unavailable в очереди модерации), а не повод не
+  # стартовать бэкенд.
+  clamav:
+    image: clamav/clamav:latest
+    container_name: pulse-clamav
+    profiles: ["av"]
+    restart: unless-stopped
+    volumes:
+      - clamav_db:/var/lib/clamav   # базы сигнатур (freshclam обновляет в фоне)
+      - clamav_run:/run/clamav      # unix-сокет clamd — общий с backend
+    environment:
+      # CLAMD_CONF_* — env-override настроек clamd официального образа:
+      # явный unix-сокет (default образа может отличаться между версиями)
+      CLAMD_CONF_LocalSocket: /run/clamav/clamd.sock
+    healthcheck:
+      # clamdcheck.sh — штатный скрипт образа (ping демона по TCP 3310);
+      # start_period — первая загрузка баз свежим volume занимает минуты
+      test: ["CMD", "clamdcheck.sh"]
+      interval: 60s
+      timeout: 10s
+      retries: 5
+      start_period: 300s
+
 volumes:
   postgres_data:
   redis_data:
   tei_data:
+  clamav_db:
+  clamav_run:

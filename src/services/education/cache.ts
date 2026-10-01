@@ -13,6 +13,8 @@
  * персональное дочисляется после чтения кэша (риск «Кэш × персонализация»).
  */
 
+import { invalidateCalMatchCache } from './calendarMatch';
+
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 минут (ТЗ-100 v3)
 const KEY_PREFIX = 'education:';
 
@@ -44,6 +46,9 @@ export async function getCached<T>(key: string, producer: () => Promise<T>): Pro
  * Жёсткая инвалидация всех ключей витрины. Дёшево (несколько десятков
  * ключей) — безопасно звать при ЛЮБОЙ мутации курсов/уроков/материалов/
  * категорий/тегов/тарифов/news-links (ТЗ-101 v3, Задача 1).
+ *
+ * ТЗ-103 Задача 7: вместе с витриной инвалидируем и кэш календарного
+ * мэтчинга (education:calmatch:*) — правка тегов курса подействует сразу.
  */
 export function invalidateEducationCache(): void {
   for (const key of store.keys()) {
@@ -51,6 +56,7 @@ export function invalidateEducationCache(): void {
       store.delete(key);
     }
   }
+  invalidateCalMatchCache();
 }
 
 export default { getCached, invalidateEducationCache };

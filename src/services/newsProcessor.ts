@@ -23,6 +23,7 @@ import { broadcastNews } from './sse';
 import { slugify } from '../utils/slugify';
 import { populateNewsTagLinksBatch, EnrichmentTask } from './enrichment';
 import { embedAndClusterBatch } from './clustering';
+import { matchNewsToCourses } from './education/match'; // ТЗ-103: мэтчинг курсов (async, fail-safe)
 
 const INSTANCE_ID = `${process.env.HOSTNAME || 'unknown'}-${Date.now()}`;
 const SQL_NOW = "NOW()";
@@ -176,6 +177,12 @@ async function processRawArticlesLocked(signal: AbortSignal): Promise<void> {
           const saveStart = Date.now();
           await saveProcessedArticles(chunk, matchedTagsList, sentimentResults);
           saveMs = Date.now() - saveStart;
+
+          // ТЗ-103: инкрементальный мэтчинг курсов ↔ новость. Асинхронно
+          // (fire-and-forget), ошибки глотаем с логом — мэтчинг не должен
+          // ломать парсинг; сам сервис no-op под EDUCATION_MATCH_ENABLED.
+          void Promise.all(chunk.map(a => matchNewsToCourses(a.id).catch((err: any) =>
+            console.warn('[EducationMatch] hook failed (non-fatal):', err?.message))));
 
           // Enrichment: news_tag_links (fire-and-forget)
           const tasks: EnrichmentTask[] = chunk.map((a, i) => ({

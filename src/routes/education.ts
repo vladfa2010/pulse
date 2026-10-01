@@ -14,16 +14,28 @@
 
 import { Router, Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
+import multer from 'multer';
+import fileType from 'file-type';
+import crypto from 'crypto';
 
 import { query } from '../config/db';
 import { AuthRequest, authMiddleware } from '../middleware/auth';
 import { optionalAuth } from '../middleware/optionalAuth';
-import { checkRateLimit, lmsFreeDownloadLimiter } from '../middleware/rateLimit';
+import { checkRateLimit, lmsCalendarMatchLimiter, lmsFreeDownloadLimiter, lmsSubmissionLimiter } from '../middleware/rateLimit';
 import { getActivePlans, getUserSubscription, parseDbJson } from '../services/subscription';
 import { getCached } from '../services/education/cache';
+import { isEducationMatchEnabled } from '../services/education/match'; // ТЗ-103 Задача 6: фичефлаг мэтчинга
+import {
+  courseTagIds,
+  getCalMatchCached,
+  matchCoursesToEvent,
+  matchEventsToCourse,
+} from '../services/education/calendarMatch'; // ТЗ-103 v2 Задача 7
+import { getMskDateString, addDays } from '../services/calendar'; // бизнес-дата МСК, как у календаря
 import { subscriptionTenureDays } from '../services/education/subscriptionTenure';
 import { logIdorBlocked } from '../services/education/access';
-import { signedUrl } from '../services/storage/driver';
+import { enqueueScan } from '../services/education/virusScan';
+import { putBufferQuarantine, signedUrl, StorageError } from '../services/storage/driver';
 
 const JWT_SECRET: string = process.env.JWT_SECRET!;
 const router = Router();
@@ -343,8 +355,13 @@ router.get('/courses/:slug', optionalAuth, h(async (req, res) => {
     `SELECT * FROM course_lessons WHERE course_id = $1 ORDER BY position ASC`,
     [c.id],
   );
+  // ТЗ-102: публично — ТОЛЬКО approved (pending/rejected UGC не светятся нигде).
+  // Редакционные строки после миграции имеют status='approved' по умолчанию.
   const materialsR = await query(
-    `SELECT * FROM course_materials WHERE course_id = $1 ORDER BY position ASC`,
+    `SELECT m.*, u.username AS submitted_by_username
+     FROM course_materials m LEFT JOIN users u ON u.id = m.submitted_by
+     WHERE m.course_id = $1 AND m.status = 'approved'
+     ORDER BY m.position ASC`,
     [c.id],
   );
 
@@ -393,11 +410,16 @@ router.get('/courses/:slug', optionalAuth, h(async (req, res) => {
     }
   }
 
-  // Материалы (v4): записанному — все; гостю — is_free + счётчик закрытых
+  // Материалы (v4): записанному — все; гостю — is_free + счётчик закрытых.
+  // origin/submitted_by — ТЗ-102: плашка «предложил @username» для UGC-материалов.
   const allMaterials = materialsR.rows.map((m: any) => ({
     id: m.id, kind: m.kind, title: m.title, is_free: boolDb(m.is_free),
     news_id: m.news_id,
     url: m.kind === 'link' || boolDb(m.is_free) ? m.url : null, // file/news — только через download-эндпоинт
+    origin: m.origin || 'editorial',
+    submitted_by: m.origin === 'user' && m.submitted_by
+      ? { id: m.submitted_by, username: m.submitted_by_username || null }
+      : null,
   }));
   const hasFullAccess = !!enrollment || admin;
   const materials = hasFullAccess
@@ -796,6 +818,128 @@ router.get('/courses/:slug/news', h(async (req, res) => {
 }));
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ТЗ-103 v2, Задача 7 — календарный мэтчинг (публичные эндпоинты, правила
+// по тегам, без LLM/эмбеддингов). Без auth, под разумным rate limit.
+// Все три — 404 при выключенном EDUCATION_MATCH_ENABLED (Задача 6/критерий 15).
+// Прошедшие события нигде не показываем.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Теги события: tag_ids — TEXT-JSON (парсинг как в calendar.ts:648). */
+function parseEventTagIds(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map(String);
+  if (typeof value === 'string' && value) {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed.map(String) : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+// GET /api/education/calendar-today — события сегодня/завтра с ≥1 курсом.
+// Кэш in-memory ключ education:calmatch:today:<YYYY-MM-DD> TTL 1 час
+// (паттерн heatmapDaily; инвалидация — вместе с invalidateEducationCache).
+router.get('/calendar-today', h(async (req, res) => {
+  if (!isEducationMatchEnabled()) return fail(res, 404, 'Not found');
+  if (!(await checkRateLimit(req, res, lmsCalendarMatchLimiter))) return; // 429 отправлен
+
+  const today = await getMskDateString();
+  const tomorrow = addDays(today, 1);
+  const cacheKey = `today:${today}`;
+
+  const payload = await getCalMatchCached(cacheKey, async () => {
+    console.log(`[EducationCalMatch] calendar-today computed (cache miss, ${today})`);
+    const rows = await query(
+      `SELECT date, title, kind, status, company, ticker, tag_ids
+       FROM calendar_events
+       WHERE date IN ($1, $2)
+       ORDER BY date ASC, title ASC`,
+      [today, tomorrow],
+    );
+    const events = [];
+    for (const r of rows.rows) {
+      const matchedCourses = await matchCoursesToEvent(parseEventTagIds(r.tag_ids));
+      if (matchedCourses.length === 0) continue; // событие без курсов — пропускаем
+      events.push({
+        date: String(r.date).slice(0, 10),
+        title: r.title,
+        kind: r.kind,
+        status: r.status,
+        company: r.company,
+        ticker: r.ticker,
+        matched_courses: matchedCourses,
+      });
+    }
+    return { events };
+  });
+  res.json(payload);
+}));
+
+// GET /api/education/for-event?date&title&kind&ticker — курсы для блока на
+// странице календаря. Событие адресуется натуральным ключом (id не принимаем —
+// нестабилен при пересборке конвейером); событие не найдено → 404.
+// ticker опционален: у сгруппированных событий с несколькими компаниями фронт
+// может не знать единственный ticker — тогда матчим по date+title+kind (первая
+// строка; риск №9 ТЗ-103: лучше пропустить, чем показать нерелевантное).
+router.get('/for-event', h(async (req, res) => {
+  if (!isEducationMatchEnabled()) return fail(res, 404, 'Not found');
+  if (!(await checkRateLimit(req, res, lmsCalendarMatchLimiter))) return; // 429 отправлен
+
+  const date = String(req.query.date || '').trim();
+  const title = String(req.query.title || '').trim();
+  const kind = String(req.query.kind || '').trim();
+  const ticker = String(req.query.ticker || '').trim();
+  if (!date || !title || !kind) {
+    return fail(res, 400, 'нужны параметры: date, title, kind (ticker опционален)');
+  }
+
+  const eventR = ticker
+    ? await query(
+        `SELECT tag_ids FROM calendar_events
+         WHERE date = $1 AND title = $2 AND kind = $3 AND ticker = $4`,
+        [date, title, kind, ticker],
+      )
+    : await query(
+        `SELECT tag_ids FROM calendar_events
+         WHERE date = $1 AND title = $2 AND kind = $3
+         ORDER BY company ASC LIMIT 1`,
+        [date, title, kind],
+      );
+  if (eventR.rows.length === 0) return fail(res, 404, 'Событие не найдено');
+
+  const courses = await matchCoursesToEvent(parseEventTagIds(eventR.rows[0].tag_ids));
+  res.json({ courses });
+}));
+
+// GET /api/education/courses/:slug/events?days=14 — «Связанные события» на
+// странице курса. Окно [сегодня, сегодня+days] по бизнес-дате МСК.
+router.get('/courses/:slug/events', h(async (req, res) => {
+  if (!isEducationMatchEnabled()) return fail(res, 404, 'Not found');
+  if (!(await checkRateLimit(req, res, lmsCalendarMatchLimiter))) return; // 429 отправлен
+
+  const courseR = await query(
+    `SELECT id, status, visibility, deleted_at FROM courses WHERE slug = $1`,
+    [req.params.slug],
+  );
+  if (courseR.rows.length === 0 || courseR.rows[0].deleted_at) {
+    return fail(res, 404, 'Курс не найден');
+  }
+  const course = courseR.rows[0];
+  if (course.status !== 'published') return fail(res, 404, 'Курс не найден');
+  // Скрытый курс: привязки хранятся, но публично не показываются (как news)
+  if (course.visibility === 'hidden') return res.json({ events: [] });
+
+  let days = parseInt(String(req.query.days || '14'), 10);
+  if (!Number.isInteger(days) || days < 1 || days > 90) days = 14;
+
+  const tags = await courseTagIds(course.id);
+  const events = await matchEventsToCourse(tags, days);
+  res.json({ events });
+}));
+
+// ═══════════════════════════════════════════════════════════════════════════
 // GET /api/education/materials/:id/download — 302 на signedUrl (ТЗ-100 v4/v11;
 // критерий 11). is_free → без auth + лимит по IP 30/час; иначе auth + enrollment
 // ═══════════════════════════════════════════════════════════════════════════
@@ -819,6 +963,19 @@ router.get('/materials/:id/download', optionalAuth, h(async (req, res) => {
     return fail(res, 400, 'Скачивание доступно только для файловых материалов');
   }
 
+  // ТЗ-102 v2 (S4): файл UGC-ученика отдаётся ТОЛЬКО после чистого скана —
+  // для ВСЕХ, включая модератора (очередь модерации не вектор заражения).
+  // Проверка ДО контроля доступа: 423 важнее 401/403.
+  if (material.origin === 'user' && material.scan_status !== 'clean') {
+    return fail(res, 423, 'Файл на антивирусной проверке. Попробуйте позже.');
+  }
+  // UGC-материал чист, но ещё не прошёл модерацию — публично не отдаём
+  if (material.origin === 'user' && material.status !== 'approved') {
+    return fail(res, 403, 'Материал на модерации');
+  }
+
+  // Админ (модератор) скачивает любой файл для проверки без enrollment (ТЗ-102)
+  const admin = await isAdminUser(userId);
   if (boolDb(material.is_free)) {
     // Открытый материал: без auth и enrollment, rate limit по IP (30/час)
     if (!(await checkRateLimit(req, res, lmsFreeDownloadLimiter))) return; // 429 отправлен
@@ -828,7 +985,7 @@ router.get('/materials/:id/download', optionalAuth, h(async (req, res) => {
       `SELECT 1 FROM course_enrollments WHERE user_id = $1 AND course_id = $2`,
       [userId, material.course_id],
     );
-    if (enrollR.rows.length === 0) {
+    if (enrollR.rows.length === 0 && !admin) {
       logIdorBlocked(userId, 'material_download', materialId);
       return fail(res, 403, 'Доступ к материалу закрыт');
     }
@@ -838,6 +995,231 @@ router.get('/materials/:id/download', optionalAuth, h(async (req, res) => {
   const target = signedUrl(String(material.url), 3600);
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.redirect(302, target);
+}));
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ТЗ-102: UGC — материалы и новости от учеников с пре-модерацией
+// ═══════════════════════════════════════════════════════════════════════════
+
+// UGC-файлы: белый список ТЗ-102, лимит 10 МБ (критерий §3 п.4: 11 МБ → 400).
+const UGC_ALLOWED_EXTS = new Set(['pdf', 'xlsx', 'docx', 'png', 'jpg', 'webp']);
+const UGC_MAX_BYTES = 10 * 1024 * 1024;
+
+const ugcUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: UGC_MAX_BYTES + 1024 }, // запас на multipart-оверхед; точный лимит — ниже
+});
+
+/** Обёртка multer для UGC: лимит размера ТЗ трактует как 400 (не 413). */
+function ugcUploadMw(req: Request, res: Response, next: () => void): void {
+  ugcUpload.single('file')(req, res, (err: any) => {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return fail(res, 400, 'Файл больше 10 МБ');
+      }
+      return fail(res, 400, 'Ошибка загрузки файла');
+    }
+    next();
+  });
+}
+
+/**
+ * Magic bytes UGC-файла (ТЗ-102 v2, S2): определённый file-type ОБЯЗАН
+ * соответствовать заявленному расширению (переименованный .exe → .pdf даст
+ * ext 'exe' ≠ 'pdf' → 415). Неопределённый тип (plain text и т.п., в т.ч.
+ * тестовый EICAR — ASCII-строка) НЕ считается несоответствием: файл уходит
+ * в карантин и досматривает ClamAV (критерий §3 п.11).
+ */
+async function ugcMagicBytesMatch(buf: Buffer, claimedExt: string): Promise<boolean> {
+  const ft = await fileType.fromBuffer(buf);
+  if (!ft) return true;
+  if (!UGC_ALLOWED_EXTS.has(ft.ext)) return false;
+  return ft.ext === claimedExt;
+}
+
+// POST /api/education/courses/:slug/materials — предложить материал (ТЗ-102).
+// Только записанным (403 иначе); link/file → course_materials (status='pending'),
+// file сразу в quarantine/ + scan_status='pending_scan' (clamd, virusScan.ts);
+// news → news_course_suggestions (UNIQUE(news_id,course_id,submitted_by) → 409).
+router.post('/courses/:slug/materials', authMiddleware, ugcUploadMw, h(async (req, res) => {
+  const userId = req.user!.userId;
+
+  if (!(await checkRateLimit(req, res, lmsSubmissionLimiter))) return; // 429 отправлен
+
+  const courseR = await query(
+    `SELECT id, deleted_at FROM courses WHERE slug = $1`, [req.params.slug],
+  );
+  if (courseR.rows.length === 0 || courseR.rows[0].deleted_at) {
+    return fail(res, 404, 'Курс не найден');
+  }
+  const courseId = courseR.rows[0].id;
+
+  // Только записанные на курс (гость сюда не доходит — authMiddleware → 401)
+  const enrollR = await query(
+    `SELECT 1 FROM course_enrollments WHERE user_id = $1 AND course_id = $2`,
+    [userId, courseId],
+  );
+  if (enrollR.rows.length === 0) {
+    logIdorBlocked(userId, 'ugc_submit', courseId);
+    return fail(res, 403, 'Запишитесь на курс, чтобы предлагать материалы');
+  }
+
+  const kind = String(req.body?.kind || '');
+  if (!['link', 'file', 'news'].includes(kind)) {
+    return fail(res, 400, "kind — только 'link' | 'file' | 'news'");
+  }
+
+  // ── kind='news': предложение новости к курсу ────────────────────────────
+  if (kind === 'news') {
+    const newsId = String(req.body?.news_id || '');
+    if (!newsId) return fail(res, 400, 'для kind=news нужен news_id');
+    const newsR = await query(`SELECT id FROM news WHERE id = $1`, [newsId]);
+    if (newsR.rows.length === 0) return fail(res, 404, 'Новость не найдена');
+    const dupR = await query(
+      `SELECT 1 FROM news_course_suggestions
+        WHERE news_id = $1 AND course_id = $2 AND submitted_by = $3`,
+      [newsId, courseId, userId],
+    );
+    if (dupR.rows.length > 0) {
+      return fail(res, 409, 'Вы уже предлагали эту новость к этому курсу');
+    }
+    const id = crypto.randomUUID();
+    try {
+      await query(
+        `INSERT INTO news_course_suggestions (id, news_id, course_id, submitted_by, created_at)
+         VALUES ($1, $2, $3, $4, ${nowSqlInline()})`,
+        [id, newsId, courseId, userId],
+      );
+    } catch (err: any) {
+      // UNIQUE(news_id, course_id, submitted_by) на гонке — та же 409
+      if (String(err?.message || '').includes('UNIQUE') || err?.code === '23505') {
+        return fail(res, 409, 'Вы уже предлагали эту новость к этому курсу');
+      }
+      throw err;
+    }
+    return res.status(201).json({ status: 'pending', id });
+  }
+
+  const title = String(req.body?.title || '').trim();
+  if (!title || title.length > 255) {
+    return fail(res, 400, 'title — непустая строка до 255 символов');
+  }
+
+  // ── kind='link': только http(s); javascript:/data: → 400 ────────────────
+  if (kind === 'link') {
+    const url = String(req.body?.url || '').trim();
+    if (!/^https?:\/\//i.test(url)) {
+      return fail(res, 400, "url для kind='link' — http(s) ссылка");
+    }
+    const maxPos = await query(
+      `SELECT COALESCE(MAX(position), 0) AS mp FROM course_materials WHERE course_id = $1`,
+      [courseId],
+    );
+    const id = crypto.randomUUID();
+    await query(
+      `INSERT INTO course_materials
+         (id, course_id, kind, title, url, news_id, is_free, position,
+          origin, status, submitted_by, scan_status, created_at)
+       VALUES ($1, $2, 'link', $3, $4, NULL, 0, $5, 'user', 'pending', $6, 'clean', ${nowSqlInline()})`,
+      [id, courseId, title, url, Number(maxPos.rows[0].mp) + 1, userId],
+    );
+    return res.status(201).json({ status: 'pending', id });
+  }
+
+  // ── kind='file': multipart (field: file), quarantine + pending_scan ─────
+  const file = (req as any).file as Express.Multer.File | undefined;
+  if (!file || !file.buffer || file.buffer.length === 0) {
+    return fail(res, 400, 'Файл не загружен (field: file)');
+  }
+  if (file.buffer.length > UGC_MAX_BYTES) {
+    return fail(res, 400, 'Файл больше 10 МБ');
+  }
+  const claimedExt = (file.originalname || '').split('.').pop()?.toLowerCase() || '';
+  if (!UGC_ALLOWED_EXTS.has(claimedExt)) {
+    return fail(res, 400, 'Допустимые типы: pdf, xlsx, docx, png, jpg, webp');
+  }
+  if (!(await ugcMagicBytesMatch(file.buffer, claimedExt))) {
+    return fail(res, 415, 'Тип файла не соответствует расширению (проверка по содержимому)');
+  }
+  let put;
+  try {
+    // S4: сразу в карантин — до чистого скана файл вне отдаваемых каталогов
+    put = await putBufferQuarantine(file.buffer, file.originalname || `material.${claimedExt}`);
+  } catch (err: any) {
+    if (err instanceof StorageError) return fail(res, err.status, err.message);
+    throw err;
+  }
+  const maxPos = await query(
+    `SELECT COALESCE(MAX(position), 0) AS mp FROM course_materials WHERE course_id = $1`,
+    [courseId],
+  );
+  const id = crypto.randomUUID();
+  await query(
+    `INSERT INTO course_materials
+       (id, course_id, kind, title, url, news_id, is_free, position,
+        origin, status, submitted_by, scan_status, created_at)
+     VALUES ($1, $2, 'file', $3, $4, NULL, 0, $5, 'user', 'pending', $6, 'pending_scan', ${nowSqlInline()})`,
+    [id, courseId, title, put.relPath, Number(maxPos.rows[0].mp) + 1, userId],
+  );
+  // Асинхронный скан (fire-and-forget): clamd недоступен → останется
+  // pending_scan, sweeper/модераторский retry догонят (virusScan.ts).
+  enqueueScan(id);
+  return res.status(201).json({ status: 'pending', id, scan_status: 'pending_scan' });
+}));
+
+// GET /api/education/my/submissions — мои предложения по всем курсам (ТЗ-102):
+// материалы и новости со статусом и reject_reason (видит только сам ученик).
+router.get('/my/submissions', authMiddleware, h(async (req, res) => {
+  const userId = req.user!.userId;
+  const [matR, newsR] = await Promise.all([
+    query(
+      `SELECT m.id, m.kind, m.title, m.status, m.reject_reason, m.scan_status, m.created_at,
+              c.id AS course_id, c.slug AS course_slug, c.title AS course_title
+       FROM course_materials m JOIN courses c ON c.id = m.course_id
+       WHERE m.submitted_by = $1
+       ORDER BY m.created_at DESC`,
+      [userId],
+    ),
+    query(
+      `SELECT s.id, s.status, s.reject_reason, s.created_at,
+              n.id AS news_id, n.slug AS news_slug, n.title_ru AS news_title,
+              c.id AS course_id, c.slug AS course_slug, c.title AS course_title
+       FROM news_course_suggestions s
+       JOIN news n ON n.id = s.news_id
+       JOIN courses c ON c.id = s.course_id
+       WHERE s.submitted_by = $1
+       ORDER BY s.created_at DESC`,
+      [userId],
+    ),
+  ]);
+  const submissions = [
+    ...matR.rows.map((m: any) => ({
+      type: 'material',
+      id: m.id,
+      kind: m.kind,
+      title: m.title,
+      status: m.status,
+      reject_reason: m.reject_reason,
+      scan_status: m.scan_status,
+      course: { id: m.course_id, slug: m.course_slug, title: m.course_title },
+      created_at: m.created_at,
+    })),
+    ...newsR.rows.map((s: any) => ({
+      type: 'news',
+      id: s.id,
+      kind: 'news',
+      title: s.news_title,
+      status: s.status,
+      reject_reason: s.reject_reason,
+      scan_status: 'clean',
+      news: { id: s.news_id, slug: s.news_slug, title_ru: s.news_title },
+      course: { id: s.course_id, slug: s.course_slug, title: s.course_title },
+      created_at: s.created_at,
+    })),
+  ];
+  // Единая лента по дате (свежие первыми); NULL-даты (старые SQLite-строки) — в конец
+  submissions.sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+  res.json({ submissions });
 }));
 
 export default router;

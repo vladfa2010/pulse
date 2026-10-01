@@ -11,9 +11,29 @@
 - ✅ **Шаг 2** (ТЗ-101 целиком + ТЗ-100 Задача 2 минимум): admin-API курсов,
   таб «Образование» в админке (пиксельный перенос мокапа admin.html),
   публичный контур витрины. Коммиты: бэкенд `25fe75c`, фронтенд `30bd9be`.
+- ✅ **ТЗ-102** (UGC + модерация + ClamAV, backend + frontend): миграция
+  `lms_v2_ugc.sql` (`/migrate-lms-ugc`), публичный API предложений
+  (`POST .../courses/:slug/materials`, `GET /my/submissions`), очередь
+  модерации (`GET|POST /api/admin/education/moderation[/:kind/:id/approve|
+  reject]`), антивирусный контур `services/education/virusScan.ts` (clamd по
+  unix-сокету, INSTREAM на stdlib net/fs; quarantine/ → ugc/ атомарный rename;
+  423 для нечистых; sweeper раз в минуту + retry при заходе модератора; флаг
+  av_unavailable вычисляемый). Smoke: `scripts/smoke-lms-ugc.js` (14 проверок;
+  с живым CLAMAV_SOCKET +EICAR и clean-контур = 16).
+- ✅ **ТЗ-103** (мэтчинг курсов с новостями и календарём, backend): миграция
+  `lms_v3_matching.sql` (`/migrate-lms-matching`), `services/education/match.ts`
+  (эмбеддинги курсов + RECALL теги/косинус + RANK LLM-батч с суточным лимитом +
+  ретроскан ≤200 новостей/14 дней при publish + cron-страховка `matchUnprocessedNews`
+  ежечасно + асинхронный хук в newsProcessor), `services/education/calendarMatch.ts`
+  (правила по тегам, без LLM; in-memory кэш `education:calmatch:today:*` TTL 1 ч,
+  инвалидация вместе с витриной). Принцип: система только РЕКОМЕНДУЕТ
+  (`course_match_suggestions`: attach/dismiss решением редактора, ON CONFLICT
+  DO NOTHING). Всё под флагом `EDUCATION_MATCH_ENABLED` (default 'false'):
+  выключен — эндпоинты 404, хук/ретроскан/cron no-op. Smoke:
+  `scripts/smoke-lms-match.js` (оба прогона). Бэкфилл:
+  `scripts/backfill-course-embeddings.js` (критерий приёмки №3).
 - ⏭ Дальше: ТЗ-100 Задачи 4–6 (прохождение/«Мои курсы» в ЛК, оплата курсов
-  ЮKassa, шеринг пути), затем ТЗ-102 (UGC + ClamAV), ТЗ-103/105, ТЗ-104,
-  ТЗ-107 последним.
+  ЮKassa, шеринг пути), затем ТЗ-105, ТЗ-104 по команде, ТЗ-107 последним.
 
 ## Шаг 2 — что реализовано
 
@@ -180,4 +200,109 @@ Volume: `/opt/pulse/uploads:/app/uploads` (bind-mount — переживает r
 3. ТЗ-100 Задачи 4–6: «Мои курсы» в ЛК/прохождение (фронт), покупка курсов
    через контур ЮKassa (`activatePaymentIfNeeded`, `product_type='course'`),
    шеринг пути (`user_path_shares`).
-4. ТЗ-102 (UGC + ClamAV), ТЗ-103/105, ТЗ-104 по команде, ТЗ-107 последним.
+
+## ТЗ-102 — UGC + модерация + ClamAV (реализовано)
+
+**Миграция** `src/migrations/lms_v2_ugc.sql` (PG, `POST /migrate-lms-ugc?
+secret=CRON_SECRET_KEY`, идемпотентна; SQLite → `{skipped:true}` — колонки
+добавляет `initSQLiteSchema()`, ALTER строго по одной колонке). Добавлено
+`created_at` в `course_materials` сверх буквы ТЗ: на нём завязан индекс
+`idx_materials_moderation` из самого ТЗ и FIFO-сортировка очереди.
+
+**Контрактные точки:**
+- `course_materials`: `origin` ('editorial'|'user'), `status` ('pending'|
+  'approved'|'rejected'), `submitted_by/reviewed_by/reviewed_at`,
+  `reject_reason`, `scan_status` ('pending_scan'|'clean'|'infected'). Дефолты
+  `editorial/approved/clean` — обратная совместимость ТЗ-100 из коробки;
+  все публичные выборки материалов фильтруют `status='approved'`.
+- `news_course_suggestions` — очередь новостей от учеников; аппрув пишет в
+  редакционную `news_course_links` (структура ТЗ-100 не тронута).
+- UGC-файлы живут в `quarantine/` (pending_scan) → `ugc/` (clean, атомарный
+  rename через `driver.moveToKind`); `/media/quarantine/**` не отдаётся никогда,
+  `/media/ugc/**` — всегда `Content-Disposition: attachment` (media.ts).
+- Скачивание файла с `scan_status != 'clean'` → **423 Locked для всех**,
+  включая модератора (проверка до контроля доступа). UGC не прошедший
+  модерацию (даже clean) → 403.
+- Деградация clamd: файл остаётся `pending_scan`, юзеру 201 «на проверке»;
+  retry — комбинированный (зафиксировано в шапке virusScan.ts): enqueue при
+  загрузке + sweeper раз в минуту + enqueue при заходе модератора в очередь.
+  Флаг `av_unavailable` в `GET /moderation` — вычисляемый: pending_scan старше
+  `CLAMAV_STALE_MS` (10 мин default).
+- Лимиты: `lmsSubmissionLimiter` — 5 предложений/сутки на юзера (429 на 6-м);
+  файлы: whitelist `pdf,xlsx,docx,png,jpg,webp`, ≤10 МБ (400), magic bytes
+  через `file-type` (несоответствие расширению → 415; неопределённый тип
+  пропускается в карантин — досматривает ClamAV, так EICAR доезжает до скана).
+
+**Env:** `CLAMAV_SOCKET` (default `/run/clamav/clamd.sock`), `CLAMAV_TIMEOUT_MS`
+(10000), `CLAMAV_SWEEP_INTERVAL_MS` (60000), `CLAMAV_STALE_MS` (600000).
+
+**Docker:** сервис `clamav` в `docker-compose.yml` с профилем `av` (не стартует
+с обычным `up -d`: ~1 ГБ RAM на базы; `docker compose --profile av up -d clamav`),
+named volume `clamav_run` — сокет в backend (ro). Backend без clamd штатно
+деградирует (см. выше), поэтому `depends_on` не добавлен.
+
+## ТЗ-103 — мэтчинг курсов с новостями и календарём (реализовано)
+
+**Миграция** `src/migrations/lms_v3_matching.sql` (PG, `POST /migrate-lms-matching?
+secret=CRON_SECRET_KEY`, идемпотентна; SQLite → `{skipped:true}`). HNSW-индекс
+НЕ создан намеренно: курсов десятики, seq scan по `vector(1024)` — микросекунды.
+
+**Новостной мэтчинг** (`services/education/match.ts`):
+- `computeCourseEmbedding` — TEI, текст = title+description+названия уроков
+  (обрезка `EMBEDDING_MAX_TEXT`), триггеры: publish всегда; PUT курса при смене
+  title/description; CRUD уроков при смене названий. Асинхронно, ошибки не
+  валят запрос.
+- RECALL: кандидаты по тегам (`course_tags` ∩ `news.matched_tags`) + top-10 по
+  косинусу эмбеддинга (PG `<=>`; SQLite — косинус в JS). RANK: LLM-батч
+  (по 8 пар) по паттерну `clusterVerifier`: JSON-вердикты `{score, reason}`,
+  fail-closed, общий суточный лимит. Пишутся пары `score>=0.5` ИЛИ тег-матч;
+  `ON CONFLICT (course_id, news_id) DO NOTHING` — решение редактора
+  (attached/dismissed) не перетирается повторным мэтчингом.
+- Пайплайн: ретроскан при publish (14 дней, ≤200 новостей) → инкрементальный
+  хук в `newsProcessor` (async, ошибки глотаем с логом) → cron-страховка
+  `matchUnprocessedNews()` ежечасно (новости за 2 ч без строк в suggestions).
+- Админ-API: `GET /courses/:id/suggestions?status=…`,
+  `POST /suggestions/:id/attach` (транзакция: `news_course_links` +
+  status=attached + инвалидация кэша), `POST /suggestions/:id/dismiss`
+  (attached через dismiss не открепляется; dismiss→attach = 409).
+
+**Календарный мэтчинг** (`services/education/calendarMatch.ts`): только
+пересечение тегов, без LLM/эмбеддингов (YAGNI, теги событий чистые). Таблиц
+связей НЕТ — события эфемерны (конвейер пересобирает `calendar_events`),
+адресация натуральным ключом `(date,title,kind,ticker)`. ≤3 курса на событие,
+прошедшие события нигде не показываем. In-memory кэш `education:calmatch:today:
+<YYYY-MM-DD>` TTL 1 ч (паттерн `heatmapDaily`), инвалидация вместе с витриной.
+Публичные эндпоинты (без auth, за `lmsCalendarMatchLimiter`):
+`GET /calendar-today` (сегодня/завтра по МСК), `GET /for-event`,
+`GET /courses/:slug/events?days=14`. Админский `GET /courses/:id/events-preview`
+(включая черновики; курс без тегов → `{events:[], warning:'no_tags'}`).
+**Контракт:** `ticker` в `/for-event` опционален — сгруппированные события с
+несколькими компаниями матчатся по `date+title+kind` (первая строка).
+
+**Фичефлаг:** `EDUCATION_MATCH_ENABLED` (default `'false'`): выключен —
+все эндпоинты мэтчинга 404, хук/ретроскан/cron no-op, фронт прячет блоки.
+
+**Env:** `EDUCATION_MATCH_ENABLED`, `EDUCATION_MATCH_LLM_DAILY_LIMIT` (500).
+
+**Бэкфилл:** `scripts/backfill-course-embeddings.js` — эмбеддинги
+существующих курсов (критерий приёмки №3; запуск после миграции, до включения
+флага на проде).
+
+**Фронтенд** (коммит в pulse-frontend отдельно): секция «Рекомендованные (N)»
+в редакторе курса (`SuggestionsPanel`), «События календаря» в админке
+(`EventsPreviewPanel`), публичные `CoursePage` / витрина `Education` /
+`CalendarTodayBlock` / `MatchedCourseChips` / «Мои предложения» в профиле
+(`SubmissionsTab`). Контракт автора UGC-материала: `submitted_by: {id, username}`.
+
+## Дорожная карта (следующие шаги)
+
+1. ~~Задача 1 + 1а: схема БД + storage-драйвер~~ ✅
+2. ~~ТЗ-101: админка курсов/уроков/категорий + публичный контур~~ ✅
+3. ~~ТЗ-102 (UGC + ClamAV)~~ ✅ / ~~ТЗ-103 (мэтчинг)~~ ✅
+4. Деплой ТЗ-102/103 на VDS: миграции `lms_v2_ugc` + `lms_v3_matching`,
+   `docker compose --profile av up -d clamav` (проверить RAM ~1 ГБ),
+   `EDUCATION_MATCH_ENABLED=true` после бэкфилла эмбеддингов.
+5. ТЗ-100 Задачи 4–6: «Мои курсы» в ЛК/прохождение (фронт), покупка курсов
+   через контур ЮKassa (`activatePaymentIfNeeded`, `product_type='course'`),
+   шеринг пути (`user_path_shares`).
+6. Затем ТЗ-105, ТЗ-104 по команде, ТЗ-107 последним.

@@ -33,6 +33,9 @@ import { logUserEvent } from '../services/activityLog';
 import { getActivePlans } from '../services/subscription';
 import { invalidateEducationCache } from '../services/education/cache';
 import { resolveSourceUrl, ResolveSourceError } from '../services/education/resolveSource';
+import { enqueueScan } from '../services/education/virusScan'; // ТЗ-102: retry-скан pending_scan при заходе в очередь
+import { isEducationMatchEnabled, onCoursePublished, scheduleCourseReembedding } from '../services/education/match'; // ТЗ-103 Задачи 1,3: эмбеддинги + ретроскан
+import { courseTagIds, matchEventsToCourse } from '../services/education/calendarMatch'; // ТЗ-103 Задача 7: events-preview
 import { putBuffer, removeFile, StorageError } from '../services/storage/driver';
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
@@ -955,6 +958,11 @@ router.put('/courses/:id', h(async (req, res) => {
   invalidateEducationCache();
   logUserEvent(adminId, 'education.course_updated', { course_id: courseId });
 
+  // ТЗ-103 Задача 1: смена title/description → асинхронный пересчёт эмбеддинга
+  if (body.title !== undefined || body.description !== undefined) {
+    scheduleCourseReembedding(courseId);
+  }
+
   res.json(await fetchCourseCard(courseId));
 }));
 
@@ -1011,6 +1019,9 @@ router.post('/courses/:id/publish', h(async (req, res) => {
   );
   invalidateEducationCache();
   logUserEvent(adminId, 'education.course_published', { course_id: courseId });
+  // ТЗ-103: публикация — всегда пересчитываем эмбеддинг и запускаем
+  // ретроскан новостей за 14 дней (асинхронно, флаг EDUCATION_MATCH_ENABLED)
+  onCoursePublished(courseId);
   res.json(await fetchCourseCard(courseId));
 }));
 
@@ -1192,6 +1203,8 @@ router.post('/courses/:id/lessons', h(async (req, res) => {
   );
   invalidateEducationCache();
   logUserEvent(req.user!.userId, 'education.course_updated', { course_id: courseId, field: 'lessons', lesson_id: id });
+  // ТЗ-103 Задача 1: новый урок меняет текст курса → пересчёт эмбеддинга
+  scheduleCourseReembedding(courseId);
   res.status(201).json({ id, position: Number(maxPos.rows[0].mp) + 1 });
 }));
 
@@ -1291,6 +1304,10 @@ router.put('/lessons/:lessonId', h(async (req, res) => {
   logUserEvent(req.user!.userId, 'education.course_updated', {
     course_id: lessonR.rows[0].course_id, field: 'lesson', lesson_id: lessonId,
   });
+  // ТЗ-103 Задача 1: переименование урока меняет текст курса → пересчёт
+  if (payload.title !== undefined) {
+    scheduleCourseReembedding(lessonR.rows[0].course_id);
+  }
   const fresh = await query(`SELECT * FROM course_lessons WHERE id = $1`, [lessonId]);
   const l = fresh.rows[0];
   res.json({
@@ -1327,6 +1344,8 @@ router.delete('/lessons/:lessonId', h(async (req, res) => {
   logUserEvent(req.user!.userId, 'education.course_updated', {
     course_id: courseId, field: 'lessons', removed_lesson_id: lessonId,
   });
+  // ТЗ-103 Задача 1: удаление урока меняет текст курса → пересчёт эмбеддинга
+  scheduleCourseReembedding(courseId);
   res.json({ ok: true, removed_progress: removedProgress });
 }));
 
@@ -1753,6 +1772,369 @@ router.delete('/courses/:id/enrollments/:userId', h(async (req, res) => {
   if ((r.rowCount ?? 0) === 0) return fail(res, 404, 'Пользователь не записан на курс');
   logUserEvent(adminId, 'education.unenroll_admin', { course_id: courseId, target_user_id: userId });
   res.status(204).end();
+}));
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Очередь модерации UGC (ТЗ-102, Задача 3) — pending-материалы + pending-
+// предложения новостей, объединённая FIFO-лента (created_at ASC, старые первыми).
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Возраст pending_scan, после которого в очереди показываем «антивирус
+// недоступен» (колонка в БД не нужна — вычисляемое поле, ТЗ-102 §2 S4).
+const AV_STALE_MS = parseInt(process.env.CLAMAV_STALE_MS || String(10 * 60 * 1000), 10);
+
+/**
+ * Парсинг created_at из БД в epoch ms. SQLite datetime('now') — 'YYYY-MM-DD
+ * HH:MM:SS' в UTC (Date парсит его как локальное время → завышенный возраст),
+ * PG — ISO с таймзоной. SQLite-формат нормализуем в UTC явно.
+ */
+function dbDateMs(value: any): number {
+  if (!value) return 0;
+  const s = String(value);
+  const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(s) ? s.replace(' ', 'T') + 'Z' : s;
+  const t = new Date(normalized).getTime();
+  return Number.isFinite(t) ? t : 0;
+}
+
+router.get('/moderation', h(async (_req, res) => {
+  const [matR, newsR] = await Promise.all([
+    query(
+      `SELECT m.id, m.kind, m.title, m.url, m.news_id, m.status, m.scan_status, m.created_at,
+              m.submitted_by, c.id AS course_id, c.slug AS course_slug, c.title AS course_title,
+              u.username AS submitted_by_username,
+              n.title_ru AS news_title, n.slug AS news_slug, n.published_at AS news_published_at
+       FROM course_materials m
+       JOIN courses c ON c.id = m.course_id
+       LEFT JOIN users u ON u.id = m.submitted_by
+       LEFT JOIN news n ON n.id = m.news_id
+       WHERE m.status = 'pending'
+       ORDER BY m.created_at ASC`,
+      [],
+    ),
+    query(
+      `SELECT s.id, s.created_at, s.news_id, s.submitted_by,
+              c.id AS course_id, c.slug AS course_slug, c.title AS course_title,
+              u.username AS submitted_by_username,
+              n.title_ru AS news_title, n.slug AS news_slug, n.published_at AS news_published_at
+       FROM news_course_suggestions s
+       JOIN courses c ON c.id = s.course_id
+       LEFT JOIN users u ON u.id = s.submitted_by
+       JOIN news n ON n.id = s.news_id
+       WHERE s.status = 'pending'
+       ORDER BY s.created_at ASC`,
+      [],
+    ),
+  ]);
+
+  const now = Date.now();
+  const items: any[] = [
+    ...matR.rows.map((m: any) => {
+      const pendingScan = m.scan_status === 'pending_scan';
+      // pending_scan свежее порога — норма (clamd обрабатывает); старше — авария
+      const ageMs = m.created_at ? now - dbDateMs(m.created_at) : 0;
+      return {
+        type: 'material',
+        id: m.id,
+        kind: m.kind,
+        title: m.title,
+        url: m.kind === 'link' ? m.url : null, // файл — скачивание через download-эндпоинт
+        file_url: m.kind === 'file' ? m.url : null,
+        scan_status: m.scan_status,
+        av_unavailable: pendingScan && ageMs > AV_STALE_MS,
+        news: m.news_id
+          ? { id: m.news_id, slug: m.news_slug, title_ru: m.news_title, published_at: m.news_published_at }
+          : null,
+        course: { id: m.course_id, slug: m.course_slug, title: m.course_title },
+        author: m.submitted_by
+          ? { id: m.submitted_by, username: m.submitted_by_username || null }
+          : null,
+        created_at: m.created_at,
+      };
+    }),
+    ...newsR.rows.map((s: any) => ({
+      type: 'news-suggestion',
+      id: s.id,
+      kind: 'news',
+      title: s.news_title,
+      url: null,
+      file_url: null,
+      scan_status: 'clean',
+      av_unavailable: false,
+      news: { id: s.news_id, slug: s.news_slug, title_ru: s.news_title, published_at: s.news_published_at },
+      course: { id: s.course_id, slug: s.course_slug, title: s.course_title },
+      author: s.submitted_by
+        ? { id: s.submitted_by, username: s.submitted_by_username || null }
+        : null,
+      created_at: s.created_at,
+    })),
+  ];
+  // FIFO: старые первыми (NULL-даты — в начало, их модерируют первыми)
+  items.sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')));
+
+  // ТЗ-102 §2 (retry-стратегия): заход модератора в очередь ставит pending_scan
+  // в очередь сканирования — статус в карточке обновляется без перезагрузки
+  for (const m of matR.rows) {
+    if (m.scan_status === 'pending_scan') enqueueScan(m.id);
+  }
+
+  res.json({ total: items.length, items });
+}));
+
+// POST /moderation/:kind/:id/approve — kind='material' | 'news-suggestion'
+router.post('/moderation/:kind/:id/approve', h(async (req, res) => {
+  const adminId = req.user!.userId;
+  const { kind, id } = req.params;
+
+  if (kind === 'material') {
+    const r = await query(`SELECT * FROM course_materials WHERE id = $1`, [id]);
+    if (r.rows.length === 0) return fail(res, 404, 'Материал не найден');
+    const m = r.rows[0];
+    if (m.status !== 'pending') return fail(res, 409, 'Материал уже проверен');
+    // S4: чистый файл-only. pending_scan ещё «на проверке», infected ушёл в
+    // системный отказ автоматически (virusScan.ts) — такие сюда не доходят.
+    if (m.scan_status !== 'clean') {
+      return fail(res, 409, 'Файл ещё на антивирусной проверке — дождитесь результата');
+    }
+    await query(
+      `UPDATE course_materials
+         SET status = 'approved', reviewed_by = $1, reviewed_at = ${nowSql()}, reject_reason = NULL
+       WHERE id = $2`,
+      [adminId, id],
+    );
+    invalidateEducationCache(); // UGC появляется на витрине без ожидания TTL
+    logUserEvent(adminId, 'education.moderation_approve', { type: 'material', id });
+    return res.json({ ok: true, status: 'approved' });
+  }
+
+  if (kind === 'news-suggestion') {
+    const r = await query(`SELECT * FROM news_course_suggestions WHERE id = $1`, [id]);
+    if (r.rows.length === 0) return fail(res, 404, 'Предложение не найдено');
+    const s = r.rows[0];
+    if (s.status !== 'pending') return fail(res, 409, 'Предложение уже проверено');
+    // Аппрув = перенос в редакционную таблицу news_course_links (ТЗ-100,
+    // публичные выборки её не меняли). Повторный аппрув (PK news_id+course_id)
+    // на гонке — идемпотентно проглатываем.
+    const maxPos = await query(
+      `SELECT COALESCE(MAX(position), 0) AS mp FROM news_course_links WHERE course_id = $1`,
+      [s.course_id],
+    );
+    try {
+      await query(
+        `INSERT INTO news_course_links (news_id, course_id, position) VALUES ($1, $2, $3)`,
+        [s.news_id, s.course_id, Number(maxPos.rows[0].mp) + 1],
+      );
+    } catch (err: any) {
+      if (!(String(err?.message || '').includes('UNIQUE') || err?.code === '23505')) throw err;
+    }
+    await query(
+      `UPDATE news_course_suggestions
+         SET status = 'approved', reviewed_by = $1, reviewed_at = ${nowSql()}, reject_reason = NULL
+       WHERE id = $2`,
+      [adminId, id],
+    );
+    invalidateEducationCache();
+    logUserEvent(adminId, 'education.moderation_approve', { type: 'news-suggestion', id });
+    return res.json({ ok: true, status: 'approved' });
+  }
+
+  return fail(res, 400, "kind — только 'material' | 'news-suggestion'");
+}));
+
+// POST /moderation/:kind/:id/reject — { reason } обязателен (увидит ученик)
+router.post('/moderation/:kind/:id/reject', h(async (req, res) => {
+  const adminId = req.user!.userId;
+  const { kind, id } = req.params;
+  const reason = String(req.body?.reason || '').trim();
+  if (!reason) return fail(res, 400, 'reason обязателен — ученик увидит его в своих предложениях');
+
+  if (kind === 'material') {
+    const r = await query(`SELECT status FROM course_materials WHERE id = $1`, [id]);
+    if (r.rows.length === 0) return fail(res, 404, 'Материал не найден');
+    if (r.rows[0].status !== 'pending') return fail(res, 409, 'Материал уже проверен');
+    await query(
+      `UPDATE course_materials
+         SET status = 'rejected', reviewed_by = $1, reviewed_at = ${nowSql()}, reject_reason = $2
+       WHERE id = $3`,
+      [adminId, reason, id],
+    );
+    invalidateEducationCache();
+    logUserEvent(adminId, 'education.moderation_reject', { type: 'material', id });
+    return res.json({ ok: true, status: 'rejected' });
+  }
+
+  if (kind === 'news-suggestion') {
+    const r = await query(`SELECT status FROM news_course_suggestions WHERE id = $1`, [id]);
+    if (r.rows.length === 0) return fail(res, 404, 'Предложение не найдено');
+    if (r.rows[0].status !== 'pending') return fail(res, 409, 'Предложение уже проверено');
+    await query(
+      `UPDATE news_course_suggestions
+         SET status = 'rejected', reviewed_by = $1, reviewed_at = ${nowSql()}, reject_reason = $2
+       WHERE id = $3`,
+      [adminId, reason, id],
+    );
+    invalidateEducationCache();
+    logUserEvent(adminId, 'education.moderation_reject', { type: 'news-suggestion', id });
+    return res.json({ ok: true, status: 'rejected' });
+  }
+
+  return fail(res, 400, "kind — только 'material' | 'news-suggestion'");
+}));
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ТЗ-103, Задача 4 — рекомендации мэтчинга «курс ↔ новость» (suggestions).
+// Принцип: система только РЕКОМЕНДУЕТ — прикрепление решением редактора
+// (attach), повторный мэтчинг не воскрешает решения (ON CONFLICT DO NOTHING).
+// Все эндпоинты — 404 при выключенном EDUCATION_MATCH_ENABLED (Задача 6).
+// ═══════════════════════════════════════════════════════════════════════════
+
+// GET /courses/:id/suggestions?status=pending — рекомендации курса
+router.get('/courses/:id/suggestions', h(async (req, res) => {
+  if (!isEducationMatchEnabled()) return fail(res, 404, 'Not found');
+  const courseId = req.params.id;
+  const courseR = await query(`SELECT 1 FROM courses WHERE id = $1`, [courseId]);
+  if (courseR.rows.length === 0) return fail(res, 404, 'Курс не найден');
+
+  const status = String(req.query.status || 'pending');
+  if (!['pending', 'attached', 'dismissed'].includes(status)) {
+    return fail(res, 400, "status — только 'pending' | 'attached' | 'dismissed'");
+  }
+  // score DESC NULLS LAST, created_at DESC (NULLS LAST кросс-диалектно через
+  // предикат — SQLite sql.js поддерживает NULLS LAST не всякий)
+  const rows = await query(
+    `SELECT s.id, s.news_id, s.score, s.reason, s.source, s.status, s.created_at,
+            n.title_ru, n.published_at, n.source AS news_source, n.slug AS news_slug
+     FROM course_match_suggestions s
+     JOIN news n ON n.id = s.news_id
+     WHERE s.course_id = $1 AND s.status = $2
+     ORDER BY (s.score IS NULL) ASC, s.score DESC, s.created_at DESC`,
+    [courseId, status],
+  );
+  res.json(rows.rows.map((r: any) => ({
+    id: r.id,
+    news_id: r.news_id,
+    news_slug: r.news_slug,
+    title_ru: r.title_ru,
+    published_at: r.published_at,
+    source: r.news_source,
+    score: r.score === null ? null : Number(r.score),
+    reason: r.reason,
+    match_source: r.source,
+    status: r.status,
+    created_at: r.created_at,
+  })));
+}));
+
+// POST /suggestions/:id/attach — прикрепить рекомендованную новость (в транзакции:
+// news_course_links + status='attached'). Идемпотентно при повторном attach.
+router.post('/suggestions/:id/attach', h(async (req, res) => {
+  if (!isEducationMatchEnabled()) return fail(res, 404, 'Not found');
+  const adminId = req.user!.userId;
+  const suggestionId = req.params.id;
+
+  const sR = await query(
+    `SELECT * FROM course_match_suggestions WHERE id = $1`, [suggestionId],
+  );
+  if (sR.rows.length === 0) return fail(res, 404, 'Рекомендация не найдена');
+  const suggestion = sR.rows[0];
+  if (suggestion.status === 'attached') {
+    return res.json({ ok: true, already_attached: true });
+  }
+  if (suggestion.status === 'dismissed') {
+    return fail(res, 409, 'Рекомендация отклонена — повторный мэтчинг её не вернёт');
+  }
+
+  const attach = async () => {
+    const maxPos = await query(
+      `SELECT COALESCE(MAX(position), 0) AS mp FROM news_course_links WHERE course_id = $1`,
+      [suggestion.course_id],
+    );
+    await query(
+      `INSERT INTO news_course_links (news_id, course_id, position)
+       VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+      [suggestion.news_id, suggestion.course_id, Number(maxPos.rows[0].mp) + 1],
+    );
+    await query(
+      `UPDATE course_match_suggestions
+         SET status = 'attached', decided_by = $1, decided_at = ${nowSql()}
+       WHERE id = $2`,
+      [adminId, suggestionId],
+    );
+  };
+
+  if (pool) {
+    // PG: транзакция (одно соединение = одна транзакция), паттерн reorder
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await attach();
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+  } else {
+    // SQLite (pool=null): последовательные запросы; окно гонки принято
+    await attach();
+  }
+
+  invalidateEducationCache(); // «Курс в новостях» обновляется без TTL-ожидания
+  logUserEvent(adminId, 'education.match_attached', { suggestion_id: suggestionId, course_id: suggestion.course_id, news_id: suggestion.news_id });
+  res.json({ ok: true, status: 'attached' });
+}));
+
+// POST /suggestions/:id/dismiss — отклонить рекомендацию. Прикреплённую новость
+// НЕ открепляем (для открепления — DELETE news-links, ТЗ-101).
+router.post('/suggestions/:id/dismiss', h(async (req, res) => {
+  if (!isEducationMatchEnabled()) return fail(res, 404, 'Not found');
+  const adminId = req.user!.userId;
+  const suggestionId = req.params.id;
+
+  const sR = await query(
+    `SELECT * FROM course_match_suggestions WHERE id = $1`, [suggestionId],
+  );
+  if (sR.rows.length === 0) return fail(res, 404, 'Рекомендация не найдена');
+  const suggestion = sR.rows[0];
+  if (suggestion.status === 'attached') {
+    return fail(res, 409, 'Новость уже прикреплена — открепление через news-links');
+  }
+  if (suggestion.status === 'dismissed') {
+    return res.json({ ok: true, already_dismissed: true }); // идемпотентно
+  }
+  await query(
+    `UPDATE course_match_suggestions
+       SET status = 'dismissed', decided_by = $1, decided_at = ${nowSql()}
+     WHERE id = $2`,
+    [adminId, suggestionId],
+  );
+  logUserEvent(adminId, 'education.match_dismissed', { suggestion_id: suggestionId, course_id: suggestion.course_id, news_id: suggestion.news_id });
+  res.json({ ok: true, status: 'dismissed' });
+}));
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ТЗ-103 v2, Задача 7 — админский events-preview: мэтчинг курса к событиям
+// календаря по тегам (для черновиков тоже — редактор проверяет до публикации).
+// 404 при выключенном EDUCATION_MATCH_ENABLED.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// GET /courses/:id/events-preview?days=14
+router.get('/courses/:id/events-preview', h(async (req, res) => {
+  if (!isEducationMatchEnabled()) return fail(res, 404, 'Not found');
+  const courseR = await query(
+    `SELECT id FROM courses WHERE id = $1 AND deleted_at IS NULL`, [req.params.id],
+  );
+  if (courseR.rows.length === 0) return fail(res, 404, 'Курс не найден');
+
+  let days = parseInt(String(req.query.days || '14'), 10);
+  if (!Number.isInteger(days) || days < 1 || days > 90) days = 14;
+
+  const tags = await courseTagIds(req.params.id);
+  if (tags.length === 0) {
+    return res.json({ events: [], warning: 'no_tags' });
+  }
+  const events = await matchEventsToCourse(tags, days);
+  res.json({ events });
 }));
 
 export default router;

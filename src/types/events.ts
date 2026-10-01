@@ -42,6 +42,12 @@ export const USER_EVENT_TYPES = [
   'education.course_restored',
   'education.enroll_admin',
   'education.unenroll_admin',
+  // ТЗ-102: модерация UGC — аудит решений админа (approve/reject)
+  'education.moderation_approve',
+  'education.moderation_reject',
+  // ТЗ-103: решения редактора по рекомендациям мэтчинга — датасет precision
+  'education.match_attached',
+  'education.match_dismissed',
 ] as const;
 
 export type UserEventType = typeof USER_EVENT_TYPES[number];

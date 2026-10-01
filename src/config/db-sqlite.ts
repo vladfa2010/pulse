@@ -734,6 +734,7 @@ export async function initSQLiteSchema(): Promise<void> {
       relevant_until TEXT,
       source_type TEXT,
       source_news_id TEXT REFERENCES news(id) ON DELETE SET NULL,
+      embedding TEXT,
       deleted_at TEXT,
       created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
       created_at TEXT DEFAULT (datetime('now')),
@@ -783,8 +784,17 @@ export async function initSQLiteSchema(): Promise<void> {
       url TEXT NOT NULL,
       news_id TEXT REFERENCES news(id) ON DELETE CASCADE,
       is_free INTEGER NOT NULL DEFAULT 0,
-      position INTEGER NOT NULL DEFAULT 0
+      position INTEGER NOT NULL DEFAULT 0,
+      origin TEXT NOT NULL DEFAULT 'editorial',
+      status TEXT NOT NULL DEFAULT 'approved',
+      submitted_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      reviewed_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      reviewed_at TEXT,
+      reject_reason TEXT,
+      scan_status TEXT NOT NULL DEFAULT 'clean',
+      created_at TEXT DEFAULT (datetime('now'))
     );
+    CREATE INDEX IF NOT EXISTS idx_materials_moderation ON course_materials(status, created_at);
 
     CREATE TABLE IF NOT EXISTS course_enrollments (
       id TEXT PRIMARY KEY,
@@ -823,6 +833,39 @@ export async function initSQLiteSchema(): Promise<void> {
       position INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (news_id, course_id)
     );
+
+    -- ТЗ-102 v2: предложения новостей от учеников (очередь модерации).
+    -- news_course_links остаётся чисто редакционной.
+    CREATE TABLE IF NOT EXISTS news_course_suggestions (
+      id TEXT PRIMARY KEY,
+      news_id TEXT NOT NULL REFERENCES news(id) ON DELETE CASCADE,
+      course_id TEXT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+      submitted_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      status TEXT NOT NULL DEFAULT 'pending',
+      reviewed_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      reviewed_at TEXT,
+      reject_reason TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE (news_id, course_id, submitted_by)
+    );
+
+    -- ТЗ-103: рекомендации «новость ↔ курс» (система только рекомендует).
+    -- score NULL = LLM не оценивал (дневной лимит), status+decided_* — датасет
+    -- решений редактора. PG-зеркало: src/migrations/lms_v3_matching.sql.
+    CREATE TABLE IF NOT EXISTS course_match_suggestions (
+      id TEXT PRIMARY KEY,
+      course_id TEXT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+      news_id TEXT NOT NULL REFERENCES news(id) ON DELETE CASCADE,
+      score REAL,
+      reason TEXT,
+      source TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      decided_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      decided_at TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE (course_id, news_id)
+    );
+    CREATE INDEX IF NOT EXISTS cms_course_status ON course_match_suggestions(course_id, status);
   `;
 
   const statements = schema.split(';').filter(s => s.trim());
@@ -850,6 +893,43 @@ export async function initSQLiteSchema(): Promise<void> {
   try {
     db.run('ALTER TABLE users ADD COLUMN ai_file_consent_at TEXT');
     console.log('[SQLite] Migration: added ai_file_consent_at column');
+  } catch {
+    // Column already exists — ignore
+  }
+
+  // Migration: ТЗ-102 (UGC + модерация) — SQLite-диалект: ADD COLUMN без
+  // IF NOT EXISTS и строго по одной колонке на ALTER (диалектный риск ТЗ-102 §4).
+  // created_at сверх буквы ТЗ-102: индекс idx_materials_moderation и FIFO-
+  // сортировка очереди модерации опираются на него.
+  const lmsV2Columns: Array<[string, string]> = [
+    ["origin", "TEXT NOT NULL DEFAULT 'editorial'"],
+    ['status', "TEXT NOT NULL DEFAULT 'approved'"],
+    ['submitted_by', 'TEXT REFERENCES users(id) ON DELETE SET NULL'],
+    ['reviewed_by', 'TEXT REFERENCES users(id) ON DELETE SET NULL'],
+    ['reviewed_at', 'TEXT'],
+    ['reject_reason', 'TEXT'],
+    ["scan_status", "TEXT NOT NULL DEFAULT 'clean'"],
+    ['created_at', 'TEXT'], // nullable: ADD COLUMN запрещает expression-default
+  ];
+  for (const [name, ddl] of lmsV2Columns) {
+    try {
+      db.run(`ALTER TABLE course_materials ADD COLUMN ${name} ${ddl}`);
+      console.log(`[SQLite] Migration: course_materials.${name} added`);
+    } catch {
+      // Column already exists — ignore
+    }
+  }
+  try {
+    db.run('CREATE INDEX IF NOT EXISTS idx_materials_moderation ON course_materials(status, created_at)');
+  } catch {
+    // ignore
+  }
+
+  // Migration: ТЗ-103 (мэтчинг курсов) — эмбеддинг курса как JSON-текст.
+  // course_match_suggestions создаётся CREATE TABLE IF NOT EXISTS выше (схема).
+  try {
+    db.run('ALTER TABLE courses ADD COLUMN embedding TEXT');
+    console.log('[SQLite] Migration: courses.embedding added');
   } catch {
     // Column already exists — ignore
   }

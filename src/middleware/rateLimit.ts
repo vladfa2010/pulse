@@ -226,6 +226,23 @@ export const lmsUploadLimiter = rateLimit({
   validate: { trustProxy: false },
 });
 
+// ─── LMS: предложения материалов/новостей от учеников (ТЗ-102) ───────────────
+// 5 предложений в сутки на юзера (материалы + новости суммарно; 6-е → 429,
+// критерий приёмки ТЗ-102 §3 п.3). Ключ — userId (эндпоинт за authMiddleware),
+// считаются все попытки включая отклонённые валидацией — защита от спам-перебора.
+export const lmsSubmissionLimiter = rateLimit({
+  windowMs: 24 * 60 * 60 * 1000, // 24 часа
+  max: 5,
+  message: {
+    error: 'Лимит предложений: 5 в сутки. Попробуйте завтра.',
+    retryAfter: '24 hours',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => (req as any).user?.userId || req.ip || 'unknown',
+  validate: { trustProxy: false },
+});
+
 // ─── LMS: скачивание открытых (is_free) материалов (ТЗ-100 v4) ──────────────
 // Анонимная публичная поверхность → лимит по IP. 30 скачиваний/час —
 // защита от хотлинка на 302-signedUrl (TTL 1ч), основной поток юзеров
@@ -235,6 +252,24 @@ export const lmsFreeDownloadLimiter = rateLimit({
   max: 30,
   message: {
     error: 'Слишком много скачиваний. Попробуйте через час.',
+    retryAfter: '1 hour',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.ip || 'unknown',
+  validate: { trustProxy: false },
+});
+
+// ─── LMS: календарный мэтчинг (ТЗ-103 Задача 7) ─────────────────────────────
+// Публичные безликие эндпоинты (calendar-today / for-event / courses/:slug/
+// events) — ответ почти весь кэшируется (TTL 1 ч), лимит страхует от перебора
+// параметров for-event. 60 запросов/час на IP — с запасом над реальным
+// сценарием (витрина + страницы календаря/курса).
+export const lmsCalendarMatchLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 час
+  max: 60,
+  message: {
+    error: 'Слишком много запросов. Попробуйте через час.',
     retryAfter: '1 hour',
   },
   standardHeaders: true,

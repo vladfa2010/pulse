@@ -63,9 +63,10 @@ import adminEducationRoutes from './routes/adminEducation'; // ТЗ-101: адм�
 import educationRoutes from './routes/education';           // ТЗ-100 Задача 2: публичный API LMS
 import { authMiddleware, AuthRequest } from './middleware/auth';
 import { bootstrapStorage } from './services/storage/driver'; // ТЗ-100 v15: LMS storage bootstrap
+import { startVirusScanSweeper } from './services/education/virusScan'; // ТЗ-102 v2: sweeper перескана pending_scan
 import { mediaGuard } from './services/storage/media';       // ТЗ-100 v15: отдача файлов /media
 import { apiLimiter, authLimiter, webhookLimiter, forgotPasswordLimiter, passwordResetFlowLimiter, promoValidateLimiter, adminLimiter } from './middleware/rateLimit';
-import { startCron, startHeatmapFreezeCron, startClusteringCron, startTopicsNamingCron } from './services/cron';   // startCron (RSS) отключен (TZ_REMOVE_DUPLICATE_RSS_CRON); heatmap freeze — TZ-49; clustering — ТЗ-92 (флаг CLUSTERING_ENABLED); topics naming — ТЗ-115 (флаг TOPICS_ENABLED)
+import { startCron, startHeatmapFreezeCron, startClusteringCron, startTopicsNamingCron, startEducationMatchCron } from './services/cron';   // startCron (RSS) отключен (TZ_REMOVE_DUPLICATE_RSS_CRON); heatmap freeze — TZ-49; clustering — ТЗ-92 (флаг CLUSTERING_ENABLED); topics naming — ТЗ-115 (флаг TOPICS_ENABLED); education match catch-up — ТЗ-103 (флаг EDUCATION_MATCH_ENABLED)
 import { sendWeeklyReportForUser } from './services/reports'; // ← Еженедельные репорты (manual + API)
 import { startDigestCron, sendAllDigests, setDigestEnabled } from './services/digest'; // ← дайджест (каждый час) — через notification matrix
 import { startRadioCacheMaintenance } from './services/radioMp3CacheMaintenance'; // ТЗ-65: snapshot истории 60с + алерты 5м
@@ -914,6 +915,114 @@ app.post('/migrate-lms', async (req, res) => {
     // Вырезаем SQL-комментарии ДО split(';'): иначе точка с запятой внутри
     // комментария («…идемпотентна; …») режет следующий за ним CREATE TABLE
     // пополам → syntax error. Строковых литералов с '--' в миграции нет.
+    const cleaned = sql
+      .split('\n')
+      .map((l: string) => {
+        const i = l.indexOf('--');
+        return i >= 0 ? l.slice(0, i) : l;
+      })
+      .join('\n');
+    const statements = cleaned.split(';').filter((s: string) => s.trim());
+    const results: string[] = [];
+
+    for (const stmt of statements) {
+      try {
+        await query(stmt + ';');
+        results.push(`OK: ${stmt.trim().substring(0, 60)}`);
+      } catch (e: any) {
+        // Игнорируем «already exists» — объект создан ранее (идемпотентность)
+        if (!e.message?.includes('already exists')) {
+          results.push(`WARN: ${e.message?.substring(0, 100)}`);
+        }
+      }
+    }
+
+    res.json({ success: true, applied: results.length, details: results });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// POST /migrate-lms-ugc?secret=KEY — LMS UGC + модерация (ТЗ-102 v2, Задача 1)
+// Применяет src/migrations/lms_v2_ugc.sql (PostgreSQL-диалект). Идемпотентна.
+// В SQLite-режиме колонки/таблицу добавляет initSQLiteSchema() → пропускаем.
+// ═══════════════════════════════════════════════════════════════════════════
+app.post('/migrate-lms-ugc', async (req, res) => {
+  const secret = req.headers['x-trigger-secret'] || req.query.secret;
+  if (secret !== CRON_SECRET_KEY) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  if (USE_SQLITE) {
+    return res.json({ skipped: true, message: 'SQLite mode: LMS UGC schema is created by initSQLiteSchema()' });
+  }
+
+  try {
+    const fs = await import('fs');
+    const path = await import('path');
+    // __dirname = /app/dist; lms_v2_ugc.sql копируется в dist/migrations через Dockerfile
+    const sqlPath = path.join(__dirname, 'migrations', 'lms_v2_ugc.sql');
+    if (!fs.existsSync(sqlPath)) {
+      return res.status(500).json({ error: `lms_v2_ugc.sql not found at ${sqlPath}` });
+    }
+
+    const sql = fs.readFileSync(sqlPath, 'utf-8');
+    // Вырезаем SQL-комментарии ДО split(';') — см. аналогичный блок /migrate-lms
+    const cleaned = sql
+      .split('\n')
+      .map((l: string) => {
+        const i = l.indexOf('--');
+        return i >= 0 ? l.slice(0, i) : l;
+      })
+      .join('\n');
+    const statements = cleaned.split(';').filter((s: string) => s.trim());
+    const results: string[] = [];
+
+    for (const stmt of statements) {
+      try {
+        await query(stmt + ';');
+        results.push(`OK: ${stmt.trim().substring(0, 60)}`);
+      } catch (e: any) {
+        // Игнорируем «already exists» — объект создан ранее (идемпотентность)
+        if (!e.message?.includes('already exists')) {
+          results.push(`WARN: ${e.message?.substring(0, 100)}`);
+        }
+      }
+    }
+
+    res.json({ success: true, applied: results.length, details: results });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// POST /migrate-lms-matching?secret=KEY — LMS мэтчинг курсов (ТЗ-103, Задача 1)
+// Применяет src/migrations/lms_v3_matching.sql (PostgreSQL-диалект). Идемпотентна.
+// В SQLite-режиме колонку/таблицу добавляет initSQLiteSchema() → пропускаем.
+// ═══════════════════════════════════════════════════════════════════════════
+app.post('/migrate-lms-matching', async (req, res) => {
+  const secret = req.headers['x-trigger-secret'] || req.query.secret;
+  if (secret !== CRON_SECRET_KEY) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  if (USE_SQLITE) {
+    return res.json({ skipped: true, message: 'SQLite mode: LMS matching schema is created by initSQLiteSchema()' });
+  }
+
+  try {
+    const fs = await import('fs');
+    const path = await import('path');
+    // __dirname = /app/dist; lms_v3_matching.sql копируется в dist/migrations через Dockerfile
+    const sqlPath = path.join(__dirname, 'migrations', 'lms_v3_matching.sql');
+    if (!fs.existsSync(sqlPath)) {
+      return res.status(500).json({ error: `lms_v3_matching.sql not found at ${sqlPath}` });
+    }
+
+    const sql = fs.readFileSync(sqlPath, 'utf-8');
+    // Вырезаем SQL-комментарии ДО split(';') — см. аналогичный блок /migrate-lms
     const cleaned = sql
       .split('\n')
       .map((l: string) => {
@@ -3153,6 +3262,10 @@ async function start() {
   // не блокируем listen (healthcheck Render'а).
   bootstrapStorage().catch((e: any) => console.warn('[Storage] bootstrap failed:', e?.message));
 
+  // ТЗ-102 v2 (S4): фоновый sweeper антивирусного контура — перескан pending_scan
+  // файлов раз в минуту (clamd мог быть недоступен в момент загрузки).
+  startVirusScanSweeper();
+
   // Start HTTP server immediately so /health is available and Render can route traffic
   // before migrations finish. Migrations and background jobs run in parallel.
   const server = app.listen(PORT, () => {
@@ -4120,6 +4233,7 @@ async function start() {
       startHeatmapFreezeCron({ isShuttingDown: () => shuttingDown }); // News heatmap freeze — ежедневно 00:05 MSK (TZ-49)
       startClusteringCron({ isShuttingDown: () => shuttingDown }); // ТЗ-92: catch-up кластеризации (*/15) + сюжеты (ежечасно), флаг CLUSTERING_ENABLED
       startTopicsNamingCron({ isShuttingDown: () => shuttingDown }); // ТЗ-115: нейминг тем 04:10 МСК, флаг TOPICS_ENABLED
+      startEducationMatchCron({ isShuttingDown: () => shuttingDown }); // ТЗ-103: catch-up мэтчинга курсов ежечасно, флаг EDUCATION_MATCH_ENABLED
       startRadioCacheMaintenance({ isShuttingDown: () => shuttingDown }); // ТЗ-65: snapshot истории 60с + алерты 5м
     }
 

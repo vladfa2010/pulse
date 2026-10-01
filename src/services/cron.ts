@@ -35,6 +35,7 @@ import { analyzeUnifiedBatch, UnifiedResult } from './smartTagMatcher';
 import { freezeHeatmapRecentDays } from './heatmapDaily';
 import { embedAndClusterBatch } from './clustering';      // ТЗ-92, задача 4
 import { runStoryGrouping } from './storyGrouper';        // ТЗ-92, задача 5
+import { matchUnprocessedNews } from './education/match'; // ТЗ-103, задача 3: cron-страховка мэтчинга курсов
 import { VERIFIER_MODEL_TEMPERATURE } from '../config/clustering'; // ТЗ-115: температура LLM по конвенции §9.1
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -705,4 +706,36 @@ export function startTopicsNamingCron(opts?: { isShuttingDown?: () => boolean })
     }
   }, { timezone: 'Europe/Moscow' });
   console.log('[Cron] Topics naming scheduled daily at 04:10 Europe/Moscow');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ТЗ-103, задача 3 — страховка мэтчинга курсов (education-match catch-up)
+// ═══════════════════════════════════════════════════════════════════════════
+// Раз в час: новости за последние 2 часа без ни одной строки в
+// course_match_suggestions догоняются мэтчингом — закрывает окно, если
+// асинхронный хук в newsProcessor упал. Под фичефлагом
+// EDUCATION_MATCH_ENABLED (default 'false'): выключен — джоба не планируется,
+// а matchUnprocessedNews() сам no-op (Задача 6).
+
+const EDUCATION_MATCH_ENABLED = process.env.EDUCATION_MATCH_ENABLED === 'true';
+
+export function startEducationMatchCron(opts?: { isShuttingDown?: () => boolean }) {
+  if (!EDUCATION_MATCH_ENABLED) {
+    console.log('[Cron] Education match disabled (EDUCATION_MATCH_ENABLED != true) — match catch-up cron not scheduled');
+    return;
+  }
+
+  cron.schedule('0 * * * *', async () => {
+    if (opts?.isShuttingDown?.()) return;
+    const acquired = await acquireCronLock('education-match-catchup');
+    if (!acquired) return;
+    try {
+      await matchUnprocessedNews();
+    } catch (err: any) {
+      console.error('[Cron] Education match catch-up failed:', err.message);
+    } finally {
+      await releaseCronLock('education-match-catchup');
+    }
+  });
+  console.log('[Cron] Education match catch-up scheduled hourly');
 }

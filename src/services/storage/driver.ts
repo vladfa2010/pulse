@@ -200,6 +200,51 @@ export async function putBuffer(
 }
 
 /**
+ * (ТЗ-102 v2, S4) Записать UGC-файл сразу в карантин quarantine/ — до результата
+ * сканирования clamd файл НЕ должен лежать в отдаваемом каталоге (mediaGuard
+ * /media/quarantine/** не отдаёт никогда). Атомарность — как у putBuffer.
+ * В БД путь /media/quarantine/<uuid>.<ext> — после чистого скана moveToKind()
+ * переносит файл в целевой каталог и обновляет путь в БД.
+ */
+export async function putBufferQuarantine(
+  buf: Buffer,
+  originalName: string,
+): Promise<PutResult> {
+  if (STORAGE_DRIVER !== 'local') throw new StorageError(501, 'storage driver not implemented');
+  await assertDiskSpace();
+
+  const filename = safeFilename(originalName);
+  const relPath = `/media/quarantine/${filename}`;
+  const absTarget = absFromRel(relPath);
+  const absTmp = path.join(UPLOADS_DIR, 'tmp', `${crypto.randomUUID()}.part`);
+
+  try {
+    await atomicWrite(absTmp, absTarget, buf);
+  } catch (err) {
+    await fs.promises.unlink(absTmp).catch(() => {});
+    await fs.promises.unlink(absTarget).catch(() => {});
+    throw err;
+  }
+  return { relPath, url: relPath, size: buf.length };
+}
+
+/**
+ * (ТЗ-102 v2, S4/S11) Атомарно перенести файл между каталогами хранилища
+ * (quarantine/ → ugc/ после чистого скана). rename внутри одного UPLOADS_DIR —
+ * одна файловая система, атомарен. Возвращает новый относительный путь
+ * (/media/<targetKind>/<имя>), который вызывающий код сохраняет в БД.
+ */
+export async function moveToKind(relPath: string, targetKind: UploadKind): Promise<PutResult> {
+  if (STORAGE_DRIVER !== 'local') throw new StorageError(501, 'storage driver not implemented');
+  const absSource = absFromRel(relPath);
+  const relTarget = `/media/${targetKind}/${path.basename(absSource)}`;
+  const absTarget = absFromRel(relTarget);
+  await fs.promises.mkdir(path.dirname(absTarget), { recursive: true });
+  await fs.promises.rename(absSource, absTarget);
+  return { relPath: relTarget, url: relTarget, size: (await fs.promises.stat(absTarget)).size };
+}
+
+/**
  * Перенести файл из временного пути (напр. tmp-файл multer из ТЗ-101)
  * в хранилище с той же атомарной гарантией.
  */
@@ -315,6 +360,8 @@ export async function bootstrapStorage(): Promise<void> {
 export default {
   putBuffer,
   putFile,
+  putBufferQuarantine,
+  moveToKind,
   removeFile,
   signedUrl,
   verifySignedUrl,

@@ -76,6 +76,12 @@ export function mediaGuard(req: Request, res: Response, _next: NextFunction): vo
       res.setHeader('Content-Disposition', `attachment; filename="${path.basename(abs)}"`);
     }
 
+    // ТЗ-102 v2: UGC-файлы учеников отдаются ВСЕГДА как attachment (в т.ч.
+    // картинки) — файл не исполняется/не рендерится в домене (XSS-защита).
+    if (firstSeg === 'ugc') {
+      res.setHeader('Content-Disposition', `attachment; filename="${path.basename(abs)}"`);
+    }
+
     // Content-Type по расширению; неизвестные — application/octet-stream
     // и принудительно attachment (не рендерим чужой контент как документ)
     const mime = MIME_BY_EXT[ext] || 'application/octet-stream';
