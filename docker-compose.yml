@@ -70,17 +70,20 @@ services:
       # ТЗ-115: темы живут только на VPS — на Render переменной нет (крон не
       # регистрируется, ручки отвечают 404 topics_disabled)
       TOPICS_ENABLED: ${TOPICS_ENABLED:-false}
+      # ТЗ-102 v2 (S4): путь к unix-сокету clamd ( clamav-сервис, профиль av).
+      # Без профиля каталог пуст — backend штатно деградирует: файлы висят в
+      # pending_scan, админке виден флаг «антивирус недоступен» (virusScan.ts).
+      # ВАЖНО: в одном mapping-е ключ environment один — второй блок compose
+      # отклонит («mapping key already defined»), поэтому CLAMAV_SOCKET живёт
+      # здесь, а не отдельным блоком.
+      CLAMAV_SOCKET: /run/clamav/clamd.sock
     ports:
       - "3001:3001"
     volumes:
       - ./logs:/app/logs
       # ТЗ-102 v2 (S4): unix-сокет clamd ( clamav-сервис, профиль av ).
-      # Без профиля каталог пуст — backend штатно деградирует: файлы висят в
-      # pending_scan, админке виден флаг «антивирус недоступен» (virusScan.ts).
+      # Без профиля каталог пуст — backend штатно деградирует (см. выше).
       - clamav_run:/run/clamav:ro
-    environment:
-      # Путь к сокету clamd (default в коде совпадает; явно — для наглядности)
-      CLAMAV_SOCKET: /run/clamav/clamd.sock
     restart: unless-stopped
 
   # ТЗ-91 (этап 1) — TEI с Qwen3-Embedding-0.6B (dim 1024).
