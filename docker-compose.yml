@@ -39,6 +39,14 @@ services:
   backend:
     build: .
     container_name: pulse-backend
+    # Все секреты VDS живут в /opt/pulse/.env (вне git). Подключаются дважды:
+    # env_file — прямой проброс в контейнер (SERPER/FINNHUB/VAPID/CRON_SECRET_KEY/
+    # MINIMAX/ENCRYPTION_KEY/SIGNED_URL_SECRET и т.д.); symlink .env в project dir
+    # — для интерполяции ${VAR} в блоке environment ниже. Только env_file НЕ
+    # достаточно: явные ключи environment перекрывают env_file, и без symlink
+    # они получили бы дефолты вроде change-me-in-production.
+    env_file:
+      - /opt/pulse/.env
     depends_on:
       postgres:
         condition: service_healthy
@@ -81,6 +89,9 @@ services:
       - "3001:3001"
     volumes:
       - ./logs:/app/logs
+      # ТЗ-100: загруженные файлы LMS (обложки, материалы, UGC) — bind-mount
+      # вне дерева git, переживает redeploy и бэкапится одним tar.
+      - /opt/pulse/uploads:/app/uploads
       # ТЗ-102 v2 (S4): unix-сокет clamd ( clamav-сервис, профиль av ).
       # Без профиля каталог пуст — backend штатно деградирует (см. выше).
       - clamav_run:/run/clamav:ro
