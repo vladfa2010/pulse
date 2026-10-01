@@ -55,6 +55,13 @@ function fail(res: Response, status: number, message: string): void {
   res.status(status).json({ error: message });
 }
 
+// id LMS — uuid (uuid-ossp). Невалидный формат до запроса не пускаем: иначе PG
+// бросит «invalid input syntax for type uuid» → 500 вместо честного 404.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isUuid(v: string): boolean {
+  return UUID_RE.test(v);
+}
+
 function boolDb(v: any): boolean {
   return v === true || v === 1;
 }
@@ -514,6 +521,7 @@ router.get('/courses/:slug', optionalAuth, h(async (req, res) => {
 router.get('/lessons/:lessonId', optionalAuth, h(async (req, res) => {
   const lessonId = req.params.lessonId;
   const userId = req.user?.userId;
+  if (!isUuid(lessonId)) return fail(res, 404, 'Урок не найден');
 
   const lessonR = await query(
     `SELECT l.*, c.status AS course_status, c.visibility, c.deleted_at,
@@ -672,6 +680,7 @@ router.get('/lessons/:lessonId', optionalAuth, h(async (req, res) => {
 router.post('/lessons/:lessonId/complete', authMiddleware, h(async (req, res) => {
   const lessonId = req.params.lessonId;
   const userId = req.user!.userId;
+  if (!isUuid(lessonId)) return fail(res, 404, 'Урок не найден');
 
   const lessonR = await query(
     `SELECT l.*, c.deleted_at, c.subscription_unlock_mode
@@ -755,6 +764,7 @@ router.post('/lessons/:lessonId/complete', authMiddleware, h(async (req, res) =>
 router.post('/lessons/:lessonId/test', authMiddleware, h(async (req, res) => {
   const lessonId = req.params.lessonId;
   const userId = req.user!.userId;
+  if (!isUuid(lessonId)) return fail(res, 404, 'Урок не найден');
 
   const lessonR = await query(
     `SELECT l.*, c.deleted_at, c.subscription_unlock_mode
