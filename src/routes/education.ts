@@ -37,6 +37,7 @@ import { logIdorBlocked } from '../services/education/access';
 import { logUserEvent } from '../services/activityLog';
 import { enqueueScan } from '../services/education/virusScan';
 import { putBufferQuarantine, signedUrl, StorageError } from '../services/storage/driver';
+import { sanitizeLessonHtml } from '../services/education/contentHtml'; // ТЗ-108: description — HTML, санитизируем и на отдаче (legacy-строки)
 
 const JWT_SECRET: string = process.env.JWT_SECRET!;
 const router = Router();
@@ -482,7 +483,7 @@ router.get('/courses/:slug', optionalAuth, h(async (req, res) => {
     id: c.id,
     slug: c.slug,
     title: c.title,
-    description: c.description,
+    description: sanitizeLessonHtml(String(c.description || '')),
     cover_url: c.cover_url,
     type: c.type,
     size: c.size,

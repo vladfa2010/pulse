@@ -19,7 +19,6 @@
 import { Router, Request, Response } from 'express';
 import multer from 'multer';
 import crypto from 'crypto';
-import sanitizeHtml from 'sanitize-html';
 import sharp from 'sharp';
 import fileType from 'file-type';
 
@@ -129,37 +128,11 @@ async function generateCourseSlug(title: string): Promise<string> {
   }
 }
 
-// ─── Санитизация контента урока (ТЗ-101 v12, S1; критерий 23) ───────────────
-
-/**
- * Whitelist: p/h1-h4/списки/strong/em/a/img/code/pre/blockquote/table;
- * a[href] — только https://, img[src] — только '/media/' (наш storage);
- * SVG/script/on*-атрибуты/style отсекаются sanitize-html по умолчанию.
- * Санитизируем на ЗАПИСИ — публичный API отдаёт готовый безопасный HTML.
- */
-export function sanitizeLessonHtml(html: string): string {
-  return sanitizeHtml(html, {
-    allowedTags: [
-      'p', 'h1', 'h2', 'h3', 'h4', 'ul', 'ol', 'li', 'strong', 'em',
-      'a', 'img', 'code', 'pre', 'blockquote', 'table', 'thead', 'tbody',
-      'tr', 'th', 'td', 'br',
-    ],
-    allowedAttributes: { a: ['href'], img: ['src'] },
-    transformTags: {
-      a: (tagName, attribs): { tagName: string; attribs: Record<string, string> } => {
-        const href = attribs.href || '';
-        // Только https: http и прочие схемы (javascript:) вырезаются целиком.
-        if (!/^https:\/\//i.test(href)) return { tagName: 'a', attribs: {} };
-        return { tagName: 'a', attribs: { href } };
-      },
-      img: (tagName, attribs): { tagName: string; attribs: Record<string, string> } => {
-        const src = attribs.src || '';
-        if (!src.startsWith('/media/')) return { tagName: 'img', attribs: {} };
-        return { tagName: 'img', attribs: { src } };
-      },
-    },
-  });
-}
+// ─── Санитизация контента урока/описания курса (ТЗ-101 v12, S1; критерий 23) ──
+// Реализация — в services/education/contentHtml.ts (ТЗ-108: общая для
+// админского и публичного контуров); здесь только re-export для совместимости.
+export { sanitizeLessonHtml } from '../services/education/contentHtml';
+import { sanitizeLessonHtml } from '../services/education/contentHtml';
 
 // ─── Валидация embed-URL (белый список доменов, критерий 5) ─────────────────
 
@@ -723,7 +696,7 @@ router.post('/courses', h(async (req, res) => {
     return fail(res, 400, "type — только 'course' | 'situational'");
   }
 
-  const description = String(body.description || '');
+  const description = sanitizeLessonHtml(String(body.description || ''));
   const price = body.price !== undefined ? Number(body.price) : 0;
   if (!Number.isInteger(price) || price < 0) return fail(res, 400, 'price — целое число ≥ 0');
 
@@ -826,7 +799,8 @@ router.put('/courses/:id', h(async (req, res) => {
     setField('title = ?', title);
   }
   if (body.description !== undefined) {
-    setField('description = ?', String(body.description));
+    // ТЗ-108: описание курса — теперь HTML (тот же whitelist, что у текста урока)
+    setField('description = ?', sanitizeLessonHtml(String(body.description)));
   }
   if (body.price !== undefined) {
     const price = Number(body.price);

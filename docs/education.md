@@ -330,11 +330,20 @@ secret=CRON_SECRET_KEY`, идемпотентна; SQLite → `{skipped:true}`).
   401 (кнопка «Войти» через auth-modal) / 403 (subscription_expired,
   locked_by_drip с «откроется через N дн.», test_blocked). Контент: видео
   (embed-iframe, youtube watch→embed конвертация на клиенте), текст как HTML
-  (санитизирует бэк `sanitizeLessonHtml`), тест (радио-варианты → грейдинг →
+  (санитизирует бэк `sanitizeLessonHtml` — вынесен в
+  `services/education/contentHtml.ts`, ТЗ-108; whitelist расширен тегом `u`),
+  общая rich-text типографика `.edu-content` (index.css) — тот же класс, что в
+  предпросмотре админки (TextFormatField, ТЗ-108) и карточке курса; тест
+  (радио-варианты → грейдинг →
   при проходе автоматический `complete`), кнопка «Отметить пройденным» для
   уроков без теста, навигация prev/next.
 - `CoursePage`: строка урока — ссылка, когда `(enrolled || is_free_preview) &&
   !locked_by_drip`; иначе прежняя неактивная строка с замком/drip-плашкой.
+  Описание курса — HTML (ТЗ-108): `description` санитизируется
+  `sanitizeLessonHtml` на записи (POST/PUT /admin/education/courses) и на
+  публичной отдаче (legacy-строки), карточка рендерит его через
+  `dangerouslySetInnerHTML` в `.edu-content` (whiteSpace pre-wrap — старые
+  plain-text описания не слипаются).
 - `lib/api.ts`: ошибки HTTP теперь несут `err.data` — тело ответа целиком
   (машиночитаемые `reason`/`unlock_in_days` из LMS и будущих эндпоинтов).
 - `lib/educationApi.ts`: `fetchLesson`, `submitLessonTest`, `completeLesson`.
