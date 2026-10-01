@@ -184,6 +184,21 @@ Volume: `/opt/pulse/uploads:/app/uploads` (bind-mount — переживает r
 бэкапится одним `tar`). Бэкап-cron (tar uploads + pg_dump, ротация 14 дней,
 внешняя копия) — обязателен с первого дня эксплуатации (ТЗ-100 v11).
 
+**Инцидент 2026-10-01 (зафиксировано, чтобы не повторить):** секреты VDS живут
+в `/opt/pulse/.env` (ВНЕ project dir). Compose их видит двумя способами, оба
+закоммичены в `docker-compose.yml`: `env_file: /opt/pulse/.env` (проброс в
+контейнер) и **symlink** `/opt/pulse/pulse/.env → /opt/pulse/.env` (compose
+читает `.env` из project dir для интерполяции `${VAR}` в блоке `environment`;
+без symlink явные ключи получали дефолты вроде `change-me-in-production` и
+перекрывали env_file). Раньше серверный compose был пропатчен вручную и не
+был в git — `git pull` перезаписал его, контейнер потерял `ENCRYPTION_KEY`,
+`SIGNED_URL_SECRET` и пр. Правило: **правки compose на сервере → сразу коммит
+в git**. Дубль ключа `environment` в одном mapping-е compose отклоняет
+(«mapping key already defined») — ключи объединять, а не добавлять второй блок.
+Прод-миграции LMS (`/migrate-lms`, `/migrate-lms-ugc`, `/migrate-lms-matching`,
+POST + `?secret=CRON_SECRET_KEY`) применяются вручную после первого деплоя
+схемы — автоматически не накатываются.
+
 ## Проверки
 
 - `npx tsc --noEmit` — чисто.
