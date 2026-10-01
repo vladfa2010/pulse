@@ -1,13 +1,13 @@
 # AuthModal — Полная спецификация
 
 > Этот документ — чертеж для 100% репликации логики. Можно передать новой команде/AI как ТЗ.
-> Версия: 2026-06-18
+> Версия: 2026-10-02 (ТЗ-119 v3: стартовые теги, «К рынку», поле имени без иконки)
 
 ---
 
 ## 1. Общая концепция
 
-AuthModal — единый модальный компонент для аутентификации. Объединяет **Вход**, **Регистрацию** и **Восстановление пароля** в одном окне. После успешной регистрации или сброса пароля показывает **Success-экран**.
+AuthModal — единый модальный компонент для аутентификации. Объединяет **Вход** и **Регистрацию** в одном окне с таб-переключением. Регистрация — **3 шага** со степпером (ТЗ-119 от 2026-09-30, реализация 2026-10-02): 1) имя, 2) почта, 3) пароль + согласие; кнопка «Создать аккаунт» зажигается (`BorderGlow lit`) при пароле от 8 символов. После успешной регистрации показывает **Success-экран** с обращением по имени, стартовыми тегами (ТЗ-119 v3, задача 7 — только если бэк вернул `starterTags`, флаг `STARTER_TAGS_ENABLED`) и кнопкой «К рынку».
 
 ---
 
@@ -29,8 +29,8 @@ AuthModal — единый модальный компонент для ауте
 │   │(active)│        │  pill    │
 │   └────────┴────────┘          │
 │                                 │
-│         Вход / Создать          │  ← заголовок
-│                                 │
+│         Вход / Создать          │  ← заголовок (login: h3 «Вход»;
+│                                 │     register: степпер «Шаг N из 3»)
 │  Логин                          │
 │  ┌──────────────────┐          │
 │  │ 👤 investor_2025 │          │
@@ -45,16 +45,11 @@ AuthModal — единый модальный компонент для ауте
 │  ┌──────────────────┐          │
 │  │ 🔒 ••••••••  👁️ │          │
 │  └──────────────────┘          │
-│  ▓▓▓▓ (4 segments)            │  ← PasswordStrength
-│                                 │
-│  Подтвердите пароль             │  (только регистрация)
-│  ┌──────────────────┐          │
-│  │ 🔒 ••••••••  👁️ │          │
-│  └──────────────────┘          │
+│  ▓▓▓▓ (4 segments)            │  ← PasswordStrength (forgot only)
 │                                 │
 │  ☑ Запомнить меня             │  (только вход)
 │                                 │
-│  ☑ Условия + Политика         │  (только регистрация)
+│  ☑ Условия + Политика         │  (только регистрация, шаг 3)
 │                                 │
 │  [Ошибка]                       │  ← красный текст
 │                                 │
@@ -62,6 +57,22 @@ AuthModal — единый модальный компонент для ауте
 │  │     Войти        │  ← CTA  │
 │  └──────────────────┘          │
 │                                 │
+└─────────────────────────────────┘
+
+РЕЖИМ REGISTER (ТЗ-119) — 3 шага со степпером (3 точки + линии):
+┌─────────────────────────────────┐
+│  ●━━━●━━━○   Шаг 1 из 3        │  ← степпер
+│  Как к вам обращаться?          │
+│  ┌──────────────────┐          │
+│  │                  │          │  ← без плейсхолдера и БЕЗ иконки (v2)
+│  └──────────────────┘          │
+│  [Вперёд →]                     │
+│  ─────────────────────────────  │
+│  Шаг 2: «Ваша почта» + [← Назад][Вперёд →]
+│  Шаг 3: «Придумайте пароль» + живой счётчик
+│          «Ещё N символов — и кнопка зажгётся»,
+│          согласие, [← Назад][✨ Создать аккаунт]
+│          (кнопка в BorderGlow, lit при ≥8 символов)
 └─────────────────────────────────┘
 ```
 
@@ -102,9 +113,8 @@ AuthModal — единый модальный компонент для ауте
 | State | Тип | Описание |
 |-------|-----|----------|
 | `isOpen` | boolean | Модал открыт/закрыт |
-| `mode` | `'login' \| 'register' \| 'forgot'` | Активная вкладка / режим |
-| `step` | `'form' \| 'success'` | Форма или success-экран (регистрация) |
-| `forgotStep` | `'email' \| 'code' \| 'password' \| 'success'` | Текущий шаг восстановления пароля |
+| `mode` | `'login' \| 'register'` | Активная вкладка |
+| `step` | `'form' \| 'success'` | Форма или success-экран |
 | `email` | string | Поле Email |
 | `password` | string | Поле Пароль |
 | `confirmPassword` | string | Поле Подтверждение пароля |
@@ -115,13 +125,9 @@ AuthModal — единый модальный компонент для ауте
 | `loading` | boolean | Идёт запрос |
 | `showPassword` | boolean | Показать пароль (глазок) |
 | `showConfirm` | boolean | Показать подтверждение |
-| `showNewPassword` | boolean | Показать новый пароль (сброс) |
-| `showNewConfirm` | boolean | Показать подтверждение нового пароля |
-| `newPassword` | string | Новый пароль |
-| `confirmNewPassword` | string | Подтверждение нового пароля |
-| `code` | string | 6-значный код из письма |
-| `resetToken` | string | JWT-токен для сброса пароля |
-| `resendTimer` | number | Таймер повторной отправки кода (сек) |
+| `regStep` / `stepDir` / `stepHint` / `igniteCount` | number/string | ТЗ-119: шаги регистрации, направление анимации, подсказка, вспышка зажигания |
+| `pwdSubmitError` / `pwdShakeTick` / `agreeError` / `agreeShakeTick` | boolean/number | ТЗ-119: ошибки сабмита шага 3 |
+| `starterTags` | `Array<{ tag_name, tag_type }>` | ТЗ-119 v3: стартовые теги из ответа `register()` (пусто при выключенном флаге) |
 
 ---
 
@@ -177,7 +183,7 @@ AuthModal — единый модальный компонент для ауте
 
 **Компонент:** `PasswordStrength.tsx`
 
-**Отображается:** В режиме `register` и на шаге установки нового пароля (`forgot` → `password`), под полем пароля
+**Отображается:** Только в режиме `register`, под полем пароля
 
 **4 сегмента индикатора:**
 
@@ -214,40 +220,58 @@ level = score (0..4)
 5. **Успех:** `handleClose()` → модал закрывается, пользователь авторизован
 6. **Ошибка:** `error = result.error` → отображается красным текстом под формой
 
-### US-6: Регистрация (Submit Register)
+### US-6: Регистрация в 3 шага (ТЗ-119)
 
-**Предусловия:**
-- `mode === 'register'`
-- Все поля заполнены
-- `agreed === true` (галочка согласия)
+**Шаги (`regStep: 1 | 2 | 3`):**
+1. **«Как к вам обращаться?»** — поле `username` (без плейсхолдера). Сабмит: `trim().length >= 2`, иначе инлайн-hint «Напишите хотя бы пару букв — и вперёд» + фокус.
+2. **«Ваша почта»** — поле `email`. Сабмит: regex `/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/`, иначе hint «Похоже, в адресе опечатка — проверьте». «← Назад» возвращает на шаг 1 с сохранением имени.
+3. **«Придумайте пароль»** — поле `password` (глаз показать/скрыть), живой счётчик в подзаголовке: `0` → «Минимум 8 символов. Последний шаг — честно.»; `1..7` → «Ещё N симв. — и кнопка зажгётся»; `≥8` → «Пароль готов ✓» (cyan). Галочка согласия (кастомный чекбокс).
 
-**Клиентская валидация (перед отправкой):**
-1. `password === confirmPassword`? Нет → `error = 'Пароли не совпадают'`
-2. `password.length >= 8`? Нет → `error = 'Пароль должен быть не менее 8 символов'`
-3. `agreed === true`? Нет → `error = 'Необходимо согласиться с условиями'`
+**Сабмит (только с шага 3, `handleSubmit`):**
+- `username.trim().length < 2` → возврат на шаг 1 (guard)
+- `password.length < 8` → красный счётчик + тряска подзаголовка + фокус в поле (не `error`)
+- `!agreed` → красная рамка чекбокса + тряска + hint «Без согласия аккаунт не создать — отметьте галочку» (не `error`)
+- Guard'ы сбрасываются при следующем вводе/переключении чекбокса
 
 **Поток после валидации:**
 1. `loading = true`
 2. `POST /api/auth/register` → `{ username, email, password }`
-3. **Успех:** `step = 'success'` → показ Success-экрана
-4. **Ошибка:** `error = result.error` → отображается красным
+3. **Успех:** `logAnalyticsEvent('sign_up')`, `step = 'success'` → Success-экран
+4. **Ошибка:** `error = result.error` → красный текст над рядом кнопок шага 3
+
+**Кнопка «Создать аккаунт» (зажигание, ТЗ-119):**
+- Обёрнута в `BorderGlow` с `lit={password.length >= 8}` и `sweepSignal={igniteCount}`
+- В момент первого достижения 8 символов `igniteCount++` → вспышка пробегом, далее постоянное свечение (вращающаяся рамка cyan/green/violet)
+- Стерли ниже 8 → `lit=false`, флаг «уже зажигалась» сбрасывается → повторное достижение 8 повторяет вспышку
+- Покой: текст `#6B7280`; зажжена: `#FFFFFF` (переход `color .35s`)
+
+**Сброс:** `reset()`/`switchMode()` → `regStep=1`, hint'и и `igniteCount` в ноль.
 
 ### US-7: Success-экран (после регистрации)
 
-**Триггер:** Успешный ответ от `/api/auth/register`
+**Триггер:** Успешный ответ от `/api/auth/register` (в `register()` сохраняется `result.starterTags`)
 
 **Содержимое:**
-- ✅ Иконка `CheckCircle` (64px, цвет `emerald-400`)
+- ✅ Иконка `CheckCircle` (64px, цвет `#00D4FF` — ТЗ-119)
 - Заголовок: "Аккаунт создан!"
-- Описание: "Добро пожаловать в PULSE. Теперь вы можете добавлять теги и отслеживать новости."
-- Кнопка: "Начать" → `handleClose()` (закрывает модал)
+- Описание: "{Имя с заглавной}, добро пожаловать в PULSE.\nПисьмо с подтверждением уже летит на почту." (имя — из шага 1; пустое → «Добро пожаловать в PULSE. Письмо с подтверждением уже летит на почту.»)
+- **Стартовые теги (ТЗ-119 v3, задача 7)** — только если `starterTags.length > 0` (бэк вернул фактически добавленные теги; при выключенном `STARTER_TAGS_ENABLED` блока нет):
+  - Лейбл «Мы добавили два тега для старта — лента уже работает:» — 13px `#6B7280`, по центру, `mt-[18px]`
+  - Чипы в ряд по центру, gap-2 — 1:1 как `DemoTagsRow`: пилюля `h-9 px-3.5 rounded-pill`, `bg #161616`, `border 1px {color}40`, точка `w-2 h-2 rounded-full` + имя `text-sm font-medium`. Цвет точки/бордера по `tag_type`: `company` → `#00D4FF`, `sector` → `#A78BFA` (остальное → `#00D4FF`)
+  - Подпись «Поменяйте их на свои, чтобы получить персональные подборки» — 12px `#4B5563`
+- Кнопка: **«К рынку»** (ТЗ-119 v3, раньше «Начать») — те же стили primary-градиента, `w-full`:
+  - `returnUrl` есть → `handleAuthSuccess(returnUrl)` (как раньше)
+  - `returnUrl` пуст → `reset()` + `onClose()` + `navigate('/feed', { replace: true })` (НЕ просто закрыть модал)
 
 **Анимация:**
 ```
 CheckCircle: scale 0→1, spring, delay 0.1s
 Заголовок:   opacity 0→1, y 10→0, delay 0.2s
 Описание:    opacity 0→1, y 10→0, delay 0.3s
-Кнопка:      opacity 0→1, y 10→0, delay 0.4s
+Лейбл тегов: opacity+y, delay 0.45s
+Чипы:        scale 0.6→1, spring, delay 0.5s + i*0.12s (поп-ин каскадом)
+Подпись:     opacity+y, delay 0.5s + N*0.12s
+Кнопка:      opacity+y, delay 0.9s
 ```
 
 ### US-8: Закрытие модала
@@ -255,77 +279,31 @@ CheckCircle: scale 0→1, spring, delay 0.1s
 **Триггеры:**
 - Клик крестика (X)
 - Клик вне модала (backdrop)
-- Клик "Начать" на Success-экране
+- Клик "К рынку" на Success-экране (ТЗ-119 v3, раньше «Начать»)
 - Успешный login
-- Успешный сброс пароля
 
 **Поведение:**
-1. `reset()` — **все поля очищаются**, `step = 'form'`, `mode = 'login'`, `forgotStep = 'email'`
+1. `reset()` — **все поля очищаются**, `step = 'form'`, `mode = 'login'`
 2. `onClose()` — `isOpen = false`
 3. Анимация: `opacity 1→0` (200ms)
 
-### US-9: Переход к восстановлению пароля
-
-**Триггер:** Клик "Забыли пароль?" в режиме `login`
-
-**Поведение:**
-1. `switchMode('forgot')`
-2. `forgotStep = 'email'`
-3. Показывается форма ввода email с кнопкой "Назад ко входу"
-
-### US-10: Отправка кода восстановления
-
-**Предусловия:**
-- `mode === 'forgot'`, `forgotStep === 'email'`
-- Поле email заполнено
-
-**Поток:**
-1. `handleForgotEmail()`
-2. `POST /api/auth/forgot-password` → `{ email }`
-3. **Успех:** `forgotStep = 'code'`, `resendTimer = 60`
-4. **Ошибка:** `error = result.error`
-
-### US-11: Проверка кода
-
-**Предусловия:**
-- `mode === 'forgot'`, `forgotStep === 'code'`
-- `code.length === 6`
-
-**Поток:**
-1. `handleForgotVerify()`
-2. `POST /api/auth/verify-code` → `{ email, code }`
-3. **Успех:** сохраняем `resetToken`, `forgotStep = 'password'`
-4. **Ошибка:** `error = 'Неверный или просроченный код'`
-
-### US-12: Установка нового пароля
-
-**Предусловия:**
-- `mode === 'forgot'`, `forgotStep === 'password'`
-- `newPassword.length >= 8`
-- `newPassword === confirmNewPassword`
-
-**Поток:**
-1. `handleForgotReset()`
-2. `POST /api/auth/reset-password` → `{ resetToken, password }`
-3. **Успех:** сохраняем JWT, обновляем пользователя, `forgotStep = 'success'`
-4. **Ошибка:** `error = result.error`
-
 ---
 
-## 5. Динамические поля (AnimatePresence)
+## 5. Динамические поля (ТЗ-119)
 
-Поля, которые появляются/исчезают при переключении `login ↔ register`:
+Регистрация больше не переключает поля через AnimatePresence — она рендерит **один шаг за раз** (свой `<form>` на шаг) внутри контейнера `min-h-[258px]` с slide-x переходом. В режиме login поля статичны.
 
-| Поле | Видно при | Анимация |
-|------|-----------|----------|
-| **Логин** | `register` | `height: 0→auto`, `opacity 0→1`, 250ms, ease `[0.16, 1, 0.3, 1]` |
-| **Подтвердите пароль** | `register` | Та же анимация |
+| Поле | Видно при | Примечание |
+|------|-----------|------------|
+| **Логин** (шаг 1) | `register` | Без плейсхолдера, `autoComplete="nickname"`, **без иконки** — padding 16px с обеих сторон (ТЗ-119 v2) |
+| **Email** (шаг 2) | `register`, login | — |
+| **Пароль** (шаг 3) | `register`, login | Глаз показать/скрыть |
+| **Согласие с условиями** (шаг 3) | `register` | Кастомный чекбокс 18×18, подсветка ошибкой |
 | **Запомнить меня** | `login` | — (статично) |
-| **Согласие с условиями** | `register` | Та же анимация |
-| **PasswordStrength** | `register`, `forgot` (password) | — (условный рендер) |
+| **PasswordStrength** | `forgot` (смена пароля) | Из register удалён (ТЗ-119) |
 | **Забыли пароль?** | `login` | — (статично) |
-| **Код из письма** | `forgot` (code) | — |
-| **Новый пароль / Подтверждение** | `forgot` (password) | — |
+
+**Удалено (ТЗ-119):** поле «Подтвердите пароль» и его state (`confirmPassword`, `showConfirm`), `PasswordStrength` в register, h3-заголовок «Создать аккаунт» (заменён степпером).
 
 ---
 
@@ -340,19 +318,15 @@ CheckCircle: scale 0→1, spring, delay 0.1s
 
 | Текст | Когда |
 |-------|-------|
-| "Пароли не совпадают" | `password !== confirmPassword` при submit register |
-| "Пароль должен быть не менее 8 символов" | `password.length < 8` при submit register |
-| "Необходимо согласиться с условиями" | `!agreed` при submit register |
+| "Напишите хотя бы пару букв — и вперёд" | Шаг 1: `username.trim().length < 2` (инлайн под полем) |
+| "Похоже, в адресе опечатка — проверьте" | Шаг 2: email не прошёл regex (инлайн под полем) |
+| "Введите пароль — минимум 8 символов" / "Не хватает N символов" | Шаг 3: сабмит с `password.length < 8` (красный счётчик + тряска) |
+| "Без согласия аккаунт не создать — отметьте галочку" | Шаг 3: сабмит с `!agreed` (под чекбоксом) |
 | "Неправильный логин или пароль" | Backend вернул ошибку login |
-| "Ошибка регистрации" | Backend вернул ошибку register |
-| "Введите email" | Пустой email в forgot |
-| "Введите 6 цифр кода" | Код неполный в verify-code |
-| "Не удалось отправить код" | Backend вернул ошибку forgot |
-| "Неверный или просроченный код" | Backend вернул ошибку verify-code |
-| "Не удалось сменить пароль" | Backend вернул ошибку reset |
+| "Ошибка регистрации" | Backend вернул ошибку register (красный текст над кнопками шага 3) |
 | "Сетевая ошибка" | Fetch throw (TypeError) |
 
-**При переключении таба:** `error = ''` (очищается)
+**При переключении таба:** `error = ''` (очищается); степ регистрации сбрасывается на 1.
 
 ---
 
@@ -373,13 +347,29 @@ exit:     scale 0.95, opacity 0
 spring:   stiffness 400, damping 35
 ```
 
-### Dynamic fields (username, confirm, agreement)
+### Смена шагов регистрации (ТЗ-119)
 ```
-hidden:   opacity 0, height 0, marginTop 0
-visible:  opacity 1, height auto, marginTop 16px
-duration: 250ms
-ease:     [0.16, 1, 0.3, 1] (easeOutExpo)
+initial:  opacity 0, x: 48 * dir   (dir=+1 вперёд, −1 назад)
+animate:  opacity 1, x: 0
+exit:     opacity 0, x: −48 * dir
+duration: 300ms, x ease [0.16, 1, 0.3, 1] (easeOutExpo)
+mode: AnimatePresence "wait" — старый шаг уходит, новый входит
+контейнер: min-h-[258px] (высота модалки не дёргается)
 ```
+
+### Степпер (регистрация)
+- Точка 30×30: покой `#1C1C1C`/`#2A2A2A`/`#6B7280`; текущая `#00D4FF` + тень `0 0 16px rgba(0,212,255,.35)`; пройдена — иконка Check cyan в полупрозрачном cyan-фоне
+- Линия `flex-1 h-[2px]`, заполнение `width 0→100%`, `.35s cubic-bezier(.16,1,.3,1)`
+- Подпись «Шаг N из 3», 12px `#6B7280`, letter-spacing .04em
+
+### Тряска (ошибки сабмита шага 3)
+```
+x: [0, −3, 0, 3, 0], 300ms — счётчик пароля и чекбокс согласия
+```
+
+### BorderGlow lit (кнопка «Создать аккаунт»)
+- `lit=true`: рамка видна всегда, edgeProximity фиксирован 0.9, угол вращается rAF (оборот 4 с, linear; hover/sweep перехватывают управление)
+- Зажигание: `sweepSignal={igniteCount}` вспышка пробегом при первом достижении 8 символов
 
 ### Success screen
 ```
@@ -387,7 +377,8 @@ Container: opacity 0→1, scale 0.9→1, 400ms, easeOutExpo
 CheckCircle: scale 0→1, spring, delay 100ms
 Title:       opacity+y, delay 200ms
 Description: opacity+y, delay 300ms
-Button:      opacity+y, delay 400ms
+StarterTags: label opacity+y delay 450ms; chips scale 0.6→1 spring, 500ms + i*120ms; caption — после чипов (ТЗ-119 v3)
+Button («К рынку»): opacity+y, delay 900ms
 ```
 
 ---
@@ -408,7 +399,7 @@ Input focus:    #00D4FF (opacity 50%)
 Placeholder:    #6B7280
 Accent (CTA):   linear-gradient(135deg, #00D4FF, #0099CC)
 Error:          #EF4444
-Success icon:   #34D399
+Success icon:   #00D4FF (ТЗ-119, раньше emerald #34D399)
 ```
 
 ### Размеры
@@ -434,12 +425,13 @@ Font (CTA):     14px, semibold
 - `AuthModalContext.tsx` — контекст управления состоянием
 
 ### Хуки
-- `useAuth()` — `login(email, password)`, `register(username, email, password)`, `forgotPassword(email)`, `verifyCode(email, code)`, `resetPassword(resetToken, password)`
+- `useAuth()` — `login(email, password)` и `register(username, email, password)`
 
 ### Иконки (Lucide)
 ```
-X, Mail, Lock, User, Eye, EyeOff, CheckCircle, ArrowLeft
+X, Mail, Lock, Eye, EyeOff, CheckCircle, ArrowLeft, AlertTriangle, Check
 ```
+(иконка `User` удалена в ТЗ-119 v2 — у поля имени на шаге 1 её нет)
 
 ### Библиотеки
 - `framer-motion` — AnimatePresence, motion.div
@@ -461,32 +453,12 @@ Error: { error: string }
 ```
 POST /api/auth/register
 Body: { username: string, email: string, password: string }
-Response: { token: string, user: { id, username, email, ... } }
+Response: { token: string, user: { id, username, email, ... },
+            starterTags?: Array<{ tag_name: string, tag_type: string }> }
+  — starterTags: фактически добавленные стартовые теги (ТЗ-119 v3, задача 11,
+    флаг STARTER_TAGS_ENABLED на бэке: «Сбербанк» company + «Нефть» sector).
+    Отсутствует/пуст, когда флаг выключен или теги не найдены в каталоге.
 Error: { error: string }
-```
-
-### Forgot password — request code
-```
-POST /api/auth/forgot-password
-Body: { email: string }
-Response: { success: true }
-Error: { error: string }
-```
-
-### Verify code
-```
-POST /api/auth/verify-code
-Body: { email: string, code: string }
-Response: { resetToken: string }
-Error: { error: string, code: 'CODE_INVALID_OR_EXPIRED' }
-```
-
-### Reset password
-```
-POST /api/auth/reset-password
-Body: { resetToken: string, password: string }
-Response: { token: string, user: { id, username, email, ... } }
-Error: { error: string, code: 'INVALID_RESET_TOKEN' }
 ```
 
 ### User mapping (frontend)

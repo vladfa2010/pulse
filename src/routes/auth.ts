@@ -31,7 +31,7 @@ import {
 } from '../schemas/auth';
 import { buildSubscriptionStatus } from '../services/subscription';
 import { ensureDefaultSubscriptions } from '../services/notifications/subscriptions';
-import { getUserTagsFull } from '../services/tagManager';
+import { getUserTagsFull, createUserTag } from '../services/tagManager';
 import { sendPasswordResetCodeEmail, sendWelcomeEmail } from '../services/email';
 import { sendTelegramMessage } from '../services/telegram';
 import { notifyAdminsSystemAlert } from '../services/adminAlerts';
@@ -49,6 +49,49 @@ if (!JWT_SECRET) {
   throw new Error('JWT_SECRET environment variable is required');
 }
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
+
+// ─── Стартовые теги при регистрации (ТЗ-119 v3, задача 11) ──────────────
+// За фичефлагом STARTER_TAGS_ENABLED. Теги ищутся в каталоге user_defined_tags
+// по имени (НЕ хардкодим UUID): не найден → warn и продолжаем без него.
+// Подписка идёт тем же конвейером, что POST /user/tags (createUserTag):
+// лимит тарифа НЕ обходится, фоновое enrichment — штатно для новых тегов.
+const STARTER_TAGS_ENABLED = process.env.STARTER_TAGS_ENABLED === 'true';
+const STARTER_TAGS = [
+  { tagName: 'Сбербанк', tagType: 'company' },
+  { tagName: 'Нефть', tagType: 'sector' },
+];
+
+async function ensureStarterTags(userId: string): Promise<Array<{ tag_name: string; tag_type: string }>> {
+  const added: Array<{ tag_name: string; tag_type: string }> = [];
+  if (!STARTER_TAGS_ENABLED) return added;
+  for (const starter of STARTER_TAGS) {
+    try {
+      const found = await query(
+        `SELECT tag_id, tag_name, tag_type FROM user_defined_tags WHERE LOWER(tag_name) = LOWER($1) LIMIT 1`,
+        [starter.tagName]
+      );
+      if (found.rows.length === 0) {
+        console.warn(`[Auth] Starter tag "${starter.tagName}" not found in catalog, skipping`);
+        continue;
+      }
+      const catalog = found.rows[0];
+      const result = await createUserTag(userId, catalog.tag_id, catalog.tag_name, catalog.tag_type);
+      if (!result.success) {
+        console.warn(`[Auth] Starter tag "${catalog.tag_name}" subscribe failed:`, result.error || 'unknown');
+        continue;
+      }
+      if (!result.alreadySubscribed) {
+        added.push({
+          tag_name: result.resolvedTagName || catalog.tag_name,
+          tag_type: result.detectedType || catalog.tag_type,
+        });
+      }
+    } catch (err: any) {
+      console.warn(`[Auth] Starter tag "${starter.tagName}" error:`, err?.message);
+    }
+  }
+  return added;
+}
 
 // Detect platform from User-Agent string
 function detectPlatform(userAgent?: string): string {
@@ -155,6 +198,9 @@ router.post('/register', validate(RegisterSchema), async (req, res) => {
     // ─── Сидируем матрицу подписок (новый рефактор уведомлений) ────────
     await ensureDefaultSubscriptions(userId);
 
+    // ─── Стартовые теги (ТЗ-119 v3) — за фичефлагом STARTER_TAGS_ENABLED ──
+    const starterTags = await ensureStarterTags(userId);
+
     // ─── Отправляем welcome-письмо (не блокируем ответ) ─────────────────
     sendWelcomeEmail(email, username).catch((err: any) => {
       console.error('[Auth] Welcome email failed:', err.message);
@@ -169,6 +215,7 @@ router.post('/register', validate(RegisterSchema), async (req, res) => {
     res.status(201).json({
       token,
       user: { id: userId, email, username, is_admin: false },
+      ...(starterTags.length > 0 ? { starterTags } : {}),
     });
   } catch (err: any) {
     console.error('[Auth] Register error:', err.message);
