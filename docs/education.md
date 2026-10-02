@@ -115,6 +115,13 @@ PG-миграция: `src/migrations/lms_v1.sql`, применяется иде�
   `unlock_after_days` (день АКТИВНОЙ подписки, 0 = сразу). Действует ТОЛЬКО
   на enrollment `source='subscription'`; tenure — накопленные дни членства
   (паузы «замораживают», не сбрасывают).
+- ТЗ-121: `included_tariffs` в публичной карточке курса (включая анонимов) —
+  активные планы из `course_tariffs`, каждый `{id, name, price,
+  billing_frequency}`. Помесячную конверсию годовых цен НЕ считаем (фронт
+  показывает «₽/мес» только для `billing_frequency='monthly'`): ложная цена
+  хуже её отсутствия. Фронт рендерит блок «или в подписке» гостю и юзеру
+  без подходящего тарифа (`CoursePage.tsx`, условия: price>0, нет
+  my_enrollment, нет access_via_subscription, included_tariffs непуст).
 
 ## Storage-драйвер (`src/services/storage/driver.ts`)
 

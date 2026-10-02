@@ -510,7 +510,11 @@ async function scenario(runLabel) {
     });
     assert(r.status === 400, `несуществующий план → 400, got ${r.status}`);
     r = await api('GET', `/api/education/courses/${slug1}`);
-    assert(r.json.included_tariffs.some((t) => t.id === 'pro'), 'публичная карточка: included_tariffs содержит PRO');
+    const incPro = r.json.included_tariffs.find((t) => t.id === 'pro');
+    assert(incPro, 'публичная карточка: included_tariffs содержит PRO');
+    // ТЗ-121: included_tariffs расширен сырыми price + billing_frequency
+    assert(typeof incPro.price === 'number' && incPro.price >= 0, `included_tariffs PRO: price число, got ${JSON.stringify(incPro)}`);
+    assert(typeof incPro.billing_frequency === 'string' && incPro.billing_frequency.length > 0, `included_tariffs PRO: billing_frequency, got ${JSON.stringify(incPro)}`);
     ok('критерий 17: GET /plans, PUT tariff_ids, несуществующий → 400, included_tariffs');
 
     // ── Критерий 20: категории ────────────────────────────────────────────

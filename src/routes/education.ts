@@ -447,7 +447,10 @@ router.get('/courses/:slug', optionalAuth, h(async (req, res) => {
   const tariffIds = new Set(tariffR.rows.map((r: any) => r.plan_id));
   const includedTariffs = activePlans
     .filter((p: any) => tariffIds.has(p.id))
-    .map((p: any) => ({ id: p.id, name: p.name }));
+    // ТЗ-121: сырые price + billing_frequency — фронт показывает цену «₽/мес»
+    // только для monthly-тарифов (помесячную конверсию годовых не считаем:
+    // ложная цена хуже её отсутствия)
+    .map((p: any) => ({ id: p.id, name: p.name, price: Number(p.price), billing_frequency: p.billing_frequency }));
 
   // Прогресс записанного
   let progress: { completed_lessons: number; total_lessons: number; percent: number } | null = null;
