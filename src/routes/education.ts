@@ -17,6 +17,7 @@ import jwt from 'jsonwebtoken';
 import multer from 'multer';
 import fileType from 'file-type';
 import crypto from 'crypto';
+import axios from 'axios';
 
 import { query } from '../config/db';
 import { AuthRequest, authMiddleware } from '../middleware/auth';
@@ -1351,6 +1352,223 @@ router.get('/my/submissions', authMiddleware, h(async (req, res) => {
   // Единая лента по дате (свежие первыми); NULL-даты (старые SQLite-строки) — в конец
   submissions.sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
   res.json({ submissions });
+}));
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ТЗ-100 v8 (Задача 6) — шеринг инвестиционного пути.
+// Один активный шеринг на юзера: POST перевыпускает токен (старый мёртв
+// сразу), DELETE отзывает. GET /shared/:token — публичная страница пути:
+// только username, агрегированные статы и опубликованные публичные курсы.
+// email/user_id/source/даты НЕ отдаём (приватность по ТЗ).
+// ═══════════════════════════════════════════════════════════════════════════
+
+const EDU_FRONTEND_URL = (process.env.FRONTEND_URL || 'https://pulse.inside-trade.ru').replace(/\/+$/, '');
+
+function pathShareUrl(token: string): string {
+  return `${EDU_FRONTEND_URL}/education/path/${token}`;
+}
+
+// GET /api/education/my/path-share — моя активная ссылка
+router.get('/my/path-share', authMiddleware, h(async (req, res) => {
+  const userId = req.user!.userId;
+  const r = await query(`SELECT token FROM user_path_shares WHERE user_id = $1`, [userId]);
+  if (r.rows.length === 0) return res.json({ token: null, url: null });
+  const token = r.rows[0].token;
+  res.json({ token, url: pathShareUrl(token) });
+}));
+
+// POST /api/education/my/path-share — создать/перевыпустить токен
+router.post('/my/path-share', authMiddleware, h(async (req, res) => {
+  const userId = req.user!.userId;
+  const token = crypto.randomBytes(24).toString('base64url');
+  await query(`DELETE FROM user_path_shares WHERE user_id = $1`, [userId]);
+  await query(
+    `INSERT INTO user_path_shares (user_id, token) VALUES ($1, $2)`,
+    [userId, token],
+  );
+  res.json({ token, url: pathShareUrl(token) });
+}));
+
+// DELETE /api/education/my/path-share — отозвать ссылку
+router.delete('/my/path-share', authMiddleware, h(async (req, res) => {
+  await query(`DELETE FROM user_path_shares WHERE user_id = $1`, [req.user!.userId]);
+  res.status(204).end();
+}));
+
+// GET /api/education/shared/:token — публичная страница пути (без auth)
+router.get('/shared/:token', h(async (req, res) => {
+  const shareR = await query(
+    `SELECT s.user_id, u.username, u.is_blocked
+     FROM user_path_shares s JOIN users u ON u.id = s.user_id
+     WHERE s.token = $1`,
+    [req.params.token],
+  );
+  // Токена нет или владелец заблокирован — одинаковый 404 (без утечки факта блокировки)
+  if (shareR.rows.length === 0) return fail(res, 404, 'Ссылка не найдена');
+  const owner = shareR.rows[0];
+  if (owner.is_blocked === true || owner.is_blocked === 1) return fail(res, 404, 'Ссылка не найдена');
+
+  const rows = await query(
+    `SELECT c.slug, c.title, c.type, c.size, c.cover_url,
+       (SELECT COUNT(*) FROM course_lessons cl WHERE cl.course_id = c.id) AS total_lessons,
+       (SELECT COUNT(*) FROM lesson_progress lp
+          JOIN course_lessons cl ON cl.id = lp.lesson_id
+         WHERE lp.user_id = $2 AND lp.completed_at IS NOT NULL AND cl.course_id = c.id) AS completed_lessons
+     FROM course_enrollments ce
+     JOIN courses c ON c.id = ce.course_id
+     WHERE ce.user_id = $2 AND c.deleted_at IS NULL
+       AND c.status = 'published' AND c.visibility = 'public'
+     ORDER BY ce.created_at ASC`,
+    [req.params.token, owner.user_id],
+  );
+  const items = rows.rows.map((r: any) => {
+    const total = Number(r.total_lessons);
+    const completed = Number(r.completed_lessons);
+    return {
+      slug: r.slug,
+      title: r.title,
+      type: r.type,
+      size: r.size,
+      cover_url: r.cover_url,
+      progress_percent: total > 0 ? Math.round((completed / total) * 100) : 0,
+      completed: total > 0 && completed >= total,
+    };
+  });
+
+  const statsR = await query(
+    `SELECT COUNT(DISTINCT ce.course_id) AS courses,
+            COUNT(lp.lesson_id) AS lessons_done,
+            COALESCE(SUM(CASE WHEN lp.lesson_id IS NOT NULL THEN cl.duration_min ELSE 0 END), 0) AS minutes
+     FROM course_enrollments ce
+     JOIN courses c ON c.id = ce.course_id
+     LEFT JOIN course_lessons cl ON cl.course_id = c.id
+     LEFT JOIN lesson_progress lp
+       ON lp.lesson_id = cl.id AND lp.user_id = ce.user_id AND lp.completed_at IS NOT NULL
+     WHERE ce.user_id = $1 AND c.deleted_at IS NULL
+       AND c.status = 'published' AND c.visibility = 'public'`,
+    [owner.user_id],
+  );
+  const s = statsR.rows[0] || {};
+  res.json({
+    owner: { username: owner.username },
+    stats: {
+      courses: Number(s.courses || 0),
+      lessons_done: Number(s.lessons_done || 0),
+      minutes: Number(s.minutes || 0),
+    },
+    items,
+  });
+}));
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ТЗ-100 v14 (Задача 5) — покупка платного курса через ЮKassa.
+// Платёж с product_type='course': plan_id=NULL, billing_cycle='once'.
+// Двойной клик = два pending-платежа — активацией владеет
+// activatePaymentIfNeeded (ON CONFLICT в enrollment страхует гонку).
+// Промокоды на курсы не распространяются (400, как в ТЗ).
+// ═══════════════════════════════════════════════════════════════════════════
+router.post('/courses/:slug/buy', authMiddleware, h(async (req, res) => {
+  const userId = req.user!.userId;
+  if ((req.body as any)?.promoCode) {
+    return fail(res, 400, 'Промокоды не применяются к покупке курсов');
+  }
+  const courseR = await query(
+    `SELECT id, title, price, status, visibility, deleted_at FROM courses WHERE slug = $1`,
+    [req.params.slug],
+  );
+  if (courseR.rows.length === 0 || courseR.rows[0].deleted_at) {
+    return fail(res, 404, 'Курс не найден');
+  }
+  const c = courseR.rows[0];
+  if (c.status !== 'published' || c.visibility === 'hidden') {
+    return fail(res, 404, 'Курс не найден');
+  }
+  const price = Number(c.price);
+  if (!(price > 0)) {
+    return fail(res, 400, 'Курс бесплатный — используйте запись на курс');
+  }
+  const enrollR = await query(
+    `SELECT 1 FROM course_enrollments WHERE user_id = $1 AND course_id = $2`,
+    [userId, c.id],
+  );
+  if (enrollR.rows.length > 0) return fail(res, 409, 'Вы уже записаны на этот курс');
+
+  const paymentId = crypto.randomUUID();
+  await query(
+    `INSERT INTO payments (id, user_id, amount, base_amount, discount, method, status,
+                           plan_id, billing_cycle, duration_days, is_upgrade,
+                           product_type, product_ref)
+     VALUES ($1, $2, $3, $3, 0, 'bank_card', 'pending',
+             NULL, 'once', NULL, 0,
+             'course', $4)`,
+    [paymentId, userId, price, c.id],
+  );
+
+  const YOOKASSA_SHOP_ID = process.env.YOOKASSA_SHOP_ID || '';
+  const YOOKASSA_SECRET_KEY = process.env.YOOKASSA_SECRET_KEY || '';
+
+  // DEMO режим (как в payment.ts): без ключей — «оплата» через demo-страницу
+  if (!YOOKASSA_SHOP_ID || !YOOKASSA_SECRET_KEY) {
+    return res.json({
+      payment: { id: paymentId, amount: price, status: 'pending' },
+      demo: true,
+      confirmation_url: `${EDU_FRONTEND_URL}/payment/return?demo=1&payment_id=${paymentId}&return=1`,
+    });
+  }
+
+  const userEmail = req.user!.email || '';
+  const yookassaPayload: any = {
+    amount: { value: price.toFixed(2), currency: 'RUB' },
+    capture: true,
+    confirmation: {
+      type: 'redirect',
+      return_url: `${EDU_FRONTEND_URL}/education/${req.params.slug}?payment_id=${paymentId}&paid=1`,
+    },
+    description: `PULSE курс «${c.title}» — ${userEmail}`.slice(0, 128),
+    save_payment_method: false,
+    merchant_customer_id: userId,
+    metadata: { payment_id: paymentId, user_id: userId, product: 'course', course_id: c.id },
+    receipt: {
+      customer: { email: userEmail },
+      items: [{
+        description: `Курс PULSE «${c.title}»`.slice(0, 128),
+        quantity: '1.00',
+        amount: { value: price.toFixed(2), currency: 'RUB' },
+        vat_code: 1,
+        payment_subject: 'service',
+        payment_mode: 'full_payment',
+      }],
+    },
+  };
+
+  try {
+    const yookassaRes = await axios.post(
+      'https://api.yookassa.ru/v3/payments',
+      yookassaPayload,
+      {
+        headers: {
+          Authorization: 'Basic ' + Buffer.from(`${YOOKASSA_SHOP_ID}:${YOOKASSA_SECRET_KEY}`).toString('base64'),
+          'Idempotence-Key': crypto.randomUUID(),
+          'Content-Type': 'application/json',
+        },
+        timeout: 15000,
+      },
+    );
+    await query(
+      `UPDATE payments SET provider_ref = $1 WHERE id = $2`,
+      [yookassaRes.data.id, paymentId],
+    );
+    res.json({
+      payment: { id: paymentId, amount: price, status: 'pending' },
+      confirmation_url: yookassaRes.data.confirmation?.confirmation_url,
+    });
+  } catch (err: any) {
+    console.error('[Education] Buy failed:', err.response?.data || err.message);
+    res.status(500).json({
+      error: 'Payment creation failed',
+      details: err.response?.data?.description || err.message,
+    });
+  }
 }));
 
 export default router;

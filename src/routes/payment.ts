@@ -274,16 +274,17 @@ router.post('/confirm', authMiddleware, validate(ConfirmPaymentSchema), async (r
     const { paymentId } = req.body;
 
     const paymentResult = await query(
-      `SELECT plan_id, duration_days, is_upgrade FROM payments WHERE id = $1 AND user_id = $2`,
+      `SELECT plan_id, duration_days, is_upgrade, product_type FROM payments WHERE id = $1 AND user_id = $2`,
       [paymentId, userId]
     );
     if (paymentResult.rows.length === 0) {
       return res.status(404).json({ error: 'Payment not found' });
     }
 
-    const { plan_id, duration_days, is_upgrade } = paymentResult.rows[0];
+    const { plan_id, duration_days, is_upgrade, product_type } = paymentResult.rows[0];
 
-    if (!plan_id) {
+    // ТЗ-100 v14: курсовые платежи идут без plan_id — это не ошибка
+    if (!plan_id && product_type !== 'course') {
       return res.status(400).json({ error: 'No plan associated with this payment' });
     }
 
@@ -293,13 +294,13 @@ router.post('/confirm', authMiddleware, validate(ConfirmPaymentSchema), async (r
     }
 
     const completedPayment = await query(
-      `SELECT id, amount, plan_id, billing_cycle, duration_days, status, method FROM payments WHERE id = $1`,
+      `SELECT id, amount, plan_id, billing_cycle, duration_days, status, method, product_type, product_ref FROM payments WHERE id = $1`,
       [paymentId]
     );
 
     res.json({
       success: true,
-      message: 'Subscription activated',
+      message: product_type === 'course' ? 'Course purchase completed' : 'Subscription activated',
       payment: completedPayment.rows[0] || { id: paymentId, amount: 0, status: 'completed' },
     });
   } catch (err) {
@@ -318,6 +319,7 @@ router.get('/status/:id', authMiddleware, async (req: AuthRequest, res) => {
     const result = await query(
       `SELECT id, amount, base_amount, discount, method, status, provider_ref, plan_id, billing_cycle, duration_days,
               is_upgrade, promo_code, promo_discount_type, promo_discount_value,
+              product_type, product_ref,
               paid_at, created_at FROM payments WHERE id = $1 AND user_id = $2`,
       [id, userId]
     );
@@ -336,7 +338,9 @@ router.get('/status/:id', authMiddleware, async (req: AuthRequest, res) => {
         const yookassaStatus = yookassaRes.data.status;
 
         if (yookassaStatus === 'succeeded') {
-          if (!payment.plan_id) {
+          // ТЗ-100 v14: без plan_id + product_type='course' — покупка курса,
+          // активируется enrollment'ом (ветка внутри activatePaymentIfNeeded)
+          if (!payment.plan_id && payment.product_type !== 'course') {
             // TZ_CARD_STATUS_FORCECHECK: card binding payment has no plan — do not activate subscription
             console.log(`[Payment Status] Card binding payment ${id}, skipping subscription activation`);
             await query(
@@ -395,7 +399,7 @@ router.post('/force-check', authMiddleware, async (req: AuthRequest, res) => {
     }
 
     const result = await query(
-      `SELECT id, status, provider_ref, plan_id, duration_days, is_upgrade FROM payments WHERE id = $1 AND user_id = $2`,
+      `SELECT id, status, provider_ref, plan_id, duration_days, is_upgrade, product_type FROM payments WHERE id = $1 AND user_id = $2`,
       [paymentId, userId]
     );
     if (result.rows.length === 0) {
@@ -419,7 +423,8 @@ router.post('/force-check', authMiddleware, async (req: AuthRequest, res) => {
     const yookassaStatus = yookassaRes.data.status;
 
     if (yookassaStatus === 'succeeded') {
-      if (!payment.plan_id) {
+      // ТЗ-100 v14: product_type='course' без plan_id — покупка курса
+      if (!payment.plan_id && payment.product_type !== 'course') {
         // TZ_CARD_STATUS_FORCECHECK: card binding payment has no plan — do not activate subscription
         console.log(`[Payment ForceCheck] Card binding payment ${paymentId}, skipping subscription activation`);
         await query(

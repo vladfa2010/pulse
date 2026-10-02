@@ -140,6 +140,8 @@ CREATE TABLE IF NOT EXISTS payments (
   promo_code  VARCHAR(50) DEFAULT NULL,
   promo_discount_type VARCHAR(20) DEFAULT NULL,
   promo_discount_value INTEGER DEFAULT NULL,
+  product_type VARCHAR(20) NOT NULL DEFAULT 'subscription',
+  product_ref VARCHAR(64) DEFAULT NULL,
   paid_at     TIMESTAMP,
   created_at  TIMESTAMP DEFAULT NOW()
 );

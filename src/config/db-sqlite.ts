@@ -131,12 +131,15 @@ export async function query(text: string, params?: any[]): Promise<{ rows: any[]
     let result: any[] = [];
 
     let rowsModified = 0;
-    if (isWrite) {
+    // UPDATE/DELETE ... RETURNING: строки есть и у write-операций — выполняем
+    // через prepare/step, иначе RETURNING-строки теряются (db.run их отбрасывает)
+    const hasReturning = /\bRETURNING\b/i.test(sql);
+    if (isWrite && !hasReturning) {
       // Write operation: use run()
       db.run(sql, flatParams);
       rowsModified = db.getRowsModified();
     } else {
-      // Read operation: use prepare + step + getAsObject
+      // Read operation (или write с RETURNING): use prepare + step + getAsObject
       const stmt = db.prepare(sql);
       stmt.bind(flatParams);
       while (stmt.step()) {
@@ -265,6 +268,8 @@ export async function initSQLiteSchema(): Promise<void> {
       promo_discount_type TEXT DEFAULT NULL,
       promo_discount_value INTEGER DEFAULT NULL,
       paid_at TEXT,
+      product_type TEXT NOT NULL DEFAULT 'subscription',
+      product_ref TEXT DEFAULT NULL,
       created_at TEXT DEFAULT (datetime('now'))
     );
 

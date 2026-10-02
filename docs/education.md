@@ -32,8 +32,13 @@
   выключен — эндпоинты 404, хук/ретроскан/cron no-op. Smoke:
   `scripts/smoke-lms-match.js` (оба прогона). Бэкфилл:
   `scripts/backfill-course-embeddings.js` (критерий приёмки №3).
-- ⏭ Дальше: ТЗ-100 Задачи 4–6 (прохождение/«Мои курсы» в ЛК, оплата курсов
-  ЮKassa, шеринг пути), затем ТЗ-105, ТЗ-104 по команде, ТЗ-107 последним.
+- ✅ **ТЗ-100 v8/v14** (шеринг инвестиционного пути + покупка курсов через
+  ЮKassa, backend + frontend): `user_path_shares` (CRUD + публичная страница
+  пути), платёжный контур курсов по `product_type='course'`
+  (`activatePaymentIfNeeded`, webhook, `/status`, `/confirm`). Smoke:
+  `scripts/smoke-lms-path-buy.js` (19 проверок).
+- ⏭ Дальше: ТЗ-100 Задача 4 («Мои курсы» в ЛК), затем ТЗ-105, ТЗ-104 по
+  команде, ТЗ-107 последним.
 
 ## Шаг 2 — что реализовано
 
@@ -208,13 +213,76 @@ POST + `?secret=CRON_SECRET_KEY`) применяются вручную посл
 - `node scripts/smoke-lms-media.js` — HTTP 6/6: публичная обложка, signed
   gating, подделка/expired → 404, traversal, attachment для SVG.
 
+## ТЗ-100 v8/v14 — шеринг пути + покупка курса (реализовано)
+
+**Шеринг инвестиционного пути** (`src/routes/education.ts`):
+- `GET|POST|DELETE /api/education/my/path-share` (auth). Один активный шеринг
+  на юзера: POST перевыпускает токен (`crypto.randomBytes(24)` base64url;
+  DELETE+INSERT — старый токен мёртв сразу), DELETE отзывает (204).
+  URL: `FRONTEND_URL || https://pulse.inside-trade.ru` + `/education/path/<token>`.
+- `GET /api/education/shared/:token` (публичный, без auth): `{owner:{username},
+  stats:{courses,lessons_done,minutes}, items:[{slug,title,type,size,cover_url,
+  progress_percent,completed}]}`. Только опубликованные публичные курсы
+  владельца (hidden — исключены), `ORDER BY ce.created_at ASC`; владелец
+  `is_blocked` → 404. email/user_id/source/даты НЕ отдаём. minutes — сумма
+  `duration_min` пройденных уроков (CASE по matched `lesson_progress`,
+  у `lesson_progress` составной PK без колонки `id`).
+- Фронт: `pages/SharedPathPage.tsx` (маршрут `/education/path/:token` выше
+  `/education/:slug`, noindex, дизайн `lms-full/mockup/path.html`),
+  `components/education/SharePathModal.tsx` (GlassModal: копия/перевыпуск/
+  отзыв, двухшаговые подтверждения), кнопка «Поделиться путём» на витрине
+  `Education.tsx` (только авторизованным).
+
+**Покупка курса через ЮKassa** (`product_type` в платёжном контуре):
+- Миграции: `payments.product_type VARCHAR(20) NOT NULL DEFAULT 'subscription'`
+  + `payments.product_ref VARCHAR(64)` (PG — ALTER в общем списке миграций
+  `index.ts`, накатывается на boot; SQLite — CREATE в `db-sqlite.ts` + тот же
+  guarded ALTER). Подписочный путь (DEFAULT 'subscription') без изменений
+  поведения — регрессия проверена смоуком.
+- `POST /api/education/courses/:slug/buy` (auth): курс `published` + public +
+  `price>0` (иначе 404/400), enrollment есть → 409, promoCode → 400. INSERT
+  payments: `product_type='course', product_ref=course_id, plan_id=NULL,
+  billing_cycle='once', duration_days=NULL`. Дальше как в `payment.ts`:
+  без ключей ЮKassa → demo-ответ с `confirmation_url` на `/payment/return`;
+  иначе POST api.yookassa.ru/v3/payments (`return_url` на карточку курса с
+  `?payment_id=&paid=1`, receipt «Курс PULSE «…»», `save_payment_method:false`,
+  metadata `{product:'course', course_id}`).
+- `activatePaymentIfNeeded` (services/subscription.ts): RETURNING дополнен
+  `product_type, product_ref`; ветка 'course' — INSERT enrollment
+  `source='purchase', payment_id` (ON CONFLICT DO NOTHING) + лог
+  `payment_completed` с `product_type` (logPaymentCompleted — 5-й опциональный
+  параметр; plan_id принимает null). Подписочная ветка не тронута.
+- `webhook.ts`: SELECT дополнен `product_type`; курсовый платёж (без plan_id)
+  НЕ путается с привязкой карты — отдельная ветка до card-guard: активация +
+  ранний return (refund-trial/промо, plan-deleted, auto-renew для курсов не
+  выполняются); в `payment.canceled` подписочный лог не пишется для курсов.
+- `payment.ts`: `/confirm` ослаблен для course (без plan_id — не 400),
+  message product-aware; `/status` и `/force-check` — card-binding guard
+  пропускает `product_type='course'` в `activatePaymentIfNeeded`; SELECT'ы
+  дополнены `product_type, product_ref`.
+- Фронт: `CoursePage.tsx` — ветка «Купить курс» под фичефлагом
+  `VITE_EDUCATION_PAYMENTS_ENABLED === 'true'` (выкл → прежняя ссылка на
+  /pricing), редирект на `confirmation_url`; возврат с оплаты — поллинг
+  `GET /api/payment/status/:id` (2 с × 15), по completed перезагрузка карточки
+  и чистка query; 409 → перезагрузка; таймаут → «платёж обрабатывается».
+- **Фикс драйвера SQLite** (`config/db-sqlite.ts`): write-запросы с RETURNING
+  выполнялись через `db.run()`, теряя RETURNING-строки (молчаливая поломка
+  идемпотентности `activatePaymentIfNeeded`, промо-инкремента и др. в SQLite-
+  режиме; PG не затронут). Теперь write с RETURNING идёт через prepare/step.
+
+**Проверки:** `npx tsc --noEmit`, `npm run build`, `node scripts/smoke-lms-path-buy.js`
+— 19 проверок: сервисная активация (course + подписочная регрессия,
+идемпотентность), path-share CRUD/перевыпуск/отзыв/блокировка, shared-фильтры
+и приватность, buy-валидации, demo-флоу (buy → status → confirm → /my),
+двойной клик, реальный webhook payment.succeeded (курс + подписочная
+регрессия, IP ЮKassa через X-Forwarded-For), чужой payment_id → 404.
+Регрессия: `smoke-lms-step2.js` — 2 прогона × 30 проверок зелёные.
+
 ## Дорожная карта (следующие шаги)
 
 1. ~~Задача 1 + 1а: схема БД + storage-драйвер~~ ✅
 2. ~~ТЗ-101: админка курсов/уроков/категорий + публичный контур~~ ✅
-3. ТЗ-100 Задачи 4–6: «Мои курсы» в ЛК/прохождение (фронт), покупка курсов
-   через контур ЮKassa (`activatePaymentIfNeeded`, `product_type='course'`),
-   шеринг пути (`user_path_shares`).
+3. ~~ТЗ-100 Задачи 5–6: покупка курсов ЮKassa + шеринг пути~~ ✅
 
 ## ТЗ-102 — UGC + модерация + ClamAV (реализовано)
 
@@ -356,10 +424,6 @@ secret=CRON_SECRET_KEY`, идемпотентна; SQLite → `{skipped:true}`).
 1. ~~Задача 1 + 1а: схема БД + storage-драйвер~~ ✅
 2. ~~ТЗ-101: админка курсов/уроков/категорий + публичный контур~~ ✅
 3. ~~ТЗ-102 (UGC + ClamAV)~~ ✅ / ~~ТЗ-103 (мэтчинг)~~ ✅
-4. Деплой ТЗ-102/103 на VDS: миграции `lms_v2_ugc` + `lms_v3_matching`,
-   `docker compose --profile av up -d clamav` (проверить RAM ~1 ГБ),
-   `EDUCATION_MATCH_ENABLED=true` после бэкфилла эмбеддингов.
-5. ТЗ-100 Задачи 4–6: «Мои курсы» в ЛК/прохождение (фронт), покупка курсов
-   через контур ЮKassa (`activatePaymentIfNeeded`, `product_type='course'`),
-   шеринг пути (`user_path_shares`).
+4. ~~ТЗ-100 v8/v14: шеринг пути + покупка курсов ЮKassa~~ ✅
+5. ТЗ-100 Задача 4: «Мои курсы» в ЛК/прохождение (фронт).
 6. Затем ТЗ-105, ТЗ-104 по команде, ТЗ-107 последним.

@@ -3835,6 +3835,11 @@ async function start() {
     { sql: `ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_file_consent_at ${USE_SQLITE ? 'TIMESTAMP' : 'TIMESTAMPTZ'}`, name: 'users_ai_file_consent_at' },
     // Страховка (§14.4 п.4): любые существующие данные — всегда частные
     { sql: `UPDATE fact_check_requests SET is_public = FALSE WHERE is_public != FALSE`, name: 'fact_check_requests_is_public_false' },
+    // ТЗ-100 v14 (Задача 5): покупка курсов через ЮKassa. product_type
+    // отделяет курсовые платежи от подписочных: весь подписочный контур
+    // (webhook, /status, /confirm) ветвится по этой колонке.
+    { sql: `ALTER TABLE payments ADD COLUMN IF NOT EXISTS product_type VARCHAR(20) NOT NULL DEFAULT 'subscription'`, name: 'payments_product_type' },
+    { sql: `ALTER TABLE payments ADD COLUMN IF NOT EXISTS product_ref VARCHAR(64) DEFAULT NULL`, name: 'payments_product_ref' },
   ];
   for (const m of migrations) {
     try {

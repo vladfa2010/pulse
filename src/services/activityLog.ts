@@ -74,10 +74,16 @@ export async function logTagRemoved(userId: string, tagId: string, tagName: stri
 export async function logPaymentCompleted(
   userId: string,
   amount: number,
-  planId: string,
-  method: string
+  planId: string | null,
+  method: string,
+  productType?: string
 ): Promise<void> {
-  return logUserEvent(userId, 'payment_completed', { amount, plan_id: planId, method });
+  return logUserEvent(userId, 'payment_completed', {
+    amount,
+    plan_id: planId,
+    method,
+    ...(productType ? { product_type: productType } : {}),
+  });
 }
 
 export async function logSubscriptionActivated(userId: string, planId: string, expiresAt: string): Promise<void> {

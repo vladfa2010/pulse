@@ -96,7 +96,7 @@ router.post('/yookassa', async (req, res) => {
     }
 
     const paymentResult = await query(
-      `SELECT id, user_id, status, plan_id, duration_days, amount, is_upgrade
+      `SELECT id, user_id, status, plan_id, duration_days, amount, is_upgrade, product_type
        FROM payments WHERE provider_ref = $1`,
       [object.id]
     );
@@ -156,7 +156,10 @@ router.post('/yookassa', async (req, res) => {
     if (event === 'payment.canceled') {
       await query(`UPDATE payments SET status = 'failed' WHERE id = $1`, [payment.id]);
 
-      logSubscriptionCancelled(payment.user_id, payment.plan_id).catch(() => {});
+      // ТЗ-100 v14: для курсового платежа подписочный лог не пишем
+      if (payment.product_type !== 'course') {
+        logSubscriptionCancelled(payment.user_id, payment.plan_id).catch(() => {});
+      }
 
       if (object.metadata?.auto_renew === 'true') {
         // TZ_DOUBLE_INCREMENT: webhook is the single source of truth for failure counting.
@@ -199,6 +202,18 @@ router.post('/yookassa', async (req, res) => {
     // #Y7 save payment method for future auto-renew
     if (object.payment_method?.saved && object.payment_method?.id) {
       await savePaymentMethod(payment.user_id, object.payment_method);
+    }
+
+    // ТЗ-100 v14 (Задача 5): курсовый платёж идёт без plan_id — НЕ путать с
+    // привязкой карты. Активация = enrollment на курс (внутри сервиса),
+    // весь подписочный контур ниже (refund trial/промо, plan-deleted,
+    // auto-renew) для курсов не выполняется.
+    if (payment.product_type === 'course') {
+      const activatedCourse = await activatePaymentIfNeeded(payment.id);
+      if (activatedCourse) {
+        console.log(`[YooKassa] Course enrollment activated for user ${payment.user_id}, payment ${payment.id}`);
+      }
+      return res.status(200).json({ received: true });
     }
 
     // Guard: привязка карты — без plan_id, не активируем подписку

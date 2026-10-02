@@ -459,7 +459,7 @@ export async function activatePaymentIfNeeded(paymentId: string): Promise<boolea
          paid_at = ${nowSql()}
      WHERE id = $1
        AND status = 'pending'
-     RETURNING user_id, plan_id, duration_days, is_upgrade, amount, method, billing_cycle`,
+     RETURNING user_id, plan_id, duration_days, is_upgrade, amount, method, billing_cycle, product_type, product_ref`,
     [paymentId]
   );
 
@@ -469,6 +469,22 @@ export async function activatePaymentIfNeeded(paymentId: string): Promise<boolea
   }
 
   const p = result.rows[0];
+
+  // ТЗ-100 v14 (Задача 5): курсовый платёж — запись на курс вместо подписки.
+  // Подписочный контур (activateSubscription, сброс auto_renew_failures,
+  // промо-инкремент) для курсов не выполняется.
+  if (p.product_type === 'course') {
+    if (p.product_ref) {
+      await query(
+        `INSERT INTO course_enrollments (user_id, course_id, source, payment_id)
+         VALUES ($1, $2, 'purchase', $3)
+         ON CONFLICT (user_id, course_id) DO NOTHING`,
+        [p.user_id, p.product_ref, paymentId]
+      );
+    }
+    logPaymentCompleted(p.user_id, Number(p.amount), null, p.method || 'yookassa', 'course').catch(() => {});
+    return true;
+  }
 
   await activateSubscription(
     p.user_id,
