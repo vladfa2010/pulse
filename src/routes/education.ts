@@ -1413,13 +1413,13 @@ router.get('/shared/:token', h(async (req, res) => {
        (SELECT COUNT(*) FROM course_lessons cl WHERE cl.course_id = c.id) AS total_lessons,
        (SELECT COUNT(*) FROM lesson_progress lp
           JOIN course_lessons cl ON cl.id = lp.lesson_id
-         WHERE lp.user_id = $2 AND lp.completed_at IS NOT NULL AND cl.course_id = c.id) AS completed_lessons
+         WHERE lp.user_id = $1 AND lp.completed_at IS NOT NULL AND cl.course_id = c.id) AS completed_lessons
      FROM course_enrollments ce
      JOIN courses c ON c.id = ce.course_id
-     WHERE ce.user_id = $2 AND c.deleted_at IS NULL
+     WHERE ce.user_id = $1 AND c.deleted_at IS NULL
        AND c.status = 'published' AND c.visibility = 'public'
      ORDER BY ce.created_at ASC`,
-    [req.params.token, owner.user_id],
+    [owner.user_id],
   );
   const items = rows.rows.map((r: any) => {
     const total = Number(r.total_lessons);
