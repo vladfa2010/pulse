@@ -636,6 +636,7 @@ async function fetchCourseCard(courseId: string): Promise<any | null> {
       news_id: m.news_id,
       is_free: boolDb(m.is_free),
       position: m.position,
+      lesson_id: m.lesson_id ?? null,
     })),
     linked_news: linksR.rows.map((n: any) => ({
       id: n.id, slug: n.slug, title_ru: n.title_ru, published_at: n.published_at,
@@ -1328,7 +1329,26 @@ router.delete('/lessons/:lessonId', h(async (req, res) => {
   );
   const removedProgress = Number(progress.rows[0].cnt);
 
+  // ТЗ-123: файлы материалов урока → soft-delete в trash (как при удалении
+  // материала), иначе CASCADE снесёт строки course_materials, а файлы осиротеют.
+  // Удаляем строки материалов ЯВНО: на SQLite (sql.js) PRAGMA foreign_keys
+  // не форсирует FK и CASCADE не срабатывает — опора только на него оставила бы
+  // сирот в обоих диалектах-тестах. На PG явный DELETE идемпотентен каскаду.
+  // Известное поведение (не тронуто): удаление КУРСА полагается на CASCADE
+  // без чистки файлов материалов — зафиксировано в docs/education.md.
+  const lessonFileMaterials = await query(
+    `SELECT url FROM course_materials WHERE lesson_id = $1 AND kind = 'file'`,
+    [lessonId],
+  );
+  await query(`DELETE FROM course_materials WHERE lesson_id = $1`, [lessonId]);
+
   await query(`DELETE FROM course_lessons WHERE id = $1`, [lessonId]);
+  for (const m of lessonFileMaterials.rows) {
+    if (m.url && String(m.url).startsWith('/media/')) {
+      removeFile(String(m.url)).catch((e: any) =>
+        console.warn('[AdminEducation] lesson material removeFile failed:', e?.message));
+    }
+  }
   // Пересчёт position оставшихся 1..N без дыр (FK каскадно снёс lesson_progress)
   const rest = await query(
     `SELECT id FROM course_lessons WHERE course_id = $1 ORDER BY position ASC`,
@@ -1415,6 +1435,7 @@ async function fetchMaterial(materialId: string): Promise<any | null> {
   return {
     id: m.id, course_id: m.course_id, kind: m.kind, title: m.title,
     url: m.url, news_id: m.news_id, is_free: boolDb(m.is_free), position: m.position,
+    lesson_id: m.lesson_id ?? null,
   };
 }
 
@@ -1466,6 +1487,17 @@ async function validateMaterialBody(body: any, partial: boolean):
     if (!Number.isInteger(p) || p < 0) return { ok: false, status: 400, message: 'position — целое ≥ 0' };
     fields.position = p;
   }
+  // ТЗ-123: привязка к уроку. null = сделать курсовым. Проверка принадлежности
+  // урока курсу — в роутах (здесь course_id неизвестен).
+  if (body.lesson_id !== undefined) {
+    if (body.lesson_id === null) {
+      fields.lesson_id = null;
+    } else {
+      const lid = String(body.lesson_id).trim();
+      if (!lid) return { ok: false, status: 400, message: 'lesson_id — непустая строка или null' };
+      fields.lesson_id = lid;
+    }
+  }
   return { ok: true, fields };
 }
 
@@ -1479,6 +1511,7 @@ router.get('/courses/:id/materials', h(async (req, res) => {
   res.json(rows.rows.map((m: any) => ({
     id: m.id, kind: m.kind, title: m.title, url: m.url,
     news_id: m.news_id, is_free: boolDb(m.is_free), position: m.position,
+    lesson_id: m.lesson_id ?? null,
   })));
 }));
 
@@ -1512,15 +1545,32 @@ router.post('/courses/:id/materials', h(async (req, res) => {
     url = `/news/${news.rows[0].slug || news.rows[0].id}`;
   }
 
-  const maxPos = await query(
-    `SELECT COALESCE(MAX(position), 0) AS mp FROM course_materials WHERE course_id = $1`,
-    [courseId],
-  );
+  // ТЗ-123: материал урока — урок должен существовать и принадлежать этому курсу
+  let lessonId: string | null = null;
+  if (body.lesson_id !== undefined && body.lesson_id !== null) {
+    lessonId = String(body.lesson_id);
+    const lr = await query(
+      `SELECT 1 FROM course_lessons WHERE id = $1 AND course_id = $2`,
+      [lessonId, courseId],
+    );
+    if (lr.rows.length === 0) return fail(res, 400, 'lesson_id: урок не найден или не принадлежит курсу');
+  }
+
+  // Позиция — в скоупе урока (курсовые и уроковые нумерации не смешиваются)
+  const maxPos = lessonId
+    ? await query(
+        `SELECT COALESCE(MAX(position), 0) AS mp FROM course_materials WHERE course_id = $1 AND lesson_id = $2`,
+        [courseId, lessonId],
+      )
+    : await query(
+        `SELECT COALESCE(MAX(position), 0) AS mp FROM course_materials WHERE course_id = $1 AND lesson_id IS NULL`,
+        [courseId],
+      );
   const id = crypto.randomUUID();
   await query(
-    `INSERT INTO course_materials (id, course_id, kind, title, url, news_id, is_free, position)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-    [id, courseId, kind, title, url, newsId, !!body.is_free, Number(maxPos.rows[0].mp) + 1],
+    `INSERT INTO course_materials (id, course_id, kind, title, url, news_id, is_free, position, lesson_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+    [id, courseId, kind, title, url, newsId, !!body.is_free, Number(maxPos.rows[0].mp) + 1, lessonId],
   );
   invalidateEducationCache();
   res.status(201).json(await fetchMaterial(id));
@@ -1542,18 +1592,35 @@ router.post('/courses/:id/materials/upload', uploadMw(materialUpload, 'file'), h
   if (!ext) {
     return fail(res, 415, 'Недопустимый тип файла (pdf/office/изображения/zip/txt/md/csv)');
   }
+  // ТЗ-123: материал урока (multipart-поле lesson_id) — проверка ДО putBuffer,
+  // иначе при 400 файл уже ушёл в storage и осиротеет
+  let lessonId: string | null = null;
+  const rawLessonId = req.body?.lesson_id;
+  if (rawLessonId !== undefined && rawLessonId !== null && String(rawLessonId).trim() !== '') {
+    lessonId = String(rawLessonId);
+    const lr = await query(
+      `SELECT 1 FROM course_lessons WHERE id = $1 AND course_id = $2`,
+      [lessonId, courseId],
+    );
+    if (lr.rows.length === 0) return fail(res, 400, 'lesson_id: урок не найден или не принадлежит курсу');
+  }
   try {
     const put = await putBuffer(file.buffer, 'materials', file.originalname || `material.${ext}`);
     const title = String((req.body?.title || file.originalname || 'Файл')).trim().substring(0, 255);
-    const maxPos = await query(
-      `SELECT COALESCE(MAX(position), 0) AS mp FROM course_materials WHERE course_id = $1`,
-      [courseId],
-    );
+    const maxPos = lessonId
+      ? await query(
+          `SELECT COALESCE(MAX(position), 0) AS mp FROM course_materials WHERE course_id = $1 AND lesson_id = $2`,
+          [courseId, lessonId],
+        )
+      : await query(
+          `SELECT COALESCE(MAX(position), 0) AS mp FROM course_materials WHERE course_id = $1 AND lesson_id IS NULL`,
+          [courseId],
+        );
     const id = crypto.randomUUID();
     await query(
-      `INSERT INTO course_materials (id, course_id, kind, title, url, news_id, is_free, position)
-       VALUES ($1, $2, 'file', $3, $4, NULL, $5, $6)`,
-      [id, courseId, title, put.relPath, !!req.body?.is_free, Number(maxPos.rows[0].mp) + 1],
+      `INSERT INTO course_materials (id, course_id, kind, title, url, news_id, is_free, position, lesson_id)
+       VALUES ($1, $2, 'file', $3, $4, NULL, $5, $6, $7)`,
+      [id, courseId, title, put.relPath, !!req.body?.is_free, Number(maxPos.rows[0].mp) + 1, lessonId],
     );
     invalidateEducationCache();
     res.status(201).json(await fetchMaterial(id));
@@ -1570,6 +1637,15 @@ router.patch('/materials/:materialId', h(async (req, res) => {
   if (!existing) return fail(res, 404, 'Материал не найден');
   const v = await validateMaterialBody(req.body || {}, true);
   if (!v.ok) return fail(res, v.status, v.message);
+  // ТЗ-123: смена lesson_id (в т.ч. на null = «сделать курсовым») — урок должен
+  // принадлежать курсу материала
+  if ('lesson_id' in v.fields && v.fields.lesson_id !== null) {
+    const lr = await query(
+      `SELECT 1 FROM course_lessons WHERE id = $1 AND course_id = $2`,
+      [v.fields.lesson_id, existing.course_id],
+    );
+    if (lr.rows.length === 0) return fail(res, 400, 'lesson_id: урок не найден или не принадлежит курсу');
+  }
 
   const keys = Object.keys(v.fields);
   if (keys.length > 0) {

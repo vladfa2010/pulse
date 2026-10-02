@@ -14,6 +14,8 @@ RUN mkdir -p dist/migrations && cp src/migrations/lms_v1.sql dist/migrations/lms
 RUN cp src/migrations/lms_v2_ugc.sql dist/migrations/lms_v2_ugc.sql
 # ТЗ-103: миграция мэтчинга курсов для POST /migrate-lms-matching
 RUN cp src/migrations/lms_v3_matching.sql dist/migrations/lms_v3_matching.sql
+# ТЗ-123: материалы урока для POST /migrate-lms-lesson-materials
+RUN cp src/migrations/lms_v4_lesson_materials.sql dist/migrations/lms_v4_lesson_materials.sql
 EXPOSE 3001
 ENV BUILD_TIMESTAMP=1779922500
 CMD ["node", "dist/index.js"]

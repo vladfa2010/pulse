@@ -367,10 +367,12 @@ router.get('/courses/:slug', optionalAuth, h(async (req, res) => {
   );
   // ТЗ-102: публично — ТОЛЬКО approved (pending/rejected UGC не светятся нигде).
   // Редакционные строки после миграции имеют status='approved' по умолчанию.
+  // ТЗ-123: на странице курса — ТОЛЬКО курсовые материалы (lesson_id IS NULL);
+  // материалы уроков живут в контексте своего урока.
   const materialsR = await query(
     `SELECT m.*, u.username AS submitted_by_username
      FROM course_materials m LEFT JOIN users u ON u.id = m.submitted_by
-     WHERE m.course_id = $1 AND m.status = 'approved'
+     WHERE m.course_id = $1 AND m.status = 'approved' AND m.lesson_id IS NULL
      ORDER BY m.position ASC`,
     [c.id],
   );
@@ -660,6 +662,25 @@ router.get('/lessons/:lessonId', optionalAuth, h(async (req, res) => {
   const prevLesson = idx > 0 ? neighborsR.rows[idx - 1] : null;
   const nextLesson = idx >= 0 && idx < neighborsR.rows.length - 1 ? neighborsR.rows[idx + 1] : null;
 
+  // ТЗ-123: материалы урока — только approved (регрессия модерации ТЗ-102).
+  // Гейты скачивания остаются курсовыми (enrollment / is_free) — /materials/:id/download.
+  // Доступ к самому уроку уже отгейчен выше (enrollment / preview / admin).
+  const lessonMaterialsR = await query(
+    `SELECT id, kind, title, url, is_free, news_id
+     FROM course_materials
+     WHERE lesson_id = $1 AND status = 'approved'
+     ORDER BY position ASC`,
+    [lessonId],
+  );
+  const lessonMaterials = lessonMaterialsR.rows.map((m: any) => ({
+    id: m.id,
+    kind: m.kind,
+    title: m.title,
+    is_free: boolDb(m.is_free),
+    news_id: m.news_id,
+    url: m.kind === 'link' || boolDb(m.is_free) ? m.url : null,
+  }));
+
   res.json({
     id: lesson.id,
     course_id: lesson.course_id,
@@ -673,6 +694,10 @@ router.get('/lessons/:lessonId', optionalAuth, h(async (req, res) => {
     video_embed_url: lesson.video_embed_url,
     duration_min: lesson.duration_min,
     unlock_after_days: lesson.unlock_after_days,
+    materials: lessonMaterials,
+    // ТЗ-123: полный доступ к материалам урока (не-is_free) — enrolled/admin;
+    // гость с free-preview видит locked-строки с замком, не кликабельные.
+    has_full_access: !!enrollment || admin,
     test,
     progress,
     prev_lesson_id: prevLesson?.id ?? null,

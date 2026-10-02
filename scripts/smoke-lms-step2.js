@@ -893,6 +893,66 @@ async function scenario(runLabel) {
     );
     ok('критерий 10/11: upload md 201 / exe 415, is_free 302 анониму, закрытый 401/403/302, locked_materials_count');
 
+    // ── ТЗ-123: материалы урока ────────────────────────────────────────────
+    // create link-материал в уроке lesson1 (free-preview — анонимный GET урока ок)
+    r = await api('POST', `/api/admin/education/courses/${courseId}/materials`, {
+      // is_free: true — иначе гостю карточка курса его не покажет (v4: гость видит только is_free)
+      token: adminJwt, body: { kind: 'link', title: 'Чек-лист урока', url: 'https://example.com/checklist', lesson_id: lesson1, is_free: true },
+    });
+    assert(r.status === 201 && r.json.lesson_id === lesson1, `материал урока → 201 с lesson_id, got ${r.status} ${r.text}`);
+    const lessonMaterialId = r.json.id;
+    // урок чужого/несуществующего курса → 400
+    r = await api('POST', `/api/admin/education/courses/${courseId}/materials`, {
+      token: adminJwt, body: { kind: 'link', title: 'X', url: 'https://example.com/x', lesson_id: crypto.randomUUID() },
+    });
+    assert(r.status === 400, `lesson_id чужого урока → 400, got ${r.status}`);
+    // публичная отдача: урок (аноним, preview) содержит материал
+    r = await api('GET', `/api/education/lessons/${lesson1}`);
+    assert(r.status === 200, 'анонимный GET урока → 200');
+    const lm = (r.json.materials || []).find((m) => m.id === lessonMaterialId);
+    assert(lm && lm.kind === 'link' && lm.url === 'https://example.com/checklist',
+      `материал урока в ответе урока: ${JSON.stringify(r.json.materials)}`);
+    assert(r.json.has_full_access === false, 'аноним: has_full_access=false');
+    // карточка курса материал урока НЕ содержит
+    r = await api('GET', `/api/education/courses/${slug1}`);
+    assert(!(r.json.materials || []).some((m) => m.id === lessonMaterialId), 'карточка курса: материала урока нет');
+    // PATCH lesson_id=null → перенос на уровень курса (виден в карточке)
+    r = await api('PATCH', `/api/admin/education/materials/${lessonMaterialId}`, {
+      token: adminJwt, body: { lesson_id: null },
+    });
+    assert(r.status === 200 && r.json.lesson_id === null, 'PATCH lesson_id=null → курсовой');
+    r = await api('GET', `/api/education/courses/${slug1}`);
+    assert((r.json.materials || []).some((m) => m.id === lessonMaterialId), 'после PATCH: материал виден в карточке курса');
+    r = await api('PATCH', `/api/admin/education/materials/${lessonMaterialId}`, {
+      token: adminJwt, body: { lesson_id: lesson1 },
+    });
+    assert(r.status === 200 && r.json.lesson_id === lesson1, 'PATCH lesson_id=урок → обратно в урок');
+    // upload файла с lesson_id (multipart-поле)
+    const lmForm = new FormData();
+    lmForm.append('file', new Blob([Buffer.from('# Шаблон урока')], { type: 'text/plain' }), 'lesson-template.md');
+    lmForm.append('lesson_id', lesson1);
+    r = await api('POST', `/api/admin/education/courses/${courseId}/materials/upload`, {
+      token: adminJwt, form: lmForm,
+    });
+    assert(r.status === 201 && r.json.lesson_id === lesson1 && r.json.kind === 'file',
+      `upload с lesson_id → 201, got ${r.status} ${r.text}`);
+    // временный урок: каскад DELETE урока сносит его материалы
+    r = await api('POST', `/api/admin/education/courses/${courseId}/lessons`, {
+      token: adminJwt, body: { title: 'Временный (каскад материалов)', position: 99, is_free_preview: true },
+    });
+    assert(r.status === 201, `временный урок → 201, got ${r.status}`);
+    const tmpLessonId = r.json.id;
+    r = await api('POST', `/api/admin/education/courses/${courseId}/materials`, {
+      token: adminJwt, body: { kind: 'link', title: 'Материал временного урока', url: 'https://example.com/tmp', lesson_id: tmpLessonId },
+    });
+    assert(r.status === 201, 'материал временного урока → 201');
+    const tmpMaterialId = r.json.id;
+    r = await api('DELETE', `/api/admin/education/lessons/${tmpLessonId}`, { token: adminJwt });
+    assert(r.status === 200, `DELETE временного урока → 200, got ${r.status}`);
+    r = await api('GET', `/api/admin/education/courses/${courseId}/materials`, { token: adminJwt });
+    assert(!(r.json || []).some((m) => m.id === tmpMaterialId), 'каскад: материал удалённого урока снесён');
+    ok('ТЗ-123: материал урока (create/upload/PATCH/публичная отдача/карточка курса/каскад)');
+
     // ── Идемпотентность тарифов и delete (второй прогон покрывает свежим seed)
     r = await api('PUT', `/api/admin/education/courses/${courseId}`, {
       token: adminJwt, body: { tariff_ids: ['pro', 'base'] },

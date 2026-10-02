@@ -797,9 +797,12 @@ export async function initSQLiteSchema(): Promise<void> {
       reviewed_at TEXT,
       reject_reason TEXT,
       scan_status TEXT NOT NULL DEFAULT 'clean',
+      -- ТЗ-123: NULL = материал курса, задан = материал урока
+      lesson_id TEXT REFERENCES course_lessons(id) ON DELETE CASCADE,
       created_at TEXT DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS idx_materials_moderation ON course_materials(status, created_at);
+    CREATE INDEX IF NOT EXISTS idx_materials_lesson ON course_materials(lesson_id);
 
     CREATE TABLE IF NOT EXISTS course_enrollments (
       id TEXT PRIMARY KEY,
@@ -926,6 +929,20 @@ export async function initSQLiteSchema(): Promise<void> {
   }
   try {
     db.run('CREATE INDEX IF NOT EXISTS idx_materials_moderation ON course_materials(status, created_at)');
+  } catch {
+    // ignore
+  }
+
+  // Migration: ТЗ-123 (материалы урока) — SQLite-диалект: ADD COLUMN без
+  // IF NOT EXISTS, строго одна колонка на ALTER (тот же риск, что в ТЗ-102 §4).
+  try {
+    db.run('ALTER TABLE course_materials ADD COLUMN lesson_id TEXT REFERENCES course_lessons(id) ON DELETE CASCADE');
+    console.log('[SQLite] Migration: course_materials.lesson_id added');
+  } catch {
+    // Column already exists — ignore
+  }
+  try {
+    db.run('CREATE INDEX IF NOT EXISTS idx_materials_lesson ON course_materials(lesson_id)');
   } catch {
     // ignore
   }
