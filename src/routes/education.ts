@@ -665,7 +665,7 @@ router.get('/lessons/:lessonId', optionalAuth, h(async (req, res) => {
     position: lesson.position,
     title: lesson.title,
     kind: lesson.kind,
-    text_content: lesson.text_content,
+    text_content: sanitizeLessonHtml(String(lesson.text_content || '')), // ТЗ-108 v3: легаси-простой текст → абзацы на отдаче (идемпотентно)
     video_source: lesson.video_source,
     video_embed_url: lesson.video_embed_url,
     duration_min: lesson.duration_min,

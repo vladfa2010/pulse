@@ -142,8 +142,8 @@ async function seedDatabase(DIR) {
   );
   await q(`INSERT INTO course_tariffs (course_id, plan_id) VALUES ($1,'pro')`, [dripCourseId]);
   await q(
-    `INSERT INTO course_lessons (id, course_id, position, title, unlock_after_days)
-     VALUES ($1,$2,1,'Урок сразу',0),($3,$2,2,'Урок на 30-й день',30)`,
+    `INSERT INTO course_lessons (id, course_id, position, title, unlock_after_days, text_content)
+     VALUES ($1,$2,1,'Урок сразу',0,'Легаси строка один\n\nЛегаси строка два'),($3,$2,2,'Урок на 30-й день',30,NULL)`,
     [dripLesson1, dripCourseId, dripLesson2],
   );
   await q(
@@ -345,6 +345,40 @@ async function scenario(runLabel) {
     assert(saved.includes('https://ok.ru'), 'https-ссылка сохранена');
     assert(saved.includes('src="/media/a.png"'), 'img только /media/ сохранён');
     ok('критерий 23: script/onerror/http-img вырезаны, https и /media/img сохранены');
+
+    // ── ТЗ-108 v3: нормализация простого текста (критерии 9-10) ──────────
+    // Простой текст (без блочных тегов) → абзацы по пустым строкам, \n → <br>
+    r = await api('PUT', `/api/admin/education/lessons/${lesson1}`, {
+      token: adminJwt, body: { text_content: 'Строка один\nСтрока два\n\nСтрока три' },
+    });
+    assert(r.status === 200, `PUT plain text → 200, got ${r.status}`);
+    assert(r.json.text_content === '<p>Строка один<br>Строка два</p><p>Строка три</p>',
+      `plain → абзацы: ${r.json.text_content}`);
+    // Двойная нормализация (запись + отдача) идемпотентна (урок читает записанный subscriber)
+    r = await api('GET', `/api/education/lessons/${lesson1}`, { token: subJwt });
+    assert(r.json.text_content === '<p>Строка один<br>Строка два</p><p>Строка три</p>',
+      `GET идемпотентен: ${r.status} ${r.text.slice(0, 200)}`);
+    // Размеченный текст (есть блочные теги) нормализатором НЕ трогается (критерий 10)
+    r = await api('PUT', `/api/admin/education/lessons/${lesson1}`, {
+      token: adminJwt,
+      body: { text_content: '<h2>Заголовок</h2>\n\n<p>Абзац <strong>жирный</strong> и <u>подчёрк</u></p>' },
+    });
+    const markedBack = String(r.json.text_content).replace(/\s+/g, '');
+    assert(markedBack === '<h2>Заголовок</h2><p>Абзац<strong>жирный</strong>и<u>подчёрк</u></p>'.replace(/\s+/g, ''),
+      `marked не изменён: ${r.json.text_content}`);
+    // Легаси-строка в БД (засеяна до сервера, без тегов) → абзацы на ЧТЕНИИ, без миграции
+    r = await api('GET', `/api/education/lessons/${dripLesson1}`, { token: subJwt });
+    assert(r.json.text_content === '<p>Легаси строка один</p><p>Легаси строка два</p>',
+      `legacy read: ${r.json.text_content}`);
+    // То же для описания курса (публичная карточка)
+    r = await api('PUT', `/api/admin/education/courses/${courseId}`, {
+      token: adminJwt, body: { description: 'Описание один\n\nОписание два' },
+    });
+    assert(r.status === 200, `PUT description → 200, got ${r.status}`);
+    r = await api('GET', `/api/education/courses/${slug1}`);
+    assert(r.json.description === '<p>Описание один</p><p>Описание два</p>',
+      `description → абзацы: ${r.json.description}`);
+    ok('ТЗ-108 v3: plain→абзацы (запись+чтение), идемпотентность, round-trip marked, описание');
 
     // ── Критерий 6: удаление урока — пересчёт position + removed_progress ─
     r = await api('POST', `/api/admin/education/courses/${courseId}/enrollments`, {
