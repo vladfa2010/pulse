@@ -122,6 +122,21 @@ PG-миграция: `src/migrations/lms_v1.sql`, применяется иде�
   хуже её отсутствия. Фронт рендерит блок «или в подписке» гостю и юзеру
   без подходящего тарифа (`CoursePage.tsx`, условия: price>0, нет
   my_enrollment, нет access_via_subscription, included_tariffs непуст).
+- ТЗ-122 (Задача 1): TTL висящих pending-платежей — cron ежечасно закрывает
+  в `failed` всё, что в `pending` дольше 24 ч (брошенные оплаты ЮKassa /
+  упавший create). Окно с запасом: confirmation_url ЮKassa живёт ~1 ч.
+  Trade-off (осознан): активация идёт только из pending, поэтому webhook
+  `payment.succeeded` после закрытия в failed платёж не активирует —
+  лучше редкий ручной разбор, чем вечный мусор в payments и /payment/history.
+  Пересмотреть, если появятся офлайн-оплаты с долгим подтверждением.
+  Cross-dialect cutoff: SQLite-шим НЕ переводит `NOW() - INTERVAL '...'`
+  (вырезает `INTERVAL '` раньше), поэтому `expireStalePendingPayments`
+  использует тот же тernary-паттерн, что admin.ts:
+  `datetime('now', '-24 hours')` / `NOW() - INTERVAL '24 hours'`.
+- ТЗ-122 (Задача 2): перевыпуск path-share — один upsert
+  `ON CONFLICT (user_id) DO UPDATE SET token = EXCLUDED.token` вместо
+  DELETE+INSERT: параллельные POST (даблклик) больше не дают 500 на PK.
+  `created_at` в DO UPDATE не трогаем — дата первого шеринга сохраняется.
 
 ## Storage-драйвер (`src/services/storage/driver.ts`)
 

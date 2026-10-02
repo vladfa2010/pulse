@@ -326,6 +326,24 @@ async function scenario() {
     assert(r.status === 200, 'новый токен жив');
     ok('path-share: перевыпуск убивает старый токен (404), новый работает');
 
+    // ── ТЗ-122 (Задача 2): гонка перевыпуска — два параллельных POST ───────
+    // Раньше: DELETE+INSERT → второй INSERT падал на PK user_id → 500.
+    const [ra, rb] = await Promise.all([
+      api('POST', '/api/education/my/path-share', { token: userJwt }),
+      api('POST', '/api/education/my/path-share', { token: userJwt }),
+    ]);
+    assert(ra.status === 200 && rb.status === 200,
+      `параллельный перевыпуск: оба 200, got ${ra.status}/${rb.status} ${ra.text.slice(0, 120)}`);
+    assert(ra.json.token !== rb.json.token, 'параллельные токены разные');
+    // Last-writer-wins: победивший токен — чей upsert записался ПОСЛЕДНИМ,
+    // это не обязательно токен из второго ответа.
+    const sa = await api('GET', `/api/education/shared/${ra.json.token}`);
+    const sb = await api('GET', `/api/education/shared/${rb.json.token}`);
+    const liveCount = [sa.status, sb.status].filter((s) => s === 200).length;
+    assert(liveCount === 1,
+      `валиден ровно 1 из 2 токенов (last-writer-wins), got ${sa.status}/${sb.status}`);
+    ok('ТЗ-122: параллельный перевыпуск — оба 200, ровно один токен жив, без 500 на PK');
+
     // ── отзыв ссылки ─────────────────────────────────────────────────────
     r = await api('DELETE', '/api/education/my/path-share', { token: userJwt });
     assert(r.status === 204, `DELETE → 204, got ${r.status}`);

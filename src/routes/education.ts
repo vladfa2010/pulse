@@ -1381,12 +1381,17 @@ router.get('/my/path-share', authMiddleware, h(async (req, res) => {
 }));
 
 // POST /api/education/my/path-share — создать/перевыпустить токен
+// ТЗ-122 (Задача 2): DELETE+INSERT заменён одним upsert — два параллельных
+// запроса (даблклик) больше не дают 500 на PK user_id. created_at намеренно
+// НЕ трогаем: дата первого шеринга сохраняется (зафиксировано в docs/education.md).
+// ON CONFLICT DO UPDATE — нативный синтаксис SQLite ≥3.24, шим его не трогает
+// (переписывает только DO NOTHING → INSERT OR IGNORE).
 router.post('/my/path-share', authMiddleware, h(async (req, res) => {
   const userId = req.user!.userId;
   const token = crypto.randomBytes(24).toString('base64url');
-  await query(`DELETE FROM user_path_shares WHERE user_id = $1`, [userId]);
   await query(
-    `INSERT INTO user_path_shares (user_id, token) VALUES ($1, $2)`,
+    `INSERT INTO user_path_shares (user_id, token) VALUES ($1, $2)
+     ON CONFLICT (user_id) DO UPDATE SET token = EXCLUDED.token`,
     [userId, token],
   );
   res.json({ token, url: pathShareUrl(token) });

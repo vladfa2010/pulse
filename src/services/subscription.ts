@@ -509,6 +509,33 @@ export async function activatePaymentIfNeeded(paymentId: string): Promise<boolea
 // ═════════════════════════════════════════════════════════════════════════════
 // Promo usage — atomic increment only after successful payment
 // ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * ТЗ-122 (Задача 1): TTL для pending-платежей. Платёж, висящий в pending дольше
+ * 24 часов (брошенная страница оплаты ЮKassa / упавший create), закрывается в
+ * failed — не копим мусор в payments и /payment/history.
+ * Окно 24 ч с запасом: confirmation_url ЮKassa живёт ~1 час.
+ * Trade-off (осознан): активация идёт только из pending (activatePaymentIfNeeded
+ * делает UPDATE ... WHERE status='pending'), поэтому webhook payment.succeeded,
+ * пришедший ПОЗЖЕ закрытия в failed (практически невозможно у ЮKassa), платёж
+ * уже не активирует — лучше редкий ручной разбор, чем вечные висяки.
+ * Пересмотреть, если появятся офлайн-оплаты с долгим подтверждением.
+ * Кросс-диалектный cutoff — тот же паттерн, что в admin.ts: SQLite-шим
+ * НЕ переводит `NOW() - INTERVAL '...'` (сначала вырезает `INTERVAL '`), так
+ * что литерал через шим не пропустить.
+ * @returns количество закрытых платежей
+ */
+export async function expireStalePendingPayments(): Promise<number> {
+  const cutoff = process.env.USE_SQLITE === 'true'
+    ? `datetime('now', '-24 hours')`
+    : `NOW() - INTERVAL '24 hours'`;
+  const result = await query(
+    `UPDATE payments SET status = 'failed'
+     WHERE status = 'pending' AND created_at < ${cutoff}`
+  );
+  return result.rowCount ?? 0;
+}
+
 export async function incrementPromoUsageAtomic(paymentId: string): Promise<void> {
   const result = await query(
     `SELECT p.promo_code, pc.id as promo_id

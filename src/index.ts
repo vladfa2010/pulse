@@ -78,7 +78,7 @@ import portfolioRouter from './routes/portfolio';
 import cron from 'node-cron';
 import { resetDailyWindows, refreshImoexCache } from './services/sentimentIndex';
 import { sendSentimentVotePush } from './services/push';
-import { processScheduledDowngrades, processAutoRenewals, processTrialExpirations, getPlanById, sendExpiryNotifications } from './services/subscription';
+import { processScheduledDowngrades, processAutoRenewals, processTrialExpirations, getPlanById, sendExpiryNotifications, expireStalePendingPayments } from './services/subscription';
 import { isUserEventType } from './types/events';
 import { logPageViewPlans, logPageViewPortfolio, logPortfolioAddClicked } from './services/activityLog';
 import { getAdminTgSettings, saveAdminTgSettings, sendTestAlert, ALERT_EVENT_TYPES } from './services/adminAlerts';
@@ -4302,6 +4302,16 @@ async function start() {
         .catch((e: any) => console.error('[Cron] Expiry notifications failed:', e.message));
     });
     console.log('[Cron] Expiry notifications scheduled daily at 09:00 UTC');
+
+    // ТЗ-122 (Задача 1): TTL висящих pending-платежей — ежечасно, окно 24 ч.
+    // Trade-off закрытия в failed до позднего webhook — см. expireStalePendingPayments.
+    cron.schedule('0 * * * *', () => {
+      if (shuttingDown) return;
+      expireStalePendingPayments()
+        .then((n) => { if (n > 0) console.log(`[Cron] Expired stale pending payments: ${n}`); })
+        .catch((e: any) => console.error('[Cron] Expire stale pending payments failed:', e.message));
+    });
+    console.log('[Cron] Stale pending payments TTL scheduled hourly');
 
     // Trial expirations — every 6 hours
     cron.schedule('0 */6 * * *', () => {
