@@ -92,6 +92,11 @@ interface PublicCourse {
   source: { type: string; id: string; title: string | null } | null;
   is_expired: boolean;
   created_at: string;
+  // ТЗ-131: поля карточки витрины по мокапу (безликие — входят в кэш каталога).
+  total_minutes: number;
+  students_count: number;
+  visibility: string; // 'public' | 'hidden' — для пилюли «Скрытый курс» (mine-выборка)
+  tariff_name: string | null; // самый дешёвый активный тариф, включающий курс
 }
 
 function isExpiredCourse(row: any, now: number): boolean {
@@ -146,7 +151,7 @@ async function courseIdsByTopic(topic: string): Promise<Set<string> | null> {
   return new Set(rows.rows.map((r: any) => r.course_id));
 }
 
-function toPublicCourse(row: any, tags: { id: string; label: string }[], now: number): PublicCourse {
+function toPublicCourse(row: any, tags: { id: string; label: string }[], now: number, tariffName: string | null = null): PublicCourse {
   return {
     id: row.id,
     slug: row.slug,
@@ -167,7 +172,47 @@ function toPublicCourse(row: any, tags: { id: string; label: string }[], now: nu
       : null,
     is_expired: isExpiredCourse(row, now),
     created_at: row.created_at,
+    // ТЗ-131: мета карточки витрины (агрегаты из SELECT, tariff_name — ниже).
+    total_minutes: Number(row.total_minutes) || 0,
+    students_count: Number(row.students_count) || 0,
+    visibility: row.visibility ?? 'public',
+    tariff_name: tariffName,
   };
+}
+
+/** ТЗ-131: имя самого дешёвого активного тарифа на курс — для пилюли
+ *  «или от тарифа …» на карточке витрины. Кросс-диалектно (SQLite/PG). */
+async function loadCheapestTariffNames(courseIds: string[]): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  if (courseIds.length === 0) return map;
+  const activePlans = await getActivePlans();
+  const activeIds = new Set(activePlans.map((p: any) => p.id));
+  const planName = new Map(activePlans.map((p: any) => [p.id, p.name]));
+  const planPrice = new Map(activePlans.map((p: any) => [p.id, Number(p.price)]));
+  let tRows: { course_id: string; plan_id: string }[];
+  if (process.env.USE_SQLITE === 'true') {
+    const ph = courseIds.map((_, i) => `$${i + 1}`).join(',');
+    tRows = (await query(
+      `SELECT course_id, plan_id FROM course_tariffs WHERE course_id IN (${ph})`,
+      courseIds,
+    )).rows;
+  } else {
+    tRows = (await query(
+      `SELECT course_id, plan_id FROM course_tariffs WHERE course_id = ANY($1)`,
+      [courseIds],
+    )).rows;
+  }
+  const best = new Map<string, { name: string; price: number }>();
+  for (const r of tRows) {
+    if (!activeIds.has(r.plan_id)) continue; // только активные планы (как на странице курса)
+    const price = planPrice.get(r.plan_id) ?? 0;
+    const cur = best.get(r.course_id);
+    if (!cur || price < cur.price) {
+      best.set(r.course_id, { name: planName.get(r.plan_id) ?? r.plan_id, price });
+    }
+  }
+  for (const [id, v] of best) map.set(id, v.name);
+  return map;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -221,6 +266,8 @@ router.get('/courses', optionalAuth, h(async (req, res) => {
     const rows = await query(
       `SELECT c.*, cc.name AS category_name,
          (SELECT COUNT(*) FROM course_lessons cl WHERE cl.course_id = c.id) AS lessons_count,
+         (SELECT COALESCE(SUM(cl2.duration_min), 0) FROM course_lessons cl2 WHERE cl2.course_id = c.id) AS total_minutes,
+         (SELECT COUNT(*) FROM course_enrollments ce WHERE ce.course_id = c.id) AS students_count,
          (SELECT title_ru FROM news n WHERE n.id = c.source_news_id) AS source_title
        FROM courses c
        LEFT JOIN course_categories cc ON cc.id = c.category_id
@@ -237,8 +284,9 @@ router.get('/courses', optionalAuth, h(async (req, res) => {
     }
 
     const tagMap = await loadCourseTags(list.map((r: any) => r.id));
+    const tariffMap = await loadCheapestTariffNames(list.map((r: any) => r.id));
     const courses = list.map((r: any) =>
-      toPublicCourse(r, tagMap.get(r.id) || [], now),
+      toPublicCourse(r, tagMap.get(r.id) || [], now, tariffMap.get(r.id) ?? null),
     );
 
     if (filter === 'mine') {
