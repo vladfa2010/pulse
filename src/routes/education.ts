@@ -694,6 +694,8 @@ router.get('/lessons/:lessonId', optionalAuth, h(async (req, res) => {
     video_embed_url: lesson.video_embed_url,
     duration_min: lesson.duration_min,
     unlock_after_days: lesson.unlock_after_days,
+    // ТЗ-124: CTA-кнопки урока — всем, кто видит урок (валидированы на записи)
+    buttons: parseDbJson<any[]>(lesson.buttons) || [],
     materials: lessonMaterials,
     // ТЗ-123: полный доступ к материалам урока (не-is_free) — enrolled/admin;
     // гость с free-preview видит locked-строки с замком, не кликабельные.

@@ -953,6 +953,73 @@ async function scenario(runLabel) {
     assert(!(r.json || []).some((m) => m.id === tmpMaterialId), 'каскад: материал удалённого урока снесён');
     ok('ТЗ-123: материал урока (create/upload/PATCH/публичная отдача/карточка курса/каскад)');
 
+    // ── ТЗ-124: CTA-кнопки урока ───────────────────────────────────────────
+    // 3 кнопки: https + внутренняя /education, одна без target → дефолты
+    r = await api('PUT', `/api/admin/education/lessons/${lesson1}`, {
+      token: adminJwt,
+      body: {
+        buttons: [
+          { label: 'Открыть терминал', url: 'https://example.com/terminal', color: 'accent' },
+          { label: 'Все курсы', url: '/education', color: 'violet' },
+          { label: 'Чек-лист', url: 'https://example.com/checklist', color: 'ghost', target: 'self' },
+        ],
+      },
+    });
+    assert(r.status === 200 && Array.isArray(r.json.buttons) && r.json.buttons.length === 3,
+      `PUT buttons 3 шт → 200, got ${r.status} ${r.text}`);
+    assert(r.json.buttons[0].target === 'new_tab', 'дефолт target=https → new_tab');
+    assert(r.json.buttons[1].target === 'self', 'дефолт target=внутренний / → self');
+    assert(r.json.buttons[1].color === 'violet' && r.json.buttons[2].color === 'ghost',
+      'color сохраняется (violet/ghost)');
+    assert(r.json.buttons.every((b) => b.label.length > 0 && b.label.length <= 30), 'label в лимите');
+    // валидационные 400
+    const badButtonsCases = [
+      [{ label: '1', url: 'https://a.ru' }, { label: '2', url: 'https://a.ru' },
+       { label: '3', url: 'https://a.ru' }, { label: '4', url: 'https://a.ru' }],
+      [{ label: 'X', url: 'http://x.ru' }],
+      [{ label: 'X', url: 'javascript:alert(1)' }],
+      [{ label: 'X', url: '//evil.com' }],
+      [{ label: 'A'.repeat(31), url: 'https://a.ru' }],
+      [{ label: '   ', url: 'https://a.ru' }],
+    ];
+    for (const buttons of badButtonsCases) {
+      r = await api('PUT', `/api/admin/education/lessons/${lesson1}`, {
+        token: adminJwt, body: { buttons },
+      });
+      assert(r.status === 400, `buttons ${JSON.stringify(buttons).substring(0, 50)} → 400, got ${r.status}`);
+    }
+    // публичная отдача: анонимный GET free-preview урока содержит buttons
+    r = await api('GET', `/api/education/lessons/${lesson1}`);
+    assert(r.status === 200 && Array.isArray(r.json.buttons) && r.json.buttons.length === 3,
+      `аноним: урок содержит buttons, got ${r.status} ${JSON.stringify(r.json.buttons)}`);
+    assert(r.json.buttons[0].url === 'https://example.com/terminal' && r.json.buttons[0].target === 'new_tab',
+      'публично: кнопка с дефолтом target=new_tab');
+    // PUT: замена набора на 1 кнопку (ghost, target self)
+    r = await api('PUT', `/api/admin/education/lessons/${lesson1}`, {
+      token: adminJwt,
+      body: { buttons: [{ label: 'Подробнее', url: '/education/courses', color: 'ghost', target: 'self' }] },
+    });
+    assert(r.status === 200 && r.json.buttons.length === 1
+      && r.json.buttons[0].color === 'ghost' && r.json.buttons[0].target === 'self',
+      `PUT: замена набора → 1 ghost/self, got ${r.status} ${r.text}`);
+    r = await api('GET', `/api/education/lessons/${lesson1}`);
+    assert(r.json.buttons.length === 1 && r.json.buttons[0].label === 'Подробнее',
+      'публично: новый набор после замены');
+    // PATCH без buttons не сбрасывает набор
+    r = await api('PUT', `/api/admin/education/lessons/${lesson1}`, {
+      token: adminJwt, body: { title: 'Урок 1 (обновлён)' },
+    });
+    assert(r.status === 200, 'PUT без buttons → 200');
+    r = await api('GET', `/api/education/lessons/${lesson1}`);
+    assert(r.json.buttons.length === 1 && r.json.buttons[0].label === 'Подробнее',
+      'PUT без buttons: набор сохранён (PATCH-семантика)');
+    // очистка: buttons=[] → публично пустой массив
+    r = await api('PUT', `/api/admin/education/lessons/${lesson1}`, {
+      token: adminJwt, body: { buttons: [] },
+    });
+    assert(r.status === 200 && r.json.buttons.length === 0, 'buttons=[] → 200, пустой набор');
+    ok('ТЗ-124: кнопки урока (валидация/дефолты/публичная отдача)');
+
     // ── Идемпотентность тарифов и delete (второй прогон покрывает свежим seed)
     r = await api('PUT', `/api/admin/education/courses/${courseId}`, {
       token: adminJwt, body: { tariff_ids: ['pro', 'base'] },

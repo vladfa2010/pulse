@@ -148,6 +148,18 @@ PG-миграция: `src/migrations/lms_v1.sql`, применяется иде�
   file-материалов дополнительно уходят в trash через removeFile.
   Известное поведение (не тронуто): удаление КУРСА по-прежнему полагается
   на CASCADE без чистки файлов его материалов.
+- ТЗ-124: `course_lessons.buttons` — JSONB-массив 0–3 CTA-кнопок урока:
+  `{label ≤30, url (строго https:// или внутренний путь на '/', '//'-префиксы
+  запрещены), color из пресетов 'accent'|'violet'|'green'|'ghost' (дефолт
+  'accent'), target 'self'|'new_tab' (дефолт по типу ссылки: https →
+  'new_tab', внутренняя → 'self')}`. Валидация и нормализация — целиком на
+  бэке (`validateLessonButtons`, adminEducation); в БД падает уже готовый
+  набор, БД доверяет API. PATCH-семантика: `buttons: undefined` в теле
+  PUT — поле не трогается; очистка — явный `buttons: []`. Публично
+  (`GET /api/education/lessons/:id`) отдаётся всем, кто видит урок
+  (enrollment / free-preview / admin), кэш-инвалидация — существующая
+  `invalidateEducationCache()` в PUT урока. Backlog: счётчик кликов,
+  кнопки «только записанным».
 
 ## Storage-драйвер (`src/services/storage/driver.ts`)
 

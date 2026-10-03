@@ -166,6 +166,75 @@ interface LessonPayload {
   duration_min?: number | null;
   is_free_preview?: boolean;
   unlock_after_days?: number;
+  buttons?: LessonButton[];
+}
+
+// ─── CTA-кнопки урока (ТЗ-124) ───────────────────────────────────────────────
+
+interface LessonButton {
+  label: string;
+  url: string;
+  color: 'accent' | 'violet' | 'green' | 'ghost';
+  target: 'self' | 'new_tab';
+}
+
+const LESSON_BUTTON_COLORS = ['accent', 'violet', 'green', 'ghost'] as const;
+
+/**
+ * Валидация buttons урока: массив 0–3 кнопок.
+ * url — строго https:// (new URL) или внутренний путь на '/' (без '//'-префикса:
+ * protocol-relative запрещены). Дефолты: color='accent'; target — 'new_tab'
+ * для https-ссылок, 'self' для внутренних.
+ */
+function validateLessonButtons(raw: any): LessonButton[] | { error: string } {
+  if (!Array.isArray(raw) || raw.length > 3) {
+    return { error: 'buttons — массив из 0–3 кнопок' };
+  }
+  const out: LessonButton[] = [];
+  for (const b of raw) {
+    if (b === null || typeof b !== 'object' || Array.isArray(b)) {
+      return { error: 'buttons: каждая кнопка — объект { label, url, color?, target? }' };
+    }
+    const label = typeof b.label === 'string' ? b.label.trim() : '';
+    if (!label || label.length > 30) {
+      return { error: 'buttons: label — непустая строка до 30 символов' };
+    }
+    const url = typeof b.url === 'string' ? b.url.trim() : '';
+    let isExternal = false;
+    if (url.startsWith('/')) {
+      if (url.startsWith('//')) {
+        return { error: 'buttons: url — https://-ссылка или внутренний путь на /' };
+      }
+    } else {
+      try {
+        const u = new URL(url);
+        if (u.protocol !== 'https:') {
+          return { error: 'buttons: url — только https:// или внутренний путь на /' };
+        }
+        isExternal = true;
+      } catch {
+        return { error: 'buttons: url — только https:// или внутренний путь на /' };
+      }
+    }
+    let color: LessonButton['color'] = 'accent';
+    if (b.color !== undefined) {
+      if (!LESSON_BUTTON_COLORS.includes(b.color)) {
+        return { error: `buttons: color — только ${LESSON_BUTTON_COLORS.join(' | ')}` };
+      }
+      color = b.color;
+    }
+    let target: LessonButton['target'];
+    if (b.target !== undefined) {
+      if (b.target !== 'self' && b.target !== 'new_tab') {
+        return { error: "buttons: target — только 'self' | 'new_tab'" };
+      }
+      target = b.target;
+    } else {
+      target = isExternal ? 'new_tab' : 'self';
+    }
+    out.push({ label, url, color, target });
+  }
+  return out;
 }
 
 function validateLessonPayload(body: any): LessonPayload | { error: string } {
@@ -217,6 +286,12 @@ function validateLessonPayload(body: any): LessonPayload | { error: string } {
       return { error: 'unlock_after_days — целое число ≥ 0' };
     }
     out.unlock_after_days = d;
+  }
+  if (body.buttons !== undefined) {
+    // ТЗ-124: undefined = поле не трогаем (PATCH-семантика, как у остальных)
+    const buttons = validateLessonButtons(body.buttons);
+    if ('error' in buttons) return buttons;
+    out.buttons = buttons;
   }
   return out;
 }
@@ -580,6 +655,7 @@ async function fetchCourseCard(courseId: string): Promise<any | null> {
       duration_min: l.duration_min,
       is_free_preview: boolDb(l.is_free_preview),
       unlock_after_days: l.unlock_after_days,
+      buttons: parseJsonField<LessonButton[]>(l.buttons, []),
       test: testR.rows.length > 0
         ? {
             id: testR.rows[0].id,
@@ -1164,6 +1240,7 @@ router.get('/courses/:id/lessons', h(async (req, res) => {
     duration_min: l.duration_min,
     is_free_preview: boolDb(l.is_free_preview),
     unlock_after_days: l.unlock_after_days,
+    buttons: parseJsonField<LessonButton[]>(l.buttons, []),
   })));
 }));
 
@@ -1185,8 +1262,8 @@ router.post('/courses/:id/lessons', h(async (req, res) => {
   await query(
     `INSERT INTO course_lessons
        (id, course_id, position, title, kind, text_content, video_source,
-        video_embed_url, video_file_url, duration_min, is_free_preview, unlock_after_days)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+        video_embed_url, video_file_url, duration_min, is_free_preview, unlock_after_days, buttons)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
     [
       id, courseId, Number(maxPos.rows[0].mp) + 1, title,
       payload.kind ?? 'text',
@@ -1197,6 +1274,7 @@ router.post('/courses/:id/lessons', h(async (req, res) => {
       payload.duration_min ?? null,
       payload.is_free_preview ?? false,
       payload.unlock_after_days ?? 0,
+      JSON.stringify(payload.buttons ?? []),
     ],
   );
   invalidateEducationCache();
@@ -1291,6 +1369,7 @@ router.put('/lessons/:lessonId', h(async (req, res) => {
   if (payload.duration_min !== undefined) setField('duration_min = ?', payload.duration_min);
   if (payload.is_free_preview !== undefined) setField('is_free_preview = ?', payload.is_free_preview);
   if (payload.unlock_after_days !== undefined) setField('unlock_after_days = ?', payload.unlock_after_days);
+  if (payload.buttons !== undefined) setField('buttons = ?', JSON.stringify(payload.buttons));
 
   if (sets.length > 0) {
     await query(
@@ -1314,6 +1393,7 @@ router.put('/lessons/:lessonId', h(async (req, res) => {
     video_embed_url: l.video_embed_url, video_file_url: l.video_file_url,
     duration_min: l.duration_min, is_free_preview: boolDb(l.is_free_preview),
     unlock_after_days: l.unlock_after_days,
+    buttons: parseJsonField<LessonButton[]>(l.buttons, []),
   });
 }));
 

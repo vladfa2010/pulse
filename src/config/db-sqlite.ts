@@ -768,6 +768,8 @@ export async function initSQLiteSchema(): Promise<void> {
       duration_min INTEGER,
       is_free_preview INTEGER NOT NULL DEFAULT 0,
       unlock_after_days INTEGER NOT NULL DEFAULT 0,
+      -- ТЗ-124: CTA-кнопки урока (JSON-массив, валидация на уровне API)
+      buttons TEXT NOT NULL DEFAULT '[]',
       UNIQUE (course_id, position)
     );
     CREATE INDEX IF NOT EXISTS idx_lessons_course ON course_lessons(course_id, position);
@@ -945,6 +947,15 @@ export async function initSQLiteSchema(): Promise<void> {
     db.run('CREATE INDEX IF NOT EXISTS idx_materials_lesson ON course_materials(lesson_id)');
   } catch {
     // ignore
+  }
+
+  // Migration: ТЗ-124 (CTA-кнопки урока) — SQLite-диалект: ADD COLUMN без
+  // IF NOT EXISTS, строго одна колонка на ALTER (тот же риск, что в ТЗ-102 §4).
+  try {
+    db.run("ALTER TABLE course_lessons ADD COLUMN buttons TEXT NOT NULL DEFAULT '[]'");
+    console.log('[SQLite] Migration: course_lessons.buttons added');
+  } catch {
+    // Column already exists — ignore
   }
 
   // Migration: ТЗ-103 (мэтчинг курсов) — эмбеддинг курса как JSON-текст.
