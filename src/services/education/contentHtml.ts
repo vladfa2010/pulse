@@ -21,7 +21,7 @@ import sanitizeHtml from 'sanitize-html';
  */
 export function normalizePlainText(html: string): string {
   if (!html) return html;
-  if (/<(p|h[1-4]|ul|ol|li|blockquote|pre|table)\b/i.test(html)) return html;
+  if (/<(p|h[1-4]|ul|ol|li|blockquote|pre|table|div)\b/i.test(html)) return html;
   const trimmed = html.trim();
   if (!trimmed) return '';
   return trimmed
@@ -46,9 +46,12 @@ export function sanitizeLessonHtml(html: string): string {
       'p', 'h1', 'h2', 'h3', 'h4', 'ul', 'ol', 'li', 'strong', 'em',
       'u',
       'a', 'img', 'code', 'pre', 'blockquote', 'table', 'thead', 'tbody',
-      'tr', 'th', 'td', 'br',
+      'tr', 'th', 'td', 'br', 'div',
     ],
-    allowedAttributes: { a: ['href'], img: ['src'] },
+    // ТЗ-127 4а: div только как контейнер callout-выноски в конспекте;
+    // прочие классы отсекаются allowedClasses.
+    allowedAttributes: { a: ['href'], img: ['src'], div: ['class'] },
+    allowedClasses: { div: ['callout'] },
     transformTags: {
       a: (tagName, attribs): { tagName: string; attribs: Record<string, string> } => {
         const href = attribs.href || '';

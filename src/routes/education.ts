@@ -653,14 +653,34 @@ router.get('/lessons/:lessonId', optionalAuth, h(async (req, res) => {
       : { completed: false, test_score: null };
   }
 
-  // prev/next по позициям курса
+  // prev/next по позициям курса. ТЗ-127: выбираем title/kind/duration_min —
+  // тем же запросом отдаём программу курса целиком + прогресс по ней.
   const neighborsR = await query(
-    `SELECT id, position FROM course_lessons WHERE course_id = $1 ORDER BY position ASC`,
+    `SELECT id, position, title, kind, duration_min
+       FROM course_lessons WHERE course_id = $1 ORDER BY position ASC`,
     [lesson.course_id],
   );
   const idx = neighborsR.rows.findIndex((r: any) => r.id === lessonId);
   const prevLesson = idx > 0 ? neighborsR.rows[idx - 1] : null;
   const nextLesson = idx >= 0 && idx < neighborsR.rows.length - 1 ? neighborsR.rows[idx + 1] : null;
+
+  // ТЗ-127: completed-set для program/course_progress (записанному — реальный,
+  // анониму — пустой). Кросс-диалектно (PG и SQLite-шим — $N-плейсхолдеры).
+  const completedSet = new Set<string>();
+  if (req.user) {
+    const lessonIds = neighborsR.rows.map((r: any) => r.id);
+    if (lessonIds.length > 0) {
+      const ph = lessonIds.map((_, i) => `$${i + 2}`).join(',');
+      const completedR = await query(
+        `SELECT lesson_id FROM lesson_progress
+          WHERE user_id = $1 AND lesson_id IN (${ph})`,
+        [req.user.userId, ...lessonIds],
+      );
+      for (const r of completedR.rows) completedSet.add(String(r.lesson_id));
+    }
+  }
+  const totalLessons = neighborsR.rows.length;
+  const completedLessons = neighborsR.rows.filter((r: any) => completedSet.has(String(r.id))).length;
 
   // ТЗ-123: материалы урока — только approved (регрессия модерации ТЗ-102).
   // Гейты скачивания остаются курсовыми (enrollment / is_free) — /materials/:id/download.
@@ -702,6 +722,27 @@ router.get('/lessons/:lessonId', optionalAuth, h(async (req, res) => {
     has_full_access: !!enrollment || admin,
     test,
     progress,
+    // ТЗ-127: программа курса, прогресс и соседи с номерами/названиями
+    total_lessons: totalLessons,
+    program: neighborsR.rows.map((r: any) => ({
+      id: r.id,
+      position: r.position,
+      title: r.title,
+      kind: r.kind,
+      duration_min: r.duration_min,
+      completed: completedSet.has(String(r.id)),
+    })),
+    course_progress: {
+      completed_lessons: completedLessons,
+      total_lessons: totalLessons,
+      percent: totalLessons > 0 ? Math.round((completedLessons / totalLessons) * 100) : 0,
+    },
+    prev_lesson: prevLesson
+      ? { id: prevLesson.id, position: prevLesson.position, title: prevLesson.title }
+      : null,
+    next_lesson: nextLesson
+      ? { id: nextLesson.id, position: nextLesson.position, title: nextLesson.title }
+      : null,
     prev_lesson_id: prevLesson?.id ?? null,
     next_lesson_id: nextLesson?.id ?? null,
   });

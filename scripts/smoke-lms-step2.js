@@ -439,6 +439,26 @@ async function scenario(runLabel) {
     r = await api('POST', `/api/education/lessons/${lesson3}/test`, { token: userJwt, body: { answers: [1] } });
     assert(r.status === 200 && r.json.test_score === 100 && r.json.passed === true && r.json.pass_score === 70,
       `верный ответ → 100/пройден, got ${r.status} ${r.text}`);
+    // Прогресс пишет POST /complete (авто-complete при passed — как на фронте)
+    r = await api('POST', `/api/education/lessons/${lesson3}/complete`, {
+      token: userJwt, body: { test_score: 100 },
+    });
+    assert(r.status === 200, `complete после пройденного теста → 200, got ${r.status} ${r.text}`);
+    // ТЗ-127 Задача 0: программа курса + прогресс + соседи с номерами
+    r = await api('GET', `/api/education/lessons/${lesson3}`, { token: userJwt });
+    assert(r.status === 200 && Array.isArray(r.json.program) && r.json.program.length >= 1,
+      `lessons/:id отдаёт program[], got ${r.status}`);
+    assert(typeof r.json.total_lessons === 'number' && r.json.total_lessons === r.json.program.length,
+      'total_lessons === program.length');
+    const prog3 = r.json.program.find((p) => p.id === lesson3);
+    assert(prog3 && prog3.completed === true, 'program.completed=true для пройденного урока');
+    assert(r.json.program.every((p) => typeof p.position === 'number' && typeof p.title === 'string' && 'kind' in p),
+      'program: position/title/kind на месте');
+    assert(r.json.course_progress && r.json.course_progress.completed_lessons >= 1 &&
+      r.json.course_progress.total_lessons === r.json.total_lessons &&
+      typeof r.json.course_progress.percent === 'number', 'course_progress на месте');
+    assert(r.json.next_lesson === null || (r.json.next_lesson.id && typeof r.json.next_lesson.position === 'number'),
+      'next_lesson объект {id,position,title} или null');
     ok('грейдинг теста: 401 анониму, 400 по длине, подсчёт балла на бэке');
     r = await api('POST', `/api/education/lessons/${lesson3}/complete`, {
       token: userJwt, body: { test_score: 80 },
@@ -457,6 +477,8 @@ async function scenario(runLabel) {
     assert(r.status === 200, `аноним preview-урок → 200, got ${r.status}`);
     assert(!r.text.includes('"correct"'), 'в ответе НЕТ correct');
     assert(r.json.progress === null, 'анониму progress=null');
+    assert(Array.isArray(r.json.program) && r.json.program.every((p) => p.completed === false),
+      'анониму program отдаётся, completed все false');
     r = await api('GET', `/api/education/lessons/${lesson3}`); // закрытый, аноним
     assert(r.status === 401, `закрытый урок аноним → 401, got ${r.status}`);
     r = await api('GET', `/api/education/lessons/${lesson3}`, { token: blockedJwt });
