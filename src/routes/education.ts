@@ -872,7 +872,13 @@ router.get('/my', authMiddleware, h(async (req, res) => {
        (SELECT COUNT(*) FROM course_lessons cl WHERE cl.course_id = c.id) AS total_lessons,
        (SELECT COUNT(*) FROM lesson_progress lp
           JOIN course_lessons cl ON cl.id = lp.lesson_id
-         WHERE lp.user_id = ce.user_id AND cl.course_id = c.id) AS completed_lessons
+         WHERE lp.user_id = ce.user_id AND cl.course_id = c.id) AS completed_lessons,
+       (SELECT cl.id FROM course_lessons cl
+          WHERE cl.course_id = c.id
+            AND NOT EXISTS (SELECT 1 FROM lesson_progress lp
+                             WHERE lp.lesson_id = cl.id AND lp.user_id = ce.user_id)
+          ORDER BY cl.position ASC
+          LIMIT 1) AS next_lesson_id
      FROM course_enrollments ce
      JOIN courses c ON c.id = ce.course_id
      WHERE ce.user_id = $1 AND c.deleted_at IS NULL
@@ -895,6 +901,7 @@ router.get('/my', authMiddleware, h(async (req, res) => {
       visibility: r.visibility,
       enrollment_source: r.source,
       enrolled_at: r.enrolled_at,
+      next_lesson_id: r.next_lesson_id ?? null,
       progress: {
         completed_lessons: completed,
         total_lessons: total,

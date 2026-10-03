@@ -1035,9 +1035,15 @@ async function scenario(runLabel) {
     r = await api('GET', '/api/education/my', { token: userJwt });
     const myCourse = r.json.find((c) => c.id === courseId);
     assert(myCourse && myCourse.progress.completed_lessons >= 1, '/my отдаёт прогресс');
+    // ТЗ-126 Задача 3: next_lesson_id — первый непройденный урок (null — всё пройдено)
+    assert('next_lesson_id' in myCourse, '/my отдаёт поле next_lesson_id');
+    assert(
+      myCourse.next_lesson_id === null || typeof myCourse.next_lesson_id === 'string',
+      `next_lesson_id null|string, got ${JSON.stringify(myCourse.next_lesson_id)}`,
+    );
     r = await api('GET', '/api/education/my');
     assert(r.status === 401, '/my без JWT → 401');
-    ok('критерий 6 (ТЗ-100): /my с прогрессом, без JWT 401');
+    ok('критерий 6 (ТЗ-100): /my с прогрессом + next_lesson_id, без JWT 401');
 
     console.log(`\nПРОГОН ${runLabel}: все ${passed} проверок зелёные`);
   } finally {
