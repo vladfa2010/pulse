@@ -12,6 +12,15 @@
 		reverse_proxy backend:3001
 	}
 
+	# ТЗ-135: кэш-политика фронта. index.html (и прочее через try_files) —
+	# no-cache: Safari/браузеры обязаны ревалидировать, иначе держат СТАРЫЙ
+	# HTML и старый JS-бандл после деплоя («деплой вышел, а у юзера старое»).
+	# Хэшированные ассеты vite (content-hash в имени) — год, immutable.
+	handle /assets/* {
+		header Cache-Control "public, max-age=31536000, immutable"
+		file_server
+	}
+
 	# ТЗ-100: статика LMS (/media/*) отдаётся бэкендом (mediaGuard:
 	# публичные обложки, signed URL для materials/ugc, quarantine не отдаётся).
 	# Без этого правила Caddy отдавал index.html → «битые» обложки курсов.
@@ -43,6 +52,7 @@
 	}
 
 	handle {
+		header Cache-Control "no-cache"
 		try_files {path} /index.html
 		file_server
 	}
