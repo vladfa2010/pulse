@@ -341,6 +341,13 @@ const materialUpload = multer({
   limits: { fileSize: 20 * 1024 * 1024 }, // ТЗ-100 критерий 18(1): >20 МБ → 413
 });
 
+// ТЗ-136: картинки для вставки в текст урока/описание курса. Лимит больше
+// обложки (10 МБ): скриншоты и схемы весят больше; sharp всё равно сожмёт.
+const contentImageUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+});
+
 /** Обёртка multer: ошибки лимита размера → 413, прочие → 400. */
 function uploadMw(mw: ReturnType<typeof multer>, field: string) {
   return (req: Request, res: Response, next: () => void) => {
@@ -1202,6 +1209,55 @@ router.post('/courses/:id/cover', uploadMw(coverUpload, 'file'), h(async (req, r
     invalidateEducationCache();
     logUserEvent(adminId, 'education.course_updated', { course_id: courseId, field: 'cover' });
     res.json({ cover_url: put.relPath });
+  } catch (err: any) {
+    if (err instanceof StorageError) return fail(res, err.status, err.message);
+    throw err;
+  }
+}));
+
+// ТЗ-136: картинка для вставки в текст урока/описание курса.
+// Пайплайн = обложка (magic bytes + EXIF strip + bomb-лимит), но kind='content'
+// и без UPDATE — фронт сам вставляет relPath в HTML. Контентный kind публичный
+// (см. PUBLIC_KINDS): путь живёт в text_content навсегда, signed URL с часовым
+// TTL протух бы.
+router.post('/content-image', uploadMw(contentImageUpload, 'file'), h(async (req, res) => {
+  const adminId = req.user!.userId;
+  if (!(await checkRateLimit(req, res, lmsUploadLimiter))) return; // 429 уже отправлен
+
+  const file = (req as any).file as Express.Multer.File | undefined;
+  if (!file || !file.buffer || file.buffer.length === 0) {
+    return fail(res, 400, 'Файл не загружен (field: file)');
+  }
+
+  // Тип по magic bytes, не по Content-Type клиента
+  const ft = await fileType.fromBuffer(file.buffer);
+  if (!ft || !COVER_MIMES.has(ft.mime)) {
+    return fail(res, 415, 'Допустимы только jpg/png/webp');
+  }
+
+  // EXIF strip: rotate() применяет orientation, метаданные камеры/GPS не копируются.
+  // Контентные картинки дополнительно сжимаем: ширина ≤1600px, качество 82 —
+  // конспект читают с телефона, оригиналы не храним (как EXIF-strip у обложек).
+  let normalized: Buffer;
+  try {
+    const img = sharp(file.buffer).rotate();
+    const meta = await img.metadata();
+    const megapixels = (meta.width || 0) * (meta.height || 0) / 1e6;
+    if (megapixels > 50) {
+      return fail(res, 413, 'Изображение больше 50 Мпикс (decompression bomb)');
+    }
+    normalized = await img
+      .resize({ width: 1600, withoutEnlargement: true })
+      .toFormat(ft.ext === 'png' ? 'png' : ft.ext === 'webp' ? 'webp' : 'jpeg', { quality: 82 })
+      .toBuffer();
+  } catch {
+    return fail(res, 415, 'Файл не является корректным изображением');
+  }
+
+  try {
+    const put = await putBuffer(normalized, 'content', `img.${ft.ext}`);
+    logUserEvent(adminId, 'education.content_image_uploaded', { path: put.relPath, size: put.size });
+    res.json({ url: put.relPath }); // { url: '/media/content/<uuid>.<ext>' }
   } catch (err: any) {
     if (err instanceof StorageError) return fail(res, err.status, err.message);
     throw err;

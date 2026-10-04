@@ -50,6 +50,8 @@ export const USER_EVENT_TYPES = [
   // ТЗ-103: решения редактора по рекомендациям мэтчинга — датасет precision
   'education.match_attached',
   'education.match_dismissed',
+  // ТЗ-136: загрузка картинки в конспект/описание (kind='content')
+  'education.content_image_uploaded',
 ] as const;
 
 export type UserEventType = typeof USER_EVENT_TYPES[number];

@@ -67,12 +67,16 @@ export class StorageError extends Error {
 
 // ─── Пути ───────────────────────────────────────────────────────────────────
 
-export type UploadKind = 'courses' | 'materials' | 'ugc';
+export type UploadKind = 'courses' | 'materials' | 'ugc' | 'content';
 
 // Публичные (без подписи) подкаталоги. Всё остальное — только по signed URL.
-const PUBLIC_KINDS: UploadKind[] = ['courses'];
+// 'content' (ТЗ-136): картинки конспекта/описания — путь зашит в text_content
+// навсегда, подписать URL per-request невозможно → публичная отдача, как у
+// обложек. Осознанный trade-off: картинка платного урока доступна по прямой
+// ссылке любому (контент ценен текстом/тестом, картинки — иллюстрации).
+const PUBLIC_KINDS: UploadKind[] = ['courses', 'content'];
 
-const BOOTSTRAP_DIRS = ['courses', 'materials', 'ugc', 'tmp', 'tmp/trash', 'quarantine'];
+const BOOTSTRAP_DIRS = ['courses', 'materials', 'ugc', 'content', 'tmp', 'tmp/trash', 'quarantine'];
 
 function absFromRel(relPath: string): string {
   // relPath вида /media/<kind>/<filename> → абсолютный путь внутри UPLOADS_DIR
