@@ -1,0 +1,57 @@
+# ⚠️ ЕДИНСТВЕННЫЙ ИСТОЧНИК ПРАВДЫ ДЛЯ /opt/pulse/Caddyfile
+# Деплой бэкенда (update-backend.sh) сам синхронизирует этот файл на сервер
+# (md5-сравнение + бэкап + docker restart pulse-caddy при изменении).
+# Правки руками на сервере ЗАПРЕЩЕНЫ — они будут перезаписаны следующим деплоем.
+# Прецедент: инциденты 2026-09-15 и 2026-10-01 (docker-compose.yml), 2026-10-04 (Caddyfile).
+#
+(common) {
+	root * /srv/dist
+	encode gzip
+
+	handle /api/* {
+		reverse_proxy backend:3001
+	}
+
+	# ТЗ-100: статика LMS (/media/*) отдаётся бэкендом (mediaGuard:
+	# публичные обложки, signed URL для materials/ugc, quarantine не отдаётся).
+	# Без этого правила Caddy отдавал index.html → «битые» обложки курсов.
+	# Статичные ассеты фронта из public/media (tile-reveal, hero-video) —
+	# отдаём напрямую из dist; динамическое /media (обложки, материалы) ниже.
+	handle /media/tile-reveal/* {
+		file_server
+	}
+	handle /media/hero-video-2.mp4 {
+		file_server
+	}
+
+	handle /media/* {
+		reverse_proxy backend:3001
+	}
+
+	handle /health {
+		reverse_proxy backend:3001
+	}
+
+	# ТЗ-118: временный прокси legacy admin-API. УДАЛИТЬ в Задаче 3.
+	# ВАЖНО: точные /admin и /admin/ — SPA-страница фронта, их НЕ проксируем.
+	@adminLegacyApi {
+		path /admin/* /cleanup-failed-articles
+		not path /admin /admin/
+	}
+	handle @adminLegacyApi {
+		reverse_proxy backend:3001
+	}
+
+	handle {
+		try_files {path} /index.html
+		file_server
+	}
+}
+
+pulse.inside-trade.ru {
+	import common
+}
+
+155.212.216.142.sslip.io {
+	import common
+}
