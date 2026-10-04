@@ -1,7 +1,10 @@
 # PULSE — Deployment Guide
 
 > Единый документ по инфраструктуре, деплою и окружению.
-> Последнее обновление: 2026-10-01 (инцидент «git pull снёс ручные правки
+> Последнее обновление: 2026-10-04 (Caddyfile унифицирован по образцу compose:
+> источник правды — `deploy/Caddyfile` в git, update-backend.sh сам синхронизирует
+> его с сервером и перезапускает caddy; см. раздел «Инцидент 2026-10-04»).
+> Предыдущее: 2026-10-01 (инцидент «git pull снёс ручные правки
 > compose» → compose унифицирован: боевой конфиг в git, на сервере symlinks,
 > см. раздел «Инцидент 2026-10-01»; compose теперь безопасен из любого каталога).
 >
@@ -335,14 +338,19 @@ docker-compose up   # PostgreSQL 16 + Redis 7 + Backend
 ├── docker-compose.yml   # ← SYMLINK на /opt/pulse/pulse/docker-compose.yml
 │                        # (единый боевой конфиг, источник правды — git)
 ├── .env                 # секреты (НЕ в git, chmod 600)
-├── Caddyfile            # два домена (прод + sslip), прокси /api
-│                        # + ТЗ-118: временный блок @adminLegacyApi (прокси /admin/* и
-│                        #   /cleanup-failed-articles на backend:3001; УДАЛИТЬ в Задаче 3
-│                        #   ТЗ-118; бэкап до хотфикса — /opt/pulse/Caddyfile.bak-tz118)
+├── Caddyfile            # ← СИНХРОНИЗИРУЕТСЯ из git: deploy/Caddyfile в клоне
+│                        # (единый источник правды, см. «Инцидент 2026-10-04»).
+│                        # Два домена (прод + sslip), прокси /api, статика фронта,
+│                        # /media/* → backend (mediaGuard), исключения
+│                        # /media/tile-reveal/* и /media/hero-video-2.mp4 → dist,
+│                        # + ТЗ-118: временный блок @adminLegacyApi (УДАЛИТЬ в
+│                        # Задаче 3 ТЗ-118). Бэкапы: Caddyfile.bak-*
 ├── frontend/dist/       # собранный фронт (API_BASE захардкожен → pulse.inside-trade.ru)
 ├── pulse/               # git-клон этого репозитория (источник сборки backend)
 │   ├── docker-compose.yml  # боевой стек целиком, закоммичен (caddy/postgres/
 │                        # embeddings/topics-worker + ClamAV-профиль; пути абсолютные)
+│   ├── deploy/Caddyfile # боевой Caddyfile, закоммичен (источник правды для
+│   │                        # /opt/pulse/Caddyfile; синхронизируется update-backend.sh)
 │   └── .env             # ← SYMLINK на /opt/pulse/.env (интерполяция ${VAR} compose)
 ├── music/, sfx/, uploads/  # bind-mount'ы backend (треки радио, SFX, файлы LMS)
 ├── update-backend.sh    # каноническое обновление бэкенда (git pull + build из /opt/pulse)
@@ -531,6 +539,36 @@ staging-таблицы + `INSERT ... ON CONFLICT DO NOTHING` (дедуп по co
 (единственная копия состояния 02–11.09) — с ним ничего общего больше нет,
 ни один compose его не поднимает.
 
+### ⚠️ Инцидент 2026-10-04: Caddyfile вне git — статика фронта 404 + caddy reload не применяет конфиг
+
+Третий инцидент того же класса, что 2026-09-15 и 2026-10-01: **боевой
+конфиг вне git**. Правило ТЗ-100 `handle /media/* → backend:3001` когда-то
+завезено руками на сервер и закоммичено не было. Оно теневит статику фронта
+`public/media/` (`tile-reveal/life-*.jpg`, `hero-video-2.mp4`) → после
+пересборки/перезапуска caddy эти URL стали отдавать 404 («битые» картинки
+на главной). Отдельная находка: **`docker exec pulse-caddy caddy reload`
+отвечал «config is unchanged» и НЕ применял правки** — конфиг реально
+применяется только `docker restart pulse-caddy` (проверено через admin API
+`localhost:2019/config`: после reload — старый конфиг, после restart — новый).
+
+**Лечение и устранение класса инцидента (сделано 2026-10-04, commit 923503d):**
+1. **Caddyfile унифицирован по образцу compose** — боевой конфиг закоммичен
+   как `pulse-backend/deploy/Caddyfile` (полный: оба домена, /api, /media,
+   исключения tile-reveal/hero-video, ТЗ-118-блок). Шапка файла фиксирует
+   статус «единственный источник правды».
+2. **`update-backend.sh` синхронизирует Caddyfile**: после `git pull`
+   md5-сравнение `deploy/Caddyfile` с `/opt/pulse/Caddyfile`; при расхождении —
+   бэкап `Caddyfile.bak-<дата>` + копирование + `docker restart pulse-caddy`
+   (не `caddy reload`, см. находку выше; даунтайм ~2–3 с только при реальном
+   изменении). Лог: `Caddyfile: unchanged` / `Caddyfile: updated, caddy restarted`.
+3. **Правило: любые правки маршрутизации — только через git** (commit + push +
+   деплой бэкенда). Ручной патч Caddyfile на сервере перезаписывается
+   следующим деплоем. Фронт Caddyfile не меняет — синхронизация живёт
+   только в backend-деплое.
+4. Smoke после деплоя со статикой: `curl -sI https://pulse.inside-trade.ru/
+   media/tile-reveal/life-1.jpg` → 200, `/media/hero-video-2.mp4` → 200,
+   обложка курса `/media/courses/<uuid>.png` → 200 (бэкенд, mediaGuard).
+
 ### ⚠️ Инцидент 2026-09-15: сборка из git-клона уронила env бэкенда
 
 При деплое ТЗ-104 сборка была запущена из `/opt/pulse/pulse` (`docker compose
@@ -702,7 +740,11 @@ docker compose restart backend                 # рестарт
 > Канонические скрипты обновления на сервере:
 > `/opt/pulse/update-backend.sh`, `/opt/pulse/update-frontend.sh`.
 > Правило, остающееся в силе: **правки compose на сервере — только через git**
-> (коммит + push + pull), ручные патчи запрещены.
+> (коммит + push + pull), ручные патчи запрещены. То же с 2026-10-04 для
+> **Caddyfile** (`deploy/Caddyfile` в репозитории): update-backend.sh сам
+> синхронизирует его с `/opt/pulse/Caddyfile` и перезапускает caddy.
+> ⚠️ `caddy reload` внутри контейнера конфиг НЕ применяет (молча «unchanged») —
+> только `docker restart pulse-caddy` (инцидент 2026-10-04).
 
 ⚠️ **ЗАПРЕЩЕНО на проде:** `docker compose down -v`, `docker volume rm`,
 `docker compose up -V` — удаляют данные postgres/TEI (инцидент 2026-09-11,
@@ -755,6 +797,9 @@ docker compose restart backend                 # рестарт
 
 > Compose единый (symlink), сборку можно запускать из `/opt/pulse` или клона —
 > конфиг одинаковый. Канонический вариант одной командой: `/opt/pulse/update-backend.sh`.
+> Скрипт после `git pull` **сам синхронизирует Caddyfile** (md5 → бэкап →
+> `docker restart pulse-caddy` при изменении) — ручные правки Caddyfile
+> на сервере не нужны и будут перезаписаны (инцидент 2026-10-04).
 > Если бэкенд после пересборки в статусе `Restarting` — смотреть
 > `docker logs pulse-backend --tail 30`; падение с `... environment variable
 > is required` = потерян env (см. инцидент 2026-10-01: env_file + symlink .env).
@@ -773,6 +818,11 @@ docker compose restart backend                 # рестарт
 .kimi/vps-ssh.exp "tail -5 /tmp/build.log; docker ps --format '{{.Names}} {{.Status}}'"
 .kimi/vps-ssh.exp "docker logs pulse-backend --tail 30"   # старт и миграции без ошибок
 ```
+
+> ⚠️ Ручная цепочка `git pull` + `docker compose up` выше **не синхронизирует
+> Caddyfile** — это делает только `update-backend.sh`. Если в коммитах было
+> изменение `deploy/Caddyfile`, запускайте канонический скрипт (или повторите
+> его Caddyfile-блок руками: md5 → cp с бэкапом → `docker restart pulse-caddy`).
 
 > После выкатки с миграциями (новые таблицы) проверить, что они применены:
 > миграции LMS — вручную `POST /migrate-lms{,-ugc,-matching}?secret=CRON_SECRET_KEY`
@@ -822,6 +872,14 @@ curl -s "https://pulse.inside-trade.ru/$REMOTE" | grep -c "pulse-api-bsov.onrend
 
 # 4.3. Backend жив через caddy:
 curl -s https://pulse.inside-trade.ru/api/health   # {"ok":true,...}
+
+# 4.3.1 Статика /media не разбита (обе ветки: файл-сервер dist и бэкенд mediaGuard):
+curl -s -o /dev/null -w '%{http_code} %{content_type}\n' \
+  https://pulse.inside-trade.ru/media/tile-reveal/life-1.jpg      # 200 image/jpeg
+curl -s -o /dev/null -w '%{http_code} %{content_type}\n' \
+  https://pulse.inside-trade.ru/media/hero-video-2.mp4            # 200 video/mp4
+curl -s -o /dev/null -w '%{http_code} %{content_type}\n' \
+  https://pulse.inside-trade.ru/media/courses/<uuid-обложки>.png  # 200 image/* (из /api/education/courses)
 
 # 4.4. Сигнатура данных БД (инцидент 2026-10-01 — «не тот» кластер PG):
 curl -s https://pulse.inside-trade.ru/health | python3 -m json.tool | grep -A4 '"db"'
@@ -1083,6 +1141,16 @@ git push
 ### Frontend: белая страница
 **Причина:** Неправильный `base` в `vite.config.ts`
 **Решение:** `base` должен быть `'/'` для Render, `'/pulse-frontend/'` для GitHub Pages
+
+### VPS: «битые» картинки /media/*.jpg|mp4 (инцидент 2026-10-04)
+**Причина:** правило `handle /media/* → backend:3001` (ТЗ-100) теневит статику
+фронта из `public/media/` (tile-reveal, hero-video). Исключения —
+`handle /media/tile-reveal/* { file_server }` и `handle /media/hero-video-2.mp4
+{ file_server }` в `deploy/Caddyfile`. Дополнительно `caddy reload` внутри
+контейнера конфиг не применяет — только `docker restart pulse-caddy`.
+**Решение:** деплой через `update-backend.sh` (сам синхронизирует Caddyfile
+и рестартует caddy); ручная правка — `docker restart pulse-caddy` после
+изменения `/opt/pulse/Caddyfile`, в git — коммит в `deploy/Caddyfile`.
 
 ### Backend: 30-sec warmup / 504 Gateway Timeout
 **Причина:** Раньше Render переключал трафик только после полной инициализации миграций и фоновых задач, из-за чего первый запрос мог занимать ~30 сек.
