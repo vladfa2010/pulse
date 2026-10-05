@@ -1378,7 +1378,7 @@ router.post('/courses/:slug/materials', authMiddleware, ugcUploadMw, h(async (re
       `INSERT INTO course_materials
          (id, course_id, kind, title, url, news_id, is_free, position,
           origin, status, submitted_by, scan_status, created_at)
-       VALUES ($1, $2, 'link', $3, $4, NULL, 0, $5, 'user', 'pending', $6, 'clean', ${nowSqlInline()})`,
+       VALUES ($1, $2, 'link', $3, $4, NULL, FALSE, $5, 'user', 'pending', $6, 'clean', ${nowSqlInline()})`,
       [id, courseId, title, url, Number(maxPos.rows[0].mp) + 1, userId],
     );
     return res.status(201).json({ status: 'pending', id });
@@ -1416,7 +1416,7 @@ router.post('/courses/:slug/materials', authMiddleware, ugcUploadMw, h(async (re
     `INSERT INTO course_materials
        (id, course_id, kind, title, url, news_id, is_free, position,
         origin, status, submitted_by, scan_status, created_at)
-     VALUES ($1, $2, 'file', $3, $4, NULL, 0, $5, 'user', 'pending', $6, 'pending_scan', ${nowSqlInline()})`,
+     VALUES ($1, $2, 'file', $3, $4, NULL, FALSE, $5, 'user', 'pending', $6, 'pending_scan', ${nowSqlInline()})`,
     [id, courseId, title, put.relPath, Number(maxPos.rows[0].mp) + 1, userId],
   );
   // Асинхронный скан (fire-and-forget): clamd недоступен → останется
@@ -1630,7 +1630,7 @@ router.post('/courses/:slug/buy', authMiddleware, h(async (req, res) => {
                            plan_id, billing_cycle, duration_days, is_upgrade,
                            product_type, product_ref)
      VALUES ($1, $2, $3, $3, 0, 'bank_card', 'pending',
-             NULL, 'once', NULL, 0,
+             NULL, 'once', NULL, FALSE,
              'course', $4)`,
     [paymentId, userId, price, c.id],
   );
