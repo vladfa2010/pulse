@@ -2028,33 +2028,58 @@ function dbDateMs(value: any): number {
   return Number.isFinite(t) ? t : 0;
 }
 
-router.get('/moderation', h(async (_req, res) => {
+router.get('/moderation', h(async (req, res) => {
+  // ТЗ-142: история модерации. Дефолт 'pending' — поведение до ТЗ-142
+  // (старый фронт не сломается). 'all' — без фильтра по статусу.
+  const statusFilter = String(req.query.status || 'pending');
+  if (!['pending', 'approved', 'rejected', 'all'].includes(statusFilter)) {
+    return fail(res, 400, "status — только 'pending' | 'approved' | 'rejected' | 'all'");
+  }
+  const matParams = statusFilter === 'all' ? [] : [statusFilter];
+  const newsParams = statusFilter === 'all' ? [] : [statusFilter];
+  const matWhere = statusFilter === 'all' ? '' : 'WHERE m.status = $1';
+  const newsWhere = statusFilter === 'all' ? '' : 'WHERE s.status = $1';
+  // Очередь — FIFO (как раньше); история — свежие проверки сверху + LIMIT 200
+  // (защита от распухания; пагинация не требуется).
+  const matOrder = statusFilter === 'pending'
+    ? 'ORDER BY m.created_at ASC'
+    : "ORDER BY COALESCE(m.reviewed_at, m.created_at) DESC LIMIT 200";
+  const newsOrder = statusFilter === 'pending'
+    ? 'ORDER BY s.created_at ASC'
+    : "ORDER BY COALESCE(s.reviewed_at, s.created_at) DESC LIMIT 200";
+
   const [matR, newsR] = await Promise.all([
     query(
       `SELECT m.id, m.kind, m.title, m.url, m.news_id, m.status, m.scan_status, m.created_at,
-              m.submitted_by, c.id AS course_id, c.slug AS course_slug, c.title AS course_title,
+              m.submitted_by, m.reviewed_by, m.reviewed_at, m.reject_reason,
+              c.id AS course_id, c.slug AS course_slug, c.title AS course_title,
               u.username AS submitted_by_username,
+              ru.username AS reviewed_by_username,
               n.title_ru AS news_title, n.slug AS news_slug, n.published_at AS news_published_at
        FROM course_materials m
        JOIN courses c ON c.id = m.course_id
        LEFT JOIN users u ON u.id = m.submitted_by
+       LEFT JOIN users ru ON ru.id = m.reviewed_by
        LEFT JOIN news n ON n.id = m.news_id
-       WHERE m.status = 'pending'
-       ORDER BY m.created_at ASC`,
-      [],
+       ${matWhere}
+       ${matOrder}`,
+      matParams,
     ),
     query(
-      `SELECT s.id, s.created_at, s.news_id, s.submitted_by,
+      `SELECT s.id, s.created_at, s.news_id, s.submitted_by, s.status,
+              s.reviewed_by, s.reviewed_at, s.reject_reason,
               c.id AS course_id, c.slug AS course_slug, c.title AS course_title,
               u.username AS submitted_by_username,
+              ru.username AS reviewed_by_username,
               n.title_ru AS news_title, n.slug AS news_slug, n.published_at AS news_published_at
        FROM news_course_suggestions s
        JOIN courses c ON c.id = s.course_id
        LEFT JOIN users u ON u.id = s.submitted_by
+       LEFT JOIN users ru ON ru.id = s.reviewed_by
        JOIN news n ON n.id = s.news_id
-       WHERE s.status = 'pending'
-       ORDER BY s.created_at ASC`,
-      [],
+       ${newsWhere}
+       ${newsOrder}`,
+      newsParams,
     ),
   ]);
 
@@ -2081,6 +2106,13 @@ router.get('/moderation', h(async (_req, res) => {
           ? { id: m.submitted_by, username: m.submitted_by_username || null }
           : null,
         created_at: m.created_at,
+        // ТЗ-142: поля модерации (история)
+        status: m.status,
+        reviewed_at: m.reviewed_at || null,
+        reviewed_by: m.reviewed_by_username
+          ? { username: m.reviewed_by_username }
+          : null,
+        reject_reason: m.reject_reason || null,
       };
     }),
     ...newsR.rows.map((s: any) => ({
@@ -2098,15 +2130,31 @@ router.get('/moderation', h(async (_req, res) => {
         ? { id: s.submitted_by, username: s.submitted_by_username || null }
         : null,
       created_at: s.created_at,
+      // ТЗ-142: поля модерации (история)
+      status: s.status,
+      reviewed_at: s.reviewed_at || null,
+      reviewed_by: s.reviewed_by_username
+        ? { username: s.reviewed_by_username }
+        : null,
+      reject_reason: s.reject_reason || null,
     })),
   ];
-  // FIFO: старые первыми (NULL-даты — в начало, их модерируют первыми)
-  items.sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')));
+  // Очередь — FIFO (старые первыми); история — свежие проверки сверху
+  // (dbDateMs: PG шлёт Date, SQLite — строку — приводим к мс).
+  if (statusFilter === 'pending') {
+    items.sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')));
+  } else {
+    items.sort((a, b) =>
+      dbDateMs(b.reviewed_at || b.created_at) - dbDateMs(a.reviewed_at || a.created_at));
+  }
 
   // ТЗ-102 §2 (retry-стратегия): заход модератора в очередь ставит pending_scan
-  // в очередь сканирования — статус в карточке обновляется без перезагрузки
-  for (const m of matR.rows) {
-    if (m.scan_status === 'pending_scan') enqueueScan(m.id);
+  // в очередь сканирования — статус в карточке обновляется без перезагрузки.
+  // ТЗ-142: только для очереди — на истории гонять сканер бессмысленно.
+  if (statusFilter === 'pending') {
+    for (const m of matR.rows) {
+      if (m.scan_status === 'pending_scan') enqueueScan(m.id);
+    }
   }
 
   res.json({ total: items.length, items });
