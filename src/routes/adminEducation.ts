@@ -643,6 +643,15 @@ async function fetchCourseCard(courseId: string): Promise<any | null> {
     ),
   ]);
 
+  // ТЗ-141: счётчик approved-материалов по урокам — считаем в JS из уже
+  // загруженных materialsR (без N+1: отдельный запрос на каждый урок не нужен).
+  const materialsCountByLesson = new Map<string, number>();
+  for (const m of materialsR.rows) {
+    if (m.lesson_id && m.status === 'approved') {
+      materialsCountByLesson.set(m.lesson_id, (materialsCountByLesson.get(m.lesson_id) || 0) + 1);
+    }
+  }
+
   // Тесты уроков (lesson_tests UNIQUE(lesson_id))
   const lessons = [];
   for (const l of lessonsR.rows) {
@@ -663,6 +672,9 @@ async function fetchCourseCard(courseId: string): Promise<any | null> {
       is_free_preview: boolDb(l.is_free_preview),
       unlock_after_days: l.unlock_after_days,
       buttons: parseJsonField<LessonButton[]>(l.buttons, []),
+      // ТЗ-141: маркер «в уроке есть материалы» на плашке (только approved —
+      // pending/rejected ученик не видит, маркер не должен врать из-за UGC).
+      materials_count: materialsCountByLesson.get(l.id) || 0,
       test: testR.rows.length > 0
         ? {
             id: testR.rows[0].id,
@@ -1281,7 +1293,14 @@ router.get('/courses/:id/lessons', h(async (req, res) => {
   const courseR = await query(`SELECT 1 FROM courses WHERE id = $1`, [req.params.id]);
   if (courseR.rows.length === 0) return fail(res, 404, 'Курс не найден');
   const rows = await query(
-    `SELECT * FROM course_lessons WHERE course_id = $1 ORDER BY position ASC`,
+    `SELECT cl.*,
+       EXISTS (SELECT 1 FROM lesson_tests lt WHERE lt.lesson_id = cl.id) AS has_test,
+       (SELECT lt.is_blocking FROM lesson_tests lt WHERE lt.lesson_id = cl.id) AS test_is_blocking,
+       (SELECT COUNT(*) FROM course_materials cm
+         WHERE cm.lesson_id = cl.id AND cm.status = 'approved') AS materials_count
+     FROM course_lessons cl
+     WHERE cl.course_id = $1
+     ORDER BY cl.position ASC`,
     [req.params.id],
   );
   res.json(rows.rows.map((l: any) => ({
@@ -1297,6 +1316,10 @@ router.get('/courses/:id/lessons', h(async (req, res) => {
     is_free_preview: boolDb(l.is_free_preview),
     unlock_after_days: l.unlock_after_days,
     buttons: parseJsonField<LessonButton[]>(l.buttons, []),
+    // ТЗ-141: маркеры содержимого на плашке урока (легкий эндпоинт без questions)
+    has_test: boolDb(l.has_test),
+    test_is_blocking: l.has_test ? boolDb(l.test_is_blocking) : false,
+    materials_count: Number(l.materials_count) || 0,
   })));
 }));
 
