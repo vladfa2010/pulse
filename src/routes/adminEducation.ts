@@ -2264,6 +2264,50 @@ router.post('/moderation/:kind/:id/reject', h(async (req, res) => {
   return fail(res, 400, "kind — только 'material' | 'news-suggestion'");
 }));
 
+// DELETE /moderation/:kind/:id — удаление обработанной заявки из истории:
+// физически стирает запись из БД → заявка исчезает из истории модерации
+// и из «Моих предложений» ученика (ЛК читает те же таблицы).
+// Допускается только для уже проверенных заявок (approved/rejected):
+// живую очередь (pending) удалять нельзя — её сначала надо принять/отклонить.
+router.delete('/moderation/:kind/:id', h(async (req, res) => {
+  const adminId = req.user!.userId;
+  const { kind, id } = req.params;
+
+  if (kind === 'material') {
+    const r = await query(`SELECT * FROM course_materials WHERE id = $1`, [id]);
+    if (r.rows.length === 0) return fail(res, 404, 'Материал не найден');
+    const m = r.rows[0];
+    if (m.origin !== 'user') return fail(res, 409, 'Удалять можно только заявки сообщества');
+    if (m.status === 'pending') {
+      return fail(res, 409, 'Заявка ещё на проверке — сначала примите или отклоните её');
+    }
+    await query(`DELETE FROM course_materials WHERE id = $1`, [id]);
+    // Файл заявки → soft-delete в tmp/trash (retention 30 дней), как при
+    // удалении материалов курса. Саму новость ленты не трогаем.
+    if (m.kind === 'file' && m.url && String(m.url).startsWith('/media/')) {
+      removeFile(String(m.url)).catch((e: any) =>
+        console.warn('[AdminEducation] moderation removeFile failed:', e?.message));
+    }
+    invalidateEducationCache();
+    logUserEvent(adminId, 'education.moderation_delete', { type: 'material', id });
+    return res.json({ ok: true });
+  }
+
+  if (kind === 'news-suggestion') {
+    const r = await query(`SELECT status FROM news_course_suggestions WHERE id = $1`, [id]);
+    if (r.rows.length === 0) return fail(res, 404, 'Предложение не найдено');
+    if (r.rows[0].status === 'pending') {
+      return fail(res, 409, 'Заявка ещё на проверке — сначала примите или отклоните её');
+    }
+    await query(`DELETE FROM news_course_suggestions WHERE id = $1`, [id]);
+    invalidateEducationCache();
+    logUserEvent(adminId, 'education.moderation_delete', { type: 'news-suggestion', id });
+    return res.json({ ok: true });
+  }
+
+  return fail(res, 400, "kind — только 'material' | 'news-suggestion'");
+}));
+
 // ═══════════════════════════════════════════════════════════════════════════
 // ТЗ-103, Задача 4 — рекомендации мэтчинга «курс ↔ новость» (suggestions).
 // Принцип: система только РЕКОМЕНДУЕТ — прикрепление решением редактора
