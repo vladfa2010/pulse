@@ -2037,7 +2037,11 @@ router.get('/moderation', h(async (req, res) => {
   }
   const matParams = statusFilter === 'all' ? [] : [statusFilter];
   const newsParams = statusFilter === 'all' ? [] : [statusFilter];
-  const matWhere = statusFilter === 'all' ? '' : 'WHERE m.status = $1';
+  // Материалы — только UGC (origin='user'): «Обработанные» — история заявок
+  // сообщества, editorial-материалы заявками не являются и author у них null.
+  const matWhere = statusFilter === 'all'
+    ? "WHERE m.origin = 'user'"
+    : "WHERE m.origin = 'user' AND m.status = $1";
   const newsWhere = statusFilter === 'all' ? '' : 'WHERE s.status = $1';
   // Очередь — FIFO (как раньше); история — свежие проверки сверху + LIMIT 200
   // (защита от распухания; пагинация не требуется).
