@@ -704,13 +704,35 @@ router.get('/lessons/:lessonId', optionalAuth, h(async (req, res) => {
   // prev/next по позициям курса. ТЗ-127: выбираем title/kind/duration_min —
   // тем же запросом отдаём программу курса целиком + прогресс по ней.
   const neighborsR = await query(
-    `SELECT id, position, title, kind, duration_min
+    `SELECT id, position, title, kind, duration_min, is_free_preview, unlock_after_days
        FROM course_lessons WHERE course_id = $1 ORDER BY position ASC`,
     [lesson.course_id],
   );
   const idx = neighborsR.rows.findIndex((r: any) => r.id === lessonId);
   const prevLesson = idx > 0 ? neighborsR.rows[idx - 1] : null;
   const nextLesson = idx >= 0 && idx < neighborsR.rows.length - 1 ? neighborsR.rows[idx + 1] : null;
+
+  // ТЗ-147: доступность следующего урока — фронту нужно заранее, не доводя
+  // студента до 403-страницы. 'ok' | 'drip' | 'no_access'.
+  let nextAccess: 'ok' | 'drip' | 'no_access' = 'ok';
+  let nextUnlockInDays: number | null = null;
+  if (nextLesson && !admin) {
+    const nextEnrolled = !!enrollment;
+    if (!nextEnrolled && !boolDb(nextLesson.is_free_preview)) {
+      nextAccess = 'no_access'; // гость/не-записанный: урок не в превью
+    } else if (
+      nextEnrolled &&
+      enrollment!.source === 'subscription' &&
+      lesson.subscription_unlock_mode === 'drip' &&
+      Number(nextLesson.unlock_after_days) > 0
+    ) {
+      const tenure = await subscriptionTenureDays(userId!);
+      if (tenure < Number(nextLesson.unlock_after_days)) {
+        nextAccess = 'drip';
+        nextUnlockInDays = Number(nextLesson.unlock_after_days) - tenure;
+      }
+    }
+  }
 
   // ТЗ-127: completed-set для program/course_progress (записанному — реальный,
   // анониму — пустой). Кросс-диалектно (PG и SQLite-шим — $N-плейсхолдеры).
@@ -789,7 +811,14 @@ router.get('/lessons/:lessonId', optionalAuth, h(async (req, res) => {
       ? { id: prevLesson.id, position: prevLesson.position, title: prevLesson.title }
       : null,
     next_lesson: nextLesson
-      ? { id: nextLesson.id, position: nextLesson.position, title: nextLesson.title }
+      ? {
+          id: nextLesson.id,
+          position: nextLesson.position,
+          title: nextLesson.title,
+          kind: nextLesson.kind,
+          access: nextAccess, // ТЗ-147
+          unlock_in_days: nextUnlockInDays, // ТЗ-147: только при access='drip'
+        }
       : null,
     prev_lesson_id: prevLesson?.id ?? null,
     next_lesson_id: nextLesson?.id ?? null,
