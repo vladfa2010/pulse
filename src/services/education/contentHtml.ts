@@ -67,8 +67,13 @@ function extractHtmlBlocks(html: string): { placeholdered: string; blocks: strin
         }
     }
     if (end === -1) {
-      // незакрытый блок — считаем всё до конца строки содержимым блока
-      end = rest.length;
+      // незакрытый блок — считаем всё до конца строки содержимым блока.
+      // Не откусываем '</div>'.length: у незакрытого блока его нет, иначе
+      // терялись последние 6 символов вёрстки (B2, ревью ТЗ-137).
+      blocks.push(rest.slice(start + BLOCK_OPEN.length));
+      placeholdered += `%%PULSE_HTML_BLOCK_${blocks.length - 1}%%`;
+      rest = '';
+      break;
     }
     blocks.push(rest.slice(start + BLOCK_OPEN.length, end - '</div>'.length));
     placeholdered += `%%PULSE_HTML_BLOCK_${blocks.length - 1}%%`;
