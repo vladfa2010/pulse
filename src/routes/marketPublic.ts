@@ -14,6 +14,8 @@ import {
   dateInTz,
   addDays,
 } from '../services/market/exchangeTimezones';
+import { getDailyCandles, getIntraday5minRange, getExchanges } from '../services/market/marketRouter';
+import { formatMskLocal } from '../services/market/utils';
 
 const router = Router();
 
@@ -49,6 +51,22 @@ function cacheAndSend(newsId: string, payload: { published_at: string; instrumen
   newsChartCache.set(newsId, { at: Date.now(), ttl, payload });
   res.setHeader('X-Cache', 'miss');
   return res.json(payload);
+}
+
+// ТЗ-143: кэш chart-block уроков. Ключ — instrument+range (не урок):
+// один и тот же SBER@MOEX 3M в десяти уроках бьётся в одну запись.
+const CHART_CACHE_TODAY_MS = 15 * 60 * 1000;       // есть сегодняшняя свеча — 15 мин
+const CHART_CACHE_PAST_MS = 24 * 3600 * 1000;      // только закрытые дни — сутки
+const CHART_CACHE_EMPTY_MS = 15 * 60 * 1000;       // пустой ответ — 15 мин
+const CHART_CACHE_MAX_SIZE = 500;
+
+const chartCache = new Map<string, { at: number; ttl: number; payload: any }>();
+
+function evictChartCache(): void {
+  if (chartCache.size <= CHART_CACHE_MAX_SIZE) return;
+  const entries = [...chartCache.entries()].sort((a, b) => a[1].at - b[1].at);
+  const toRemove = entries.slice(0, Math.ceil(entries.length * 0.2));
+  for (const [key] of toRemove) chartCache.delete(key);
 }
 
 interface InstrumentChart {
@@ -1123,6 +1141,121 @@ router.get('/watchlist-quotes', authMiddleware, async (req: AuthRequest, res) =>
       return res.status(503).json({ error: 'market_unavailable' });
     }
     return res.status(500).json({ error: 'watchlist_unavailable' });
+  }
+});
+
+/**
+ * ТЗ-143. GET /api/market/chart?ticker=SBER&exchange=MOEX&tf=d1&range=3M
+ *
+ * Свечи для chart-block в конспекте урока. Публичный (как /news-chart):
+ * открытый урок смотрит и гость.
+ *
+ * tf=d1: дневки через getDailyCandles. range → days (календарный запас):
+ *   1M=45, 3M=120, 6M=240, 1Y=365 (потолок адаптера — 365,
+ *   finamMarketAdapter.ts:144: days = Math.min(Math.max(days, 1), 365)).
+ * tf=m5: 5-минутки через getIntraday5minRange (метод каскад-графика ТЗ-92):
+ *   1D=сегодня, 1W=7 и 1M=31 календарный день до сегодня включительно,
+ *   даты в таймзоне биржи (контракт адаптера, finamMarketAdapter.ts:211).
+ *
+ * Ответ: { ticker, exchange, exchange_name, tf, range, timezone, times, ohlc, volumes }
+ * — times: для d1 даты 'YYYY-MM-DD', для m5 полные ISO UTC (CandleChart сам
+ * форматирует по timezone: метка MM-DD для дат, HH:MM для интрадея,
+ * CandleChart.tsx:16-19). ohlc=[o,c,l,h] — shape пропсов CandleChart.
+ */
+const CHART_D1_DAYS: Record<string, number> = { '1M': 45, '3M': 120, '6M': 240, '1Y': 365 };
+const CHART_M5_SPAN: Record<string, number> = { '1D': 1, '1W': 7, '1M': 31 };
+const CHART_MIC_TO_ALIAS: Record<string, string> = { MISX: 'MOEX', XNGS: 'NASDAQ', XNYS: 'NYSE' };
+
+router.get('/chart', async (req, res) => {
+  try {
+    const ticker = String(req.query.ticker || '').trim().toUpperCase();
+    const exchange = String(req.query.exchange || 'MOEX').trim().toUpperCase();
+    const tf = String(req.query.tf || 'd1').trim().toLowerCase();
+    const range = String(req.query.range || '').trim().toUpperCase();
+
+    if (!/^[A-Z0-9][A-Z0-9.\-]{0,14}$/.test(ticker)) {
+      return res.status(400).json({ error: 'ticker is required' });
+    }
+    if (!/^[A-Z0-9]{2,10}$/.test(exchange)) {
+      return res.status(400).json({ error: 'bad exchange' });
+    }
+    if (tf !== 'd1' && tf !== 'm5') {
+      return res.status(400).json({ error: 'bad tf' });
+    }
+    const effRange = range || (tf === 'm5' ? '1D' : '3M');
+    if (tf === 'd1' && !CHART_D1_DAYS[effRange]) return res.status(400).json({ error: 'bad range' });
+    if (tf === 'm5' && !CHART_M5_SPAN[effRange]) return res.status(400).json({ error: 'bad range' });
+
+    const cacheKey = `${ticker}@${exchange}:${tf}:${effRange}`;
+    const cached = chartCache.get(cacheKey);
+    if (cached && Date.now() - cached.at < cached.ttl) {
+      res.setHeader('X-Cache', 'hit');
+      return res.json(cached.payload);
+    }
+
+    // MIC для таймзоны: exchange у нас алиас (MOEX) или сырой MIC — ищем в обе стороны.
+    const mic = Object.entries(CHART_MIC_TO_ALIAS).find(([, a]) => a === exchange)?.[0] ?? exchange;
+    const tz = micTimezone(mic);
+
+    let candles: MarketCandle[];
+    if (tf === 'm5') {
+      const span = CHART_M5_SPAN[effRange];
+      const endDate = dateInTz(new Date().toISOString(), tz);
+      const startDate = addDays(endDate, -(span - 1));
+      ({ candles } = await getIntraday5minRange(exchange, ticker, startDate, endDate));
+    } else {
+      ({ candles } = await getDailyCandles(exchange, ticker, CHART_D1_DAYS[effRange]));
+    }
+
+    // Имя биржи для шапки блока — по справочнику Финама.
+    let exchangeName = exchange;
+    try {
+      const exchanges = await getExchanges();
+      exchangeName = exchanges.find((e) => e.mic.toUpperCase() === mic)?.name ?? exchange;
+    } catch { /* справочник недоступен — шапка покажет код биржи */ }
+
+    const times = tf === 'm5'
+      ? candles.map((c) => new Date(c.time).toISOString())
+      : candles.map((c) => formatMskLocal(new Date(c.time)).slice(0, 10));
+    const payload = {
+      ticker,
+      exchange,
+      exchange_name: exchangeName,
+      tf,
+      range: effRange,
+      timezone: tz,
+      times,
+      ohlc: candles.map((c) => [c.open, c.close, c.low, c.high]),
+      volumes: candles.map((c) => c.volume ?? 0),
+    };
+
+    // TTL: свеча за сегодня ещё «живая» → короткий кэш; только закрытые → сутки.
+    // m5 сегодняшнего дня всегда живые → короткий TTL.
+    const today = dateInTz(new Date().toISOString(), tz);
+    const includesToday = tf === 'm5'
+      ? effRange === '1D' || times.some((t) => dateInTz(t, tz) === today)
+      : times[times.length - 1] === today;
+    const ttl = candles.length === 0
+      ? CHART_CACHE_EMPTY_MS
+      : (includesToday ? CHART_CACHE_TODAY_MS : CHART_CACHE_PAST_MS);
+
+    evictChartCache();
+    chartCache.set(cacheKey, { at: Date.now(), ttl, payload });
+    res.setHeader('X-Cache', 'miss');
+    return res.json(payload);
+  } catch (err: any) {
+    // Тот же маппинг, что у /news-chart: деградация Финама — 503,
+    // фронт показывает заставку «Данные недоступны», а не 500-страницу.
+    if (
+      err.code === 'finam_no_key' ||
+      err.code === 'finam_maintenance' ||
+      err.code === 'finam_auth_failed' ||
+      err.code === 'finam_rate_limited'
+    ) {
+      return res.status(503).json({ error: 'market_unavailable' });
+    }
+    console.error('[marketPublic] chart error:', err.message);
+    return res.status(500).json({ error: 'market_unavailable' });
   }
 });
 

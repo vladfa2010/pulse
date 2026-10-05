@@ -116,8 +116,15 @@ export function sanitizeLessonHtml(html: string): string {
     // ТЗ-137: img[width] — пресеты ширины из редактора (только проценты);
     // html-block в allowedClasses нужен, чтобы пустой блок (вставленный руками
     // без содержимого) переживал санитайзер — наполнение защищено extraction'ом.
-    allowedAttributes: { a: ['href'], img: ['src', 'width'], div: ['class'] },
-    allowedClasses: { div: ['callout', 'html-block'] },
+    // ТЗ-143: div.chart-block — атом графика, атрибуты data-* валидируются
+    // трансформером div ниже (содержимого у блока нет — озвучке/рендеру
+    // текста нечего сломать).
+    allowedAttributes: {
+      a: ['href'],
+      img: ['src', 'width'],
+      div: ['class', 'data-ticker', 'data-exchange', 'data-name', 'data-tf', 'data-range', 'data-width'],
+    },
+    allowedClasses: { div: ['callout', 'html-block', 'chart-block'] },
     transformTags: {
       a: (tagName, attribs): { tagName: string; attribs: Record<string, string> } => {
         const href = attribs.href || '';
@@ -135,6 +142,42 @@ export function sanitizeLessonHtml(html: string): string {
         const w = attribs.width || '';
         const ok = /^([1-9]\d?|100)%$/.test(w.trim());
         return { tagName: 'img', attribs: ok ? { src, width: w.trim() } : { src } };
+      },
+      div: (tagName, attribs): { tagName: string; attribs: Record<string, string> } => {
+        // ТЗ-143: жёсткая валидация chart-block — любой невалидный атрибут
+        // обнуляет блок целиком (класс снимается → фронт его не рендерит),
+        // а не оставляет «битый» график ученику.
+        if ((attribs.class || '').split(/\s+/).includes('chart-block')) {
+          const ticker = (attribs['data-ticker'] || '').toUpperCase().trim();
+          const exchange = (attribs['data-exchange'] || '').toUpperCase().trim();
+          const name = (attribs['data-name'] || '').trim().slice(0, 80);
+          const tf = (attribs['data-tf'] || 'd1').toLowerCase().trim();
+          const range = (attribs['data-range'] || '').toUpperCase().trim();
+          const width = (attribs['data-width'] || '').trim();
+          const okTicker = /^[A-Z0-9][A-Z0-9.\-]{0,14}$/.test(ticker);
+          const okExchange = /^[A-Z0-9]{2,10}$/.test(exchange);
+          const okTf = ['d1', 'm5'].includes(tf);
+          // Диапазон обязан соответствовать таймфрейму: иначе руками в HTML
+          // можно собрать m5+1Y — тысячи 5-минутных свечей за год.
+          const okRange = tf === 'm5'
+            ? ['1D', '1W', '1M'].includes(range || '1D')
+            : ['1M', '3M', '6M', '1Y'].includes(range || '3M');
+          const okWidth = !width || /^([1-9]\d?|100)%$/.test(width);
+          if (!okTicker || !okExchange || !okTf || !okRange || !okWidth) {
+            return { tagName: 'div', attribs: {} };
+          }
+          const out: Record<string, string> = {
+            class: 'chart-block',
+            'data-ticker': ticker,
+            'data-exchange': exchange,
+            'data-tf': tf,
+            'data-range': range || (tf === 'm5' ? '1D' : '3M'),
+          };
+          if (name) out['data-name'] = name;
+          if (width) out['data-width'] = width;
+          return { tagName: 'div', attribs: out };
+        }
+        return { tagName, attribs };
       },
     },
   }).replace(/<br\s*\/>/gi, '<br>');
