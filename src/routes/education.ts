@@ -985,22 +985,28 @@ function nowSqlInline(): string {
 router.get('/my', authMiddleware, h(async (req, res) => {
   const userId = req.user!.userId;
   const rows = await query(
-    `SELECT c.id, c.slug, c.title, c.type, c.size, c.price, c.badges, c.cover_url,
-            c.status, c.visibility, ce.source, ce.created_at AS enrolled_at,
-       (SELECT COUNT(*) FROM course_lessons cl WHERE cl.course_id = c.id) AS total_lessons,
-       (SELECT COUNT(*) FROM lesson_progress lp
-          JOIN course_lessons cl ON cl.id = lp.lesson_id
-         WHERE lp.user_id = ce.user_id AND cl.course_id = c.id) AS completed_lessons,
-       (SELECT cl.id FROM course_lessons cl
-          WHERE cl.course_id = c.id
-            AND NOT EXISTS (SELECT 1 FROM lesson_progress lp
-                             WHERE lp.lesson_id = cl.id AND lp.user_id = ce.user_id)
-          ORDER BY cl.position ASC
-          LIMIT 1) AS next_lesson_id
-     FROM course_enrollments ce
-     JOIN courses c ON c.id = ce.course_id
-     WHERE ce.user_id = $1 AND c.deleted_at IS NULL
-     ORDER BY ce.created_at DESC`,
+    `WITH mc AS (
+       SELECT c.id, c.slug, c.title, c.type, c.size, c.price, c.badges, c.cover_url,
+              c.status, c.visibility, ce.source, ce.created_at AS enrolled_at,
+         (SELECT COUNT(*) FROM course_lessons cl WHERE cl.course_id = c.id) AS total_lessons,
+         (SELECT COUNT(*) FROM lesson_progress lp
+            JOIN course_lessons cl ON cl.id = lp.lesson_id
+           WHERE lp.user_id = ce.user_id AND cl.course_id = c.id) AS completed_lessons,
+         (SELECT cl.id FROM course_lessons cl
+            WHERE cl.course_id = c.id
+              AND NOT EXISTS (SELECT 1 FROM lesson_progress lp
+                               WHERE lp.lesson_id = cl.id AND lp.user_id = ce.user_id)
+            ORDER BY cl.position ASC
+            LIMIT 1) AS next_lesson_id,
+         (SELECT MAX(lp2.completed_at) FROM lesson_progress lp2
+            JOIN course_lessons cl2 ON cl2.id = lp2.lesson_id
+           WHERE lp2.user_id = ce.user_id AND cl2.course_id = c.id) AS last_activity
+       FROM course_enrollments ce
+       JOIN courses c ON c.id = ce.course_id
+       WHERE ce.user_id = $1 AND c.deleted_at IS NULL
+     )
+     SELECT * FROM mc
+     ORDER BY (last_activity IS NULL), last_activity DESC, enrolled_at DESC`,
     [userId],
   );
   res.json(rows.rows.map((r: any) => {
@@ -1020,6 +1026,7 @@ router.get('/my', authMiddleware, h(async (req, res) => {
       enrollment_source: r.source,
       enrolled_at: r.enrolled_at,
       next_lesson_id: r.next_lesson_id ?? null,
+      last_activity: r.last_activity ?? null,
       progress: {
         completed_lessons: completed,
         total_lessons: total,
