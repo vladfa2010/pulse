@@ -19,6 +19,9 @@ services:
     # образа postgres:18-alpine), volume postgres_data совместим.
     image: pgvector/pgvector:pg18
     container_name: pulse-postgres
+    # Инцидент 2026-10-08: дефолтный /dev/shm docker'а (64MB) не позволял
+    # параллельной постройке индексов (DSM "No space left on device").
+    shm_size: 1gb
     environment:
       POSTGRES_DB: pulse
       POSTGRES_USER: pulse_user
