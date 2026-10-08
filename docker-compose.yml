@@ -26,9 +26,16 @@ services:
       PGDATA: /var/lib/postgresql/data/18/docker
     volumes:
       - postgres_data:/var/lib/postgresql
+    # Инцидент 2026-10-08: на ядре 7.0 io_uring AIO (PG18) давал зависшие
+    # io worker'ы (spin 100% CPU), AioIoCompletion-таймауты и повреждённые
+    # страницы news. Префетч AIO отключён (effective/maintenance_io_concurrency=0).
+    # shared_buffers подняты: таблица news (~700MB) не влезала в 128MB и каждый
+    # запрос шёл на диск (логин занимал 30с). Лимит памяти контейнера поднят
+    # синхронно (shared_buffers не должен приближаться к лимиту cgroup).
     command: >
-      postgres -c shared_buffers=128MB -c effective_cache_size=256MB
-      -c work_mem=4MB -c maintenance_work_mem=32MB -c max_connections=50
+      postgres -c shared_buffers=384MB -c effective_cache_size=1792MB
+      -c work_mem=4MB -c maintenance_work_mem=128MB -c max_connections=50
+      -c effective_io_concurrency=0 -c maintenance_io_concurrency=0
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U pulse_user -d pulse"]
       interval: 10s
@@ -37,7 +44,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 320M
+          memory: 896M
     restart: unless-stopped
 
   backend:
