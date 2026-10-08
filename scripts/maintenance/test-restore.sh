@@ -159,6 +159,10 @@ else
 fi
 
 # --- 5. Сравнение count(*) -------------------------------------------------------
+# ВАЖНО: бэкап снят в прошлом — в проде легитимно больше строк (новые
+# пользователи/портфели/публикации с момента снятия). Инвариант: в проде
+# НЕ ДОЛЖНО БЫТЬ МЕНЬШЕ, чем в бэкапе (потеря данных). Положительная разница —
+# норма, только логируем.
 for table in news users portfolios; do
     prod_count=$($PSQL_PROD "SELECT count(*) FROM ${table}" 2>/dev/null)
     test_count=$($PSQL_TEST "SELECT count(*) FROM ${table}" 2>/dev/null)
@@ -171,13 +175,13 @@ for table in news users portfolios; do
     log "count ${table}: прод=${prod_count} бэкап=${test_count} разница(прод-бэкап)=${diff_count}"
     case "$table" in
         users|portfolios)
-            if [ "$prod_count" != "$test_count" ]; then
-                fail "count ${table}: расхождение прод=${prod_count} бэкап=${test_count} (допуск 0)"
+            # Отрицательная разница = в проде меньше, чем в бэкапе → потеря данных.
+            if [ "$diff_count" != "n/a" ] && [ "$diff_count" -lt 0 ] 2>/dev/null; then
+                fail "count ${table}: в проде меньше, чем в бэкапе, на $(( -diff_count )) — потеря данных"
             fi
             ;;
         news)
-            # Допуск: бэкап ≤ прод + delta свежих публикаций. Фиксируем только
-            # аномалию «в бэкапе больше, чем в проде, на >500» (потеря данных в проде).
+            # Аналогично: бэкап больше прода на существенную величину → потеря.
             if [ "$diff_count" != "n/a" ] && [ "$diff_count" -lt -500 ] 2>/dev/null; then
                 fail "count news: в бэкапе больше на $(( -diff_count )) — возможна потеря данных в проде"
             fi
@@ -187,9 +191,11 @@ done
 
 # --- 6. Дифф потерянных новостей инцидента 2026-10-08 -----------------------------
 # URL, которые есть в бэкапе (снят ДО инцидента), но отсутствуют в проде.
-lost_urls=$($PSQL_TEST "SELECT url FROM news WHERE url IS NOT NULL ORDER BY url" 2>/dev/null | sort -u)
-prod_urls=$($PSQL_PROD "SELECT url FROM news WHERE url IS NOT NULL" 2>/dev/null | sort -u)
-lost=$(comm -23 <(echo "$lost_urls") <(echo "$prod_urls"))
+# LC_ALL=C — byte-wise сортировка: гарантирует согласованный порядок для comm
+# (URL содержат UTF-8, под cron'ом locale POSIX → comm иначе ругается).
+lost_urls=$($PSQL_TEST "SELECT url FROM news WHERE url IS NOT NULL ORDER BY url" 2>/dev/null | LC_ALL=C sort -u)
+prod_urls=$($PSQL_PROD "SELECT url FROM news WHERE url IS NOT NULL" 2>/dev/null | LC_ALL=C sort -u)
+lost=$(LC_ALL=C comm -23 <(echo "$lost_urls") <(echo "$prod_urls"))
 lost_count=$(echo "$lost" | grep -c . 2>/dev/null || echo 0)
 lost_count=${lost_count:-0}
 log "потерянных новостей (в бэкапе, нет в проде): ${lost_count}"
@@ -199,7 +205,7 @@ repo_root=""
 if git -C "$(pwd)" rev-parse --show-toplevel >/dev/null 2>&1; then
     repo_root=$(git -C "$(pwd)" rev-parse --show-toplevel)
 else
-    for d in "$(pwd)" "$(pwd)/pulse-backend" "$(pwd)/.."; do
+    for d in "$(pwd)" "$(pwd)/pulse-backend" "$(pwd)/.." /opt/pulse/pulse; do
         [ -f "${d}/DEPLOYMENT.md" ] && { repo_root="$d"; break; }
     done
 fi
