@@ -1200,3 +1200,47 @@ EMAIL_PROVIDER=resend
 EMAIL_FROM=noreply@pulse.inside-trade.ru
 RESEND_API_KEY=re_xxxxxxxx
 ```
+
+---
+
+## Инцидент 2026-10-08 и превентивный мониторинг (ТЗ-150)
+
+**Инцидент:** PostgreSQL 18 на ядре хоста 7.0 зависал в AIO (io_uring) — IO worker'ы
+крутились на 100% CPU, запросы висли на `AioIoCompletion` до statement_timeout
+(логин отдавался через 30.1 с с пустыми тегами), плюс физическое повреждение 17 страниц
+heap таблицы `news` (контрольные суммы). Восстановлено VACUUM FULL, потеряно ~120 старых
+новостей. Подробный postmortem — `docs/incident-2026-10-08-corrupt-news-aio.md`.
+
+Превентивные скрипты (bash, запуск root'ом с хоста, алерты в Telegram через
+`TELEGRAM_BOT_TOKEN` / `TELEGRAM_ADMIN_CHAT_ID` из `/opt/pulse/.env` — уже есть):
+
+### Cron-записи (root crontab на VPS)
+
+```
+* * * * * /opt/pulse/pulse/scripts/health/incident-watch.sh
+0 4 * * 0 /opt/pulse/pulse/scripts/maintenance/weekly-integrity.sh
+0 3 1 * * /opt/pulse/pulse/scripts/maintenance/test-restore.sh
+```
+
+(путь к клону репо на сервере — `/opt/pulse/pulse`)
+
+### Скрипты и логи
+
+| Скрипт | Задача | Лог |
+|--------|--------|-----|
+| `scripts/health/incident-watch.sh` | Каждую минуту: зависшие IO-запросы (>60 с), io worker'ы postgres (>50% CPU), свежие повреждения страниц в логе контейнера, p95 логина (>5 с). Дедупликация алертов — 1 на условие за 30 мин. Формат: `[PULSE-WATCH] <условие>: <детали>`. Exit 0 всегда. | `/var/log/pulse/incident-watch.log` |
+| `scripts/maintenance/weekly-integrity.sh` | Воскресенье 04:00: `bt_index_check()` каждого btree-индекса `news` (HNSW/GIN не трогаем), затем read-only свеп контрольных сумм всех пользовательских таблиц (`zero_damaged_pages=on`). Алерты: `[PULSE-INTEGRITY] ...`. | `/var/log/pulse/weekly-integrity.log` |
+| `scripts/maintenance/test-restore.sh` | 1-е числа 03:00: restore последнего nightly-бэкапа в изолированный контейнер `pulse-postgres-restore-test` (pgvector/pgvector:pg18, порт 55433, volume `restore_test_data`, прод не трогается; cleanup через trap). Проверки: 0 строк ERROR при restore, 0 `invalid page` после свипа чексумм, count(*) users/portfolios — точное совпадение с продом, news — с допуском на свежие публикации. Запускать вне пика (zcat/restore не оборачиваются в nice/ionice — запускать вручную как `nice -n 10 ionice -c3 ...` при необходимости). Дифф потерянных новостей инцидента → `docs/incident-2026-10-08-lost-news.md`. | `/var/log/pulse/test-restore.log` |
+
+### Restore-тест: результат первого прогона
+
+Дата прогона: 2026-10-09 (значения заполняются после прогона на прод-хосте).
+
+| Проверка | Результат |
+|----------|-----------|
+| Restore последнего nightly-бэкапа, ERROR-строк | заполняется после прогона |
+| Свеп чексумм в restore-контейнере, `invalid page` | заполняется после прогона |
+| count users (прод / бэкап) | заполняется после прогона |
+| count portfolios (прод / бэкап) | заполняется после прогона |
+| count news (прод / бэкап, разница) | заполняется после прогона |
+| Потерянные новости 2026-10-08 (URL в бэкапе, нет в проде) | заполняется после прогона |

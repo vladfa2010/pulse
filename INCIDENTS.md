@@ -785,6 +785,50 @@ SELECT EXISTS (
 
 ---
 
+## INC-007: AIO-зависание PG18 + квадратичный SubPlan-UPDATE — сайт недоступен
+
+**Дата:** 2026-10-08
+**Полный разбор:** `docs/incident-2026-10-08-corrupt-news-aio.md` (v1 + v2 по аудиту ТЗ-150)
+
+### Симптом
+
+Логин стабильно отдавался через ровно ~30.1 с с пустыми тегами («Сервер не отвечает»),
+CPU хоста 200%. Два независимых дефекта накладывались:
+
+1. **Инфраструктурный:** PostgreSQL 18 на ядре 7.0 — io worker'ы (io_uring)
+   зависали в spin на 100% CPU, запросы висли на `AioIoCompletion` до
+   statement_timeout. Плюс физическое повреждение 17 страниц heap `news`
+   (рассинхрон page cache / O_DIRECT — баг уровня ядра/хранилища).
+2. **Приложный:** `wakeUpNoTagsArticles` — бесконечный UPDATE-цикл на ~88% CPU
+   второго ядра (фикс `f8db192`, keyset-батчинг).
+
+### Правильно/неправильно
+
+| Неправильно | Правильно |
+|---|---|
+| `UPDATE ... WHERE id IN (SELECT ... ORDER BY id LIMIT $1)` в цикле | CTE `pick` + `UPDATE FROM` (выборка строго один раз) |
+| Батч-цикл, где UPDATE не меняет критерий выборки | Keyset (`id > lastId`) либо изменение критерия в самом UPDATE |
+| Судить о «медленном запросе» по длительности | Стабильные «ровно statement_timeout» секунды = зависший запрос; первым делом `pg_stat_activity.wait_event` |
+| Считать `zero_damaged_pages=on` лечением | Оно обнуляет страницу только в памяти бэкенда, буфер не dirty → на диск не пишется; лечение — перезапись (VACUUM FULL/CLUSTER) |
+| `effective_io_concurrency=0` как «отключение AIO» | Префетч отключается, но PG18 продолжает использовать io_uring через io worker'ов — класс отказа жив, мониторить io worker CPU |
+
+#### Чеклист: батч-апдейты и «зависшие» запросы
+
+```markdown
+## Перед циклом батч-апдейтов:
+1. [ ] Проверить EXPLAIN: `IN (SELECT ... LIMIT)` → нет ли SubPlan per-row
+2. [ ] Критерий выборки после UPDATE исключает обработанные строки?
+3. [ ] Есть keyset-прогресс (id > lastId) — цикл не может крутиться по кругу
+4. [ ] Защита: максимум итераций / общий таймаут на весь цикл
+
+## Эндпоинт стабильно отдаётся ровно за statement_timeout:
+1. [ ] pg_stat_activity: wait_event (AioIoCompletion? DataFileRead? CPU?)
+2. [ ] ps aux: спинящие postgres/io worker процессы
+3. [ ] docker logs pulse-postgres: invalid page / checksum errors
+```
+
+---
+
 ---
 
 ## 7. СВОДНАЯ ТАБЛИЦА ВСЕХ УРОКОВ
@@ -798,6 +842,11 @@ SELECT EXISTS (
 | 5 | Не доверять названиям таблиц — сверяться с schema.sql | INC-006 | INC-006 |
 | 6 | Trailing newline `\n` в конце файла обязательна | INC-005 | INC-005 баг #6 |
 | 7 | `array_remove` а не `DELETE` для массивных полей | INC-005 | INC-005 баг #1 |
+| 8 | `IN (SELECT ... LIMIT)` в UPDATE → квадратичный SubPlan; паттерн CTE + UPDATE FROM | INC-007 | INC-007 |
+| 9 | Батч-цикл без изменения критерия выборки → бесконечный цикл; keyset id > lastId | INC-007 | INC-007 |
+| 10 | «Ровно statement_timeout» у эндпоинта = зависший IO, не медленный план; смотреть wait_event | INC-007 | INC-007 |
+| 11 | `zero_damaged_pages=on` — обнуление только в памяти, на диск не пишется | INC-007 | INC-007 |
+| 12 | AIO/io_uring на mainline-ядре: io worker spin; effective_io_concurrency=0 не отключает io_uring | INC-007 | INC-007 |
 
 ---
 

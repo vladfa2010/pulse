@@ -39,6 +39,18 @@ services:
       postgres -c shared_buffers=384MB -c effective_cache_size=1792MB
       -c work_mem=4MB -c maintenance_work_mem=128MB -c max_connections=50
       -c effective_io_concurrency=0 -c maintenance_io_concurrency=0
+      -c log_min_duration_statement=1000
+      -c shared_preload_libraries=pg_stat_statements
+    # ТЗ-150 задача 6: slow log (log_min_duration_statement=1000) — первичный
+    # детектор запросов типа SubPlan-спина (укладываются в statement_timeout,
+    # но видны в логе). pg_stat_statements — агрегатная статистика по всем
+    # запросам (расширение создаётся в weekly-integrity.sh). Ротация json-лога
+    # docker'а — иначе slow log на слабом диске станет сам риском.
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U pulse_user -d pulse"]
       interval: 10s

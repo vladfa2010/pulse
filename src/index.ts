@@ -66,7 +66,7 @@ import { bootstrapStorage } from './services/storage/driver'; // ТЗ-100 v15: L
 import { startVirusScanSweeper } from './services/education/virusScan'; // ТЗ-102 v2: sweeper перескана pending_scan
 import { mediaGuard } from './services/storage/media';       // ТЗ-100 v15: отдача файлов /media
 import { apiLimiter, authLimiter, webhookLimiter, forgotPasswordLimiter, passwordResetFlowLimiter, promoValidateLimiter, adminLimiter } from './middleware/rateLimit';
-import { startCron, startHeatmapFreezeCron, startClusteringCron, startTopicsNamingCron, startEducationMatchCron } from './services/cron';   // startCron (RSS) отключен (TZ_REMOVE_DUPLICATE_RSS_CRON); heatmap freeze — TZ-49; clustering — ТЗ-92 (флаг CLUSTERING_ENABLED); topics naming — ТЗ-115 (флаг TOPICS_ENABLED); education match catch-up — ТЗ-103 (флаг EDUCATION_MATCH_ENABLED)
+import { startCron, startHeatmapFreezeCron, startClusteringCron, startTopicsNamingCron, startEducationMatchCron, startAnalyzeNewsCron } from './services/cron';   // startCron (RSS) отключен (TZ_REMOVE_DUPLICATE_RSS_CRON); heatmap freeze — TZ-49; clustering — ТЗ-92 (флаг CLUSTERING_ENABLED); topics naming — ТЗ-115 (флаг TOPICS_ENABLED); education match catch-up — ТЗ-103 (флаг EDUCATION_MATCH_ENABLED); analyze news — ТЗ-150 задача 7 (без флага)
 import { sendWeeklyReportForUser } from './services/reports'; // ← Еженедельные репорты (manual + API)
 import { startDigestCron, sendAllDigests, setDigestEnabled } from './services/digest'; // ← дайджест (каждый час) — через notification matrix
 import { startRadioCacheMaintenance } from './services/radioMp3CacheMaintenance'; // ТЗ-65: snapshot истории 60с + алерты 5м
@@ -4378,6 +4378,7 @@ async function start() {
       startClusteringCron({ isShuttingDown: () => shuttingDown }); // ТЗ-92: catch-up кластеризации (*/15) + сюжеты (ежечасно), флаг CLUSTERING_ENABLED
       startTopicsNamingCron({ isShuttingDown: () => shuttingDown }); // ТЗ-115: нейминг тем 04:10 МСК, флаг TOPICS_ENABLED
       startEducationMatchCron({ isShuttingDown: () => shuttingDown }); // ТЗ-103: catch-up мэтчинга курсов ежечасно, флаг EDUCATION_MATCH_ENABLED
+      startAnalyzeNewsCron({ isShuttingDown: () => shuttingDown }); // ТЗ-150 задача 7: ANALYZE news ежедневно 04:30 МСК
       startRadioCacheMaintenance({ isShuttingDown: () => shuttingDown }); // ТЗ-65: snapshot истории 60с + алерты 5м
     }
 

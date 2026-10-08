@@ -739,3 +739,29 @@ export function startEducationMatchCron(opts?: { isShuttingDown?: () => boolean 
   });
   console.log('[Cron] Education match catch-up scheduled hourly');
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ТЗ-150 задача 7 — ежедневный ANALYZE news
+// ═══════════════════════════════════════════════════════════════════════════
+// ТЗ-150 задача 7: ежедневный ANALYZE news (инцидент 2026-10-08 — устаревшая
+// статистика планировщика: n_live_tup 559 при сотнях тысяч строк). Только
+// ANALYZE, не VACUUM FULL. Задача лёгкая (AccessShareLock), distributed lock
+// не нужен — как у соседей, try/catch + cron_log. ANALYZE news без списка
+// колонок (полный) — валиден и в SQLite, и в PostgreSQL.
+
+export function startAnalyzeNewsCron(opts?: { isShuttingDown?: () => boolean }) {
+  cron.schedule('30 4 * * *', async () => {
+    if (opts?.isShuttingDown?.()) return;
+    const logId = await logCronStart('analyze_news');
+    try {
+      console.log('[Cron] Starting ANALYZE news at', new Date().toISOString());
+      await query('ANALYZE news');
+      console.log('[Cron] ANALYZE news done');
+      await logCronFinish(logId, 0, 0, 0, []);
+    } catch (err: any) {
+      console.error('[Cron] ANALYZE news failed:', err.message);
+      await logCronFinish(logId, 0, 0, 0, [err.message]);
+    }
+  }, { timezone: 'Europe/Moscow' });
+  console.log('[Cron] ANALYZE news scheduled daily at 04:30 Europe/Moscow');
+}
