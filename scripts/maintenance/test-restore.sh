@@ -102,6 +102,7 @@ log "бэкап: ${backup} ($(du -h "$backup" | cut -f1))"
 # --- 2. Изолированный контейнер -------------------------------------------------
 # Свой POSTGRES_PASSWORD=test — прод-секреты не нужны и не используются.
 docker run -d --name "$TEST_CONTAINER" \
+    --memory 512m --memory-swap 512m --cpus 1 \
     -e POSTGRES_USER=pulse_user \
     -e POSTGRES_PASSWORD=test \
     -e POSTGRES_DB=pulse \

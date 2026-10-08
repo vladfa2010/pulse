@@ -745,7 +745,8 @@ export function startEducationMatchCron(opts?: { isShuttingDown?: () => boolean 
 // ═══════════════════════════════════════════════════════════════════════════
 // ТЗ-150 задача 7: ежедневный ANALYZE news (инцидент 2026-10-08 — устаревшая
 // статистика планировщика: n_live_tup 559 при сотнях тысяч строк). Только
-// ANALYZE, не VACUUM FULL. Задача лёгкая (AccessShareLock), distributed lock
+// ANALYZE, не VACUUM FULL. Задача лёгкая (ShareUpdateExclusiveLock — читатели
+// и писатели не блокируются), distributed lock
 // не нужен — как у соседей, try/catch + cron_log. ANALYZE news без списка
 // колонок (полный) — валиден и в SQLite, и в PostgreSQL.
 
