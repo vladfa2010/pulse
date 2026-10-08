@@ -1129,36 +1129,48 @@ function sleep(ms: number): Promise<void> {
 /**
  * Wake up articles previously marked as 'no-tags' so the news processor
  * can re-check them against newly created/updated tags.
- * Batched UPDATE (5000 rows per batch, 200ms pause) to avoid a single
+ * Batched UPDATE (1000 rows per batch, 200ms pause) to avoid a single
  * long table lock / heavy I/O spike.
+ *
+ * Батчинг — keyset (id > lastId), НЕ «тот же LIMIT по кругу»: UPDATE не
+ * меняет sentiment_source, поэтому выборка «no-tags + пустые теги» после
+ * UPDATE НЕ исключает строки — цикл по одному LIMIT брал те же id снова
+ * и крутился бесконечно, полностью грузив CPU (инцидент 2026-10-08:
+ * один UPDATE висел ~1,5 ч на 88% CPU, сайт недоступен). Keyset гарантирует
+ * прогресс: каждый батч идёт строго за последним обработанным id.
  */
 export async function wakeUpNoTagsArticles(): Promise<number> {
   invalidateUserTagsCache();
   let total = 0;
-  let batch = -1;
+  let lastId: string | null = null; // uuid строкой; null = первый батч
   try {
-    while (batch !== 0) {
+    for (;;) {
       const result = await query(
-        `UPDATE news
-         SET needs_translation = TRUE
-         WHERE id IN (
+        `WITH pick AS (
            SELECT id FROM news
            WHERE sentiment_source = 'no-tags'
              AND (matched_tags IS NULL OR matched_tags = '{}')
+             AND ($2::uuid IS NULL OR id > $2::uuid)
            ORDER BY id
            LIMIT $1
          )
-         RETURNING id`,
-        [WAKEUP_BATCH_SIZE]
+         UPDATE news
+         SET needs_translation = TRUE
+         FROM pick
+         WHERE news.id = pick.id
+         RETURNING news.id`,
+        [WAKEUP_BATCH_SIZE, lastId]
       );
-      batch = result.rows.length;
+      const batch = result.rows.length;
       total += batch;
+      if (batch === 0) break;
+      lastId = result.rows[result.rows.length - 1].id;
       if (batch === WAKEUP_BATCH_SIZE) {
         await sleep(WAKEUP_BATCH_DELAY_MS);
       }
     }
     if (total > 0) {
-      console.log(`[TagManager] Woke up ${total} no-tags articles for re-check (batched)`);
+      console.log(`[TagManager] Woke up ${total} no-tags articles for re-check (batched, keyset)`);
     }
     return total;
   } catch (err: any) {
