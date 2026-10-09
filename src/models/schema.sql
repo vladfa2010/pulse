@@ -80,6 +80,10 @@ CREATE TABLE IF NOT EXISTS users (
   created_at      TIMESTAMP DEFAULT NOW()
 );
 
+-- ТЗ-157: уникальность username (case-insensitive) — свежие инсталляции
+-- получают индекс сразу; на существующих базах — миграция users_username_lower_unique_idx.
+CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower_idx ON users (LOWER(username));
+
 -- ============================================================
 -- 1a. user_logins — platform/device/country detection for analytics
 -- ============================================================

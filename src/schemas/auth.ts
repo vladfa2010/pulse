@@ -16,7 +16,7 @@ export const RegisterSchema = z.object({
     .email('Некорректный email'),
   username: z.string()
     .min(1, 'Имя пользователя обязательно')
-    .max(50, 'Максимум 50 символов'),
+    .max(30, 'Максимум 30 символов'),
   password: z.string()
     .min(8, 'Минимум 8 символов')
     .max(128, 'Максимум 128 символов'),

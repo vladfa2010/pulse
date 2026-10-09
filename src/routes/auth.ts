@@ -173,6 +173,17 @@ router.post('/register', validate(RegisterSchema), async (req, res) => {
       });
     }
 
+    // ─── Проверяем, не занят ли username (case-insensitive) ─────────────
+    // ТЗ-157: дубли имён раньше разрешались, теперь 409 USERNAME_EXISTS.
+    // Порядок проверок важен: email первым — фронт уходит в автологин-фолбэк.
+    const existingName = await query('SELECT id FROM users WHERE LOWER(username) = LOWER($1)', [username]);
+    if (existingName.rows.length > 0) {
+      return res.status(409).json({
+        error: 'Это имя уже занято — придумайте другое',
+        code: 'USERNAME_EXISTS'
+      });
+    }
+
     // ─── Хешируем пароль (bcrypt, 10 раундов) ───────────────────────────
     const passwordHash = await bcrypt.hash(password, 10);
     const userId = uuidv4();

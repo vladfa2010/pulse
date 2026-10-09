@@ -3766,6 +3766,28 @@ async function start() {
     { sql: `ALTER TABLE users ADD COLUMN IF NOT EXISTS timezone VARCHAR(50)`, name: 'users_timezone' },
     { sql: `ALTER TABLE users ADD COLUMN IF NOT EXISTS locale VARCHAR(10)`, name: 'users_locale' },
     { sql: `ALTER TABLE users ADD COLUMN IF NOT EXISTS cohort_date DATE`, name: 'users_cohort_date' },
+    // ТЗ-157: уникальность username (case-insensitive). Для PG проверка дублей
+    // и создание индекса — один атомарный блок: при дублях RAISE с перечнем,
+    // индекс не создаётся (миграция встанет с понятным сообщением в логе).
+    // Слияние дублей — отдельное решение владельца, этой миграцией не делается.
+    {
+      sql: USE_SQLITE
+        ? `CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower_idx ON users (LOWER(username))`
+        : `DO $$
+DECLARE
+  dupes TEXT;
+BEGIN
+  SELECT string_agg(u || ' (' || c || ' шт.)', ', ' ORDER BY c DESC) INTO dupes
+  FROM (SELECT LOWER(username) u, COUNT(*) c FROM users GROUP BY 1 HAVING COUNT(*) > 1) d;
+  IF dupes IS NOT NULL THEN
+    RAISE EXCEPTION 'TZ-157: в users есть дубли username: % — слейте дубли, затем перезапустите', dupes;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'users_username_lower_idx') THEN
+    CREATE UNIQUE INDEX users_username_lower_idx ON users (LOWER(username));
+  END IF;
+END $$`,
+      name: 'users_username_lower_unique_idx'
+    },
     { sql: `CREATE TABLE IF NOT EXISTS user_logins (id ${USE_SQLITE ? 'TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16))))' : 'UUID PRIMARY KEY DEFAULT uuid_generate_v4()'}, user_id ${USE_SQLITE ? 'TEXT' : 'UUID'} NOT NULL REFERENCES users(id) ON DELETE CASCADE, login_at TIMESTAMP DEFAULT ${_SQL_NOW}, ip_address VARCHAR(45), user_agent TEXT, platform VARCHAR(20), device_type VARCHAR(20), os VARCHAR(50), browser VARCHAR(50), country VARCHAR(2), created_at TIMESTAMP DEFAULT ${_SQL_NOW})`, name: 'user_logins' },
     { sql: `CREATE INDEX IF NOT EXISTS idx_user_logins_user_id ON user_logins(user_id)`, name: 'idx_user_logins_user_id' },
     { sql: `CREATE INDEX IF NOT EXISTS idx_user_logins_login_at ON user_logins(login_at DESC)`, name: 'idx_user_logins_login_at' },

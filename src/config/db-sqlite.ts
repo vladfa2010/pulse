@@ -205,6 +205,7 @@ export async function initSQLiteSchema(): Promise<void> {
     );
 
     CREATE INDEX IF NOT EXISTS idx_user_logins_user_id ON user_logins(user_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower_idx ON users (LOWER(username)); -- ТЗ-157
     CREATE INDEX IF NOT EXISTS idx_user_logins_login_at ON user_logins(login_at DESC);
     CREATE INDEX IF NOT EXISTS idx_user_logins_platform ON user_logins(platform);
     CREATE INDEX IF NOT EXISTS idx_user_logins_device_type ON user_logins(device_type);

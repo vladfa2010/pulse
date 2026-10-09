@@ -107,6 +107,19 @@ router.patch('/profile', authMiddleware, async (req: AuthRequest, res) => {
       return res.status(400).json({ error: 'Username must be 2-30 characters' });
     }
 
+    // ТЗ-157: уникальность имени в профиле (case-insensitive, без себя).
+    // Без этой проверки дубль упал бы на уникальном индексе с 500.
+    const nameTaken = await query(
+      'SELECT id FROM users WHERE LOWER(username) = LOWER($1) AND id <> $2',
+      [username, userId]
+    );
+    if (nameTaken.rows.length > 0) {
+      return res.status(409).json({
+        error: 'Это имя уже занято — придумайте другое',
+        code: 'USERNAME_EXISTS'
+      });
+    }
+
     await query(
       'UPDATE users SET username = $1 WHERE id = $2',
       [username, userId]
