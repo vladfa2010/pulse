@@ -37,6 +37,13 @@
   пути), платёжный контур курсов по `product_type='course'`
   (`activatePaymentIfNeeded`, webhook, `/status`, `/confirm`). Smoke:
   `scripts/smoke-lms-path-buy.js` (19 проверок).
+- ✅ **ТЗ-157** (идемпотентное создание урока, backend + frontend): миграция
+  `lms_v6_lesson_idempotency.sql` (`/migrate-lms-lesson-idempotency`, применена
+  на проде 2026-10-09) — частичный уникальный индекс `course_lessons_idem_key`
+  по `(course_id, idem_key)`, колонка `idem_key`, обработка дубля: POST возвращает
+  `already_created` + существующий урок вместо 500. Фронт шлёт стабильный ключ
+  из формы урока и показывает тост «Урок уже был добавлен (повторный запрос)».
+  Тест: `src/tests/lessonIdempotency.test.ts` (11 проверок).
 - ⏭ Дальше: ТЗ-100 Задача 4 («Мои курсы» в ЛК), затем ТЗ-105, ТЗ-104 по
   команде, ТЗ-107 последним.
 
@@ -246,8 +253,8 @@ Volume: `/opt/pulse/uploads:/app/uploads` (bind-mount — переживает r
 в git**. Дубль ключа `environment` в одном mapping-е compose отклоняет
 («mapping key already defined») — ключи объединять, а не добавлять второй блок.
 Прод-миграции LMS (`/migrate-lms`, `/migrate-lms-ugc`, `/migrate-lms-matching`,
-POST + `?secret=CRON_SECRET_KEY`) применяются вручную после первого деплоя
-схемы — автоматически не накатываются.
+`/migrate-lms-lesson-idempotency`, POST + `?secret=CRON_SECRET_KEY`) применяются
+вручную после первого деплоя схемы — автоматически не накатываются.
 
 ## Проверки
 

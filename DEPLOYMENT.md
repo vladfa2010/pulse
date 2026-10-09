@@ -825,17 +825,24 @@ docker compose restart backend                 # рестарт
 > его Caddyfile-блок руками: md5 → cp с бэкапом → `docker restart pulse-caddy`).
 
 > После выкатки с миграциями (новые таблицы) проверить, что они применены:
-> миграции LMS — вручную `POST /migrate-lms{,-ugc,-matching}?secret=CRON_SECRET_KEY`
+> миграции LMS — вручную `POST /migrate-lms{,-ugc,-matching,-lesson-idempotency}?secret=CRON_SECRET_KEY`
 > из контейнера (`docker exec pulse-backend node -e "fetch(...)“`),
 > см. `docs/education.md`; остальные накатываются при boot из schema.sql.
+>
+> ⚠️ Статус на 2026-10-10: миграция `lms_v6_lesson_idempotency.sql`
+> (ТЗ-157, частичный уникальный индекс `course_lessons_idem_key` против дублей
+> уроков) применена на проде через `/migrate-lms-lesson-idempotency`. Миграция
+> `users_username_lower_unique_idx` (уникальность username, ТЗ-157) НЕ применена:
+> в БД есть дубли username (test ×11, max ×2, …). Порядок: владелец чистит дубли
+> вручную → перезапуск backend-контейнера (миграция доезжает при boot).
 
 #### 3. Frontend — собирается НЕ на сервере (1 ГБ RAM не тянет сборку)
 
 ```bash
 cd pulse-frontend
-# 3.1. Пропатчить API URL на VPS-домен в 4 файлах (одной командой):
-sed -i '' 's/pulse-api-bsov\.onrender\.com/pulse.inside-trade.ru/g' \
-  src/lib/api.ts src/pages/DownloadPage.tsx src/hooks/useSseNews.ts src/components/SentimentChartCard.tsx
+# 3.1. (устарело ~2026-10) Патч API URL больше НЕ нужен: VPS-домен
+# захардкожен в git (src/lib/api.ts, DownloadPage.tsx). Проверка:
+grep -rn "pulse.inside-trade.ru/api" src/   # > 0, onrender-адресов нет
 # (.env.production уже содержит VITE_FRONTEND_URL=https://pulse.inside-trade.ru — проверить)
 
 # 3.2. Собрать и упаковать (COPYFILE_DISABLE убирает macOS-xattr из tar).
@@ -844,9 +851,8 @@ sed -i '' 's/pulse-api-bsov\.onrender\.com/pulse.inside-trade.ru/g' \
 # только инлайн здесь (файл .env под git, Render-контур флаг не должен видеть).
 VITE_TOPICS_ENABLED=true npm run build && COPYFILE_DISABLE=1 tar czf dist.tar.gz -C dist .
 
-# 3.3. ОТКАТИТЬ ПАТЧ ЛОКАЛЬНО — иначе Render-контур соберётся с VPS-доменом:
-git checkout -- src/lib/api.ts src/pages/DownloadPage.tsx src/hooks/useSseNews.ts src/components/SentimentChartCard.tsx
-git status --short   # должно быть пусто
+# 3.3. (устарело) Откат патча больше не нужен — патча нет, рабочее дерево чисто:
+git status --short   # должно быть пусто (только dist/ и dist.tar.gz — игнорируются)
 
 # 3.4. Залить (scp сохранит имя dist.tar.gz):
 .kimi/vps-scp.exp dist.tar.gz /opt/pulse/
@@ -967,8 +973,9 @@ df -h /                     # проверить
 - 1 vCPU / 1 ГБ RAM: для прода под нагрузкой апгрейдить до 2+ ГБ.
 - Диск 8,6 ГБ — впритык: БД ~300 МБ + образы Docker ~1 ГБ + бэкапы.
   При ENOSPC — см. «Если кончилось место на диске». Рекомендуется 20+ ГБ.
-- API_BASE фронта захардкожен в 4 файлах (`src/lib/api.ts`, `DownloadPage.tsx`,
-  `useSseNews.ts`, `SentimentChartCard.tsx`) — смена домена = правка + пересборка.
+- API_BASE фронта захардкожен в git на VPS-домен (`src/lib/api.ts`,
+  `DownloadPage.tsx`) — смена домена = правка + пересборка. Патч домена
+  при сборке (бывшие шаги 3.1/3.3) с ~2026-10 не нужен — домен в git.
 - Без боевых ключей молча отключены: LLM (перевод/сентимент/фактчек), Telegram,
   платежи (демо), пуши.
 
@@ -979,6 +986,13 @@ df -h /                     # проверить
 - **Email:** `vladfa@ya.ru`
 - **Password:** `!1234567890`
 - **URL:** https://pulse.inside-trade.ru
+
+**Техническая учётка пробника логина** (мониторинг incident-watch, ТЗ-150):
+- `vladfa@ya2.ru` / `!1234567890`, username `test2`, помечена в БД
+  `registration_source='monitoring-probe'`; TG-алерты «Вход» для неё подавлены,
+  следы проб стираются из `user_logins`/`users`. Креды в `/opt/pulse/.env`
+  (`LOGIN_PROBE_EMAIL`/`LOGIN_PROBE_PASSWORD`), проба раз в 5 минут.
+  Не использовать для ручных тестов без необходимости — следы удаляются.
 
 ---
 
