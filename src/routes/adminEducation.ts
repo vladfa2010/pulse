@@ -1337,25 +1337,66 @@ router.post('/courses/:id/lessons', h(async (req, res) => {
     `SELECT COALESCE(MAX(position), 0) AS mp FROM course_lessons WHERE course_id = $1`,
     [courseId],
   );
+
+  // ТЗ-157: идемпотентное создание — повтор с тем же ключом возвращает
+  // уже созданный урок (200 already_created), а не вторую строку
+  const idemKey = String(req.body?.idempotency_key || '').trim() || null;
+  if (idemKey) {
+    const dup = await query(
+      `SELECT id, position FROM course_lessons
+        WHERE course_id = $1 AND idempotency_key = $2`,
+      [courseId, idemKey],
+    );
+    if (dup.rows.length > 0) {
+      return res.status(200).json({
+        id: dup.rows[0].id,
+        position: dup.rows[0].position,
+        already_created: true,
+      });
+    }
+  }
+
   const id = crypto.randomUUID();
-  await query(
-    `INSERT INTO course_lessons
-       (id, course_id, position, title, kind, text_content, video_source,
-        video_embed_url, video_file_url, duration_min, is_free_preview, unlock_after_days, buttons)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
-    [
-      id, courseId, Number(maxPos.rows[0].mp) + 1, title,
-      payload.kind ?? 'text',
-      payload.text_content ?? null,
-      payload.video_source ?? null,
-      payload.video_embed_url ?? null,
-      null,
-      payload.duration_min ?? null,
-      payload.is_free_preview ?? false,
-      payload.unlock_after_days ?? 0,
-      JSON.stringify(payload.buttons ?? []),
-    ],
-  );
+  try {
+    await query(
+      `INSERT INTO course_lessons
+         (id, course_id, position, title, kind, text_content, video_source,
+          video_embed_url, video_file_url, duration_min, is_free_preview, unlock_after_days, buttons,
+          idempotency_key)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+      [
+        id, courseId, Number(maxPos.rows[0].mp) + 1, title,
+        payload.kind ?? 'text',
+        payload.text_content ?? null,
+        payload.video_source ?? null,
+        payload.video_embed_url ?? null,
+        null,
+        payload.duration_min ?? null,
+        payload.is_free_preview ?? false,
+        payload.unlock_after_days ?? 0,
+        JSON.stringify(payload.buttons ?? []),
+        idemKey,
+      ],
+    );
+  } catch (e: any) {
+    // ТЗ-157: гонка двух параллельных запросов с одним ключом — второй
+    // упал на уникальном индексе; отдаём существующий урок, а не 500
+    const isUnique = e?.code === '23505' || /UNIQUE constraint failed/i.test(e?.message || '');
+    if (isUnique && idemKey) {
+      const dup = await query(
+        `SELECT id, position FROM course_lessons WHERE course_id = $1 AND idempotency_key = $2`,
+        [courseId, idemKey],
+      );
+      if (dup.rows.length > 0) {
+        return res.status(200).json({
+          id: dup.rows[0].id,
+          position: dup.rows[0].position,
+          already_created: true,
+        });
+      }
+    }
+    throw e;
+  }
   invalidateEducationCache();
   logUserEvent(req.user!.userId, 'education.course_updated', { course_id: courseId, field: 'lessons', lesson_id: id });
   // ТЗ-103 Задача 1: новый урок меняет текст курса → пересчёт эмбеддинга

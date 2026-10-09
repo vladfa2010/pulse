@@ -63,9 +63,15 @@ CREATE TABLE IF NOT EXISTS course_lessons (
   duration_min  INTEGER,
   is_free_preview BOOLEAN NOT NULL DEFAULT FALSE,
   unlock_after_days INTEGER NOT NULL DEFAULT 0,
+  -- ТЗ-157: ключ идемпотентности создания (NULL у старых уроков)
+  idempotency_key TEXT,
   UNIQUE (course_id, position)
 );
 CREATE INDEX IF NOT EXISTS idx_lessons_course ON course_lessons(course_id, position);
+-- ТЗ-157: частичный уникальный индекс — повтор с тем же ключом не создаёт дубль
+CREATE UNIQUE INDEX IF NOT EXISTS course_lessons_idem_key
+  ON course_lessons (course_id, idempotency_key)
+  WHERE idempotency_key IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS lesson_tests (
   id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
