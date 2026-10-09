@@ -9,7 +9,8 @@
 #   1. Зависшие IO/IPC-запросы в PostgreSQL (>60 сек в active)
 #   2. io worker'ы postgres на >50% CPU (симптом зависшего io_uring)
 #   3. Свежие повреждения страниц в логе контейнера postgres
-#   4. p95 замер логина через curl (>5 сек или недоступность)
+#   4. Замер логина через curl, раз в 5 минут, техническая учётка из ENV
+#      (>5 сек или недоступность; следы проб стираются из статистики)
 # Плюс дедуплицированный алерт при падении инфраструктуры (docker/psql).
 #
 # Алерты: Telegram (TELEGRAM_BOT_TOKEN / TELEGRAM_ADMIN_CHAT_ID из /opt/pulse/.env),
@@ -110,17 +111,40 @@ if [ -n "$corrupt" ]; then
 fi
 log "check corrupt-pages: $(echo "$corrupt" | grep -c . 2>/dev/null || echo 0) строк"
 
-# --- Проверка 4: p95 замер логина ---------------------------------------------
+# --- Проверка 4: замер логина (раз в 5 минут, техническая учётка) --------------
+# Техническая учётка LOGIN_PROBE_EMAIL / LOGIN_PROBE_PASSWORD из /opt/pulse/.env
+# (должна существовать в users, registration_source='monitoring-probe').
+# Следы проб стираются из user_logins / users, чтобы не попадать в статистику.
 # curl-таймаут 35 сек: при зависании AIO логин отдаётся ровно за 30.1 сек (statement_timeout).
-login_time=$(curl -s -m 35 -o /dev/null -w '%{time_total}' -X POST "$LOGIN_URL" \
-    -H 'Content-Type: application/json' \
-    -d '{"email":"vladfa@ya.ru","password":"!1234567890"}' 2>/dev/null)
-curl_rc=$?
-if [ $curl_rc -ne 0 ] || [ -z "$login_time" ]; then
-    alert "login-slow" "login endpoint недоступен (curl rc=${curl_rc}, time=${login_time:-n/a})"
-elif awk -v t="$login_time" -v th="$LOGIN_THRESHOLD_SEC" 'BEGIN{exit !(t > th)}'; then
-    alert "login-slow" "логин занял ${login_time} сек (порог ${LOGIN_THRESHOLD_SEC} сек)"
+minute=$(date +%M | sed 's/^0//')
+if [ $(( minute % 5 )) -eq 0 ]; then
+  if [ -z "${LOGIN_PROBE_EMAIL:-}" ] || [ -z "${LOGIN_PROBE_PASSWORD:-}" ]; then
+    log "WARN: LOGIN_PROBE_EMAIL/LOGIN_PROBE_PASSWORD не заданы в /opt/pulse/.env, пробу логина пропускаю"
+  else
+    probe_uid=$($PSQL "SELECT id::text FROM users WHERE LOWER(email)=LOWER('${LOGIN_PROBE_EMAIL}')" 2>/dev/null)
+    prev_login=$($PSQL "SELECT COALESCE(last_login_at::text,'')" 2>/dev/null)
+    login_time=$(curl -s -m 35 -o /dev/null -w '%{time_total}' -X POST "$LOGIN_URL" \
+        -H 'Content-Type: application/json' \
+        -d "{\"email\":\"${LOGIN_PROBE_EMAIL}\",\"password\":\"${LOGIN_PROBE_PASSWORD}\"}" 2>/dev/null)
+    curl_rc=$?
+    if [ $curl_rc -ne 0 ] || [ -z "$login_time" ]; then
+        alert "login-slow" "login endpoint недоступен (curl rc=${curl_rc}, time=${login_time:-n/a})"
+    elif awk -v t="$login_time" -v th="$LOGIN_THRESHOLD_SEC" 'BEGIN{exit !(t > th)}'; then
+        alert "login-slow" "логин занял ${login_time} сек (порог ${LOGIN_THRESHOLD_SEC} сек)"
+    fi
+    log "check login: time=${login_time:-failed}s rc=${curl_rc}"
+    # Статистика логина пишется бэкендом в фоне ПОСЛЕ ответа — ждём и стираем след
+    sleep 5
+    if [ -n "${probe_uid}" ]; then
+        deleted=$($PSQL "WITH d AS (DELETE FROM user_logins WHERE user_id='${probe_uid}' RETURNING 1) SELECT count(*) FROM d" 2>/dev/null)
+        if [ -n "${deleted:-}" ] && [ "${deleted:-0}" -gt 0 ] 2>/dev/null; then
+            $PSQL "UPDATE users SET login_count = GREATEST(COALESCE(login_count,0) - ${deleted}, 0), last_login_at = NULLIF('${prev_login}', '')::timestamp WHERE id='${probe_uid}'" >/dev/null 2>&1
+            log "probe cleanup: удалено записей user_logins=${deleted}, login_count уменьшен"
+        fi
+    fi
+  fi
+else
+  log "check login: пропуск (не 5-я минута)"
 fi
-log "check login: time=${login_time:-failed}s rc=${curl_rc}"
 
 exit 0
