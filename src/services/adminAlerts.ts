@@ -51,12 +51,13 @@ interface UserMini {
   id: string;
   email: string;
   username: string;
+  registration_source?: string | null;
 }
 
 async function getUserMini(userId: string): Promise<UserMini | null> {
   try {
     const result = await query(
-      `SELECT id, email, username FROM users WHERE id = $1`,
+      `SELECT id, email, username, registration_source FROM users WHERE id = $1`,
       [userId]
     );
     if (result.rows.length === 0) return null;
@@ -238,6 +239,12 @@ export async function notifyAdmins(
     if (settingsResult.rows.length === 0) return;
 
     const user = userId ? await getUserMini(userId) : null;
+    // Технические учётки (пробы мониторинга, registration_source='monitoring-probe')
+    // не должны спамить админам — уведомления пропускаем полностью
+    if (user?.registration_source === 'monitoring-probe') {
+      console.log(`[AdminAlerts] skip alert for monitoring-probe user ${userId} (type=${eventType})`);
+      return;
+    }
     const text = formatAlert(eventType, user, { ...eventData, user_id: userId });
 
     for (const row of settingsResult.rows) {
