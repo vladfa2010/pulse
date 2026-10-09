@@ -1208,8 +1208,8 @@ RESEND_API_KEY=re_xxxxxxxx
 **Инцидент:** PostgreSQL 18 на ядре хоста 7.0 зависал в AIO (io_uring) — IO worker'ы
 крутились на 100% CPU, запросы висли на `AioIoCompletion` до statement_timeout
 (логин отдавался через 30.1 с с пустыми тегами), плюс физическое повреждение 17 страниц
-heap таблицы `news` (контрольные суммы). Восстановлено VACUUM FULL, потеряно ~120 старых
-новостей. Подробный postmortem — `docs/incident-2026-10-08-corrupt-news-aio.md`.
+heap таблицы `news` (контрольные суммы). Восстановлено VACUUM FULL, потеряно 129 старых
+новостей (список URL — `docs/incident-2026-10-08-lost-news.md`). Подробный postmortem — `docs/incident-2026-10-08-corrupt-news-aio.md`.
 
 Превентивные скрипты (bash, запуск root'ом с хоста, алерты в Telegram через
 `TELEGRAM_BOT_TOKEN` / `TELEGRAM_ADMIN_CHAT_ID` из `/opt/pulse/.env` — уже есть):
