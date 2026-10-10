@@ -65,7 +65,9 @@ async function backfillEmbeddings(): Promise<void> {
       FROM news
       WHERE embedding IS NULL AND title_ru IS NOT NULL
       ${modFilter}
-      ORDER BY published_at
+      -- ТЗ-162: свежие первыми — если прогон прервём, покрыт самый свежий
+      -- срез (критичен для поиска, ТЗ-161); хвост допиливается следующим запуском.
+      ORDER BY published_at DESC
       LIMIT ${BATCH_SIZE}
     `);
     const rows = res.rows;
