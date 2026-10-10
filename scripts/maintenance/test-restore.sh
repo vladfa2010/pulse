@@ -4,6 +4,9 @@
 #
 # Запуск: разово вручную и ежемесячно по cron (1-е число, 03:00 МСК):
 #   0 3 1 * * /opt/pulse/pulse/scripts/maintenance/test-restore.sh
+# Квартальная проверка внешней копии (ТЗ-152 задача 5, вручную):
+#   S3_CHECK=1 bash scripts/maintenance/test-restore.sh
+#   — скачивает последний дамп из S3, сверяет sha256 и гонит restore с него.
 #
 # ВАЖНО: запускать вне пика нагрузки. zcat/restore нельзя обернуть в nice/ionice
 # напрямую (пайп через docker exec), поэтому при необходимости запускайте вручную:
@@ -73,6 +76,7 @@ cleanup() {
     log "cleanup: удаляю контейнер ${TEST_CONTAINER} и volume ${TEST_VOLUME}"
     docker rm -f "$TEST_CONTAINER" >/dev/null 2>&1 || true
     docker volume rm "$TEST_VOLUME" >/dev/null 2>&1 || true
+    [ -n "$S3_TMP" ] && rm -rf "$S3_TMP"
 }
 trap cleanup EXIT
 
@@ -89,11 +93,47 @@ if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "pulse-postgres"; th
 fi
 
 # --- 1. Бэкап для restore -------------------------------------------------------
-# По умолчанию — последний nightly. BACKUP_FILE=<путь> — переопределение
+# По умолчанию — последний nightly из BACKUP_DIR. BACKUP_FILE=<путь> — переопределение
 # (например, для диффа потерянных новостей инцидента 2026-10-08 нужен
 # бэкап ДО инцидента: BACKUP_FILE=/opt/pulse/backups/nightly-2026-10-08.sql.gz).
-backup="${BACKUP_FILE:-}"
+#
+# S3_CHECK=1 (ТЗ-152 задача 5, квартально вручную) — скачать последний дамп из S3,
+# сверить sha256 и гнать restore-сценарий уже с него: так проверяется сама
+# внешняя копия, а не локальный файл.
+S3_TMP=""
+if [ "${S3_CHECK:-0}" = "1" ]; then
+    S3_ENDPOINT="https://s3.ru1.storage.beget.cloud"
+    S3_BUCKET="s3://0fa1c3a824ae-pulses3/pulse"
+    S3_TMP=$(mktemp -d /tmp/s3-restore-check.XXXXXX)
+    LATEST_REMOTE=$(aws --endpoint-url "$S3_ENDPOINT" --profile pulse-s3 \
+        s3 ls "$S3_BUCKET/" | awk '/nightly-.*\.sql\.gz$/ {print $4}' | sort | tail -1)
+    if [ -z "$LATEST_REMOTE" ]; then
+        rm -rf "$S3_TMP"
+        alert "S3_CHECK: nightly-*.sql.gz не найден в ${S3_BUCKET}"
+        exit 1
+    fi
+    aws --endpoint-url "$S3_ENDPOINT" --profile pulse-s3 \
+        s3 cp "$S3_BUCKET/$LATEST_REMOTE" "$S3_TMP/" >/dev/null
+    aws --endpoint-url "$S3_ENDPOINT" --profile pulse-s3 \
+        s3 cp "$S3_BUCKET/$LATEST_REMOTE.sha256" "$S3_TMP/" >/dev/null 2>&1 || true
+    # Сверяем по хэшу: в sidecar путь абсолютный (с хоста), sha256sum -c не подходит
+    EXPECTED=$(awk '{print $1}' "$S3_TMP/$LATEST_REMOTE.sha256" 2>/dev/null || echo "")
+    ACTUAL=$(sha256sum "$S3_TMP/$LATEST_REMOTE" | awk '{print $1}')
+    if [ -z "$EXPECTED" ] || [ "$EXPECTED" != "$ACTUAL" ]; then
+        rm -rf "$S3_TMP"
+        alert "S3_CHECK: sha256 не сошёлся для $LATEST_REMOTE (ожидалось ${EXPECTED:-sidecar-отсутствует})"
+        exit 1
+    fi
+    log "S3_CHECK: скачан $LATEST_REMOTE из S3, sha256 OK"
+    backup="$S3_TMP/$LATEST_REMOTE"
+else
+    backup="${BACKUP_FILE:-}"
+fi
+# Дефолт: последний локальный nightly (резолвим только если не задан и не из S3)
 if [ -z "$backup" ]; then
+    backup=$(ls -t "$BACKUP_DIR"/nightly-*.sql.gz 2>/dev/null | head -1)
+fi
+if [ -z "$backup" ] || [ ! -f "$backup" ]; then
     alert "бэкапы не найдены в ${BACKUP_DIR} (nightly-*.sql.gz)"
     exit 1
 fi
