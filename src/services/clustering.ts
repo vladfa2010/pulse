@@ -50,8 +50,8 @@ interface NewsRow {
   id: string;
   title_ru: string | null;
   summary_ru: string | null;
-  title_original?: string | null;
-  summary_original?: string | null;
+  title_original: string | null;
+  summary_original: string | null;
   source: string | null;
   published_at: string;
 }
