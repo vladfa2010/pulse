@@ -51,9 +51,9 @@ else
   hr "2. Пропущено (запустите с --explain вне пика)"
 fi
 
-hr "3. TEI: латентность одиночного эмбеддинга (5 прогонов)"
+hr "3. TEI: латентность одиночного эмбеддинга (5 прогонов, из backend — та же сеть, что прод)"
 for i in 1 2 3 4 5; do
-  curl -s -o /dev/null -w "прогон $i: %{time_total} s\n" \
+  docker exec pulse-backend curl -s -o /dev/null -w "прогон $i: %{time_total} s\n" \
     -X POST http://embeddings:80/embed \
     -H 'Content-Type: application/json' \
     -d '{"inputs":["что с пошлинами Трампа и ростом цен на нефть"]}'
