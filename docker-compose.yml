@@ -128,6 +128,13 @@ services:
       - /opt/pulse/uploads:/app/uploads
       # ТЗ-102 v2 (S4): unix-сокет clamd (общий volume с clamav, ro)
       - clamav_run:/run/clamav:ro
+    # 2026-10-10: хостер блокирует часть IP-подсетей Telegram. DNS отдаёт
+    # api.telegram.org → 149.154.166.110 (TCP 443 FAIL на сетевом уровне),
+    # поэтому TG-алерты молча не уходят. Пиним рабочий IPv4 — контейнер
+    # не видит /etc/hosts хоста, фикс только через extra_hosts.
+    # Если IP отомрёт: dig +short A api.telegram.org, найти живой, обновить тут.
+    extra_hosts:
+      - "api.telegram.org:149.154.167.220"
     deploy:
       resources:
         limits:
