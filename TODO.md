@@ -5,6 +5,14 @@
 
 ## ✅ РЕШЁННЫЕ (c документацией)
 
+- **[Бэкапы — внешняя копия в S3 (ТЗ-152)]** — DONE 2026-10-10
+  - Ночной дамп + файлы + `.env` выгружаются в S3-бакет хостера
+    (`s3://0fa1c3a824ae-pulses3/pulse/`), cron `15 3 * * *`, lifecycle 30 дней.
+  - Скрипты: `scripts/backup/backup-nightly.sh` (в git + sha256),
+    `scripts/backup/s3-upload-backup.sh`; квартальная проверка —
+    `S3_CHECK=1 bash scripts/maintenance/test-restore.sh`.
+  - См. DEPLOYMENT.md, раздел «Внешняя копия в S3». Коммит `876bf8c`.
+
 - **[BUG: Reasoning pipeline пустой → 3 дня дебага](BUGFIX-reasoning.md)** — FIXED 2026-06-01
   - Root cause: `raw.replace(/\n/g, '\\n')` ломал валидный JSON от LLM
   - Фикс: защита `\\` → замена newline → восстановление `\\`

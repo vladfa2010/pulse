@@ -389,12 +389,28 @@ docker-compose up   # PostgreSQL 16 + Redis 7 + Backend
   на Render после этой даты на VPS не попали. Репликации нет (Render managed PG
   не даёт прав на logical replication) — только повторные дампы.
 - **Бэкапы автоматические, ночные** (настроены 2026-10-01): cron `30 2 * * *`
-  запускает `/opt/pulse/backup-nightly.sh` → `/opt/pulse/backups/`:
-  `nightly-*.sql.gz` (plain-SQL дамп БД, ~400 МБ), `files-*.tar.gz`
-  (uploads + music + sfx, ~14 МБ). Ротация: 3 daily + 2 weekly (копия
-  по понедельникам). Лог: `/opt/pulse/logs/backup.log`. Перед любыми
-  рискованными операциями всё равно делать ручной дамп (§1 ниже) —
-  ночной бэкап может быть до 24 ч старше данных.
+  запускает `/opt/pulse/backup-nightly.sh` (симлинк на закоммиченный
+  `scripts/backup/backup-nightly.sh`; старая копия — `backup-nightly.sh.bak-20261010`)
+  → `/opt/pulse/backups/`: `nightly-*.sql.gz` (plain-SQL дамп БД, ~430 МБ,
+  + `.sha256`), `files-*.tar.gz` (uploads + music + sfx, ~44 МБ, + `.sha256`).
+  Ротация: 3 daily + 2 weekly (копия по понедельникам). Лог:
+  `/opt/pulse/logs/backup.log`. Перед любыми рискованными операциями всё равно
+  делать ручной дамп (§1 ниже) — ночной бэкап может быть до 24 ч старше данных.
+- **Внешняя копия в S3 (ТЗ-152, настроено 2026-10-10).** Каждую ночь после
+  дампа cron `15 3 * * *` выгружает свежий `nightly-*.sql.gz` (+`.sha256`),
+  `files-*.tar.gz` (+`.sha256`) и `/opt/pulse/.env` (как версионируемый
+  `env-backup-<дата>`, держим последние 5) в бакет хостера
+  `s3://0fa1c3a824ae-pulses3/pulse/` (endpoint `https://s3.ru1.storage.beget.cloud`,
+  AWS-совместимое API, path-style). Скрипт: `scripts/backup/s3-upload-backup.sh`,
+  лог: `/opt/pulse/logs/s3-upload.log`. Креды — только в `~/.aws/credentials`
+  (профиль `pulse-s3`, chmod 600), в скриптах и git ключей нет. Ротация объектов
+  старше 30 дней — lifecycle-правило `pulse-30d-retention` на бакете (задано
+  через `aws s3api put-bucket-lifecycle-configuration`). Telegram-маячок в
+  скрипте выключен до закрытия nit по кредам (тот же nit, что у incident-watch).
+  **Регламент:** раз в квартал вручную `S3_CHECK=1 bash scripts/maintenance/test-restore.sh`
+  — скачивает последний дамп из S3, сверяет sha256 и гоняет restore-сценарий
+  с него; даты прогонов фиксировать здесь: первый прогон — 2026-10-10 (хэш
+  дампа в S3 сверен с локальным, совпал).
 - **root по паролю** — перевести на SSH-ключи, отключить password auth (задача открыта).
 
 ### ТЗ-91 (2026-09-10..11): семантические эмбеддинги новостей — фактическое состояние
@@ -1242,9 +1258,14 @@ heap таблицы `news` (контрольные суммы). Восстано
 * * * * * /opt/pulse/pulse/scripts/health/incident-watch.sh
 0 4 * * 0 /opt/pulse/pulse/scripts/maintenance/weekly-integrity.sh
 0 3 1 * * /opt/pulse/pulse/scripts/maintenance/test-restore.sh
+15 3 * * * /opt/pulse/pulse/scripts/backup/s3-upload-backup.sh
 ```
 
 (путь к клону репо на сервере — `/opt/pulse/pulse`)
+
+**ТЗ-152:** внешняя копия бэкапов в S3 — cron-строка `15 3 * * *` выше, состав
+и регламент квартальной проверки — в разделе «Внешняя копия в S3» выше
+(в блоке про ночные бэкапы).
 
 ### Скрипты и логи
 
