@@ -739,6 +739,14 @@ docker compose restart backend                 # рестарт
 > переменные (`CRON_SECRET_KEY`, `ENCRYPTION_KEY`, Firebase и пр.) → crash-loop.
 > Канонические скрипты обновления на сервере:
 > `/opt/pulse/update-backend.sh`, `/opt/pulse/update-frontend.sh`.
+
+> **Автоподъём после ребута хоста (проверено 2026-10-10):** политики
+> `restart: unless-stopped` у postgres/backend/embeddings/caddy уже в compose
+> (`topics-worker` — пакетный воркер, `restart: "no"` осознанно). Системный
+> уровень: `systemctl is-enabled docker` → **enabled** — Docker стартует при
+> загрузке хоста и сам поднимает контейнеры, стек оживает без ручного
+> `docker compose up` (~1–2 мин). Проверка фактического политик:
+> `docker inspect -f '{{.Name}} {{.HostConfig.RestartPolicy.Name}}' $(docker ps -aq)`.
 > Правило, остающееся в силе: **правки compose на сервере — только через git**
 > (коммит + push + pull), ручные патчи запрещены. То же с 2026-10-04 для
 > **Caddyfile** (`deploy/Caddyfile` в репозитории): update-backend.sh сам
