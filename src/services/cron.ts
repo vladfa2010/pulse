@@ -526,7 +526,7 @@ export function startClusteringCron(opts?: { isShuttingDown?: () => boolean }) {
       const res = await query(
         `SELECT id FROM news
          WHERE embedding IS NULL
-           AND title_ru IS NOT NULL
+           AND (title_ru IS NOT NULL OR title_original IS NOT NULL)
            AND published_at > NOW() - INTERVAL '30 days'
          ORDER BY published_at ASC
          LIMIT $1`,

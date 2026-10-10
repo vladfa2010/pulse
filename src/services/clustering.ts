@@ -50,6 +50,8 @@ interface NewsRow {
   id: string;
   title_ru: string | null;
   summary_ru: string | null;
+  title_original?: string | null;
+  summary_original?: string | null;
   source: string | null;
   published_at: string;
 }
@@ -233,10 +235,10 @@ export async function embedAndClusterBatch(newsIds: string[]): Promise<void> {
   if (!Array.isArray(newsIds) || newsIds.length === 0) return;
 
   const res = await query(
-    `SELECT id, title_ru, summary_ru, source, published_at
+    `SELECT id, title_ru, summary_ru, title_original, summary_original, source, published_at
      FROM news
      WHERE id = ANY($1::uuid[])
-       AND title_ru IS NOT NULL
+       AND (title_ru IS NOT NULL OR title_original IS NOT NULL)
        AND embedding IS NULL`,
     [newsIds]
   );
@@ -244,11 +246,13 @@ export async function embedAndClusterBatch(newsIds: string[]): Promise<void> {
   if (newsList.length === 0) return;
 
   // 1–2. Эмбеддинг батчами ≤ 32 и запись векторов
+  // ТЗ-162: непереведённые новости эмбеддятся по оригинальным полям
+  // (title_ru IS NULL, title_original заполнен).
   const vectors = new Map<string, number[]>();
   for (let i = 0; i < newsList.length; i += EMBEDDING_MAX_BATCH) {
     const slice = newsList.slice(i, i + EMBEDDING_MAX_BATCH);
     const batchVectors = await embedBatch(
-      slice.map((n) => embeddingText(n.title_ru, n.summary_ru))
+      slice.map((n) => embeddingText(n.title_ru || n.title_original, n.summary_ru || n.summary_original))
     );
     slice.forEach((n, k) => vectors.set(n.id, batchVectors[k]));
   }

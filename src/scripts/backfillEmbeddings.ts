@@ -61,9 +61,10 @@ async function backfillEmbeddings(): Promise<void> {
 
   for (;;) {
     const res = await query(`
-      SELECT id, title_ru, summary_ru
+      SELECT id, title_ru, summary_ru, title_original, summary_original
       FROM news
-      WHERE embedding IS NULL AND title_ru IS NOT NULL
+      WHERE embedding IS NULL
+        AND (title_ru IS NOT NULL OR title_original IS NOT NULL)
       ${modFilter}
       -- ТЗ-162: свежие первыми — если прогон прервём, покрыт самый свежий
       -- срез (критичен для поиска, ТЗ-161); хвост допиливается следующим запуском.
@@ -75,8 +76,11 @@ async function backfillEmbeddings(): Promise<void> {
 
     // Строки, у которых текст пуст после обрезки, — не эмбеддятся никогда:
     // отправляем в skipped, иначе они будут бесконечно попадать в выборку.
-    const embeddable = rows.filter((r: any) => embeddingText(r.title_ru, r.summary_ru).length > 0);
-    const emptyIds = rows.filter((r: any) => embeddingText(r.title_ru, r.summary_ru).length === 0).map((r: any) => String(r.id));
+    // ТЗ-162: фолбэк на оригинальные поля — у непереведённых новостей
+    // (title_ru IS NULL, title_original заполнен) вектор считаем по оригиналу.
+    const textOf = (r: any) => embeddingText(r.title_ru || r.title_original, r.summary_ru || r.summary_original);
+    const embeddable = rows.filter((r: any) => textOf(r).length > 0);
+    const emptyIds = rows.filter((r: any) => textOf(r).length === 0).map((r: any) => String(r.id));
     if (emptyIds.length > 0) {
       skipped.push({ ids: emptyIds, reason: 'empty_text' });
       console.warn(`[BackfillEmb] Пропущено ${emptyIds.length} строк с пустым текстом (помечены skipped)`);
@@ -91,7 +95,7 @@ async function backfillEmbeddings(): Promise<void> {
       continue;
     }
 
-    const texts = embeddable.map((r: any) => embeddingText(r.title_ru, r.summary_ru));
+    const texts = embeddable.map(textOf);
 
     let vectors: number[][];
     try {
@@ -131,7 +135,7 @@ async function backfillEmbeddings(): Promise<void> {
 
     if (processed % PROGRESS_EVERY < BATCH_SIZE) {
       const remaining = await query(
-        `SELECT count(*)::int AS c FROM news WHERE embedding IS NULL AND title_ru IS NOT NULL ${modFilter}`
+        `SELECT count(*)::int AS c FROM news WHERE embedding IS NULL AND (title_ru IS NOT NULL OR title_original IS NOT NULL) ${modFilter}`
       );
       const elapsedMin = (Date.now() - t0) / 60000;
       const rate = processed / Math.max(elapsedMin, 0.01);
