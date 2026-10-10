@@ -29,10 +29,15 @@ import { query } from '../config/db';
 import { popularTagsCached } from '../utils/tagCache';
 import { computePopularTags } from '../services/popularTags';
 import { markAllNewsAsRead, timeFilterSql } from '../services/newsReads';
+import { embedBatch } from '../services/embeddings';
 import { nowSql } from '../utils/nowSql';
 
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
+
+// ТЗ-161: интерактивный семантический поиск не ждёт батч-крон TEI
+// (внутренний таймаут embedBatch — 600 с). 5 с — фолбэк на exact-only.
+const SEMANTIC_SEARCH_TIMEOUT_MS = 5000;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // GET /api/news/global — ПУБЛИЧНАЯ общая лента (все новости, без auth)
@@ -467,6 +472,26 @@ router.get('/search', authMiddleware, async (req: AuthRequest, res) => {
       articles = result.rows;
     }
 
+    // ТЗ-161: точные совпадения всегда первыми и всегда помечены.
+    for (const a of articles) a.match_type = 'exact';
+
+    // ─── ТЗ-161: семантическая часть гибридного поиска (PG-only) ────────
+    // SQLite-режим (демо/CI): семантика недоступна — векторы живут только
+    // в PostgreSQL; exact-only — осознанный фолбэк, поиск не падает.
+    if (!USE_SQLITE && q.trim().length >= 4 && articles.length < limit) {
+      try {
+        const semantic = await semanticNewsSearch(q, articles, limit - articles.length);
+        for (const { article, similarity } of semantic) {
+          article.match_type = 'semantic';
+          article.similarity = similarity;
+          articles.push(article);
+        }
+      } catch (err: any) {
+        // ТЗ-161: недоступность/таймаут TEI — молчаливый фолбэк на exact-only.
+        console.warn('[News] Semantic search unavailable, exact-only:', err?.message);
+      }
+    }
+
     res.json({
       articles,
       total,
@@ -478,6 +503,91 @@ router.get('/search', authMiddleware, async (req: AuthRequest, res) => {
     res.status(500).json({ error: 'Failed to search news', details: err.message });
   }
 });
+
+/**
+ * ТЗ-161: семантический топ-k по эмбеддингу запроса.
+ * Без дат-фильтра: покрытие векторами за 90 дней — всего 20,5% (ТЗ-160),
+ * дат-окно сделало бы поиск слепым к свежаку. Свежесть учитывается мягким
+ * бустом скоринга.
+ */
+async function semanticNewsSearch(
+  q: string,
+  exactArticles: any[],
+  need: number,
+): Promise<Array<{ article: any; similarity: number }>> {
+  if (need <= 0) return [];
+
+  const vectors = await withTimeout(embedBatch([q]), SEMANTIC_SEARCH_TIMEOUT_MS);
+  const vecLiteral = vectorLiteral(vectors[0]);
+
+  const candRes = await query(
+    `SELECT id, 1 - (embedding <=> $1::vector) AS sim
+     FROM news
+     WHERE embedding IS NOT NULL
+     ORDER BY embedding <=> $1::vector
+     LIMIT 50`,
+    [vecLiteral],
+  );
+
+  const exactIds = new Set(exactArticles.map((a) => a.id));
+  const candidates = candRes.rows.filter((r: any) => !exactIds.has(r.id));
+  if (candidates.length === 0) return [];
+
+  // ТЗ-99: широкие колонки — тот же набор, что в ILIKE-ветке PG,
+  // включая каскадные поля через CTE ranked.
+  const wideRes = await query(
+    `WITH ranked AS (
+       SELECT id, ROW_NUMBER() OVER (PARTITION BY cluster_id ORDER BY published_at)::int AS cluster_position
+       FROM news
+       WHERE cluster_id IS NOT NULL
+     )
+     SELECT n.id, n.title_ru, n.title_original, n.summary_ru, n.summary_original, n.source, n.url, n.published_at, n.sentiment, n.sentiment_score, n.sentiment_reasoning, n.sentiment_source, n.is_political, n.article_type, n.matched_tags, n.tag_impact, n.source_count, n.all_sources, n.fact_check_status, n.fact_check_result, n.slug,
+            n.cluster_id,
+            c.size AS cluster_size,
+            c.last_seen_at AS cluster_last_seen_at,
+            c.last_seen_at > now() - interval '2 hours' AS cluster_growing,
+            r.cluster_position,
+            CASE WHEN n.cluster_id IS NULL AND n.embedding IS NULL THEN TRUE ELSE FALSE END AS cluster_pending
+     FROM news n
+     LEFT JOIN clusters c ON c.id = n.cluster_id
+     LEFT JOIN ranked r ON r.id = n.id
+     WHERE n.id = ANY($1::uuid[])`,
+    [candidates.map((c: any) => c.id)],
+  );
+
+  const simById = new Map(candidates.map((c: any) => [c.id, Number(c.sim)]));
+  const nowMs = Date.now();
+  const DAY_MS = 24 * 60 * 60 * 1000;
+
+  return wideRes.rows
+    .map((article: any) => {
+      const sim = simById.get(article.id) ?? 0;
+      const ageMs = nowMs - new Date(article.published_at).getTime();
+      // ТЗ-161: буст свежести — стартовые константы v1,
+      // подбираются по реальному использованию.
+      const boost = ageMs <= 14 * DAY_MS ? 0.10 : ageMs <= 90 * DAY_MS ? 0.05 : 0;
+      return { article, similarity: sim, score: sim + boost };
+    })
+    .sort((a, b) => b.score - a.score)
+    .slice(0, need)
+    .map(({ article, similarity }) => ({ article, similarity: Math.round(similarity * 10000) / 10000 }));
+}
+
+// ТЗ-161: гонка с таймаутом — внутренний fetch embedBatch продолжит фоном,
+// результат отбрасывается, роут отдаёт exact-only.
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`semantic embed timeout ${ms}ms`)), ms);
+    p.then(
+      (v) => { clearTimeout(t); resolve(v); },
+      (e) => { clearTimeout(t); reject(e); },
+    );
+  });
+}
+
+function vectorLiteral(v: number[]): string {
+  return `[${v.join(',')}]`;
+}
 
 // Escape LIKE wildcards to treat user input as literal text
 function escapeLikePattern(q: string): string {

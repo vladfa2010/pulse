@@ -311,9 +311,29 @@ npm start       # localhost:3000
 ```
 
 ### Docker (локально)
+
+Локальный стек — тот же `docker-compose.yml`, что и на VPS: **PostgreSQL 18 + pgvector**,
+**embeddings (TEI, Qwen3-Embedding-0.6B)** и **backend** (caddy/clamav — опционально).
+SQLite-режим (`USE_SQLITE=true`) — фолбэк для изолированных демо/CI: семантический поиск
+(ТЗ-161) и каскады работают только на PostgreSQL.
+
 ```bash
-docker-compose up   # PostgreSQL 16 + Redis 7 + Backend
+# Минимум для ленты, поиска, кластеризации и курсов:
+docker compose up -d postgres embeddings backend
+
+# USE_SQLITE=false в .env (см. .env.example), backend ходит в PG через DATABASE_URL/DB_*.
 ```
+
+Миграции на пустой базе — вручную (не через раннер):
+
+```bash
+# Эмбеддинги (ТЗ-91) + страж HNSW-индекса (ТЗ-161, источник правды для новых окружений):
+docker exec -i pulse-postgres psql -U pulse_user -d pulse -f - < src/migrations/news_embeddings_v1.sql
+docker exec -i pulse-postgres psql -U pulse_user -d pulse -f - < src/migrations/news_embedding_hnsw.sql
+```
+
+В проде `news_embedding_hnsw` уже существует (построен вручную по ТЗ-91 задача 6,
+подтверждено разведкой ТЗ-160) — страж-миграция там no-op.
 
 ---
 
