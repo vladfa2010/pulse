@@ -51,9 +51,13 @@
 		reverse_proxy backend:3001
 	}
 
+	# ТЗ-140: try_files с {path}/index.html — build-time пререндер курсов кладёт
+	# карточки в dist/education/<slug>/index.html; без {path}/index.html Caddy
+	# сваливал директории в SPA-fallback /index.html и отдавал шелл вместо
+	# пререндеренной страницы (проверено 2026-10-12).
 	handle {
 		header Cache-Control "no-cache"
-		try_files {path} /index.html
+		try_files {path} {path}/index.html /index.html
 		file_server
 	}
 }
