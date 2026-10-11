@@ -189,10 +189,6 @@ async function main() {
     positions.length === 3 && positions.every((p: number, i: number) => p === before + i + 1)
       ? ok(`positions = max+1..max+3 (${positions.join(',')})`)
       : bad('positions', positions);
-    const kinds = (imp.data?.lessons || []).map((l: any) => l.kind);
-    kinds[1] === 'video_text' && kinds[0] === 'text' && kinds[2] === 'text'
-      ? ok(`kind: ${kinds.join(',')}`)
-      : bad('kind', kinds);
     const afterImp = await countLessons();
     afterImp === before + 3
       ? ok(`в списке +3 урока (${before} → ${afterImp})`)
@@ -206,7 +202,13 @@ async function main() {
     Array.isArray(withButton?.buttons) && withButton.buttons.length === 1 && withButton.buttons[0].label === 'В терминал'
       ? ok('кнопка урока в карточке (label «В терминал»)')
       : bad('buttons в карточке урока', withButton?.buttons);
+    withButton?.kind === 'text'
+      ? ok('kind первого урока: text')
+      : bad('kind первого урока', withButton?.kind);
     const withTest = lessonsNow.find((l: any) => l.title === 'Урок с видео и тестом');
+    withTest?.kind === 'video_text'
+      ? ok('kind урока с видео: video_text')
+      : bad('kind урока с видео', withTest?.kind);
     withTest?.has_test === true
       ? ok('has_test у урока с :::test')
       : bad('has_test', withTest);
