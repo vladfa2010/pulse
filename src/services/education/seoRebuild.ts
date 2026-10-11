@@ -28,6 +28,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { query } from '../../config/db';
 import { notifyAdminsSystemAlert } from '../adminAlerts';
 
@@ -550,20 +551,20 @@ let pendingTimer: NodeJS.Timeout | null = null;
 let running = false;
 let lastRunStartAt = 0;
 
-function runRebuild(): void {
+function runRebuild(trigger: SeoRebuildTrigger): void {
   if (running) {
     // Предыдущая пересборка ещё идёт — отложим повторный проход.
-    scheduleTimer(30 * 1000);
+    scheduleTimer(30 * 1000, trigger);
     return;
   }
   const elapsed = Date.now() - lastRunStartAt;
   if (elapsed < MIN_INTERVAL_MS) {
-    scheduleTimer(MIN_INTERVAL_MS - elapsed);
+    scheduleTimer(MIN_INTERVAL_MS - elapsed, trigger);
     return;
   }
   running = true;
   lastRunStartAt = Date.now();
-  rebuildEducationSeoNow()
+  rebuildEducationSeoNow(trigger)
     .then(({ courses }) => {
       if (courses > 0) console.log(`[EduSeo] пересборка завершена: ${courses} курсов`);
     })
@@ -576,11 +577,11 @@ function runRebuild(): void {
     });
 }
 
-function scheduleTimer(delayMs: number): void {
+function scheduleTimer(delayMs: number, trigger: SeoRebuildTrigger): void {
   if (pendingTimer) clearTimeout(pendingTimer);
   pendingTimer = setTimeout(() => {
     pendingTimer = null;
-    runRebuild();
+    runRebuild(trigger);
   }, delayMs);
   pendingTimer.unref?.();
 }
@@ -588,11 +589,12 @@ function scheduleTimer(delayMs: number): void {
 /**
  * Неблокирующий планировщик: каждый вызов сдвигает пересборку на
  * EDU_SEO_REBUILD_DEBOUNCE_SEC (дефолт 60) вперёд; фактический старт не чаще
- * раза в 5 минут. Ответ админке не ждёт пересборки.
+ * раза в 5 минут. Ответ админке не ждёт пересборки. Trigger по умолчанию —
+ * 'mutation' (все крючки мутаций зовут без аргументов); boot-heal передаёт 'boot'.
  */
-export function scheduleEducationSeoRebuild(): void {
+export function scheduleEducationSeoRebuild(trigger: SeoRebuildTrigger = 'mutation'): void {
   if (!ENABLED) return;
-  scheduleTimer(DEBOUNCE_SEC * 1000);
+  scheduleTimer(DEBOUNCE_SEC * 1000, trigger);
 }
 
 // ─── Собственно пересборка ──────────────────────────────────────────────────
@@ -602,24 +604,65 @@ export function scheduleEducationSeoRebuild(): void {
  * sitemap.xml и robots.txt в EDU_SEO_DIST. Бросает ошибку при отключённом
  * сервисе или сбое генерации (вызывающий код решает, как реагировать);
  * отсутствие шелла — мягкий пропуск: warn + { courses: 0 }.
+ * Trigger ('manual' по умолчанию — ручной роут; scheduler шлёт 'mutation'/'boot')
+ * пишется в seo_rebuild_log; ошибка записи в лог не прерывает пересборку.
  */
-export async function rebuildEducationSeoNow(): Promise<{ courses: number }> {
+export async function rebuildEducationSeoNow(trigger: SeoRebuildTrigger = 'manual'): Promise<{ courses: number }> {
   if (!ENABLED) {
     throw new Error('SEO-пересборка образования отключена (EDU_SEO_ENABLED=false)');
   }
 
-  const shellPath = path.join(DIST_DIR, 'index.html');
-  let shell: string;
+  let logId: string | null = null;
   try {
-    shell = await fs.promises.readFile(shellPath, 'utf8');
-  } catch {
-    console.warn(`[EduSeo] шелл ${shellPath} не найден — пропуск пересборки (настройте EDU_SEO_DIST или отключите EDU_SEO_ENABLED)`);
-    return { courses: 0 };
+    logId = await recordRebuildStart(query, trigger);
+  } catch (err: any) {
+    console.warn('[EduSeo] не удалось записать старт в seo_rebuild_log:', err?.message);
   }
 
-  const courses = await loadPublicSeoCourses();
-  const written = await writeEducationSeoFiles(DIST_DIR, shell, courses);
-  return { courses: written };
+  try {
+    const shellPath = path.join(DIST_DIR, 'index.html');
+    let shell: string;
+    try {
+      shell = await fs.promises.readFile(shellPath, 'utf8');
+    } catch {
+      if (trigger === 'manual') {
+        // Ручной вызов (кнопка/curl): владельцу нужно увидеть ошибку в блоке
+        // статуса (ТЗ-164 критерий 10) — бросаем, роут вернёт 500.
+        throw new Error(`SEO-шелл не найден: ${shellPath} (проверьте EDU_SEO_DIST)`);
+      }
+      // Фоновые вызовы (mutation/boot): fail-soft — warn в лог, НЕ падение
+      // (например, контейнер без смонтированной статики).
+      console.warn(`[EduSeo] шелл ${shellPath} не найден — пропуск пересборки (настройте EDU_SEO_DIST или отключите EDU_SEO_ENABLED)`);
+      if (logId) {
+        try {
+          await recordRebuildFinish(query, logId, { ok: true, courses: 0 });
+        } catch (err: any) {
+          console.warn('[EduSeo] не удалось обновить seo_rebuild_log:', err?.message);
+        }
+      }
+      return { courses: 0 };
+    }
+
+    const courses = await loadPublicSeoCourses();
+    const written = await writeEducationSeoFiles(DIST_DIR, shell, courses);
+    if (logId) {
+      try {
+        await recordRebuildFinish(query, logId, { ok: true, courses: written });
+      } catch (err: any) {
+        console.warn('[EduSeo] не удалось обновить seo_rebuild_log:', err?.message);
+      }
+    }
+    return { courses: written };
+  } catch (err: any) {
+    if (logId) {
+      try {
+        await recordRebuildFinish(query, logId, { ok: false, error: err?.message || String(err) });
+      } catch (logErr: any) {
+        console.warn('[EduSeo] не удалось обновить seo_rebuild_log:', logErr?.message);
+      }
+    }
+    throw err;
+  }
 }
 
 // ─── Boot-heal ──────────────────────────────────────────────────────────────
@@ -636,7 +679,7 @@ export function initEducationSeoBootHeal(): void {
   const vitrinePath = path.join(DIST_DIR, 'education', 'index.html');
   if (fs.existsSync(shellPath) && !fs.existsSync(vitrinePath)) {
     console.warn('[EduSeo] education/index.html отсутствует при наличии шелла — планирую пересборку (boot-heal)');
-    scheduleEducationSeoRebuild();
+    scheduleEducationSeoRebuild('boot');
   }
 }
 
@@ -645,3 +688,85 @@ export default {
   rebuildEducationSeoNow,
   initEducationSeoBootHeal,
 };
+
+// ─── Лог пересборок (ТЗ-164 Задача 5) ───────────────────────────────────────
+//
+// Таблица seo_rebuild_log (PG: src/migrations/seo_rebuild_log_v1.sql + schema.sql;
+// SQLite: initSQLiteSchema). Ретенция — последние 20 записей, чистка при
+// каждой вставке. Timestamps — параметрами из JS (ISO), NOW() в коде не
+// использовать — SQLite-совместимость. Ошибка записи в лог НЕ прерывает
+// пересборку: warn в консоль.
+
+export type SeoRebuildTrigger = 'mutation' | 'manual' | 'boot';
+
+export interface SeoRebuildLogEntry {
+  id: string;
+  started_at: string;
+  finished_at: string | null;
+  status: string;
+  courses_count: number | null;
+  error: string | null;
+  trigger: string;
+}
+
+/** Подмножество query() — чтобы лог можно было тестировать на моке/ SQLite. */
+export type SeoQueryFn = (text: string, params?: any[]) => Promise<{ rows: any[]; rowCount?: number }>;
+
+const RETENTION_LIMIT = 20;
+
+/** Старт записи: INSERT status='running' + ретенция. Возвращает id или null. */
+export async function recordRebuildStart(q: SeoQueryFn, trigger: SeoRebuildTrigger): Promise<string | null> {
+  const id = crypto.randomUUID();
+  await q(
+    `INSERT INTO seo_rebuild_log (id, started_at, status, trigger)
+     VALUES ($1, $2, 'running', $3)`,
+    [id, new Date().toISOString(), trigger],
+  );
+  await q(
+    `DELETE FROM seo_rebuild_log
+     WHERE id NOT IN (SELECT id FROM seo_rebuild_log ORDER BY started_at DESC LIMIT ${RETENTION_LIMIT})`,
+    [],
+  );
+  return id;
+}
+
+/** Финиш записи: 'ok' + courses_count либо 'error' + текст. */
+export async function recordRebuildFinish(
+  q: SeoQueryFn,
+  id: string,
+  result: { ok: true; courses: number } | { ok: false; error: string },
+): Promise<void> {
+  await q(
+    `UPDATE seo_rebuild_log
+     SET status = $2, finished_at = $3, courses_count = $4, error = $5
+     WHERE id = $1`,
+    [
+      id,
+      result.ok ? 'ok' : 'error',
+      new Date().toISOString(),
+      result.ok ? result.courses : null,
+      result.ok ? null : result.error.slice(0, 2000),
+    ],
+  );
+}
+
+/** Последняя запись (любая, включая running) + история до 5 без 'running'. */
+export async function fetchSeoRebuildLog(q: SeoQueryFn): Promise<{ last: SeoRebuildLogEntry | null; history: SeoRebuildLogEntry[] }> {
+  const lastR = await q(
+    `SELECT id, started_at, finished_at, status, courses_count, error, trigger
+     FROM seo_rebuild_log ORDER BY started_at DESC LIMIT 1`,
+    [],
+  );
+  const historyR = await q(
+    `SELECT id, started_at, finished_at, status, courses_count, error, trigger
+     FROM seo_rebuild_log WHERE status <> 'running'
+     ORDER BY started_at DESC LIMIT 5`,
+    [],
+  );
+  return { last: lastR.rows[0] ?? null, history: historyR.rows };
+}
+
+/** Pending из in-memory планировщика: дебаунс-таймер висящий или rebuild в полёте. */
+export function isEducationSeoRebuildPending(): boolean {
+  return pendingTimer !== null || running;
+}

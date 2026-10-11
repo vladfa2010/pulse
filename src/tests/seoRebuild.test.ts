@@ -14,6 +14,11 @@
  *      осталось (атомарность tmp+rename), recursive-mkdir для слага.
  *   4. Чистку протухших директорий: education/legacy-slug/ исчезает,
  *      education/index.html (витрина) не тронут.
+ *   5. Лог пересборок (ТЗ-164 Задача 5, мок QueryFn): INSERT running + trigger,
+ *      ISO-таймстемпы, ретенция 20 при каждой вставке, финиш ok/error,
+ *      history без 'running'.
+ *   6. Лог на реальной SQLite: таблица из initSQLiteSchema, те же SQL-запросы
+ *      выполняются, ретенция 20 на живой таблице.
  *
  * Запуск:  npx ts-node src/tests/seoRebuild.test.ts
  */
@@ -24,6 +29,7 @@ import path from 'path';
 
 import {
   SeoCourse,
+  SeoQueryFn,
   courseTitle,
   metaDescription,
   escapeHtml,
@@ -34,6 +40,9 @@ import {
   renderCourseHtml,
   writeEducationSeoFiles,
   cleanupStaleCourseDirs,
+  recordRebuildStart,
+  recordRebuildFinish,
+  fetchSeoRebuildLog,
 } from '../services/education/seoRebuild';
 
 let passed = 0;
@@ -241,8 +250,118 @@ async function runFileTests(): Promise<void> {
   fs.rmSync(tmpRoot, { recursive: true, force: true });
 }
 
+// ─── 6. Лог пересборок (ТЗ-164 Задача 5): мок QueryFn ─────────────────────
+function makeMockQ(): { q: SeoQueryFn; calls: { text: string; params: any[] }[] } {
+  const calls: { text: string; params: any[] }[] = [];
+  const q: SeoQueryFn = async (text: string, params: any[] = []) => {
+    calls.push({ text, params });
+    return { rows: [] };
+  };
+  return { q, calls };
+}
+
+async function runLogTests(): Promise<void> {
+  // Старт: INSERT running + trigger + ISO-таймстемпы, ретенция при каждой вставке.
+  {
+    const { q, calls } = makeMockQ();
+    const id = await recordRebuildStart(q, 'mutation');
+    check('старт лога: id сгенерирован', typeof id === 'string' && id.length === 36, id);
+    const insert = calls.find(c => /INSERT INTO seo_rebuild_log/.test(c.text));
+    check('старт лога: INSERT со статусом running и trigger',
+      !!insert && insert.text.includes("'running'") && insert.text.includes('trigger')
+      && insert.params[2] === 'mutation', insert?.params);
+    check('старт лога: started_at — ISO из JS (не NOW())',
+      !!insert && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(insert.params[1]), insert?.params[1]);
+    const del = calls.find(c => /DELETE FROM seo_rebuild_log/.test(c.text));
+    check('ретенция: DELETE с LIMIT 20 выдан при вставке',
+      !!del && /LIMIT 20/.test(del.text), del?.text);
+  }
+
+  // Ретенция вызывается при КАЖДОЙ вставке (25 стартов → 25 DELETE).
+  {
+    const { q, calls } = makeMockQ();
+    for (let i = 0; i < 25; i++) await recordRebuildStart(q, 'mutation');
+    const inserts = calls.filter(c => /INSERT INTO seo_rebuild_log/.test(c.text)).length;
+    const deletes = calls.filter(c => /DELETE FROM seo_rebuild_log/.test(c.text)).length;
+    check('ретенция: 25 вставок → 25 INSERT и 25 DELETE', inserts === 25 && deletes === 25, { inserts, deletes });
+  }
+
+  // Финиш ok: status='ok' + courses_count, error=NULL.
+  {
+    const { q, calls } = makeMockQ();
+    await recordRebuildFinish(q, 'id-1', { ok: true, courses: 6 });
+    const upd = calls.find(c => /UPDATE seo_rebuild_log/.test(c.text));
+    check('финиш ok: status=ok, courses_count=6, error=null',
+      !!upd && upd.params[0] === 'id-1' && upd.params[1] === 'ok' && upd.params[3] === 6 && upd.params[4] === null,
+      upd?.params);
+  }
+
+  // Финиш error: status='error' + текст ошибки.
+  {
+    const { q, calls } = makeMockQ();
+    await recordRebuildFinish(q, 'id-2', { ok: false, error: 'шелл не найден' });
+    const upd = calls.find(c => /UPDATE seo_rebuild_log/.test(c.text));
+    check('финиш error: status=error + текст, courses_count=null',
+      !!upd && upd.params[1] === 'error' && upd.params[3] === null && upd.params[4] === 'шелл не найден',
+      upd?.params);
+  }
+
+  // fetchSeoRebuildLog: last LIMIT 1 (любая), history без running LIMIT 5.
+  {
+    const { q, calls } = makeMockQ();
+    await fetchSeoRebuildLog(q);
+    const lastQ = calls[0].text;
+    const historyQ = calls[1].text;
+    check('статус: last — ORDER BY started_at DESC LIMIT 1',
+      /LIMIT 1/.test(lastQ) && !/<> 'running'/.test(lastQ), lastQ);
+    check('статус: history — без running, LIMIT 5',
+      /<> 'running'/.test(historyQ) && /LIMIT 5/.test(historyQ), historyQ);
+  }
+
+  // Trigger-значения ручного роута: rebuildEducationSeoNow() по умолчанию — 'manual'.
+  {
+    const { q, calls } = makeMockQ();
+    await recordRebuildStart(q, 'manual');
+    const insert = calls.find(c => /INSERT INTO seo_rebuild_log/.test(c.text));
+    check('trigger manual передаётся параметром', insert?.params[2] === 'manual', insert?.params);
+  }
+}
+
+// ─── 7. Лог на реальной SQLite: таблица из initSQLiteSchema + SQL-совместимость ──
+async function runSqliteTests(): Promise<void> {
+  process.env.SQLITE_FILE = path.join(os.tmpdir(), `edu-seo-log-test-${Date.now()}.db`);
+  const sqlite = await import('../config/db-sqlite');
+  await sqlite.initSQLite();
+  await sqlite.initSQLiteSchema();
+
+  const t = await sqlite.query(
+    `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'seo_rebuild_log'`, []);
+  check('SQLite: seo_rebuild_log создана initSQLiteSchema()', t.rows.length === 1, t.rows);
+
+  // Те же функции лога против SQLite (SQL должен работать на обеих СУБД).
+  const id = await recordRebuildStart(sqlite.query, 'boot');
+  check('SQLite: recordRebuildStart вставил running/boot', typeof id === 'string', id);
+  await recordRebuildFinish(sqlite.query, id!, { ok: true, courses: 3 });
+  const { last, history } = await fetchSeoRebuildLog(sqlite.query);
+  check('SQLite: запись завершена ok, trigger=boot, courses=3',
+    last?.status === 'ok' && last?.trigger === 'boot' && last?.courses_count === 3
+    && !!last?.started_at && !!last?.finished_at, last);
+  check('SQLite: history содержит завершённую запись', history.length === 1 && history[0].id === id);
+
+  // Ретенция на реальной таблице: 25 записей → остаётся 20.
+  for (let i = 0; i < 24; i++) {
+    await recordRebuildStart(sqlite.query, 'mutation');
+  }
+  const cnt = await sqlite.query(`SELECT COUNT(*) AS n FROM seo_rebuild_log`, []);
+  check('SQLite: ретенция — не больше 20 записей', Number(cnt.rows[0].n) === 20, cnt.rows[0]);
+
+  fs.rmSync(process.env.SQLITE_FILE, { force: true });
+}
+
 // ─── main ──────────────────────────────────────────────────────────────────
 runFileTests()
+  .then(runLogTests)
+  .then(runSqliteTests)
   .then(() => {
     console.log(`\n${passed} passed, ${failed} failed`);
     process.exit(failed > 0 ? 1 : 0);

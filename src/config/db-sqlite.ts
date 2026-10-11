@@ -883,6 +883,19 @@ export async function initSQLiteSchema(): Promise<void> {
       UNIQUE (course_id, news_id)
     );
     CREATE INDEX IF NOT EXISTS cms_course_status ON course_match_suggestions(course_id, status);
+
+    -- ТЗ-164 Задача 5: лог SEO-пересборок образования (PG-зеркало:
+    -- src/migrations/seo_rebuild_log_v1.sql). id генерит бэкенд
+    -- (crypto.randomUUID), timestamps — ISO-текстом параметрами.
+    CREATE TABLE IF NOT EXISTS seo_rebuild_log (
+      id TEXT PRIMARY KEY,
+      started_at TEXT NOT NULL,
+      finished_at TEXT,
+      status TEXT NOT NULL DEFAULT 'running',
+      courses_count INTEGER,
+      error TEXT,
+      trigger TEXT NOT NULL
+    );
   `;
 
   const statements = schema.split(';').filter(s => s.trim());

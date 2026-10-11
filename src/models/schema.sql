@@ -805,6 +805,20 @@ CREATE TABLE IF NOT EXISTS search_cache (
 
 CREATE INDEX IF NOT EXISTS idx_search_cache_expires ON search_cache(expires_at);
 
+-- ============================================================
+-- 21. ТЗ-164 Задача 5: seo_rebuild_log — лог SEO-пересборок образования
+--     (PG-миграция-зеркало: src/migrations/seo_rebuild_log_v1.sql)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS seo_rebuild_log (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  started_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  finished_at   TIMESTAMPTZ,
+  status        VARCHAR(10) NOT NULL DEFAULT 'running',
+  courses_count INTEGER,
+  error         TEXT,
+  trigger       VARCHAR(10) NOT NULL
+);
+
 -- TZ-04 v4: functional index for case-insensitive email lookups
 CREATE INDEX IF NOT EXISTS idx_users_lower_email ON users (LOWER(email));
 

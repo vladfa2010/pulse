@@ -31,7 +31,7 @@ import { checkRateLimit, lmsUploadLimiter } from '../middleware/rateLimit';
 import { logUserEvent } from '../services/activityLog';
 import { getActivePlans } from '../services/subscription';
 import { invalidateEducationCache } from '../services/education/cache';
-import { scheduleEducationSeoRebuild, rebuildEducationSeoNow } from '../services/education/seoRebuild'; // ТЗ-164: SEO-пересборка при сохранении
+import { scheduleEducationSeoRebuild, rebuildEducationSeoNow, fetchSeoRebuildLog, isEducationSeoRebuildPending } from '../services/education/seoRebuild'; // ТЗ-164: SEO-пересборка при сохранении + статус (Задачи 4-5)
 import { resolveSourceUrl, ResolveSourceError } from '../services/education/resolveSource';
 import { enqueueScan } from '../services/education/virusScan'; // ТЗ-102: retry-скан pending_scan при заходе в очередь
 import { isEducationMatchEnabled, onCoursePublished, scheduleCourseReembedding } from '../services/education/match'; // ТЗ-103 Задачи 1,3: эмбеддинги + ретроскан
@@ -1672,6 +1672,14 @@ router.post('/seo-rebuild', h(async (req, res) => {
     console.error('[AdminEducation] seo-rebuild failed:', err?.message || err);
     res.status(500).json({ ok: false, error: err?.message || 'rebuild failed' });
   }
+}));
+
+// ТЗ-164 Задача 5: статус SEO-пересборки для блока в админке.
+// pending — из in-memory планировщика (дебаунс-таймер или идущий rebuild);
+// last — последняя запись (любая, включая running); history — до 5 без 'running'.
+router.get('/seo-status', h(async (req, res) => {
+  const { last, history } = await fetchSeoRebuildLog(query);
+  res.json({ pending: isEducationSeoRebuildPending(), last, history });
 }));
 
 // PUT /lessons/:lessonId/test — создать/обновить тест (критерии ТЗ-100 4-5)
