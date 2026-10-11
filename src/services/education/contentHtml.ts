@@ -125,6 +125,15 @@ export function sanitizeLessonHtml(html: string): string {
       div: ['class', 'data-ticker', 'data-exchange', 'data-name', 'data-tf', 'data-range', 'data-width'],
     },
     allowedClasses: { div: ['callout', 'html-block', 'chart-block'] },
+    // ТЗ-155: пустые абзацы/пункты списка — мусор от выделения «с запасом»
+    // в редакторе; у студента рисуют одинокие маркеры/пустые строки.
+    // frame.mediaChildren — защита: <p><img></p> и <li><img></li> не считаем
+    // пустыми (картинка — контент); <br> контентом не считаем.
+    // (mediaChildren в sanitize-html 2.x — string[], не Set.)
+    exclusiveFilter: (frame) =>
+      (frame.tag === 'li' || frame.tag === 'p') &&
+      !frame.text.trim() &&
+      frame.mediaChildren.length === 0,
     transformTags: {
       a: (tagName, attribs): { tagName: string; attribs: Record<string, string> } => {
         const href = attribs.href || '';
