@@ -31,6 +31,7 @@ import { checkRateLimit, lmsUploadLimiter } from '../middleware/rateLimit';
 import { logUserEvent } from '../services/activityLog';
 import { getActivePlans } from '../services/subscription';
 import { invalidateEducationCache } from '../services/education/cache';
+import { scheduleEducationSeoRebuild, rebuildEducationSeoNow } from '../services/education/seoRebuild'; // ТЗ-164: SEO-пересборка при сохранении
 import { resolveSourceUrl, ResolveSourceError } from '../services/education/resolveSource';
 import { enqueueScan } from '../services/education/virusScan'; // ТЗ-102: retry-скан pending_scan при заходе в очередь
 import { isEducationMatchEnabled, onCoursePublished, scheduleCourseReembedding } from '../services/education/match'; // ТЗ-103 Задачи 1,3: эмбеддинги + ретроскан
@@ -793,6 +794,7 @@ router.post('/courses', h(async (req, res) => {
   }
 
   invalidateEducationCache();
+  scheduleEducationSeoRebuild(); // ТЗ-164: новый курс → SEO-файлы
   logUserEvent(adminId, 'education.course_created', { course_id: id, title, type });
 
   res.status(201).json(await fetchCourseCard(id));
@@ -981,6 +983,7 @@ router.put('/courses/:id', h(async (req, res) => {
   }
 
   invalidateEducationCache();
+  scheduleEducationSeoRebuild(); // ТЗ-164: правка title/description/slug/price/visibility → SEO-файлы
   logUserEvent(adminId, 'education.course_updated', { course_id: courseId });
 
   // ТЗ-103 Задача 1: смена title/description → асинхронный пересчёт эмбеддинга
@@ -1043,6 +1046,7 @@ router.post('/courses/:id/publish', h(async (req, res) => {
     [courseId],
   );
   invalidateEducationCache();
+  scheduleEducationSeoRebuild(); // ТЗ-164
   logUserEvent(adminId, 'education.course_published', { course_id: courseId });
   // ТЗ-103: публикация — всегда пересчитываем эмбеддинг и запускаем
   // ретроскан новостей за 14 дней (асинхронно, флаг EDUCATION_MATCH_ENABLED)
@@ -1060,6 +1064,7 @@ router.post('/courses/:id/archive', h(async (req, res) => {
     [courseId],
   );
   invalidateEducationCache();
+  scheduleEducationSeoRebuild(); // ТЗ-164
   logUserEvent(req.user!.userId, 'education.course_archived', { course_id: courseId });
   res.json(await fetchCourseCard(courseId));
 }));
@@ -1085,6 +1090,7 @@ router.post('/courses/:id/delete', h(async (req, res) => {
     [courseId],
   );
   invalidateEducationCache();
+  scheduleEducationSeoRebuild(); // ТЗ-164
   logUserEvent(adminId, 'education.course_deleted', { course_id: courseId });
   res.json({ ok: true });
 }));
@@ -1099,6 +1105,7 @@ router.post('/courses/:id/restore', h(async (req, res) => {
     [courseId],
   );
   invalidateEducationCache();
+  scheduleEducationSeoRebuild(); // ТЗ-164
   logUserEvent(req.user!.userId, 'education.course_restored', { course_id: courseId });
   res.json(await fetchCourseCard(courseId));
 }));
@@ -1151,6 +1158,7 @@ router.post('/courses/:id/cover', uploadMw(coverUpload, 'file'), h(async (req, r
         console.warn('[AdminEducation] old cover removeFile failed:', e?.message));
     }
     invalidateEducationCache();
+    scheduleEducationSeoRebuild(); // ТЗ-164: смена og:image
     logUserEvent(adminId, 'education.course_updated', { course_id: courseId, field: 'cover' });
     res.json({ cover_url: put.relPath });
   } catch (err: any) {
@@ -1357,6 +1365,7 @@ router.post('/courses/:id/lessons', h(async (req, res) => {
   }, idemKey, Number(maxPos.rows[0].mp) + 1);
 
   invalidateEducationCache();
+  scheduleEducationSeoRebuild(); // ТЗ-164: программа курса в SEO-файлах
   logUserEvent(req.user!.userId, 'education.course_updated', { course_id: courseId, field: 'lessons', lesson_id: inserted.id });
   // ТЗ-103 Задача 1: новый урок меняет текст курса → пересчёт эмбеддинга
   scheduleCourseReembedding(courseId);
@@ -1477,6 +1486,7 @@ router.post('/courses/:id/import-md', uploadMw(mdImportUpload, 'file'), h(async 
   const body = { created, skipped_existing: skippedExisting, tests_created: testsCreated, description_updated: descriptionUpdated, lessons: results, warnings: parsed.warnings };
   if (created > 0 || descriptionUpdated) {
     invalidateEducationCache();
+    scheduleEducationSeoRebuild(); // ТЗ-164
     logUserEvent(req.user!.userId, 'education.course_updated', { course_id: courseId, field: 'lessons', import: 'md', created, description_updated: descriptionUpdated });
     // Описание входит в текст эмбеддинга курса (lms_v3_matching.sql) — обновление
     // description само по себе причина для ре-эмбеддинга (ТЗ-159 v3 п.3)
@@ -1546,6 +1556,7 @@ router.post('/courses/:id/lessons/reorder', h(async (req, res) => {
     }
   }
   invalidateEducationCache();
+  scheduleEducationSeoRebuild(); // ТЗ-164
   res.json({ ok: true });
 }));
 
@@ -1581,6 +1592,7 @@ router.put('/lessons/:lessonId', h(async (req, res) => {
     );
   }
   invalidateEducationCache();
+  scheduleEducationSeoRebuild(); // ТЗ-164
   logUserEvent(req.user!.userId, 'education.course_updated', {
     course_id: lessonR.rows[0].course_id, field: 'lesson', lesson_id: lessonId,
   });
@@ -1641,12 +1653,25 @@ router.delete('/lessons/:lessonId', h(async (req, res) => {
     await query(`UPDATE course_lessons SET position = $1 WHERE id = $2`, [i + 1, rest.rows[i].id]);
   }
   invalidateEducationCache();
+  scheduleEducationSeoRebuild(); // ТЗ-164
   logUserEvent(req.user!.userId, 'education.course_updated', {
     course_id: courseId, field: 'lessons', removed_lesson_id: lessonId,
   });
   // ТЗ-103 Задача 1: удаление урока меняет текст курса → пересчёт эмбеддинга
   scheduleCourseReembedding(courseId);
   res.json({ ok: true, removed_progress: removedProgress });
+}));
+
+// ТЗ-164 Задача 4: ручная SEO-пересборка (отладка / «пересобрать прямо сейчас»,
+// UI-кнопки нет — владелец дёргает curl). Ошибки → 500 { ok: false, error }.
+router.post('/seo-rebuild', h(async (req, res) => {
+  try {
+    const { courses } = await rebuildEducationSeoNow();
+    res.json({ ok: true, courses });
+  } catch (err: any) {
+    console.error('[AdminEducation] seo-rebuild failed:', err?.message || err);
+    res.status(500).json({ ok: false, error: err?.message || 'rebuild failed' });
+  }
 }));
 
 // PUT /lessons/:lessonId/test — создать/обновить тест (критерии ТЗ-100 4-5)

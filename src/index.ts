@@ -64,6 +64,7 @@ import educationRoutes from './routes/education';           // ТЗ-100 Зада
 import { authMiddleware, AuthRequest } from './middleware/auth';
 import { bootstrapStorage } from './services/storage/driver'; // ТЗ-100 v15: LMS storage bootstrap
 import { startVirusScanSweeper } from './services/education/virusScan'; // ТЗ-102 v2: sweeper перескана pending_scan
+import { initEducationSeoBootHeal } from './services/education/seoRebuild'; // ТЗ-164: heal пропавших SEO-файлов после ручной заливки dist
 import { mediaGuard } from './services/storage/media';       // ТЗ-100 v15: отдача файлов /media
 import { apiLimiter, authLimiter, webhookLimiter, forgotPasswordLimiter, passwordResetFlowLimiter, promoValidateLimiter, adminLimiter } from './middleware/rateLimit';
 import { startCron, startHeatmapFreezeCron, startClusteringCron, startTopicsNamingCron, startEducationMatchCron, startAnalyzeNewsCron } from './services/cron';   // startCron (RSS) отключен (TZ_REMOVE_DUPLICATE_RSS_CRON); heatmap freeze — TZ-49; clustering — ТЗ-92 (флаг CLUSTERING_ENABLED); topics naming — ТЗ-115 (флаг TOPICS_ENABLED); education match catch-up — ТЗ-103 (флаг EDUCATION_MATCH_ENABLED); analyze news — ТЗ-150 задача 7 (без флага)
@@ -3447,6 +3448,10 @@ async function start() {
   // ТЗ-102 v2 (S4): фоновый sweeper антивирусного контура — перескан pending_scan
   // файлов раз в минуту (clamd мог быть недоступен в момент загрузки).
   startVirusScanSweeper();
+
+  // ТЗ-164: boot-heal SEO-файлов образования — свежий dist залили вручную,
+  // education/* пропал → планируем пересборку (синхронно и дёшево: два existsSync).
+  initEducationSeoBootHeal();
 
   // Start HTTP server immediately so /health is available and Render can route traffic
   // before migrations finish. Migrations and background jobs run in parallel.
