@@ -34,6 +34,7 @@ import { invalidateEducationCache } from '../services/education/cache';
 import { resolveSourceUrl, ResolveSourceError } from '../services/education/resolveSource';
 import { enqueueScan } from '../services/education/virusScan'; // ТЗ-102: retry-скан pending_scan при заходе в очередь
 import { isEducationMatchEnabled, onCoursePublished, scheduleCourseReembedding } from '../services/education/match'; // ТЗ-103 Задачи 1,3: эмбеддинги + ретроскан
+import { parseCourseMd } from '../services/education/mdCourseImport'; // ТЗ-159: импорт уроков из Markdown
 import { courseTagIds, matchEventsToCourse } from '../services/education/calendarMatch'; // ТЗ-103 Задача 7: events-preview
 import { putBuffer, removeFile, StorageError } from '../services/storage/driver';
 
@@ -135,26 +136,19 @@ export { sanitizeLessonHtml } from '../services/education/contentHtml';
 import { sanitizeLessonHtml } from '../services/education/contentHtml';
 
 // ─── Валидация embed-URL (белый список доменов, критерий 5) ─────────────────
+// Реализация — в services/education/embedUrl.ts (ТЗ-159: парсер md-импорта
+// импортирует отсюда, services → routes запрещён); здесь re-export для
+// совместимости, как sanitizeLessonHtml выше.
+export { isAllowedEmbedUrl } from '../services/education/embedUrl';
+import { isAllowedEmbedUrl } from '../services/education/embedUrl';
 
-const EMBED_DOMAINS = [
-  'youtube.com',
-  'youtube-nocookie.com',
-  'youtu.be',
-  'vkvideo.ru',
-  'player.vimeo.com',
-];
-
-/** Проверить embed-URL по белому списку (host === domain || *.domain). */
-export function isAllowedEmbedUrl(raw: string): boolean {
-  try {
-    const u = new URL(raw);
-    if (u.protocol !== 'https:') return false;
-    const host = u.hostname.toLowerCase();
-    return EMBED_DOMAINS.some((d) => host === d || host.endsWith('.' + d));
-  } catch {
-    return false;
-  }
-}
+// ─── CTA-кнопки урока (ТЗ-124) ───────────────────────────────────────────────
+// Реализация — в services/education/lessonButtons.ts (ТЗ-159 v2: парсер
+// md-импорта валидирует :::button тем же кодом — services → routes запрещён);
+// здесь re-export для совместимости, как sanitizeLessonHtml выше.
+export { validateLessonButtons, LESSON_BUTTON_COLORS } from '../services/education/lessonButtons';
+import { validateLessonButtons } from '../services/education/lessonButtons';
+import type { LessonButton } from '../services/education/lessonButtons';
 
 /** Валидация и нормализация полей урока (POST и PUT, критерий 26). */
 interface LessonPayload {
@@ -167,74 +161,6 @@ interface LessonPayload {
   is_free_preview?: boolean;
   unlock_after_days?: number;
   buttons?: LessonButton[];
-}
-
-// ─── CTA-кнопки урока (ТЗ-124) ───────────────────────────────────────────────
-
-interface LessonButton {
-  label: string;
-  url: string;
-  color: 'accent' | 'violet' | 'green' | 'ghost';
-  target: 'self' | 'new_tab';
-}
-
-const LESSON_BUTTON_COLORS = ['accent', 'violet', 'green', 'ghost'] as const;
-
-/**
- * Валидация buttons урока: массив 0–3 кнопок.
- * url — строго https:// (new URL) или внутренний путь на '/' (без '//'-префикса:
- * protocol-relative запрещены). Дефолты: color='accent'; target — 'new_tab'
- * для https-ссылок, 'self' для внутренних.
- */
-function validateLessonButtons(raw: any): LessonButton[] | { error: string } {
-  if (!Array.isArray(raw) || raw.length > 3) {
-    return { error: 'buttons — массив из 0–3 кнопок' };
-  }
-  const out: LessonButton[] = [];
-  for (const b of raw) {
-    if (b === null || typeof b !== 'object' || Array.isArray(b)) {
-      return { error: 'buttons: каждая кнопка — объект { label, url, color?, target? }' };
-    }
-    const label = typeof b.label === 'string' ? b.label.trim() : '';
-    if (!label || label.length > 30) {
-      return { error: 'buttons: label — непустая строка до 30 символов' };
-    }
-    const url = typeof b.url === 'string' ? b.url.trim() : '';
-    let isExternal = false;
-    if (url.startsWith('/')) {
-      if (url.startsWith('//')) {
-        return { error: 'buttons: url — https://-ссылка или внутренний путь на /' };
-      }
-    } else {
-      try {
-        const u = new URL(url);
-        if (u.protocol !== 'https:') {
-          return { error: 'buttons: url — только https:// или внутренний путь на /' };
-        }
-        isExternal = true;
-      } catch {
-        return { error: 'buttons: url — только https:// или внутренний путь на /' };
-      }
-    }
-    let color: LessonButton['color'] = 'accent';
-    if (b.color !== undefined) {
-      if (!LESSON_BUTTON_COLORS.includes(b.color)) {
-        return { error: `buttons: color — только ${LESSON_BUTTON_COLORS.join(' | ')}` };
-      }
-      color = b.color;
-    }
-    let target: LessonButton['target'];
-    if (b.target !== undefined) {
-      if (b.target !== 'self' && b.target !== 'new_tab') {
-        return { error: "buttons: target — только 'self' | 'new_tab'" };
-      }
-      target = b.target;
-    } else {
-      target = isExternal ? 'new_tab' : 'self';
-    }
-    out.push({ label, url, color, target });
-  }
-  return out;
 }
 
 function validateLessonPayload(body: any): LessonPayload | { error: string } {
@@ -346,6 +272,12 @@ const materialUpload = multer({
 const contentImageUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 },
+});
+
+// ТЗ-159: импорт уроков курса из .md — текст, 1 МБ с запасом.
+const mdImportUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 1 * 1024 * 1024 },
 });
 
 /** Обёртка multer: ошибки лимита размера → 413, прочие → 400. */
@@ -1323,6 +1255,79 @@ router.get('/courses/:id/lessons', h(async (req, res) => {
   })));
 }));
 
+// ─── Вставка урока с идемпотентностью ТЗ-157 (общий блок POST lessons и
+// ТЗ-159 import-md — SQL не дублируется копипастой). Поля — уже валидированы.
+interface InsertLessonFields {
+  title: string;
+  kind: string;
+  text_content: string | null;
+  video_source: string | null;
+  video_embed_url: string | null;
+  duration_min: number | null;
+  is_free_preview: boolean;
+  unlock_after_days: number;
+  buttons: unknown[];
+}
+
+async function insertLessonIdempotent(
+  courseId: string,
+  payload: InsertLessonFields,
+  idemKey: string | null,
+  position: number,
+): Promise<{ id: string; position: number; alreadyCreated: boolean }> {
+  // ТЗ-157: повтор с тем же ключом возвращает уже созданный урок
+  // (200 already_created), а не вторую строку
+  if (idemKey) {
+    const dup = await query(
+      `SELECT id, position FROM course_lessons
+        WHERE course_id = $1 AND idempotency_key = $2`,
+      [courseId, idemKey],
+    );
+    if (dup.rows.length > 0) {
+      return { id: dup.rows[0].id, position: dup.rows[0].position, alreadyCreated: true };
+    }
+  }
+
+  const id = crypto.randomUUID();
+  try {
+    await query(
+      `INSERT INTO course_lessons
+         (id, course_id, position, title, kind, text_content, video_source,
+          video_embed_url, video_file_url, duration_min, is_free_preview, unlock_after_days, buttons,
+          idempotency_key)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+      [
+        id, courseId, position, payload.title,
+        payload.kind,
+        payload.text_content,
+        payload.video_source,
+        payload.video_embed_url,
+        null,
+        payload.duration_min,
+        payload.is_free_preview,
+        payload.unlock_after_days,
+        JSON.stringify(payload.buttons),
+        idemKey,
+      ],
+    );
+  } catch (e: any) {
+    // ТЗ-157: гонка двух параллельных запросов с одним ключом — второй
+    // упал на уникальном индексе; отдаём существующий урок, а не 500
+    const isUnique = e?.code === '23505' || /UNIQUE constraint failed/i.test(e?.message || '');
+    if (isUnique && idemKey) {
+      const dup = await query(
+        `SELECT id, position FROM course_lessons WHERE course_id = $1 AND idempotency_key = $2`,
+        [courseId, idemKey],
+      );
+      if (dup.rows.length > 0) {
+        return { id: dup.rows[0].id, position: dup.rows[0].position, alreadyCreated: true };
+      }
+    }
+    throw e;
+  }
+  return { id, position, alreadyCreated: false };
+}
+
 router.post('/courses/:id/lessons', h(async (req, res) => {
   const courseId = req.params.id;
   const courseR = await query(`SELECT 1 FROM courses WHERE id = $1`, [courseId]);
@@ -1338,70 +1343,148 @@ router.post('/courses/:id/lessons', h(async (req, res) => {
     [courseId],
   );
 
-  // ТЗ-157: идемпотентное создание — повтор с тем же ключом возвращает
-  // уже созданный урок (200 already_created), а не вторую строку
   const idemKey = String(req.body?.idempotency_key || '').trim() || null;
-  if (idemKey) {
-    const dup = await query(
-      `SELECT id, position FROM course_lessons
-        WHERE course_id = $1 AND idempotency_key = $2`,
-      [courseId, idemKey],
-    );
-    if (dup.rows.length > 0) {
-      return res.status(200).json({
-        id: dup.rows[0].id,
-        position: dup.rows[0].position,
-        already_created: true,
-      });
-    }
-  }
+  const inserted = await insertLessonIdempotent(courseId, {
+    title,
+    kind: payload.kind ?? 'text',
+    text_content: payload.text_content ?? null,
+    video_source: payload.video_source ?? null,
+    video_embed_url: payload.video_embed_url ?? null,
+    duration_min: payload.duration_min ?? null,
+    is_free_preview: payload.is_free_preview ?? false,
+    unlock_after_days: payload.unlock_after_days ?? 0,
+    buttons: payload.buttons ?? [],
+  }, idemKey, Number(maxPos.rows[0].mp) + 1);
 
-  const id = crypto.randomUUID();
-  try {
-    await query(
-      `INSERT INTO course_lessons
-         (id, course_id, position, title, kind, text_content, video_source,
-          video_embed_url, video_file_url, duration_min, is_free_preview, unlock_after_days, buttons,
-          idempotency_key)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
-      [
-        id, courseId, Number(maxPos.rows[0].mp) + 1, title,
-        payload.kind ?? 'text',
-        payload.text_content ?? null,
-        payload.video_source ?? null,
-        payload.video_embed_url ?? null,
-        null,
-        payload.duration_min ?? null,
-        payload.is_free_preview ?? false,
-        payload.unlock_after_days ?? 0,
-        JSON.stringify(payload.buttons ?? []),
-        idemKey,
-      ],
-    );
-  } catch (e: any) {
-    // ТЗ-157: гонка двух параллельных запросов с одним ключом — второй
-    // упал на уникальном индексе; отдаём существующий урок, а не 500
-    const isUnique = e?.code === '23505' || /UNIQUE constraint failed/i.test(e?.message || '');
-    if (isUnique && idemKey) {
-      const dup = await query(
-        `SELECT id, position FROM course_lessons WHERE course_id = $1 AND idempotency_key = $2`,
-        [courseId, idemKey],
-      );
-      if (dup.rows.length > 0) {
-        return res.status(200).json({
-          id: dup.rows[0].id,
-          position: dup.rows[0].position,
-          already_created: true,
-        });
-      }
-    }
-    throw e;
-  }
   invalidateEducationCache();
-  logUserEvent(req.user!.userId, 'education.course_updated', { course_id: courseId, field: 'lessons', lesson_id: id });
+  logUserEvent(req.user!.userId, 'education.course_updated', { course_id: courseId, field: 'lessons', lesson_id: inserted.id });
   // ТЗ-103 Задача 1: новый урок меняет текст курса → пересчёт эмбеддинга
   scheduleCourseReembedding(courseId);
-  res.status(201).json({ id, position: Number(maxPos.rows[0].mp) + 1 });
+  if (inserted.alreadyCreated) {
+    return res.status(200).json({ id: inserted.id, position: inserted.position, already_created: true });
+  }
+  res.status(201).json({ id: inserted.id, position: inserted.position });
+}));
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ТЗ-159 — Импорт уроков курса из Markdown-файла
+// ═══════════════════════════════════════════════════════════════════════════
+
+router.post('/courses/:id/import-md', uploadMw(mdImportUpload, 'file'), h(async (req, res) => {
+  const courseId = req.params.id;
+  const courseR = await query(`SELECT description FROM courses WHERE id = $1`, [courseId]);
+  if (courseR.rows.length === 0) return fail(res, 404, 'Курс не найден');
+  const currentDescription = String(courseR.rows[0].description ?? '');
+  if (!req.file) return fail(res, 400, 'Файл не передан (поле file)');
+  const ext = (req.file.originalname.split('.').pop() || '').toLowerCase();
+  if (!['md', 'markdown', 'txt'].includes(ext)) return fail(res, 400, 'Ожидается .md файл');
+  const text = req.file.buffer.toString('utf8');
+  if (text.includes('�')) return fail(res, 400, 'Файл не в UTF-8');
+
+  const parsed = parseCourseMd(text);
+  if (parsed.errors.length > 0) {
+    // Принцип «всё или ничего»: ничего не создаём, даже если часть уроков валидна
+    return res.status(400).json({
+      error: 'Файл не прошёл валидацию',
+      details: parsed.errors,
+      warnings: parsed.warnings,
+    });
+  }
+
+  const kindOf = (l: { video_embed_url: string | null; text_content: string }) =>
+    l.video_embed_url && l.text_content ? 'video_text' : l.video_embed_url ? 'video' : 'text';
+
+  const maxPos = await query(
+    `SELECT COALESCE(MAX(position), 0) AS mp FROM course_lessons WHERE course_id = $1`,
+    [courseId],
+  );
+  const base = Number(maxPos.rows[0].mp);
+
+  // dry_run: превью без единого INSERT/UPDATE (ТЗ-159 v3: в т.ч. описание курса)
+  const dryRun = req.body?.dry_run === 'true' || req.query?.dry_run === '1' || req.query?.dry_run === 'true';
+  if (dryRun) {
+    return res.json({
+      dry_run: true,
+      course_description: parsed.course_description
+        ? { will_update: true, chars: parsed.course_description.length, current_chars: currentDescription.length }
+        : null,
+      lessons: parsed.lessons.map((l, i) => ({
+        position: base + i + 1,
+        title: l.title,
+        chars: l.text_content.length,
+        kind: kindOf(l),
+        is_free_preview: l.is_free_preview,
+        duration_min: l.duration_min,
+        buttons_count: l.buttons.length,
+        test: l.test
+          ? { questions: l.test.questions.length, pass_score: l.test.pass_score, is_blocking: l.test.is_blocking }
+          : null,
+      })),
+      warnings: parsed.warnings,
+    });
+  }
+
+  // Идемпотентность: ключ урока = md-import:<sha256 файла>:<индекс>
+  const fileHash = crypto.createHash('sha256').update(req.file.buffer).digest('hex').slice(0, 32);
+  const results: { id: string; position: number; title: string; already_created: boolean }[] = [];
+  let created = 0;
+  let skippedExisting = 0;
+  let testsCreated = 0;
+  try {
+    for (let i = 0; i < parsed.lessons.length; i++) {
+      const l = parsed.lessons[i];
+      const inserted = await insertLessonIdempotent(courseId, {
+        title: l.title,
+        kind: kindOf(l),
+        text_content: l.text_content,
+        video_source: l.video_embed_url ? 'external_embed' : null,
+        video_embed_url: l.video_embed_url,
+        duration_min: l.duration_min,
+        is_free_preview: l.is_free_preview,
+        unlock_after_days: l.unlock_after_days,
+        buttons: l.buttons,
+      }, `md-import:${fileHash}:${i}`, base + i + 1);
+      if (inserted.alreadyCreated) {
+        // Повтор файла: урок пропускаем целиком — тест и кнопки уже созданы
+        skippedExisting++;
+      } else {
+        created++;
+        if (l.test) {
+          await query(
+            `INSERT INTO lesson_tests (id, lesson_id, pass_score, is_blocking, questions)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [crypto.randomUUID(), inserted.id, l.test.pass_score, l.test.is_blocking, JSON.stringify(l.test.questions)],
+          );
+          testsCreated++;
+        }
+      }
+      results.push({ id: inserted.id, position: inserted.position, title: l.title, already_created: inserted.alreadyCreated });
+    }
+  } catch (e: any) {
+    // Транзакцию на цикл не вводим (ТЗ-159 §4): единственное окно — падение
+    // БД посередине; админ должен понимать, сколько уроков уже вставлено
+    return res.status(500).json({ error: e?.message || 'Internal server error', created_before_error: created });
+  }
+
+  // ТЗ-159 v3: преамбула файла заменяет описание курса (санитизирована парсером,
+  // как в PATCH-ветке). Повтор того же файла пишет то же значение — безвредно.
+  let descriptionUpdated = false;
+  if (parsed.course_description !== null) {
+    await query(`UPDATE courses SET description = $1 WHERE id = $2`, [parsed.course_description, courseId]);
+    descriptionUpdated = true;
+  }
+
+  const body = { created, skipped_existing: skippedExisting, tests_created: testsCreated, description_updated: descriptionUpdated, lessons: results, warnings: parsed.warnings };
+  if (created > 0 || descriptionUpdated) {
+    invalidateEducationCache();
+    logUserEvent(req.user!.userId, 'education.course_updated', { course_id: courseId, field: 'lessons', import: 'md', created, description_updated: descriptionUpdated });
+    // Описание входит в текст эмбеддинга курса (lms_v3_matching.sql) — обновление
+    // description само по себе причина для ре-эмбеддинга (ТЗ-159 v3 п.3)
+    scheduleCourseReembedding(courseId);
+    if (created > 0) return res.status(201).json(body);
+  }
+  // Все уроки уже созданы ранее и описание не менялось — 200 вместо 201
+  res.json(body);
 }));
 
 router.post('/courses/:id/lessons/reorder', h(async (req, res) => {

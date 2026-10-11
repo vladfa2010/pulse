@@ -44,6 +44,25 @@
   `already_created` + существующий урок вместо 500. Фронт шлёт стабильный ключ
   из формы урока и показывает тост «Урок уже был добавлен (повторный запрос)».
   Тест: `src/tests/lessonIdempotency.test.ts` (11 проверок).
+- ✅ **ТЗ-159 v3** (импорт курса из .md, backend + frontend): парсер
+  `services/education/mdCourseImport.ts` (чистая функция): разрез по `# `,
+  frontmatter `---` (is_free/video_url/duration_min/unlock_days), директивы
+  `:::button` (0–3, через общий `validateLessonButtons` — вынесен в
+  `services/education/lessonButtons.ts` по образцу embedUrl) и `:::test … :::`
+  (1–20 вопросов, 2–6 вариантов, ровно один (x), pass 1..100 default 70,
+  blocking true|false), `:::chart` → div.chart-block; контент — через тот же
+  `sanitizeLessonHtml`. Текст до первого `# ` = описание курса: при импорте
+  заменяет `courses.description` (пустая преамбула = не трогаем). Эндпоинт
+  `POST /courses/:id/import-md` (multer 1 МБ, .md/.markdown/.txt): dry_run →
+  превью (course_description/buttons_count/test) без записи; импорт идемпотентен
+  по ключу `md-import:<sha256>:<i>` (ТЗ-157), у вставленных уроков с тестом сразу
+  INSERT в `lesson_tests`; ответ `{created, skipped_existing, tests_created,
+  description_updated, lessons, warnings}`, ре-эмбеддинг и инвалидация кэша при
+  created≥1 или обновлении описания. Фронт: кнопка «Импорт из MD» во вкладке
+  «Уроки» + модалка с превью (плашка «Описание курса будет заменено», бейджи
+  кнопок/теста). Тесты: `src/tests/mdCourseImport.test.ts` (парсер, 78 проверок),
+  `src/tests/mdCourseImportEndpoint.test.ts` (живой API, после деплоя),
+  фронт `importmd.smoke.test.tsx`.
 - ⏭ Дальше: ТЗ-100 Задача 4 («Мои курсы» в ЛК), затем ТЗ-105, ТЗ-104 по
   команде, ТЗ-107 последним.
 
