@@ -126,23 +126,116 @@ export async function sendWelcomeEmail(
   to: string,
   username: string
 ): Promise<boolean> {
+  const FRONTEND_URL = process.env.FRONTEND_URL || 'https://pulse.inside-trade.ru';
   const html = `<!DOCTYPE html>
 <html><head><meta charset="utf-8"></head>
-<body style="font-family: Arial, sans-serif; background: #0a0a0a; margin: 0; padding: 20px; color: #e5e5e5;">
-<div style="max-width: 480px; margin: 0 auto; background: #111111; border-radius: 16px; overflow: hidden; border: 1px solid #222222;">
-  <div style="background: linear-gradient(135deg, #00D4FF, #0099CC); padding: 28px; text-align: center;">
-    <h1 style="color: #060606; margin: 0; font-size: 22px; font-weight: 700;">Добро пожаловать в PULSE</h1>
-  </div>
-  <div style="padding: 28px;">
-    <p style="font-size: 15px; line-height: 1.5; margin: 0 0 16px;">Привет, <strong>${escapeHtml(username)}</strong>!</p>
-    <p style="font-size: 15px; line-height: 1.5; margin: 0 0 20px;">Вы создали аккаунт в PULSE — сервисе персонализированных финансовых новостей. Добавляйте теги, отслеживайте рынок и получайте важные события первыми.</p>
-    <div style="text-align: center; margin: 24px 0;">
-      <a href="${process.env.FRONTEND_URL || 'https://pulse.inside-trade.ru'}" style="display: inline-block; background: linear-gradient(135deg, #00D4FF, #0099CC); color: #060606; text-decoration: none; padding: 12px 24px; border-radius: 8px; font-weight: 600;">Открыть PULSE</a>
+<body style="margin: 0; padding: 0; background: #0a0a0a;">
+<div style="max-width:480px; margin:0 auto; background:#0a0a0a; padding:24px 16px; font-family: Arial, sans-serif;">
+  <div style="background:#111111; border-radius:16px; overflow:hidden;">
+
+    <!-- Шапка -->
+    <div style="background:linear-gradient(135deg, #00D4FF, #0099CC); padding:32px 24px; text-align:center;">
+      <div style="font-size:28px; font-weight:700; color:#060606; letter-spacing:2px;">PULSE</div>
+      <div style="font-size:15px; color:#060606; opacity:0.8; margin-top:6px;">Добро пожаловать!</div>
     </div>
-    <p style="font-size: 13px; color: #888; line-height: 1.5; margin: 0;">Если у вас есть вопросы, ответьте на это письмо.</p>
-  </div>
-  <div style="text-align: center; padding: 18px; border-top: 1px solid #222222; font-size: 12px; color: #555;">
-    © PULSE
+
+    <div style="padding:28px 24px;">
+
+      <!-- Приветствие -->
+      <div style="font-size:20px; font-weight:600; color:#ffffff; margin-bottom:12px;">
+        Привет, ${escapeHtml(username)}!
+      </div>
+      <div style="font-size:14px; line-height:1.6; color:#b0b0b0; margin-bottom:20px;">
+        Мы уже добавили вам стартовые теги <b style="color:#ffffff;">Сбербанк</b> и
+        <b style="color:#ffffff;">Нефть</b> — и прямо сейчас фильтруем поток новостей,
+        собирая для вас только то, что важно по этим темам.
+        <b style="color:#ffffff;">Откройте PULSE и посмотрите свою ленту.</b>
+      </div>
+
+      <!-- Курс по платформе -->
+      <div style="background:#1a1a1a; border:1px solid rgba(0,212,255,0.25); border-radius:12px; padding:20px; margin-bottom:24px;">
+        <div style="font-size:15px; font-weight:600; color:#ffffff; margin-bottom:8px;">
+          🎓 С чего начать?
+        </div>
+        <div style="font-size:13px; line-height:1.6; color:#b0b0b0; margin-bottom:14px;">
+          У нас есть платформа знаний с курсами по работе с PULSE.
+          Начните с курса по основам платформы — за несколько минут вы поймёте,
+          что и для чего устроено:
+        </div>
+        <div style="font-size:13px; line-height:1.7; color:#b0b0b0; margin-bottom:16px;">
+          <div style="margin-bottom:8px;">
+            <span style="color:#00D4FF;">•</span>
+            <b style="color:#ffffff;">Теги и лента</b> — как собрать новостной поток под свой портфель
+          </div>
+          <div style="margin-bottom:8px;">
+            <span style="color:#00D4FF;">•</span>
+            <b style="color:#ffffff;">Фактчекинг</b> — как проверять новости на достоверность силами ИИ
+          </div>
+          <div>
+            <span style="color:#00D4FF;">•</span>
+            <b style="color:#ffffff;">Поиск виральности</b> — как находить новости, которые начинают разлетаться
+          </div>
+        </div>
+        <a href="https://pulse.inside-trade.ru/education/obuchenie-po-platforme-pulse-4d2c24ed"
+           style="display:inline-block; padding:10px 20px; background:rgba(0,212,255,0.12); border:1px solid rgba(0,212,255,0.35); border-radius:9999px; color:#00D4FF; font-size:13px; font-weight:600; text-decoration:none;">
+          Перейти к курсу →
+        </a>
+      </div>
+
+      <!-- Три шага -->
+      <div style="font-size:15px; font-weight:600; color:#ffffff; margin-bottom:12px;">
+        Три шага на первую неделю
+      </div>
+      <div style="font-size:13px; line-height:1.7; color:#b0b0b0; margin-bottom:24px;">
+        <div style="margin-bottom:10px;">
+          <span style="color:#00D4FF; font-weight:700;">1.</span>
+          Добавьте свои теги — до 3 бесплатно, лента соберётся под ваш портфель.<br>
+          <a href="${FRONTEND_URL}/" style="color:#00D4FF; text-decoration:none; font-size:12px;">Настроить теги →</a>
+        </div>
+        <div style="margin-bottom:10px;">
+          <span style="color:#00D4FF; font-weight:700;">2.</span>
+          Прочитайте «Пульс рынка» — ИИ-саммари дня по вашим тегам.<br>
+          <a href="${FRONTEND_URL}/" style="color:#00D4FF; text-decoration:none; font-size:12px;">Открыть саммари →</a>
+        </div>
+        <div>
+          <span style="color:#00D4FF; font-weight:700;">3.</span>
+          Подключите Telegram — дайджесты и еженедельный отчёт прямо в мессенджер.<br>
+          <a href="${FRONTEND_URL}/profile/notifications" style="color:#00D4FF; text-decoration:none; font-size:12px;">Подключить Telegram →</a>
+        </div>
+      </div>
+
+      <!-- Главная кнопка -->
+      <div style="text-align:center; margin-bottom:20px;">
+        <a href="${FRONTEND_URL}"
+           style="display:inline-block; padding:14px 36px; background:linear-gradient(135deg, #00D4FF, #0099CC); color:#060606; font-size:16px; font-weight:700; border-radius:12px; text-decoration:none;">
+          Открыть PULSE
+        </a>
+      </div>
+
+      <!-- Приложение -->
+      <div style="border-top:1px solid #222222; padding-top:20px; margin-bottom:20px; text-align:center;">
+        <div style="font-size:14px; font-weight:600; color:#ffffff; margin-bottom:12px;">
+          PULSE всегда под рукой
+        </div>
+        <div>
+          <a href="${FRONTEND_URL}/download"
+             style="display:inline-block; padding:10px 18px; margin:0 4px 8px; background:#1a1a1a; border:1px solid #333333; border-radius:10px; color:#ffffff; font-size:13px; font-weight:600; text-decoration:none;">
+            <img src="${FRONTEND_URL}/email/icon-android.png" width="16" height="16" alt="" style="vertical-align:-3px; margin-right:8px;">Скачать для Android
+          </a>
+          <a href="https://pulse.inside-trade.ru/education/obuchenie-po-platforme-pulse-4d2c24ed"
+             style="display:inline-block; padding:10px 18px; margin:0 4px 8px; background:#1a1a1a; border:1px solid #333333; border-radius:10px; color:#ffffff; font-size:13px; font-weight:600; text-decoration:none;">
+            <img src="${FRONTEND_URL}/email/icon-apple.png" width="16" height="16" alt="" style="vertical-align:-3px; margin-right:8px;">Как установить на iPhone
+          </a>
+        </div>
+      </div>
+
+      <!-- Футер -->
+      <div style="border-top:1px solid #222222; padding-top:16px; font-size:12px; line-height:1.6; color:#666666; text-align:center;">
+        Есть вопросы — просто ответьте на это письмо.<br>
+        © PULSE · <a href="${FRONTEND_URL}" style="color:#666666;">pulse.inside-trade.ru</a>
+      </div>
+
+    </div>
   </div>
 </div>
 </body></html>`;
