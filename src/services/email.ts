@@ -220,11 +220,11 @@ export async function sendWelcomeEmail(
         <div>
           <a href="${FRONTEND_URL}/download"
              style="display:inline-block; padding:10px 18px; margin:0 4px 8px; background:#1a1a1a; border:1px solid #333333; border-radius:10px; color:#ffffff; font-size:13px; font-weight:600; text-decoration:none;">
-            <img src="${FRONTEND_URL}/email/icon-android.png" width="16" height="16" alt="" style="vertical-align:-3px; margin-right:8px;">Скачать для Android
+            🤖 Скачать для Android
           </a>
           <a href="https://pulse.inside-trade.ru/education/obuchenie-po-platforme-pulse-4d2c24ed"
              style="display:inline-block; padding:10px 18px; margin:0 4px 8px; background:#1a1a1a; border:1px solid #333333; border-radius:10px; color:#ffffff; font-size:13px; font-weight:600; text-decoration:none;">
-            <img src="${FRONTEND_URL}/email/icon-apple.png" width="16" height="16" alt="" style="vertical-align:-3px; margin-right:8px;">Как установить на iPhone
+            🍎 Как установить на iPhone
           </a>
         </div>
       </div>
