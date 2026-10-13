@@ -114,25 +114,41 @@ router.post('/yookassa', async (req, res) => {
       return res.status(200).json({ received: true, idempotent: true });
     }
 
-    // #Y4 optional verification with YooKassa API
+    // #Y4 verification with YooKassa API.
+    // SECURITY 2026-10-13 (S1b): для payment.succeeded верификация блокирующая —
+    // статус и сумма сверяются с реальным платежом в ЮKassa. Подделанный webhook
+    // (ранее: IP-фильтр обходился поддельным cf-connecting-ip) больше не может
+    // активировать подписку без оплаты. Не получилось проверить — не активируем.
     const isYookassaConfigured = process.env.YOOKASSA_SHOP_ID && process.env.YOOKASSA_SECRET_KEY;
     if (isYookassaConfigured) {
+      let verified: any = null;
       try {
         const auth = 'Basic ' + Buffer.from(`${process.env.YOOKASSA_SHOP_ID}:${process.env.YOOKASSA_SECRET_KEY}`).toString('base64');
         const verifyRes = await axios.get(
           `https://api.yookassa.ru/v3/payments/${object.id}`,
           { headers: { Authorization: auth }, timeout: 15000 }
         );
-        const verified = verifyRes.data;
-        if (verified.status !== object.status) {
-          console.warn('[YooKassa Webhook] Status mismatch', verified.status, object.status);
+        verified = verifyRes.data;
+      } catch (verifyErr: any) {
+        console.error('[YooKassa Webhook] Verify failed:', verifyErr.response?.data || verifyErr.message);
+        if (event === 'payment.succeeded') {
+          return res.status(403).json({ error: 'Verification failed' });
         }
+      }
+      if (verified) {
         const meta = verified.metadata || {};
         if (meta.payment_id && meta.payment_id !== payment.id) {
           console.warn('[YooKassa Webhook] Metadata payment_id mismatch');
         }
-      } catch (verifyErr: any) {
-        console.error('[YooKassa Webhook] Verify failed:', verifyErr.response?.data || verifyErr.message);
+        if (event === 'payment.succeeded') {
+          const amountMatch = Number(verified.amount?.value) === Number(payment.amount);
+          if (verified.status !== 'succeeded' || !amountMatch) {
+            console.warn('[YooKassa Webhook] Verification rejected:', verified.status, verified.amount?.value, 'expected amount', payment.amount);
+            return res.status(403).json({ error: 'Verification failed' });
+          }
+        } else if (verified.status !== object.status) {
+          console.warn('[YooKassa Webhook] Status mismatch', verified.status, object.status);
+        }
       }
     }
 

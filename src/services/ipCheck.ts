@@ -82,11 +82,18 @@ export function isYookassaIp(ip: string): boolean {
   return YOOKASSA_CIDRS.some((cidr) => isIpInCidr(ip, cidr));
 }
 
+// SECURITY 2026-10-13 (S1a): cf-connecting-ip / true-client-ip — заголовки
+// Cloudflare. У нас Caddy без Cloudflare — клиент может подделать заголовок
+// и пройти IP-проверку webhook'а ЮKassa. Доверяем им только если задан
+// TRUSTED_PROXY=cloudflare, иначе игнорируем и падаем в x-forwarded-for.
+const TRUSTED_PROXY = (process.env.TRUSTED_PROXY || '').toLowerCase();
+
 export function getClientIp(headers: IncomingHttpHeaders, reqIp?: string): string | undefined {
-  // Cloudflare / Render expose the real client IP in these headers.
-  const cf = headers['cf-connecting-ip'] || headers['true-client-ip'];
-  if (typeof cf === 'string' && cf.trim()) {
-    return cf.trim();
+  if (TRUSTED_PROXY === 'cloudflare') {
+    const cf = headers['cf-connecting-ip'] || headers['true-client-ip'];
+    if (typeof cf === 'string' && cf.trim()) {
+      return cf.trim();
+    }
   }
 
   const forwarded = headers['x-forwarded-for'];
