@@ -120,27 +120,41 @@ export async function extractFromUrl(url: string): Promise<ExtractedContent> {
     },
   });
 
+  // ТЗ-120: принимаем только HTML-страницы (иначе CSS/JSON разбирались как текст)
+  const contentType = String(response.headers['content-type'] || '').toLowerCase();
+  if (contentType && !contentType.includes('text/html') && !contentType.includes('application/xhtml')) {
+    throw new Error('По ссылке не статья (не HTML-страница)');
+  }
+
   const html: string = typeof response.data === 'string' ? response.data : String(response.data || '');
   if (!html.trim()) {
     throw new Error('Страница вернула пустой ответ');
   }
 
+  // ТЗ-120: чистка HTML ДО сканирования (как в доноре) — иначе CSS из
+  // инлайн-<style> нечем удалить: открывающий тег остаётся снаружи захвата <p>
+  const cleaned = html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<(nav|header|footer|aside|form|iframe|svg|noscript|template)[\s\S]*?<\/\1>/gi, ' ');
+
   // Заголовок: og:title → <title>
   let title = '';
   const ogMatch =
-    html.match(/<meta[^>]+property=["']og:title["'][^>]*content=["']([^"']*)["']/i) ||
-    html.match(/<meta[^>]+content=["']([^"']*)["'][^>]*property=["']og:title["']/i);
+    cleaned.match(/<meta[^>]+property=["']og:title["'][^>]*content=["']([^"']*)["']/i) ||
+    cleaned.match(/<meta[^>]+content=["']([^"']*)["'][^>]*property=["']og:title["']/i);
   if (ogMatch?.[1]) title = decodeEntities(ogMatch[1]).trim();
   if (!title) {
-    const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+    const titleMatch = cleaned.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
     if (titleMatch?.[1]) title = stripTags(titleMatch[1]).trim();
   }
 
-  // Абзацы <p> ≥ 40 символов
+  // Абзацы <p> ≥ 40 символов. Строгий тег с границей слова (ТЗ-120):
+  // старый /<p[^>]*>/ матчил <path>/<picture>/<pre> и тянул CSS до </p>
   const paragraphs: string[] = [];
-  const pRegex = /<p[^>]*>([\s\S]*?)<\/p>/gi;
+  const pRegex = /<p(?:\s[^>]*)?>([\s\S]*?)<\/p>/gi;
   let m: RegExpExecArray | null;
-  while ((m = pRegex.exec(html)) !== null) {
+  while ((m = pRegex.exec(cleaned)) !== null) {
     const text = stripTags(m[1]);
     if (text.length >= 40) paragraphs.push(text);
   }
@@ -149,8 +163,8 @@ export async function extractFromUrl(url: string): Promise<ExtractedContent> {
 
   // Fallback — текст <body>
   if (text.length < 100) {
-    const bodyMatch = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
-    text = stripTags(bodyMatch?.[1] || html);
+    const bodyMatch = cleaned.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+    text = stripTags(bodyMatch?.[1] || cleaned);
   }
 
   if (text.length < 100) {

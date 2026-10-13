@@ -78,13 +78,19 @@ router.post('/', authMiddleware, async (req: AuthRequest, res) => {
       }
       extracted = { title: text.trim().slice(0, 120), text: text.trim() };
     } else if (input_type === 'url') {
-      if (typeof url !== 'string' || !URL_REGEX.test(url.trim())) {
+      if (typeof url !== 'string') {
         return res.status(400).json({ error: 'Вставьте корректную ссылку (http:// или https://).' });
       }
-      if (url.length > 2000) {
+      // ТЗ-120: домен без схемы (rbc.ru/...) — дописываем https:// как в доноре
+      let u = url.trim();
+      if (!/^https?:\/\//i.test(u) && /^[\w-]+(\.[\w-]+)+(\/\S*)?$/i.test(u)) u = `https://${u}`;
+      if (!URL_REGEX.test(u)) {
+        return res.status(400).json({ error: 'Вставьте корректную ссылку (http:// или https://).' });
+      }
+      if (u.length > 2000) {
         return res.status(400).json({ error: 'Ссылка слишком длинная.' });
       }
-      inputRaw = url.trim();
+      inputRaw = u;
       try {
         extracted = await extractFromUrl(inputRaw);
       } catch (err: any) {
