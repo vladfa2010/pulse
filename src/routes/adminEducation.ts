@@ -140,8 +140,8 @@ import { sanitizeLessonHtml } from '../services/education/contentHtml';
 // Реализация — в services/education/embedUrl.ts (ТЗ-159: парсер md-импорта
 // импортирует отсюда, services → routes запрещён); здесь re-export для
 // совместимости, как sanitizeLessonHtml выше.
-export { isAllowedEmbedUrl } from '../services/education/embedUrl';
-import { isAllowedEmbedUrl } from '../services/education/embedUrl';
+export { isAllowedEmbedUrl, normalizeEmbedUrl } from '../services/education/embedUrl';
+import { isAllowedEmbedUrl, normalizeEmbedUrl } from '../services/education/embedUrl';
 
 // ─── CTA-кнопки урока (ТЗ-124) ───────────────────────────────────────────────
 // Реализация — в services/education/lessonButtons.ts (ТЗ-159 v2: парсер
@@ -183,10 +183,10 @@ function validateLessonPayload(body: any): LessonPayload | { error: string } {
     out.text_content = sanitizeLessonHtml(raw);
   }
   if (body.video_embed_url !== undefined) {
-    const embed = body.video_embed_url === null ? '' : String(body.video_embed_url).trim();
+    const embed = body.video_embed_url === null ? '' : normalizeEmbedUrl(String(body.video_embed_url).trim());
     if (embed) {
       if (!isAllowedEmbedUrl(embed)) {
-        return { error: 'video_embed_url — домен вне белого списка (youtube, vkvideo, vimeo) или не https' };
+        return { error: 'video_embed_url — домен вне белого списка (youtube, vkvideo, vimeo, rutube) или не https' };
       }
       out.video_embed_url = embed;
       out.video_source = 'external_embed';

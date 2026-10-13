@@ -20,7 +20,7 @@
 import MarkdownIt from 'markdown-it';
 import { parse as parseYaml } from 'yaml';
 import { sanitizeLessonHtml } from './contentHtml';
-import { isAllowedEmbedUrl } from './embedUrl';
+import { isAllowedEmbedUrl, normalizeEmbedUrl } from './embedUrl';
 import { validateLessonButtons } from './lessonButtons';
 import type { LessonButton } from './lessonButtons';
 
@@ -309,10 +309,10 @@ function parseFrontmatter(
       case 'video_url': {
         if (!value) {
           errors.push(`Урок "${label}": video_url — непустая строка`);
-        } else if (!isAllowedEmbedUrl(value)) {
-          errors.push(`Урок "${label}": video_url — домен вне белого списка (youtube, vkvideo, vimeo) или не https`);
+        } else if (!isAllowedEmbedUrl(normalizeEmbedUrl(value))) {
+          errors.push(`Урок "${label}": video_url — домен вне белого списка (youtube, vkvideo, vimeo, rutube) или не https`);
         } else {
-          out.videoUrl = value;
+          out.videoUrl = normalizeEmbedUrl(value);
         }
         break;
       }
