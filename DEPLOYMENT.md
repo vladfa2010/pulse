@@ -224,6 +224,7 @@ npm run build   # выход в dist/
 | `TELEGRAM_BOT_TOKEN` | `(скрыт)` | Telegram Bot токен |
 | `ENCRYPTION_KEY` | `(скрыт)` | 64 hex-символов (32 байта) для AES-256-GCM шифрования API-токенов брокеров. Обязателен для фичи портфелей. |
 | `MINIMAX_API_KEY` | `(скрыт)` | Minimax TTS для радио (`POST /api/radio/tts`, ТЗ-42). Установлен 2026-09-21 (в `.env` И в `environment:` backend-сервиса; бэкап `.env.bak-minimax`). Boot-лог: `[Radio] MINIMAX ready` / `...not set, /api/radio/tts returns 503`. Метрики: `GET /api/admin/metrics?section=radio`. ⚠️ Ключ передавался в чате — сгенерировать новый и ротировать до публичного релиза радио. |
+| `TRUSTED_PROXY` | — (не задан) | Доверять клиентским IP-заголовкам `cf-connecting-ip`/`true-client-ip` только при значении `cloudflare`. На VPS с Caddy НЕ задавать — иначе webhook-фильтр ЮKassa обходится поддельным заголовком (SECURITY_AUDIT_PAYMENTS_2026-10-13, S1a; коммит `71a5601`). |
 
 ### Почта и системные алерты (ТЗ-09, 2026-09-16)
 

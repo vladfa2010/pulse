@@ -282,7 +282,7 @@ Response:
 https://pulse.inside-trade.ru/#/payment/return?payment_id=...&return=1
 ```
 
-> URL берётся из переменной `FRONTEND_URL`. Убедитесь, что в Render она равна `https://pulse.inside-trade.ru`, иначе пользователь уйдёт на старый onrender-домен.
+> URL берётся из переменной `FRONTEND_URL`. Убедитесь, что в окружении backend она равна `https://pulse.inside-trade.ru`, иначе пользователь уйдёт на старый onrender-домен.
 
 Фронтенд начинает polling `GET /api/payment/status/:id` каждые 2 сек × 15 попыток.
 
@@ -559,13 +559,14 @@ Content-Type: application/json
 
 Backend:
 
-- Проверяет IP-адрес YuKassa.
+- Проверяет IP-адрес YuKassa (заголовки `cf-connecting-ip`/`true-client-ip` НЕ доверяем — см. `TRUSTED_PROXY`; реальный IP — последняя запись `x-forwarded-for`, ставит Caddy).
 - Проверяет `type === 'notification'`.
 - Игнорирует повторные `payment.succeeded` (idempotency по `payments.status = 'completed'`).
+- **SECURITY 2026-10-13:** для `payment.succeeded` верификация через API YuKassa **блокирующая** — реальный статус платежа обязан быть `succeeded` и сумма совпадать с записью в БД, иначе 403 без активации; сбой верификации (сеть/API) тоже 403 (fail-closed). Раньше расхождение было warn-only → поддельный webhook мог активировать подписку без оплаты (отчёт SECURITY_AUDIT_PAYMENTS_2026-10-13.md, коммит `71a5601`).
 - Сохраняет payment method, если `object.payment_method.saved === true`.
 - Активирует подписку.
 
-> ⚠️ **ВАЖНО:** Webhook всегда возвращает 200 OK, даже при ошибках обработки. Иначе YuKassa будет ретраить.
+> ⚠️ **ВАЖНО:** Webhook почти всегда возвращает 200 OK (даже «payment not found»), чтобы YuKassa не ретраила шум. Исключение — отказ верификации `payment.succeeded` (403): тогда YuKassa повторит уведомление позже, что правильно — активация возможна только после подтверждённого платежа.
 
 ---
 
@@ -708,7 +709,7 @@ GET /api/user/vapid-public-key
 
 | Параметр | Значение |
 |----------|----------|
-| URL | `https://pulse-api-bsov.onrender.com/api/webhook/yookassa` |
+| URL | `https://pulse.inside-trade.ru/api/webhook/yookassa` |
 | События | `payment.succeeded`, `payment.canceled` |
 
 Входящие уведомления от YuKassa приходят на backend, где:
@@ -730,6 +731,7 @@ GET /api/user/vapid-public-key
 | `YOOKASSA_SHOP_ID` | ID магазина |
 | `YOOKASSA_SECRET_KEY` | Секретный ключ для API платежей |
 | `YOOKASSA_OAUTH_TOKEN` | OAuth-токен для авто-настройки webhook (опционально) |
+| `TRUSTED_PROXY` | `cloudflare` — доверять `cf-connecting-ip`/`true-client-ip`; без него заголовки игнорируются (SECURITY 2026-10-13, S1a). На VPS с Caddy не задаём. |
 
 ### URLs
 
@@ -754,7 +756,7 @@ YOOKASSA_SECRET_KEY=live_xxx...
 # YOOKASSA_OAUTH_TOKEN=                      # опционально, для авто-настройки webhook
 
 FRONTEND_URL=https://pulse.inside-trade.ru
-BACKEND_URL=https://pulse-api-bsov.onrender.com
+BACKEND_URL=https://pulse.inside-trade.ru
 
 VAPID_PUBLIC_KEY=BK...
 VAPID_PRIVATE_KEY=FH...
@@ -781,19 +783,22 @@ WHERE id = '...';
 ### Webhook не приходит
 
 1. Убедитесь, что webhook в ЛК YuKassa всё ещё активен:
-   - URL: `https://pulse-api-bsov.onrender.com/api/webhook/yookassa`
+   - URL: `https://pulse.inside-trade.ru/api/webhook/yookassa`
    - События: `payment.succeeded`, `payment.canceled`
 2. Проверьте доступность endpoint:
    ```bash
-   curl -I https://pulse-api-bsov.onrender.com/api/webhook/yookassa
+   curl -I https://pulse.inside-trade.ru/api/webhook/yookassa
    ```
 3. Проверьте, что запрос снаружи отклоняется по IP (должен вернуть 403):
    ```bash
-   curl -X POST https://pulse-api-bsov.onrender.com/api/webhook/yookassa \
+   curl -X POST https://pulse.inside-trade.ru/api/webhook/yookassa \
      -H "Content-Type: application/json" \
      -d '{"type":"notification","event":"payment.succeeded","object":{"id":"test"}}'
    ```
-4. Посмотрите логи Render на строки `[YooKassa Webhook]` и таблицу `webhook_events`.
+4. Посмотрите логи контейнера на строки `[YooKassa Webhook]` и таблицу `webhook_events`:
+   ```bash
+   docker logs pulse-backend --since 1h | grep 'YooKassa Webhook'
+   ```
 
 ### Повторный webhook не должен продлевать подписку
 

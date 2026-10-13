@@ -468,7 +468,11 @@ secret=CRON_SECRET_KEY`, идемпотентна; SQLite → `{skipped:true}`).
   `lesson` ранжируется выше `/education/:slug`). Состояния: loading / 404 /
   401 (кнопка «Войти» через auth-modal) / 403 (subscription_expired,
   locked_by_drip с «откроется через N дн.», test_blocked). Контент: видео
-  (embed-iframe, youtube watch→embed конвертация на клиенте), текст как HTML
+  (embed-iframe; белый список доменов `embedUrl.ts`: youtube, vkvideo, vimeo,
+  **rutube** — ТЗ-164: страница rutube `/video/<id>` нормализуется в
+  `/play/embed/<id>` на бэке при сохранении; youtube watch→embed конвертация
+  на клиенте; ТЗ-165: 15 с на попытку + 2 молчаливых авто-ретрая + оверлей
+  «загружается…» после 5 с), текст как HTML
   (санитизирует бэк `sanitizeLessonHtml` — вынесен в
   `services/education/contentHtml.ts`, ТЗ-108; whitelist расширен тегом `u`),
   общая rich-text типографика `.edu-content` (index.css) — тот же класс, что в

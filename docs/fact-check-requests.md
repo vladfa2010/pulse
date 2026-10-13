@@ -43,7 +43,7 @@
 | Тип | Извлечение текста |
 |---|---|
 | `text` | Как есть, 20–8000 символов |
-| `url` | `extractFromUrl()`: axios GET (timeout 20s, ≤ 3 МБ, браузерный UA) → заголовок (og:title → `<title>`) → абзацы `<p>` ≥ 40 символов, fallback — текст `<body>`. Минимум 100 символов |
+| `url` | `extractFromUrl()`: axios GET (timeout 20s, ≤ 3 МБ, браузерный UA) → **ТЗ-120:** guard Content-Type (не-HTML → 422 «не статья»), предварительная чистка HTML (`script/style/nav/header/footer/aside/form/iframe/svg/noscript/template`), строгий regex `<p(?:\s[^>]*)?>` (иначе `<path>` тянул CSS) → заголовок (og:title → `<title>`) → абзацы `<p>` ≥ 40 символов, fallback — текст `<body>`. Минимум 100 символов. Ссылка без схемы (`rbc.ru/…`) — роут дописывает `https://` до валидации и хэша |
 | `image` | base64 → Kimi Files API (`purpose: file-extract`, OCR) → текст |
 | `file` | base64 → Kimi Files API (`file-extract`) → текст |
 
