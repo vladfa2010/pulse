@@ -1283,6 +1283,7 @@ heap таблицы `news` (контрольные суммы). Восстано
 0 4 * * 0 /opt/pulse/pulse/scripts/maintenance/weekly-integrity.sh
 0 3 1 * * /opt/pulse/pulse/scripts/maintenance/test-restore.sh
 15 3 * * * /opt/pulse/pulse/scripts/backup/s3-upload-backup.sh
+*/5 * * * * /opt/pulse/backfill-watchdog.sh
 ```
 
 (путь к клону репо на сервере — `/opt/pulse/pulse`)
@@ -1295,6 +1296,7 @@ heap таблицы `news` (контрольные суммы). Восстано
 
 | Скрипт | Задача | Лог |
 |--------|--------|-----|
+| `/opt/pulse/backfill-watchdog.sh` (источник `scripts/backfill-watchdog.sh`) | Каждые 5 минут: если бэкфилл эмбеддингов (ТЗ-162) не завершён (`missing > 0`), а воркеров внутри `pulse-backend` нет — поднимает двух воркеров (`BACKFILL_MOD=2`, `REM=0/1`). Воркеры погибают при любом пересоздании контейнера бэкенда (деплой) — без watchdog прогон простаивал до часа. Защиты: пропуск при прогреве бэкенда (<5 мин после старта), восстановление TEI-лимитов (`cpus=22 memory=9g`, сбрасываются при пересоздании контейнера), молчание при живых воркерах и при `missing=0`. Проверен end-to-end (убийство воркеров → автоподъём). | `/opt/pulse/backfill-watchdog.log` |
 | `scripts/health/incident-watch.sh` | Каждую минуту: зависшие IO-запросы (>60 с), io worker'ы postgres (>50% CPU), свежие повреждения страниц в логе контейнера. Проба логина — каждые 5 минут, техническая учётка `LOGIN_PROBE_EMAIL/PASSWORD` из `/opt/pulse/.env` (в БД помечена `registration_source='monitoring-probe'`), следы проб стираются из `user_logins`/`users`, чтобы не попадать в статистику; алерт при >5 с или недоступности. Дедупликация алертов — 1 на условие за 30 мин. Формат: `[PULSE-WATCH] <условие>: <детали>`. Exit 0 всегда. | `/var/log/pulse/incident-watch.log` |
 | `scripts/maintenance/weekly-integrity.sh` | Воскресенье 04:00: `bt_index_check()` каждого btree-индекса `news` (HNSW/GIN не трогаем), затем read-only свеп контрольных сумм всех пользовательских таблиц (`zero_damaged_pages=on`). Алерты: `[PULSE-INTEGRITY] ...`. | `/var/log/pulse/weekly-integrity.log` |
 | `scripts/maintenance/test-restore.sh` | 1-е числа 03:00: restore последнего nightly-бэкапа в изолированный контейнер `pulse-postgres-restore-test` (pgvector/pgvector:pg18, порт 55433, volume `restore_test_data`, прод не трогается; cleanup через trap). Проверки: 0 строк ERROR при restore, 0 `invalid page` после свипа чексумм, count(*) users/portfolios/news — FAIL только если в проде меньше строк, чем в бэкапе (потеря данных); положительная разница (регистрации/публикации после снятия бэкапа) — INFO. Запускать вне пика (zcat/restore не оборачиваются в nice/ionice — запускать вручную как `nice -n 10 ionice -c3 ...` при необходимости). Дифф потерянных новостей инцидента → `docs/incident-2026-10-08-lost-news.md`. | `/var/log/pulse/test-restore.log` |
