@@ -79,7 +79,7 @@ async function postEmbed(texts: string[]): Promise<number[][]> {
         agent: httpAgent,
         hostname: EMBEDDINGS_HOST.hostname,
         port: EMBEDDINGS_HOST.port || 80,
-        path: `${EMBEDDINGS_HOST.pathname}/embed`,
+        path: `${EMBEDDINGS_HOST.pathname.replace(/\/$/, '')}/embed`,
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
