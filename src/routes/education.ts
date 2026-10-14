@@ -980,6 +980,368 @@ function nowSqlInline(): string {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ТЗ-105 v2: программы (плейлисты курсов) — публичный контур.
+// Программа — обёртка над независимыми курсами; пейволл остаётся на курсах.
+// Прогресс вычисляемый (не хранимый). «Мягкая последовательность»: порядок —
+// рекомендация, блокировок нет. Персональные поля (my*, my_status) НЕ кэшируются.
+// ═══════════════════════════════════════════════════════════════════════════
+
+interface PathShelfCard {
+  slug: string;
+  title: string;
+  cover_url: string | null;
+  courses_count: number;
+  total_lessons: number;
+  total_minutes: number;
+  // Дочисляется после кэша — только для записанных на программу; null = не записан.
+  my?: { percent: number; done_courses: number } | null;
+}
+
+/** Прогресс юзера по программам — одним агрегирующим запросом (не N+1).
+ *  Считается по ВИДИМЫМ юзеру курсам: public + hidden с его enrollment.
+ *  Продуктовое решение (ТЗ-105 v2): процент идёт по ВСЕМ видимым курсам,
+ *  включая платные без доступа — независимо от записи на курс. */
+async function loadPathsProgress(
+  pathIds: string[],
+  userId: string,
+): Promise<Map<string, { percent: number; done_courses: number; total_courses: number }>> {
+  const map = new Map<string, { percent: number; done_courses: number; total_courses: number }>();
+  if (pathIds.length === 0) return map;
+  const perCourse = `
+      SELECT cpi.path_id, cpi.course_id,
+        COUNT(cl.id) AS total,
+        COUNT(CASE WHEN lp.lesson_id IS NOT NULL THEN 1 END) AS done
+      FROM course_path_items cpi
+      JOIN courses c ON c.id = cpi.course_id AND c.deleted_at IS NULL
+      LEFT JOIN course_lessons cl ON cl.course_id = cpi.course_id
+      LEFT JOIN lesson_progress lp ON lp.lesson_id = cl.id AND lp.user_id = $1
+      WHERE ${process.env.USE_SQLITE === 'true'
+          ? `cpi.path_id IN (${pathIds.map((_, i) => `$${i + 2}`).join(',')})`
+          : 'cpi.path_id = ANY($2)'}
+        AND (c.visibility = 'public'
+             OR EXISTS (SELECT 1 FROM course_enrollments ce
+                        WHERE ce.course_id = cpi.course_id AND ce.user_id = $1))
+      GROUP BY cpi.path_id, cpi.course_id`;
+  const params = process.env.USE_SQLITE === 'true' ? [userId, ...pathIds] : [userId, pathIds];
+  const rows = await query(
+    `WITH per_course AS (${perCourse})
+     SELECT path_id,
+       COALESCE(SUM(total), 0) AS total_lessons,
+       COALESCE(SUM(done), 0) AS done_lessons,
+       COUNT(*) AS total_courses,
+       SUM(CASE WHEN total = done THEN 1 ELSE 0 END) AS done_courses
+     FROM per_course GROUP BY path_id`,
+    params,
+  );
+  for (const r of rows.rows) {
+    const total = Number(r.total_lessons);
+    const done = Number(r.done_lessons);
+    map.set(r.path_id, {
+      percent: total > 0 ? Math.round((done / total) * 100) : 100,
+      done_courses: Number(r.done_courses),
+      total_courses: Number(r.total_courses),
+    });
+  }
+  return map;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GET /api/education/paths — полка «Программы» витрины (ТЗ-105 v2).
+// Кэш: ключ education:paths (5 мин), ТОЛЬКО публичная часть; my дочисляется после.
+// Пусто → [] (фронт скрывает полку).
+// ═══════════════════════════════════════════════════════════════════════════
+router.get('/paths', optionalAuth, h(async (req, res) => {
+  const userId = req.user?.userId;
+
+  const produce = async (): Promise<PathShelfCard[]> => {
+    const rows = await query(
+      `SELECT p.slug, p.title, p.cover_url,
+         (SELECT COUNT(*) FROM course_path_items i
+            JOIN courses c ON c.id = i.course_id AND c.deleted_at IS NULL
+           WHERE i.path_id = p.id) AS courses_count,
+         (SELECT COUNT(*) FROM course_path_items i
+            JOIN courses c ON c.id = i.course_id AND c.deleted_at IS NULL
+            JOIN course_lessons cl ON cl.course_id = c.id
+           WHERE i.path_id = p.id) AS total_lessons,
+         (SELECT COALESCE(SUM(cl.duration_min), 0) FROM course_path_items i
+            JOIN courses c ON c.id = i.course_id AND c.deleted_at IS NULL
+            JOIN course_lessons cl ON cl.course_id = c.id
+           WHERE i.path_id = p.id) AS total_minutes
+       FROM course_paths p
+       WHERE p.status = 'published' AND p.deleted_at IS NULL
+       ORDER BY p.created_at DESC`,
+    );
+    return rows.rows.map((r: any) => ({
+      slug: r.slug,
+      title: r.title,
+      cover_url: r.cover_url,
+      courses_count: Number(r.courses_count),
+      total_lessons: Number(r.total_lessons),
+      total_minutes: Number(r.total_minutes),
+    }));
+  };
+
+  const result = await getCached('paths', produce);
+
+  if (userId) {
+    const enrolledR = await query(
+      `SELECT cpe.path_id, p.slug FROM course_path_enrollments cpe
+       JOIN course_paths p ON p.id = cpe.path_id AND p.deleted_at IS NULL
+       WHERE cpe.user_id = $1`,
+      [userId],
+    );
+    const bySlug = new Map<string, string>(enrolledR.rows.map((r: any) => [r.slug, r.path_id]));
+    if (bySlug.size > 0) {
+      const progress = await loadPathsProgress([...bySlug.values()], userId);
+      for (const card of result) {
+        const pid = bySlug.get(card.slug);
+        const pr = pid ? progress.get(pid) : undefined;
+        card.my = pr ? { percent: pr.percent, done_courses: pr.done_courses } : null;
+      }
+    }
+  }
+
+  res.json(result);
+}));
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GET /api/education/paths/:slug — детальная страница программы (ТЗ-105 v2).
+// Видимость items: публично — public; залогиненному — ещё его hidden-курсы;
+// прочие hidden — только hidden_count (анти-энумерация, без названий).
+// archived: записанным — с пометкой archived, остальным — 404.
+// Анониму — без my*.
+// ═══════════════════════════════════════════════════════════════════════════
+router.get('/paths/:slug', optionalAuth, h(async (req, res) => {
+  const userId = req.user?.userId;
+  const pathR = await query(
+    `SELECT id, title, slug, description, cover_url, status
+     FROM course_paths WHERE slug = $1 AND deleted_at IS NULL`,
+    [req.params.slug],
+  );
+  if (pathR.rows.length === 0) return fail(res, 404, 'Программа не найдена');
+  const path = pathR.rows[0];
+
+  const pathEnrollR = await query(
+    `SELECT created_at FROM course_path_enrollments WHERE path_id = $1 AND user_id = $2`,
+    [path.id, userId ?? ''],
+  );
+  const pathEnrolled = !!userId && pathEnrollR.rows.length > 0;
+  if (path.status === 'archived' && !pathEnrolled) {
+    return fail(res, 404, 'Программа не найдена');
+  }
+
+  const itemsR = await query(
+    `SELECT i.position, c.id, c.slug, c.title, c.size, c.price, c.cover_url,
+            c.status, c.visibility,
+       (SELECT COUNT(*) FROM course_lessons cl WHERE cl.course_id = c.id) AS lessons_count,
+       (SELECT COALESCE(SUM(cl2.duration_min), 0) FROM course_lessons cl2 WHERE cl2.course_id = c.id) AS total_minutes,
+       EXISTS (SELECT 1 FROM course_enrollments ce
+               WHERE ce.course_id = c.id AND ce.user_id = $2) AS user_enrolled,
+       (SELECT COUNT(*) FROM lesson_progress lp
+          JOIN course_lessons cl3 ON cl3.id = lp.lesson_id
+         WHERE cl3.course_id = c.id AND lp.user_id = $2) AS done_lessons
+     FROM course_path_items i
+     JOIN courses c ON c.id = i.course_id
+     WHERE i.path_id = $1 AND c.deleted_at IS NULL
+     ORDER BY i.position ASC`,
+    [path.id, userId ?? null],
+  );
+
+  const rows = itemsR.rows;
+  const visible = rows.filter((r: any) => r.visibility === 'public' || r.user_enrolled);
+  const hiddenCount = rows.length - visible.length;
+
+  const tariffMap = await loadCheapestTariffNames(visible.map((r: any) => r.id));
+  const items = visible.map((r: any) => {
+    const lessons = Number(r.lessons_count);
+    const done = Number(r.done_lessons);
+    const courseDone = done >= lessons; // курс без уроков считаем пройденным
+    let my_status: string;
+    if (r.user_enrolled) {
+      my_status = courseDone ? 'completed' : (done > 0 ? 'in_progress' : 'available');
+    } else {
+      my_status = Number(r.price) > 0 ? 'needs_purchase' : 'available';
+    }
+    return {
+      position: Number(r.position),
+      slug: r.slug,
+      title: r.title,
+      size: r.size,
+      cover_url: r.cover_url,
+      price: Number(r.price),
+      lessons_count: lessons,
+      total_minutes: Number(r.total_minutes),
+      included_tariffs: tariffMap.get(r.id) ?? null,
+      my_status,
+      progress: { done_lessons: done, total_lessons: lessons },
+    };
+  });
+
+  const result: any = {
+    slug: path.slug,
+    title: path.title,
+    description: path.description,
+    cover_url: path.cover_url,
+    status: path.status,
+    archived: path.status === 'archived',
+    courses_count: visible.length,
+    hidden_count: hiddenCount,
+    total_lessons: items.reduce((s: number, i: any) => s + i.lessons_count, 0),
+    total_minutes: items.reduce((s: number, i: any) => s + i.total_minutes, 0),
+    items,
+  };
+
+  if (userId) {
+    const progress = await loadPathsProgress([path.id], userId);
+    const pr = progress.get(path.id);
+    const percent = pr?.percent ?? 0;
+    const totalCourses = pr?.total_courses ?? 0;
+    const doneCourses = pr?.done_courses ?? 0;
+    // «Следующий курс»: первый по position непройденный из доступных
+    // (записан или бесплатный) — мягкая последовательность, без блокировок.
+    const next = visible.find((r: any) =>
+      Number(r.done_lessons) < Number(r.lessons_count) &&
+      (r.user_enrolled || Number(r.price) === 0));
+    result.my = {
+      enrolled: pathEnrolled,
+      percent,
+      done_courses: doneCourses,
+      total_courses: totalCourses,
+      completed: totalCourses > 0 && doneCourses === totalCourses,
+      next_slug: next ? next.slug : null,
+    };
+  }
+
+  res.json(result);
+}));
+
+// ═══════════════════════════════════════════════════════════════════════════
+// POST /api/education/paths/:slug/enroll — запись на программу (ТЗ-105 v2).
+// Идемпотентно: course_path_enrollments ON CONFLICT DO NOTHING, курсы —
+// через существующий enroll-контур (source НЕ перезаписываем: покупка
+// остаётся покупкой). Последовательные query() (SQLite-режим).
+// Ответ {enrolled, already, needs_purchase} — slug'и курсов (для тостов).
+// ═══════════════════════════════════════════════════════════════════════════
+router.post('/paths/:slug/enroll', authMiddleware, h(async (req, res) => {
+  const userId = req.user!.userId;
+  const pathR = await query(
+    `SELECT id, status, deleted_at FROM course_paths WHERE slug = $1`,
+    [req.params.slug],
+  );
+  if (pathR.rows.length === 0 || pathR.rows[0].deleted_at) {
+    return fail(res, 404, 'Программа не найдена');
+  }
+  const path = pathR.rows[0];
+  const pathEnrollR = await query(
+    `SELECT 1 FROM course_path_enrollments WHERE path_id = $1 AND user_id = $2`,
+    [path.id, userId],
+  );
+  const pathEnrolled = pathEnrollR.rows.length > 0;
+  if (path.status === 'archived' && !pathEnrolled) {
+    return fail(res, 404, 'Программа не найдена');
+  }
+
+  await query(
+    `INSERT INTO course_path_enrollments (path_id, user_id)
+     VALUES ($1, $2)
+     ON CONFLICT (path_id, user_id) DO NOTHING`,
+    [path.id, userId],
+  );
+
+  const itemsR = await query(
+    `SELECT c.id, c.slug, c.price, c.visibility
+     FROM course_path_items i
+     JOIN courses c ON c.id = i.course_id
+     WHERE i.path_id = $1 AND c.deleted_at IS NULL
+     ORDER BY i.position ASC`,
+    [path.id],
+  );
+  const items = itemsR.rows;
+
+  const enrolledCoursesR = await query(
+    `SELECT course_id FROM course_enrollments WHERE user_id = $1`,
+    [userId],
+  );
+  const enrolledSet = new Set<string>(enrolledCoursesR.rows.map((r: any) => r.course_id));
+
+  // Одна подписка на все платные курсы программы (как в enroll курса, :1046)
+  const subscription = await getUserSubscription(userId);
+  const tariffByCourse = new Map<string, Set<string>>();
+  const paidItems = items.filter((i: any) => Number(i.price) > 0);
+  if (paidItems.length > 0) {
+    const paidIds = paidItems.map((i: any) => i.id);
+    let tariffRows: { course_id: string; plan_id: string }[];
+    if (process.env.USE_SQLITE === 'true') {
+      const ph = paidIds.map((_, i) => `$${i + 1}`).join(',');
+      tariffRows = (await query(
+        `SELECT course_id, plan_id FROM course_tariffs WHERE course_id IN (${ph})`,
+        paidIds,
+      )).rows;
+    } else {
+      tariffRows = (await query(
+        `SELECT course_id, plan_id FROM course_tariffs WHERE course_id = ANY($1)`,
+        [paidIds],
+      )).rows;
+    }
+    for (const t of tariffRows) {
+      if (!tariffByCourse.has(t.course_id)) tariffByCourse.set(t.course_id, new Set());
+      tariffByCourse.get(t.course_id)!.add(t.plan_id);
+    }
+  }
+  const subCovers = (courseId: string): boolean => !!(
+    subscription.active &&
+    subscription.plan !== 'free' &&
+    tariffByCourse.get(courseId)?.has(subscription.plan)
+  );
+
+  const enrolled: string[] = [];
+  const already: string[] = [];
+  const needs_purchase: string[] = [];
+  for (const item of items) {
+    if (enrolledSet.has(item.id)) { already.push(item.slug); continue; }
+    if (item.visibility === 'hidden') continue; // скрытый без записи — пропуск
+    if (Number(item.price) === 0 || subCovers(item.id)) {
+      const source = Number(item.price) === 0 ? 'free' : 'subscription';
+      await query(
+        `INSERT INTO course_enrollments (user_id, course_id, source)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (user_id, course_id) DO NOTHING`,
+        [userId, item.id, source],
+      );
+      enrolled.push(item.slug);
+      if (source === 'subscription') {
+        logUserEvent(userId, 'education.enroll_subscribed', { course_id: item.id });
+      }
+    } else {
+      needs_purchase.push(item.slug);
+    }
+  }
+
+  res.json({ enrolled, already, needs_purchase });
+}));
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DELETE /api/education/paths/:slug/enroll — отписка от программы (ТЗ-105 v2).
+// Удаляется ТОЛЬКО course_path_enrollments: записи на курсы и прогресс
+// сохраняются (осознанное решение — «отписка ≠ разборка»).
+// ═══════════════════════════════════════════════════════════════════════════
+router.delete('/paths/:slug/enroll', authMiddleware, h(async (req, res) => {
+  const userId = req.user!.userId;
+  const pathR = await query(
+    `SELECT id, deleted_at FROM course_paths WHERE slug = $1`,
+    [req.params.slug],
+  );
+  if (pathR.rows.length === 0 || pathR.rows[0].deleted_at) {
+    return fail(res, 404, 'Программа не найдена');
+  }
+  await query(
+    `DELETE FROM course_path_enrollments WHERE path_id = $1 AND user_id = $2`,
+    [pathR.rows[0].id, userId],
+  );
+  res.status(204).end();
+}));
+
+// ═══════════════════════════════════════════════════════════════════════════
 // GET /api/education/my — мои курсы (критерий 6)
 // ═══════════════════════════════════════════════════════════════════════════
 router.get('/my', authMiddleware, h(async (req, res) => {
@@ -1000,7 +1362,12 @@ router.get('/my', authMiddleware, h(async (req, res) => {
             LIMIT 1) AS next_lesson_id,
          (SELECT MAX(lp2.completed_at) FROM lesson_progress lp2
             JOIN course_lessons cl2 ON cl2.id = lp2.lesson_id
-           WHERE lp2.user_id = ce.user_id AND cl2.course_id = c.id) AS last_activity
+           WHERE lp2.user_id = ce.user_id AND cl2.course_id = c.id) AS last_activity,
+         -- ТЗ-105 v2: курс записан ТОЛЬКО через программу (есть course_path_items
+         -- программы, на которую юзер записан) — фронт прячет из общего списка.
+         EXISTS (SELECT 1 FROM course_path_items cpi
+                   JOIN course_path_enrollments cpe ON cpe.path_id = cpi.path_id
+                  WHERE cpi.course_id = c.id AND cpe.user_id = ce.user_id) AS via_path
        FROM course_enrollments ce
        JOIN courses c ON c.id = ce.course_id
        WHERE ce.user_id = $1 AND c.deleted_at IS NULL
@@ -1009,7 +1376,33 @@ router.get('/my', authMiddleware, h(async (req, res) => {
      ORDER BY (last_activity IS NULL), last_activity DESC, enrolled_at DESC`,
     [userId],
   );
-  res.json(rows.rows.map((r: any) => {
+
+  // ТЗ-105 v2: «Мои программы» — программы, на которые юзер записан, с прогрессом.
+  const pathsR = await query(
+    `SELECT cpe.path_id, p.slug, p.title, p.cover_url
+     FROM course_path_enrollments cpe
+     JOIN course_paths p ON p.id = cpe.path_id AND p.deleted_at IS NULL
+     WHERE cpe.user_id = $1
+     ORDER BY cpe.created_at DESC`,
+    [userId],
+  );
+  const pathsProgress = await loadPathsProgress(pathsR.rows.map((r: any) => r.path_id), userId);
+  const paths = pathsR.rows.map((r: any) => {
+    const pr = pathsProgress.get(r.path_id);
+    return {
+      slug: r.slug,
+      title: r.title,
+      cover_url: r.cover_url,
+      percent: pr?.percent ?? 0,
+      done_courses: pr?.done_courses ?? 0,
+      total_courses: pr?.total_courses ?? 0,
+    };
+  });
+
+  // Формат ответа изменился с массива на {courses, paths} (ТЗ-105 v2) —
+  // см. отчёт по этапу (а): фронт «Моих курсов» требует одноимённой правки.
+  res.json({
+    courses: rows.rows.map((r: any) => {
     const total = Number(r.total_lessons);
     const completed = Number(r.completed_lessons);
     return {
@@ -1023,6 +1416,7 @@ router.get('/my', authMiddleware, h(async (req, res) => {
       cover_url: r.cover_url,
       status: r.status,
       visibility: r.visibility,
+      via_path: !!r.via_path,
       enrollment_source: r.source,
       enrolled_at: r.enrolled_at,
       next_lesson_id: r.next_lesson_id ?? null,
@@ -1033,7 +1427,9 @@ router.get('/my', authMiddleware, h(async (req, res) => {
         percent: total > 0 ? Math.round((completed / total) * 100) : 0,
       },
     };
-  }));
+    }),
+    paths,
+  });
 }));
 
 // ═══════════════════════════════════════════════════════════════════════════

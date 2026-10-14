@@ -896,6 +896,32 @@ export async function initSQLiteSchema(): Promise<void> {
       error TEXT,
       trigger TEXT NOT NULL
     );
+
+    -- ТЗ-105 v2: программы (плейлисты курсов). PG-вариант — lms_v7_paths.sql
+    CREATE TABLE IF NOT EXISTS course_paths (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      slug TEXT NOT NULL UNIQUE,
+      description TEXT NOT NULL DEFAULT '',
+      cover_url TEXT,
+      status TEXT NOT NULL DEFAULT 'draft',
+      created_by TEXT,
+      deleted_at TEXT,
+      created_at TEXT,
+      updated_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS course_path_items (
+      path_id TEXT NOT NULL,
+      course_id TEXT NOT NULL,
+      position INTEGER NOT NULL,
+      PRIMARY KEY (path_id, course_id)
+    );
+    CREATE TABLE IF NOT EXISTS course_path_enrollments (
+      path_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      created_at TEXT,
+      PRIMARY KEY (path_id, user_id)
+    );
   `;
 
   const statements = schema.split(';').filter(s => s.trim());

@@ -20,6 +20,8 @@ RUN cp src/migrations/lms_v4_lesson_materials.sql dist/migrations/lms_v4_lesson_
 RUN cp src/migrations/lms_v5_lesson_buttons.sql dist/migrations/lms_v5_lesson_buttons.sql
 # ТЗ-157: идемпотентное создание урока для POST /migrate-lms-lesson-idempotency
 RUN cp src/migrations/lms_v6_lesson_idempotency.sql dist/migrations/lms_v6_lesson_idempotency.sql
+# ТЗ-105 v2: программы (плейлисты курсов) для POST /migrate-lms-paths
+RUN cp src/migrations/lms_v7_paths.sql dist/migrations/lms_v7_paths.sql
 EXPOSE 3001
 ENV BUILD_TIMESTAMP=1779922500
 CMD ["node", "dist/index.js"]
