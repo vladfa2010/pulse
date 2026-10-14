@@ -206,8 +206,12 @@ async function runBuild(): Promise<KgRunStats> {
   // просто не участвуют.
 
   let embedded = 0;
-  for (let i = 0; i < toEmbed.length; i += 32) {
-    const chunk = toEmbed.slice(i, i + 32);
+  // Батч держим мелким: у TEI на VDS один поток (RAYON_NUM_THREADS=1), батч 32
+  // текста обрабатывается ~280 с и убивается дефолтным headers-timeout undici
+  // (300 с) — поймано на проде 2026-10-14. По 8 текстов — ~60–90 с на запрос.
+  const KG_EMBED_CHUNK = 8;
+  for (let i = 0; i < toEmbed.length; i += KG_EMBED_CHUNK) {
+    const chunk = toEmbed.slice(i, i + KG_EMBED_CHUNK);
     // TEI недоступен → throw выше, снапшот не тронут (деградация ТЗ-107 §2)
     const batch = await embedBatch(chunk.map(c => c.text));
     embedded += chunk.length;
