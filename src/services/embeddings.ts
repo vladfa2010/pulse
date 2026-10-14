@@ -23,7 +23,11 @@
  * сторон у этой функции пока нет (ТЗ-92).
  */
 
+import * as http from 'http';
+
 const EMBEDDINGS_URL = (process.env.EMBEDDINGS_URL || 'http://embeddings:80').replace(/\/$/, '');
+// Прода — только http по внутренней сети compose (см. шапку файла)
+const EMBEDDINGS_HOST = new URL(EMBEDDINGS_URL);
 
 /** Максимальный размер батча — зеркалит --max-client-batch-size TEI (ТЗ-91) */
 export const EMBEDDING_MAX_BATCH = 32;
@@ -39,6 +43,10 @@ export const EMBEDDING_MAX_TEXT = 1000;
 // и улетали в skipped (инцидент 2026-09-11).
 const REQUEST_TIMEOUT_MS = 600_000;
 const RETRY_DELAY_MS = 5_000;
+
+// keep-alive агент: запросы к TEI идут сериями (бэкфилл, KG-джоба), новое
+// TCP-соединение на каждый батч добавляет лишний RTT в уже долгую очередь.
+const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 4 });
 
 /** Единый формат текста для эмбеддинга: заголовок + пробел + summary (обрезка 1000) */
 export function embeddingText(titleRu: string | null, summaryRu: string | null): string {
@@ -59,24 +67,53 @@ function sleep(ms: number): Promise<void> {
 }
 
 async function postEmbed(texts: string[]): Promise<number[][]> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  try {
-    const res = await fetch(`${EMBEDDINGS_URL}/embed`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ inputs: texts }),
-      signal: controller.signal,
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify({ inputs: texts });
+    // НЕ fetch: у undici дефолтный headersTimeout 300 с — TEI на одном ядре
+    // отдаёт заголовки только после полного инференса и запрос гаснет
+    // «fetch failed UND_ERR_HEADERS_TIMEOUT» при живом сервере (поймано на
+    // KG-джобе 2026-10-14). http.request такого лимита не имеет — только наш
+    // REQUEST_TIMEOUT_MS.
+    const req = http.request(
+      {
+        agent: httpAgent,
+        hostname: EMBEDDINGS_HOST.hostname,
+        port: EMBEDDINGS_HOST.port || 80,
+        path: `${EMBEDDINGS_HOST.pathname}/embed`,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+        },
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (c: Buffer) => chunks.push(c));
+        res.on('end', () => {
+          clearTimeout(timer);
+          const raw = Buffer.concat(chunks).toString('utf-8');
+          if (res.statusCode !== 200) {
+            reject(new Error(`TEI HTTP ${res.statusCode}: ${raw.slice(0, 200)}`));
+            return;
+          }
+          try {
+            resolve(JSON.parse(raw) as number[][]);
+          } catch {
+            reject(new Error(`TEI вернул не-JSON: ${raw.slice(0, 100)}`));
+          }
+        });
+      },
+    );
+    const timer = setTimeout(() => {
+      req.destroy(new Error(`TEI timeout ${REQUEST_TIMEOUT_MS / 1000} с`));
+    }, REQUEST_TIMEOUT_MS);
+    req.on('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
     });
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      throw new Error(`TEI HTTP ${res.status}: ${body.slice(0, 200)}`);
-    }
-    const data = await res.json();
-    return data as number[][];
-  } finally {
-    clearTimeout(timer);
-  }
+    req.write(body);
+    req.end();
+  });
 }
 
 /**
