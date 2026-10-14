@@ -596,4 +596,45 @@ position 1..N), `course_path_enrollments`. Курсы удаляются мяг�
 3. ~~ТЗ-102 (UGC + ClamAV)~~ ✅ / ~~ТЗ-103 (мэтчинг)~~ ✅
 4. ~~ТЗ-100 v8/v14: шеринг пути + покупка курсов ЮKassa~~ ✅
 5. ТЗ-100 Задача 4: «Мои курсы» в ЛК/прохождение (фронт).
-6. Затем ТЗ-105, ТЗ-104 по команде, ТЗ-107 последним.
+6. ~~ТЗ-107 v3: граф знаний~~ ✅ (2026-10-14, флаг включается после первой ночной джобы)
+
+## ТЗ-107 v3 — Граф знаний (2026-10-14, deployed)
+
+**Коммиты:** backend `d66cd89` (+`518792e` фикс смоука), frontend `518bded`,
+флаги `82d629f`+`5ca7d36`. Миграция `lms_v8_knowledge_graph.sql` применена
+на проде (5 объектов, через `POST /migrate-lms-kg?secret=` по IP контейнера).
+
+**Что внутри:** ночная джоба `startKnowledgeGraphCron` (04:50 Europe/Moscow —
+слот 04:30 занят ANALYZE news) пересчитывает эмбеддинги изменившихся уроков
+(SHA-256 text_hash, без instruction-префикса) и атомарно заменяет снапшот
+`lesson_embeddings` / `lesson_similarity` / `course_similarity`
+(PG-транзакция через pool.connect). Пороги через env
+`KG_LESSON_THRESHOLD` (0.55), `KG_COURSE_THRESHOLD` (0.60),
+`KG_RECOMMEND_THRESHOLD` (0.45), топ-N: 5 / 3 / 10.
+
+**API (фичефлаг `EDUCATION_GRAPH_ENABLED`, без флага — 404):**
+- `GET /api/education/graph` — глобальная «Карта знаний»: узлы курсов
+  (lessons_count, students, included_tariffs) и уроков, рёбра курсов/уроков
+  из снапшота, `my_progress`/`my_courses` для авторизованного. Анти-энумерация:
+  hidden-курсы видны только записанным (узлы + рёбра). Кэш 5 мин на процесс.
+- `GET /api/education/courses/:slug/graph` — граф курса: уроки с состояниями
+  `done`/`current`/`open`/`locked` (4-е состояние «open» — отступление от ТЗ:
+  записан, не drip, урок доступен, но не текущий), `edges_structural`
+  (позиции), `edges_semantic` (id уроков курса, sim), рекомендации до 6
+  (урок → чужой курс, `shared_tags` — «почему связаны»). Drip-замок по
+  tenure как в ТЗ-100 v13. Гостю free_preview-урок отдаётся как `current`.
+
+**Фронт:** `KnowledgeMap` (витрина, `Education.tsx`), `CourseKnowledgeGraph`
+(`CoursePage.tsx`, внизу контента), ручной SVG, layout детерминирован
+FNV-1a(id), без библиотек. `graph: null` → секция не рендерится.
+
+**Верификация:** tsc 0, vitest 246/246, смоук `scripts/smoke-lms-kg.js` 7/7
+(флаг off/on, анти-энумерация hidden, состояния, рекомендации), регрессия
+`smoke-lms-path-buy.js` зелёная. На проде: миграция applied, `/graph` → 404
+(флаг выключен до первого прогона джобы). Критерии 2–3 ТЗ (пересчёт
+эмбеддингов, spot-check урок↔новость) — только после первого ночного прогона.
+
+**Включение фичи (после первого успешного прогона 04:50):**
+`docker update`-env `EDUCATION_GRAPH_ENABLED=true` на контейнер backend
+(либо правка compose + пересоздание — тогда закрепить), затем e2e:
+`curl https://pulse.inside-trade.ru/api/education/graph` → 200 с узлами.
