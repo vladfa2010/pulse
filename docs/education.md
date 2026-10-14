@@ -547,6 +547,26 @@ position 1..N), `course_path_enrollments`. Курсы удаляются мяг�
 
 Этапы (б) админка (`adminEducation.ts`) и (в) фронт — НЕ начаты.
 
+## ТЗ-105 v2 — этап B: админка программ (реализовано 2026-10-14)
+
+Секция в `src/routes/adminEducation.ts` (все роуты за adminMiddleware):
+`GET/POST /paths`, `GET/PUT/DELETE /paths/:id` (items — полная замена,
+≥2 без дублей, position 1..N, у soft-deleted курсов `removed: true`),
+`POST …/publish` (422 при <2 живых курсов) / `…/archive`,
+`GET /courses-search` (комбобокс, ≥2 символа), `POST …/enroll-user`
+(admin_grant на все курсы программы, идемпотентно, лог
+`education.path_enroll_admin`), `POST …/paths/:id/cover` (контур обложек
+курсов). Все мутации → `invalidateEducationCache()`. Типы событий
+`education.path_*` — в `src/types/events.ts`.
+
+**Проверки:** tsc зелёный; SQLite-смоук с реальным роутером — 24/24
+(CRUD, валидации 400, 422 publish, позиции, enroll-user, идемпотентность).
+Прод (`fb896e4` + фикс `5dfeacf`): 401 без токена; тестовая программа
+через SQL → полка отдала карточку (2 курса, 12 уроков, 79 мин),
+детальная — items по position с карточными полями. Фикс: анониму в
+детальной уходил '' в uuid-сравнение (PG ругался, SQLite — нет) → NULL.
+Зачистка выполнена, логи чистые.
+
 ## Дорожная карта (следующие шаги)
 
 1. ~~Задача 1 + 1а: схема БД + storage-драйвер~~ ✅
