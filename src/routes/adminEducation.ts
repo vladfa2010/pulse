@@ -2838,27 +2838,57 @@ router.post('/paths/:id/archive', h(async (req, res) => {
 }));
 
 // GET /courses-search?q= — комбобокс «Добавить курс» в редакторе программы.
-// Образец: users-search (пост-фильтрация в SQLite, ILIKE в PG).
+// ТЗ-168: пустой q отдаёт ВСЕ живые курсы по алфавиту (дроплист по фокусу),
+// непустой — фильтр уже с 1 символа. Образец: users-search
+// (пост-фильтрация в SQLite, ILIKE в PG).
 router.get('/courses-search', h(async (req, res) => {
   const q = String(req.query.q || '').trim();
-  if (q.length < 2) return fail(res, 400, 'Минимум 2 символа для поиска');
+  const mapRow = (r: any) => ({
+    id: r.id, title: r.title, status: r.status, price: Number(r.price),
+  });
+
+  if (!q) {
+    // Полный список: title ASC, лимит 200 с запасом; при обрезке отвечаем
+    // {items, total} — фронт покажет «показаны первые 200».
+    let rows = USE_SQLITE
+      ? (await query(
+          `SELECT id, title, status, price FROM courses WHERE deleted_at IS NULL`, [],
+        )).rows
+      : (await query(
+          `SELECT id, title, status, price FROM courses
+           WHERE deleted_at IS NULL ORDER BY title ASC LIMIT 200`, [],
+        )).rows;
+    rows = rows.slice().sort((a: any, b: any) =>
+      String(a.title).localeCompare(String(b.title), 'ru'));
+    const total = USE_SQLITE
+      ? rows.length
+      : rows.length === 200
+        ? (await query(
+            `SELECT count(*)::int AS n FROM courses WHERE deleted_at IS NULL`, [],
+          )).rows[0].n
+        : rows.length;
+    const items = rows.slice(0, 200).map(mapRow);
+    return total > 200 ? res.json({ items, total }) : res.json(items);
+  }
+
   const rows = USE_SQLITE
     ? await query(
-        `SELECT id, title, status, price FROM courses WHERE deleted_at IS NULL
-         ORDER BY created_at DESC LIMIT 1000`, [],
+        `SELECT id, title, status, price FROM courses WHERE deleted_at IS NULL`, [],
       )
     : await query(
         `SELECT id, title, status, price FROM courses
          WHERE deleted_at IS NULL AND title ILIKE $1
-         ORDER BY created_at DESC LIMIT 10`,
+         ORDER BY title ASC LIMIT 10`,
         [`%${escapeLike(q)}%`],
       );
   const list = USE_SQLITE
-    ? rows.rows.filter((c: any) => matchesQuery(c.title, q)).slice(0, 10)
+    ? rows.rows
+        .slice()
+        .sort((a: any, b: any) => String(a.title).localeCompare(String(b.title), 'ru'))
+        .filter((c: any) => matchesQuery(c.title, q))
+        .slice(0, 10)
     : rows.rows;
-  res.json(list.map((r: any) => ({
-    id: r.id, title: r.title, status: r.status, price: Number(r.price),
-  })));
+  res.json(list.map(mapRow));
 }));
 
 // POST /paths/:id/enroll-user — запись пользователя админом: программа +
