@@ -408,7 +408,7 @@ async function scenario() {
     assert(r.status === 200 && r.json.success === true, `confirm → 200: ${r.text}`);
     assert(r.json.message === 'Course purchase completed', `message: ${r.json.message}`);
     r = await api('GET', '/api/education/my', { token: buyerJwt });
-    const bought = r.json.filter((c) => c.slug === 'paid-kurs');
+    const bought = r.json.courses.filter((c) => c.slug === 'paid-kurs');
     assert(bought.length === 1 && bought[0].enrollment_source === 'purchase',
       `в /my один курс source='purchase': ${JSON.stringify(bought)}`);
     ok("confirm: 200 'Course purchase completed', в /my source='purchase'");
@@ -417,7 +417,7 @@ async function scenario() {
     r = await api('POST', '/api/payment/confirm', { token: buyerJwt, body: { paymentId: payment2 } });
     assert(r.status === 200, `confirm платежа 2 → 200, got ${r.status}`);
     r = await api('GET', '/api/education/my', { token: buyerJwt });
-    assert(r.json.filter((c) => c.slug === 'paid-kurs').length === 1, 'enrollment всё ещё один');
+    assert(r.json.courses.filter((c) => c.slug === 'paid-kurs').length === 1, 'enrollment всё ещё один');
     // повторная покупка → 409
     r = await api('POST', '/api/education/courses/paid-kurs/buy', { token: buyerJwt });
     assert(r.status === 409, `повторный buy → 409, got ${r.status}`);
@@ -431,7 +431,7 @@ async function scenario() {
     });
     assert(r.status === 200 && r.json.received === true, `webhook course → 200: ${r.text}`);
     r = await api('GET', '/api/education/my', { token: buyer2Jwt });
-    const b2 = r.json.filter((c) => c.slug === 'paid-kurs');
+    const b2 = r.json.courses.filter((c) => c.slug === 'paid-kurs');
     assert(b2.length === 1 && b2[0].enrollment_source === 'purchase',
       `buyer2 записан через webhook: ${JSON.stringify(b2)}`);
     r = await api('GET', `/api/payment/status/${seed.ykCoursePayment}`, { token: buyer2Jwt });
@@ -447,7 +447,7 @@ async function scenario() {
     assert(r.status === 200 && (r.json.idempotent === true || r.json.received === true),
       `повторный webhook → 200: ${r.text}`);
     r = await api('GET', '/api/education/my', { token: buyer2Jwt });
-    assert(r.json.filter((c) => c.slug === 'paid-kurs').length === 1, 'enrollment buyer2 один');
+    assert(r.json.courses.filter((c) => c.slug === 'paid-kurs').length === 1, 'enrollment buyer2 один');
     ok('webhook: повторный payment.succeeded idempotent');
 
     // ── webhook регрессия: подписочный платёж активирует подписку ────────
