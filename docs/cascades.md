@@ -92,7 +92,8 @@ Cron-запуска для бэкфиллов нет — только ручно
 
 ## Внешние сервисы
 
-- **Эмбеддинги — TEI** (`src/services/embeddings.ts`): `EMBEDDINGS_URL` (деф. `http://embeddings:80`), `POST /embed`, `EMBEDDING_MAX_BATCH=32`, `EMBEDDING_DIM=1024`, `EMBEDDING_MAX_TEXT=1000`, таймаут 600 000 мс (инцидент 2026-09-11), 1 retry, `embeddingText(title, summary)` — единый формат текста. Транспорт — `node:http` с keep-alive, **не fetch**: дефолтный headersTimeout undici 300 с рвал запросы к однопоточному TEI (заголовки приходят только после инференса) — `UND_ERR_HEADERS_TIMEOUT` на KG-джобе, 2026-10-14. Контейнер: `docker-compose.yml` — `text-embeddings-inference:cpu-1.9`, модель `Qwen/Qwen3-Embedding-0.6B`, `--max-client-batch-size 32 --max-batch-tokens 4096`, mem 3g/cpus 1.0, порт наружу не публикуется.
+- **Эмбеддинги — TEI** (`src/services/embeddings.ts`, см. сквозной модуль
+  **`docs/embeddings.md`** — модель, продюсеры, пороги, эксплуатация): `EMBEDDINGS_URL` (деф. `http://embeddings:80`), `POST /embed`, `EMBEDDING_MAX_BATCH=32`, `EMBEDDING_DIM=1024`, `EMBEDDING_MAX_TEXT=1000`, таймаут 600 000 мс (инцидент 2026-09-11), 1 retry, `embeddingText(title, summary)` — единый формат текста. Транспорт — `node:http` с keep-alive, **не fetch**: дефолтный headersTimeout undici 300 с рвал запросы к однопоточному TEI (заголовки приходят только после инференса) — `UND_ERR_HEADERS_TIMEOUT` на KG-джобе, 2026-10-14. Контейнер: `docker-compose.yml` — `text-embeddings-inference:cpu-1.9`, модель `Qwen/Qwen3-Embedding-0.6B`, `--max-client-batch-size 32 --max-batch-tokens 4096`, mem 3g/cpus 1.0, порт наружу не публикуется.
 - **LLM — Moonshot/Kimi**: верификатор пар и story-группировщик. Калибровка порогов — `dumpCalibrationPairs.ts` + ручной анализ CSV, отдельного LLM-клиента нет.
 
 ## Проверки
