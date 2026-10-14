@@ -57,14 +57,16 @@ if [ -n "$WORKERS" ] && [ "$WORKERS" -gt 0 ]; then
 fi
 
 # 5. TEI-лимиты сбрасываются при пересоздании контейнера — восстанавливаем.
-#    Целевые: 3 CPU / 6GB — постоянная конфигурация системы (решение
-#    владельца 14.10.2026). 5GB недостаточно: старт+прогрев candle требует
-#    ~4.1 GB (crash-loop при лимите 5GB, факт 14.10); 6GB — запас ~1.9GB.
-#    Режим: дожим свежих новостей + поисковые запросы.
+#    Целевые: 1 CPU / 6GB — постоянная конфигурация системы (решение
+#    владельца 14.10.2026): как до апгрейда сервера, TEI не должен
+#    отнимать ресурсы у сайта. 5GB недостаточно (старт+прогрев candle
+#    ~4.1GB, crash-loop при лимите 5GB, факт 14.10); 6GB — запас ~1.9GB.
+#    Режим: дожим свежих новостей + поисковые запросы (на 1 ядре батч
+#    32 текста ~2-3 мин — для дожима приемлемо).
 CPUS=$(docker inspect -f '{{.HostConfig.NanoCpus}}' "$TEI_CONTAINER" 2>/dev/null)
 MEM=$(docker inspect -f '{{.HostConfig.Memory}}' "$TEI_CONTAINER" 2>/dev/null)
-if [ "$CPUS" != "3000000000" ] || [ "$MEM" != "6442450944" ]; then
-  docker update --cpus 3 --memory 6g --memory-swap 6g "$TEI_CONTAINER" >/dev/null 2>&1
+if [ "$CPUS" != "1000000000" ] || [ "$MEM" != "6442450944" ]; then
+  docker update --cpus 1 --memory 6g --memory-swap 6g "$TEI_CONTAINER" >/dev/null 2>&1
   log "TEI limits restored (was cpus=$CPUS mem=$MEM)"
 fi
 
