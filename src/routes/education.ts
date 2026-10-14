@@ -533,6 +533,15 @@ router.get('/courses/:slug', optionalAuth, h(async (req, res) => {
     tariffIds.has(subscription.plan)
   );
 
+  // ТЗ-105 v2: «Входит в программы» — published-программы с этим курсом.
+  const pathLinksR = await query(
+    `SELECT p.slug, p.title FROM course_path_items i
+       JOIN course_paths p ON p.id = i.path_id
+      WHERE i.course_id = $1 AND p.status = 'published' AND p.deleted_at IS NULL
+      ORDER BY p.created_at DESC`,
+    [c.id],
+  );
+
   res.json({
     id: c.id,
     slug: c.slug,
@@ -564,6 +573,7 @@ router.get('/courses/:slug', optionalAuth, h(async (req, res) => {
       : null,
     progress,
     program,
+    paths: pathLinksR.rows.map((p: any) => ({ slug: p.slug, title: p.title })),
     materials,
     locked_materials_count: lockedMaterialsCount,
   });
@@ -1121,12 +1131,29 @@ router.get('/paths/:slug', optionalAuth, h(async (req, res) => {
   if (pathR.rows.length === 0) return fail(res, 404, 'Программа не найдена');
   const path = pathR.rows[0];
 
+  // Админский preview (?preview_token=<JWT>) — «Глазами ученика» для
+  // draft/archived (как у курса, education.ts выше).
+  let previewAdmin = false;
+  const previewToken = String(req.query.preview_token || '');
+  if (previewToken) {
+    try {
+      const decoded = jwt.verify(previewToken, JWT_SECRET) as { userId: string };
+      previewAdmin = await isAdminUser(decoded.userId);
+    } catch {
+      previewAdmin = false;
+    }
+  }
+
   const pathEnrollR = await query(
     `SELECT created_at FROM course_path_enrollments WHERE path_id = $1 AND user_id = $2`,
     [path.id, userId ?? null],
   );
   const pathEnrolled = !!userId && pathEnrollR.rows.length > 0;
-  if (path.status === 'archived' && !pathEnrolled) {
+  // draft — никому, кроме админского превью; archived — записанным и превью.
+  if (path.status === 'draft' && !previewAdmin) {
+    return fail(res, 404, 'Программа не найдена');
+  }
+  if (path.status === 'archived' && !pathEnrolled && !previewAdmin) {
     return fail(res, 404, 'Программа не найдена');
   }
 
@@ -1237,7 +1264,8 @@ router.post('/paths/:slug/enroll', authMiddleware, h(async (req, res) => {
     [path.id, userId],
   );
   const pathEnrolled = pathEnrollR.rows.length > 0;
-  if (path.status === 'archived' && !pathEnrolled) {
+  // Запись только на published (записанным — идемпотентный повтор ок).
+  if (path.status !== 'published' && !pathEnrolled) {
     return fail(res, 404, 'Программа не найдена');
   }
 
