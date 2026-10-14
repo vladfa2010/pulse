@@ -165,7 +165,11 @@ services:
     # RAYON_NUM_THREADS ограничивает потоки candle: без ограничения warmup-спайк
     # RSS превышает лимит и процесс молча умирает (ExitCode 0, рестарт-луп).
     # 1 поток = 1 выделенное ядро: TEI не отнимает CPU у сайта (как до апгрейда
-    # сервера, решение владельца 14.10.2026).
+    # сервера, решение владельца 14.10.2026). RAYON держим на 1 (инференс candle),
+    # а лимит cpus подняли до 1.5 (владелец 14.10.2026) — запас для 4
+    # токенизатор-воркеров и HTTP-слоя: раньше при 1.0 /health отвечал 6–21 с
+    # под нагрузкой и healthcheck (timeout 5 с) мигал unhealthy, хотя сервис
+    # был жив.
     # RAM: хост 3 CPU / 6 ГБ (ресайз владельца 14.10.2026). Лимит 9G был
     # ошибкой — он выше физической памяти хоста: хостовый OOM-killer
     # уничтожал TEI (anon-rss 5.7GB) каждые ~25 мин под нагрузкой
@@ -178,13 +182,16 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:80/health || exit 1"]
       interval: 30s
-      timeout: 5s
+      # timeout 30 с: под нагрузкой /health отвечает 6–21 с при лимите 1 ядра
+      # (CPU candle уходит в инференс) — с timeout 5 с статус мигал unhealthy,
+      # хотя сервис работал (факт 14.10.2026).
+      timeout: 30s
       retries: 3
     deploy:
       resources:
         limits:
           memory: 4500m
-          cpus: "1.0"
+          cpus: "1.5"
     restart: unless-stopped
 
   caddy:
