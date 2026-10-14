@@ -57,21 +57,25 @@ if [ -n "$WORKERS" ] && [ "$WORKERS" -gt 0 ]; then
 fi
 
 # 5. TEI-лимиты сбрасываются при пересоздании контейнера — восстанавливаем.
-#    Целевые: 1 CPU / 9GB — постоянная конфигурация системы (решение
-#    владельца 14.10.2026): TEI ограничен 1 ядром, как до апгрейда сервера,
-#    чтобы не отнимать CPU у сайта. RAM 9GB: лимиты 5-6GB давали OOM
-#    (exit 137, crash-loop при старте, факт 14.10); фактический resident
-#    ~2.5-4GB, но пиковые аллокации candle при старте непредсказуемы.
-#    Режим: дожим свежих новостей + поисковые запросы (на 1 ядре батч
-#    32 текста ~2-3 мин — для дожима приемлемо).
+#    Целевые: 1 CPU / 4500m — под физику хоста 3 CPU / 6 ГБ (ресайз
+#    владельца 14.10.2026). TEI ограничен 1 ядром, как до апгрейда сервера,
+#    чтобы не отнимать CPU у сайта. RAM: лимит 9G был выше физической
+#    памяти хоста — хостовый OOM-killer убивал TEI (anon-rss 5.7GB,
+#    global_oom в dmesg) каждые ~25 мин под нагрузкой (факт 14.10).
+#    4500m = warmup-спайк candle ~4.1GB влезает, остальные контейнеры
+#    (~1.2GB) + ОС умещаются в 6 ГБ; до 1.5G сверх лимита может уходить
+#    в swap (memory-swap 6g). Батч воркеров обязан быть ≤ 8: батч 32
+#    под длительной нагрузкой раздувает RSS candle выше лимита.
 CPUS=$(docker inspect -f '{{.HostConfig.NanoCpus}}' "$TEI_CONTAINER" 2>/dev/null)
 MEM=$(docker inspect -f '{{.HostConfig.Memory}}' "$TEI_CONTAINER" 2>/dev/null)
-if [ "$CPUS" != "1000000000" ] || [ "$MEM" != "9663676416" ]; then
-  docker update --cpus 1 --memory 9g --memory-swap 9g "$TEI_CONTAINER" >/dev/null 2>&1
+if [ "$CPUS" != "1000000000" ] || [ "$MEM" != "4718592000" ]; then
+  docker update --cpus 1 --memory 4500m --memory-swap 6g "$TEI_CONTAINER" >/dev/null 2>&1
   log "TEI limits restored (was cpus=$CPUS mem=$MEM)"
 fi
 
-# 6. Поднимаем двух воркеров (партиции id % 2)
-docker exec -d "$BACKEND_CONTAINER" sh -c "BACKFILL_BATCH_SIZE=32 BACKFILL_MOD=2 BACKFILL_REM=0 npx ts-node --transpile-only src/scripts/backfillEmbeddings.ts > /tmp/backfill-rem0.log 2>&1"
-docker exec -d "$BACKEND_CONTAINER" sh -c "BACKFILL_BATCH_SIZE=32 BACKFILL_MOD=2 BACKFILL_REM=1 npx ts-node --transpile-only src/scripts/backfillEmbeddings.ts > /tmp/backfill-rem1.log 2>&1"
+# 6. Поднимаем двух воркеров (партиции id % 2). Батч 8, не 32: на 1 ядре
+#    батч 32 ~2-3 мин в очереди TEI + раздувает RSS candle; дожим свежих
+#    новостей батчем 8 идёт с той же скоростью суммарно, но стабильно.
+docker exec -d "$BACKEND_CONTAINER" sh -c "BACKFILL_BATCH_SIZE=8 BACKFILL_MOD=2 BACKFILL_REM=0 npx ts-node --transpile-only src/scripts/backfillEmbeddings.ts > /tmp/backfill-rem0.log 2>&1"
+docker exec -d "$BACKEND_CONTAINER" sh -c "BACKFILL_BATCH_SIZE=8 BACKFILL_MOD=2 BACKFILL_REM=1 npx ts-node --transpile-only src/scripts/backfillEmbeddings.ts > /tmp/backfill-rem1.log 2>&1"
 log "workers restarted (missing=$MISSING)"
