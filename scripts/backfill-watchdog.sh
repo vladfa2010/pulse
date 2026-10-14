@@ -56,11 +56,14 @@ if [ -n "$WORKERS" ] && [ "$WORKERS" -gt 0 ]; then
   exit 0
 fi
 
-# 5. TEI-лимиты сбрасываются при пересоздании контейнера — восстанавливаем
+# 5. TEI-лимиты сбрасываются при пересоздании контейнера — восстанавливаем.
+#    Целевые: 4 CPU / 9GB. Бэкфилл ТЗ-162 завершён (14.10.2026), инференс
+#    дожима свежих новостей и поисковых запросов на 4 ядрах с запасом;
+#    22 CPU имело смысл только для массового бэкфилла.
 CPUS=$(docker inspect -f '{{.HostConfig.NanoCpus}}' "$TEI_CONTAINER" 2>/dev/null)
 MEM=$(docker inspect -f '{{.HostConfig.Memory}}' "$TEI_CONTAINER" 2>/dev/null)
-if [ "$CPUS" != "22000000000" ] || [ "$MEM" != "9663676416" ]; then
-  docker update --cpus 22 --memory 9g --memory-swap 9g "$TEI_CONTAINER" >/dev/null 2>&1
+if [ "$CPUS" != "4000000000" ] || [ "$MEM" != "9663676416" ]; then
+  docker update --cpus 4 --memory 9g --memory-swap 9g "$TEI_CONTAINER" >/dev/null 2>&1
   log "TEI limits restored (was cpus=$CPUS mem=$MEM)"
 fi
 
