@@ -57,9 +57,11 @@ if [ -n "$WORKERS" ] && [ "$WORKERS" -gt 0 ]; then
 fi
 
 # 5. TEI-лимиты сбрасываются при пересоздании контейнера — восстанавливаем.
-#    Целевые: 1 CPU / 4500m — под физику хоста 3 CPU / 6 ГБ (ресайз
-#    владельца 14.10.2026). TEI ограничен 1 ядром, как до апгрейда сервера,
-#    чтобы не отнимать CPU у сайта. RAM: лимит 9G был выше физической
+#    Целевые: 1.5 CPU / 4500m — под физику хоста 3 CPU / 6 ГБ (ресайз
+#    владельца 14.10.2026). Инференс candle ограничен RAYON_NUM_THREADS=1,
+#    как до апгрейда сервера, чтобы не отнимать CPU у сайта; лимит 1.5 —
+#    запас для токенизатор-воркеров и HTTP (владелец 14.10.2026: без него
+#    /health отвечал 6–21 с под нагрузкой). RAM: лимит 9G был выше физической
 #    памяти хоста — хостовый OOM-killer убивал TEI (anon-rss 5.7GB,
 #    global_oom в dmesg) каждые ~25 мин под нагрузкой (факт 14.10).
 #    4500m = warmup-спайк candle ~4.1GB влезает, остальные контейнеры
@@ -68,8 +70,8 @@ fi
 #    под длительной нагрузкой раздувает RSS candle выше лимита.
 CPUS=$(docker inspect -f '{{.HostConfig.NanoCpus}}' "$TEI_CONTAINER" 2>/dev/null)
 MEM=$(docker inspect -f '{{.HostConfig.Memory}}' "$TEI_CONTAINER" 2>/dev/null)
-if [ "$CPUS" != "1000000000" ] || [ "$MEM" != "4718592000" ]; then
-  docker update --cpus 1 --memory 4500m --memory-swap 6g "$TEI_CONTAINER" >/dev/null 2>&1
+if [ "$CPUS" != "1500000000" ] || [ "$MEM" != "4718592000" ]; then
+  docker update --cpus 1.5 --memory 4500m --memory-swap 6g "$TEI_CONTAINER" >/dev/null 2>&1
   log "TEI limits restored (was cpus=$CPUS mem=$MEM)"
 fi
 
