@@ -57,13 +57,14 @@ if [ -n "$WORKERS" ] && [ "$WORKERS" -gt 0 ]; then
 fi
 
 # 5. TEI-лимиты сбрасываются при пересоздании контейнера — восстанавливаем.
-#    Целевые: 2 CPU / 5GB. Бэкфилл ТЗ-162 завершён (14.10.2026), инференс
-#    дожима свежих новостей и поисковых запросов на 2 ядрах укладывается
-#    (resident-память candle ~2.5 GB, лимит с запасом).
+#    Целевые: 3 CPU / 6GB — постоянная конфигурация системы (решение
+#    владельца 14.10.2026). 5GB недостаточно: старт+прогрев candle требует
+#    ~4.1 GB (crash-loop при лимите 5GB, факт 14.10); 6GB — запас ~1.9GB.
+#    Режим: дожим свежих новостей + поисковые запросы.
 CPUS=$(docker inspect -f '{{.HostConfig.NanoCpus}}' "$TEI_CONTAINER" 2>/dev/null)
 MEM=$(docker inspect -f '{{.HostConfig.Memory}}' "$TEI_CONTAINER" 2>/dev/null)
-if [ "$CPUS" != "2000000000" ] || [ "$MEM" != "5368709120" ]; then
-  docker update --cpus 2 --memory 5g --memory-swap 5g "$TEI_CONTAINER" >/dev/null 2>&1
+if [ "$CPUS" != "3000000000" ] || [ "$MEM" != "6442450944" ]; then
+  docker update --cpus 3 --memory 6g --memory-swap 6g "$TEI_CONTAINER" >/dev/null 2>&1
   log "TEI limits restored (was cpus=$CPUS mem=$MEM)"
 fi
 
