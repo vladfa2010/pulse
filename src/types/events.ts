@@ -53,6 +53,13 @@ export const USER_EVENT_TYPES = [
   'education.match_dismissed',
   // ТЗ-136: загрузка картинки в конспект/описание (kind='content')
   'education.content_image_uploaded',
+  // ТЗ-105 v2: программы (плейлисты курсов) — аудит действий админа
+  'education.path_created',
+  'education.path_updated',
+  'education.path_deleted',
+  'education.path_published',
+  'education.path_archived',
+  'education.path_enroll_admin',
 ] as const;
 
 export type UserEventType = typeof USER_EVENT_TYPES[number];

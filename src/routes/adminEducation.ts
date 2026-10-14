@@ -2622,4 +2622,352 @@ router.get('/courses/:id/events-preview', h(async (req, res) => {
   res.json({ events });
 }));
 
+// ═══════════════════════════════════════════════════════════════════════════
+// ТЗ-105 v2 — Программы (плейлисты курсов): админский контур.
+// Таблицы: course_paths / course_path_items / course_path_enrollments
+// (PG-миграция lms_v7_paths.sql; эндпоинт /migrate-lms-paths).
+// Любая мутация → invalidateEducationCache() (ключ education:paths, TTL 5 мин).
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Слаг программы: транслит(title) + '-' + uuid8; коллизии → -2, -3. */
+async function generatePathSlug(title: string): Promise<string> {
+  const base = slugify(title, crypto.randomUUID());
+  let slug = base;
+  let n = 2;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const r = await query(`SELECT 1 FROM course_paths WHERE slug = $1`, [slug]);
+    if (r.rows.length === 0) return slug;
+    slug = `${base}-${n++}`;
+  }
+}
+
+// GET /paths — таблица программ: любой статус, не удалённые.
+router.get('/paths', h(async (_req, res) => {
+  const rows = await query(
+    `SELECT p.id, p.slug, p.title, p.status, p.cover_url, p.created_at,
+       (SELECT COUNT(*) FROM course_path_items i
+          JOIN courses c ON c.id = i.course_id AND c.deleted_at IS NULL
+         WHERE i.path_id = p.id) AS courses_count,
+       (SELECT COUNT(*) FROM course_path_enrollments cpe WHERE cpe.path_id = p.id) AS enrollments_count
+     FROM course_paths p
+     WHERE p.deleted_at IS NULL
+     ORDER BY p.created_at DESC`,
+  );
+  res.json(rows.rows.map((r: any) => ({
+    id: r.id,
+    slug: r.slug,
+    title: r.title,
+    status: r.status,
+    cover_url: r.cover_url,
+    courses_count: Number(r.courses_count),
+    enrollments_count: Number(r.enrollments_count),
+    created_at: r.created_at,
+  })));
+}));
+
+// POST /paths — черновик программы. title обязателен; description опционально.
+router.post('/paths', h(async (req, res) => {
+  const adminId = req.user!.userId;
+  const title = String(req.body?.title || '').trim();
+  if (!title) return fail(res, 400, 'title обязателен');
+  const description = String(req.body?.description ?? '');
+  const id = crypto.randomUUID();
+  const slug = await generatePathSlug(title);
+  await query(
+    `INSERT INTO course_paths (id, title, slug, description, status, created_by)
+     VALUES ($1, $2, $3, $4, 'draft', $5)`,
+    [id, title, slug, description, adminId],
+  );
+  invalidateEducationCache();
+  logUserEvent(adminId, 'education.path_created', { path_id: id });
+  res.status(201).json({ id, slug, status: 'draft' });
+}));
+
+// GET /paths/:id — мета + items по position. Soft-deleted курсы — removed: true.
+router.get('/paths/:id', h(async (req, res) => {
+  const pathR = await query(
+    `SELECT id, title, slug, description, cover_url, status, created_at, updated_at
+     FROM course_paths WHERE id = $1 AND deleted_at IS NULL`,
+    [req.params.id],
+  );
+  if (pathR.rows.length === 0) return fail(res, 404, 'Программа не найдена');
+  const p = pathR.rows[0];
+  const itemsR = await query(
+    `SELECT i.course_id, i.position, c.title, c.slug, c.status, c.price, c.deleted_at
+     FROM course_path_items i
+     JOIN courses c ON c.id = i.course_id
+     WHERE i.path_id = $1
+     ORDER BY i.position ASC`,
+    [p.id],
+  );
+  res.json({
+    id: p.id,
+    title: p.title,
+    slug: p.slug,
+    description: p.description,
+    cover_url: p.cover_url,
+    status: p.status,
+    created_at: p.created_at,
+    updated_at: p.updated_at,
+    items: itemsR.rows.map((r: any) => ({
+      course_id: r.course_id,
+      position: Number(r.position),
+      title: r.title,
+      slug: r.slug,
+      status: r.status,
+      price: Number(r.price),
+      removed: !!r.deleted_at, // курс снят (soft-deleted) — PUT без него
+    })),
+  });
+}));
+
+// PUT /paths/:id — поля + course_ids: полная замена списка курсов.
+// Валидация: ≥2 курса, без дублей, все id существуют и не удалены.
+// position переписывается 1..N в порядке course_ids.
+router.put('/paths/:id', h(async (req, res) => {
+  const adminId = req.user!.userId;
+  const pathR = await query(
+    `SELECT id, status FROM course_paths WHERE id = $1 AND deleted_at IS NULL`,
+    [req.params.id],
+  );
+  if (pathR.rows.length === 0) return fail(res, 404, 'Программа не найдена');
+
+  const title = req.body?.title !== undefined ? String(req.body.title).trim() : null;
+  if (title !== null && !title) return fail(res, 400, 'title не может быть пустым');
+  const description = req.body?.description !== undefined ? String(req.body.description) : null;
+
+  let courseIds: string[] | null = null;
+  if (req.body?.course_ids !== undefined) {
+    if (!Array.isArray(req.body.course_ids)) return fail(res, 400, 'course_ids должен быть массивом');
+    courseIds = (req.body.course_ids as unknown[]).map((c) => String(c));
+    if (courseIds.length < 2) return fail(res, 400, 'В программе минимум 2 курса');
+    if (new Set(courseIds).size !== courseIds.length) return fail(res, 400, 'Дубли курсов в course_ids');
+    const existing = await query(`SELECT id FROM courses WHERE deleted_at IS NULL`);
+    const existingSet = new Set(existing.rows.map((r: any) => r.id));
+    const missing = courseIds.filter((id) => !existingSet.has(id));
+    if (missing.length > 0) return fail(res, 400, `Несуществующие или удалённые курсы: ${missing.join(', ')}`);
+  }
+
+  if (title !== null || description !== null) {
+    await query(
+      `UPDATE course_paths
+       SET title = COALESCE($1, title),
+           description = COALESCE($2, description),
+           updated_at = ${nowSql()}
+       WHERE id = $3`,
+      [title, description, req.params.id],
+    );
+  }
+
+  if (courseIds) {
+    // Полная замена: сносим старые, пишем 1..N (паттерн позиций уроков/категорий)
+    await query(`DELETE FROM course_path_items WHERE path_id = $1`, [req.params.id]);
+    for (let i = 0; i < courseIds.length; i++) {
+      await query(
+        `INSERT INTO course_path_items (path_id, course_id, position) VALUES ($1, $2, $3)`,
+        [req.params.id, courseIds[i], i + 1],
+      );
+    }
+    await query(`UPDATE course_paths SET updated_at = ${nowSql()} WHERE id = $1`, [req.params.id]);
+  }
+
+  invalidateEducationCache();
+  logUserEvent(adminId, 'education.path_updated', { path_id: req.params.id });
+  res.json({ ok: true });
+}));
+
+// DELETE /paths/:id — soft-delete программы (записи каскадом с FK CASCADE).
+router.delete('/paths/:id', h(async (req, res) => {
+  const adminId = req.user!.userId;
+  const pathR = await query(
+    `SELECT id FROM course_paths WHERE id = $1 AND deleted_at IS NULL`,
+    [req.params.id],
+  );
+  if (pathR.rows.length === 0) return fail(res, 404, 'Программа не найдена');
+  await query(
+    `UPDATE course_paths SET deleted_at = ${nowSql()}, updated_at = ${nowSql()} WHERE id = $1`,
+    [req.params.id],
+  );
+  invalidateEducationCache();
+  logUserEvent(adminId, 'education.path_deleted', { path_id: req.params.id });
+  res.status(204).end();
+}));
+
+// POST /paths/:id/publish — публикация. Требование: ≥2 живых курса (422).
+router.post('/paths/:id/publish', h(async (req, res) => {
+  const adminId = req.user!.userId;
+  const pathR = await query(
+    `SELECT id, status FROM course_paths WHERE id = $1 AND deleted_at IS NULL`,
+    [req.params.id],
+  );
+  if (pathR.rows.length === 0) return fail(res, 404, 'Программа не найдена');
+  const alive = await query(
+    `SELECT COUNT(*) AS n FROM course_path_items i
+       JOIN courses c ON c.id = i.course_id AND c.deleted_at IS NULL
+      WHERE i.path_id = $1`,
+    [req.params.id],
+  );
+  if (Number(alive.rows[0].n) < 2) {
+    return fail(res, 422, 'Публикация требует минимум 2 живых (не удалённых) курса');
+  }
+  await query(
+    `UPDATE course_paths SET status = 'published', updated_at = ${nowSql()} WHERE id = $1`,
+    [req.params.id],
+  );
+  invalidateEducationCache();
+  logUserEvent(adminId, 'education.path_published', { path_id: req.params.id });
+  res.json({ ok: true, status: 'published' });
+}));
+
+// POST /paths/:id/archive — витрина исключает, записанные видят (с пометкой).
+router.post('/paths/:id/archive', h(async (req, res) => {
+  const adminId = req.user!.userId;
+  const pathR = await query(
+    `SELECT id FROM course_paths WHERE id = $1 AND deleted_at IS NULL`,
+    [req.params.id],
+  );
+  if (pathR.rows.length === 0) return fail(res, 404, 'Программа не найдена');
+  await query(
+    `UPDATE course_paths SET status = 'archived', updated_at = ${nowSql()} WHERE id = $1`,
+    [req.params.id],
+  );
+  invalidateEducationCache();
+  logUserEvent(adminId, 'education.path_archived', { path_id: req.params.id });
+  res.json({ ok: true, status: 'archived' });
+}));
+
+// GET /courses-search?q= — комбобокс «Добавить курс» в редакторе программы.
+// Образец: users-search (пост-фильтрация в SQLite, ILIKE в PG).
+router.get('/courses-search', h(async (req, res) => {
+  const q = String(req.query.q || '').trim();
+  if (q.length < 2) return fail(res, 400, 'Минимум 2 символа для поиска');
+  const rows = USE_SQLITE
+    ? await query(
+        `SELECT id, title, status, price FROM courses WHERE deleted_at IS NULL
+         ORDER BY created_at DESC LIMIT 1000`, [],
+      )
+    : await query(
+        `SELECT id, title, status, price FROM courses
+         WHERE deleted_at IS NULL AND title ILIKE $1
+         ORDER BY created_at DESC LIMIT 10`,
+        [`%${escapeLike(q)}%`],
+      );
+  const list = USE_SQLITE
+    ? rows.rows.filter((c: any) => matchesQuery(c.title, q)).slice(0, 10)
+    : rows.rows;
+  res.json(list.map((r: any) => ({
+    id: r.id, title: r.title, status: r.status, price: Number(r.price),
+  })));
+}));
+
+// POST /paths/:id/enroll-user — запись пользователя админом: программа +
+// массовый admin_grant на ВСЕ курсы программы (включая платные и скрытые).
+// Идемпотентно (проверка существующих записей, INSERT без дублей).
+router.post('/paths/:id/enroll-user', h(async (req, res) => {
+  const adminId = req.user!.userId;
+  const userId = req.body?.user_id ? String(req.body.user_id) : '';
+  if (!userId) return fail(res, 400, 'user_id обязателен');
+
+  const pathR = await query(
+    `SELECT id FROM course_paths WHERE id = $1 AND deleted_at IS NULL`,
+    [req.params.id],
+  );
+  if (pathR.rows.length === 0) return fail(res, 404, 'Программа не найдена');
+
+  const userR = await query(`SELECT is_blocked FROM users WHERE id = $1`, [userId]);
+  if (userR.rows.length === 0) return fail(res, 404, 'Пользователь не найден');
+  if (boolDb(userR.rows[0].is_blocked)) {
+    return fail(res, 422, 'Пользователь заблокирован — запись невозможна');
+  }
+
+  const alreadyPath = await query(
+    `SELECT 1 FROM course_path_enrollments WHERE path_id = $1 AND user_id = $2`,
+    [req.params.id, userId],
+  );
+  if (alreadyPath.rows.length === 0) {
+    await query(
+      `INSERT INTO course_path_enrollments (path_id, user_id) VALUES ($1, $2)`,
+      [req.params.id, userId],
+    );
+  }
+
+  const coursesR = await query(
+    `SELECT c.id FROM course_path_items i
+       JOIN courses c ON c.id = i.course_id AND c.deleted_at IS NULL
+      WHERE i.path_id = $1
+      ORDER BY i.position ASC`,
+    [req.params.id],
+  );
+  const enrolledR = await query(
+    `SELECT course_id FROM course_enrollments WHERE user_id = $1`,
+    [userId],
+  );
+  const enrolledSet = new Set(enrolledR.rows.map((r: any) => r.course_id));
+  let granted = 0;
+  for (const course of coursesR.rows) {
+    if (enrolledSet.has(course.id)) continue;
+    await query(
+      `INSERT INTO course_enrollments (id, user_id, course_id, source, payment_id)
+       VALUES ($1, $2, $3, 'admin_grant', NULL)`,
+      [crypto.randomUUID(), userId, course.id],
+    );
+    granted++;
+  }
+  logUserEvent(adminId, 'education.path_enroll_admin', {
+    path_id: req.params.id, target_user_id: userId, granted_courses: granted,
+  });
+  res.status(201).json({ ok: true, already_enrolled: alreadyPath.rows.length > 0, granted_courses: granted });
+}));
+
+// POST /paths/:id/cover — обложка программы: тот же контур, что у курсов
+// (magic bytes + EXIF strip, 5 МБ, putBuffer 'courses' + cover.*).
+router.post('/paths/:id/cover', uploadMw(coverUpload, 'file'), h(async (req, res) => {
+  const adminId = req.user!.userId;
+  const pathId = req.params.id;
+  const pathR = await query(`SELECT cover_url FROM course_paths WHERE id = $1`, [pathId]);
+  if (pathR.rows.length === 0) return fail(res, 404, 'Программа не найдена');
+
+  if (!(await checkRateLimit(req, res, lmsUploadLimiter))) return; // 429 уже отправлен
+
+  const file = (req as any).file as Express.Multer.File | undefined;
+  if (!file || !file.buffer || file.buffer.length === 0) {
+    return fail(res, 400, 'Файл не загружен (field: file)');
+  }
+  const ft = await fileType.fromBuffer(file.buffer);
+  if (!ft || !COVER_MIMES.has(ft.mime)) {
+    return fail(res, 415, 'Допустимы только jpg/png/webp');
+  }
+  let normalized: Buffer;
+  try {
+    const img = sharp(file.buffer).rotate();
+    const meta = await img.metadata();
+    const megapixels = (meta.width || 0) * (meta.height || 0) / 1e6;
+    if (megapixels > 50) {
+      return fail(res, 413, 'Изображение больше 50 Мпикс (decompression bomb)');
+    }
+    normalized = await img.toBuffer();
+  } catch {
+    return fail(res, 415, 'Файл не является корректным изображением');
+  }
+  try {
+    const put = await putBuffer(normalized, 'courses', `cover.${ft.ext}`);
+    const oldCover = pathR.rows[0].cover_url;
+    await query(
+      `UPDATE course_paths SET cover_url = $1, updated_at = ${nowSql()} WHERE id = $2`,
+      [put.relPath, pathId],
+    );
+    if (oldCover && String(oldCover).startsWith('/media/')) {
+      removeFile(String(oldCover)).catch((e: any) =>
+        console.warn('[AdminEducation] old path cover removeFile failed:', e?.message));
+    }
+    invalidateEducationCache();
+    logUserEvent(adminId, 'education.path_updated', { path_id: pathId, field: 'cover' });
+    res.json({ cover_url: put.relPath });
+  } catch (err: any) {
+    if (err instanceof StorageError) return fail(res, err.status, err.message);
+    throw err;
+  }
+}));
+
 export default router;
