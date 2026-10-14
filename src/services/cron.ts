@@ -36,6 +36,8 @@ import { freezeHeatmapRecentDays } from './heatmapDaily';
 import { embedAndClusterBatch } from './clustering';      // ТЗ-92, задача 4
 import { runStoryGrouping } from './storyGrouper';        // ТЗ-92, задача 5
 import { matchUnprocessedNews } from './education/match'; // ТЗ-103, задача 3: cron-страховка мэтчинга курсов
+import { rebuildKnowledgeGraph } from './education/knowledgeGraph'; // ТЗ-107 v3: ночной пересчёт графа знаний
+import { isEducationGraphEnabled } from '../config/knowledgeGraph'; // ТЗ-107 v3: фичефлаг графа
 import { VERIFIER_MODEL_TEMPERATURE } from '../config/clustering'; // ТЗ-115: температура LLM по конвенции §9.1
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -765,4 +767,34 @@ export function startAnalyzeNewsCron(opts?: { isShuttingDown?: () => boolean }) 
     }
   }, { timezone: 'Europe/Moscow' });
   console.log('[Cron] ANALYZE news scheduled daily at 04:30 Europe/Moscow');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ТЗ-107 v3 — ночная джоба графа знаний (rebuildKnowledgeGraph)
+// ═══════════════════════════════════════════════════════════════════════════
+// Расписание: ежедневно 04:50 Europe/Moscow. Отступление от буквы ТЗ (04:30):
+// 04:30 уже занят ANALYZE news (см. выше) — разносим, чтобы не конкурировать
+// за соединение к БД. Под фичефлагом EDUCATION_GRAPH_ENABLED (default false):
+// выключен — no-op с записью в лог, расписание не регистрируется.
+
+export function startKnowledgeGraphCron(opts?: { isShuttingDown?: () => boolean }) {
+  if (!isEducationGraphEnabled()) {
+    console.log('[Cron] Knowledge graph disabled (EDUCATION_GRAPH_ENABLED != true) — KG cron not scheduled');
+    return;
+  }
+
+  cron.schedule('50 4 * * *', async () => {
+    if (opts?.isShuttingDown?.()) return;
+    const acquired = await acquireCronLock('education-knowledge-graph');
+    if (!acquired) return;
+    try {
+      await rebuildKnowledgeGraph();
+    } catch (err: any) {
+      // rebuildKnowledgeGraph уже журналирует в cron_log и логирует в консоль
+      console.error('[Cron] Knowledge graph rebuild failed:', err.message);
+    } finally {
+      await releaseCronLock('education-knowledge-graph');
+    }
+  }, { timezone: 'Europe/Moscow' });
+  console.log('[Cron] Knowledge graph rebuild scheduled daily at 04:50 Europe/Moscow');
 }

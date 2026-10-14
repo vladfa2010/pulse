@@ -67,7 +67,7 @@ import { startVirusScanSweeper } from './services/education/virusScan'; // ТЗ-
 import { initEducationSeoBootHeal } from './services/education/seoRebuild'; // ТЗ-164: heal пропавших SEO-файлов после ручной заливки dist
 import { mediaGuard } from './services/storage/media';       // ТЗ-100 v15: отдача файлов /media
 import { apiLimiter, authLimiter, webhookLimiter, forgotPasswordLimiter, passwordResetFlowLimiter, promoValidateLimiter, adminLimiter } from './middleware/rateLimit';
-import { startCron, startHeatmapFreezeCron, startClusteringCron, startTopicsNamingCron, startEducationMatchCron, startAnalyzeNewsCron } from './services/cron';   // startCron (RSS) отключен (TZ_REMOVE_DUPLICATE_RSS_CRON); heatmap freeze — TZ-49; clustering — ТЗ-92 (флаг CLUSTERING_ENABLED); topics naming — ТЗ-115 (флаг TOPICS_ENABLED); education match catch-up — ТЗ-103 (флаг EDUCATION_MATCH_ENABLED); analyze news — ТЗ-150 задача 7 (без флага)
+import { startCron, startHeatmapFreezeCron, startClusteringCron, startTopicsNamingCron, startEducationMatchCron, startAnalyzeNewsCron, startKnowledgeGraphCron } from './services/cron';   // startCron (RSS) отключен (TZ_REMOVE_DUPLICATE_RSS_CRON); heatmap freeze — TZ-49; clustering — ТЗ-92 (флаг CLUSTERING_ENABLED); topics naming — ТЗ-115 (флаг TOPICS_ENABLED); education match catch-up — ТЗ-103 (флаг EDUCATION_MATCH_ENABLED); analyze news — ТЗ-150 задача 7 (без флага); knowledge graph — ТЗ-107 v3 (флаг EDUCATION_GRAPH_ENABLED)
 import { sendWeeklyReportForUser } from './services/reports'; // ← Еженедельные репорты (manual + API)
 import { startDigestCron, sendAllDigests, setDigestEnabled } from './services/digest'; // ← дайджест (каждый час) — через notification matrix
 import { startRadioCacheMaintenance } from './services/radioMp3CacheMaintenance'; // ТЗ-65: snapshot истории 60с + алерты 5м
@@ -1040,6 +1040,60 @@ app.post('/migrate-lms-matching', async (req, res) => {
     const sqlPath = path.join(__dirname, 'migrations', 'lms_v3_matching.sql');
     if (!fs.existsSync(sqlPath)) {
       return res.status(500).json({ error: `lms_v3_matching.sql not found at ${sqlPath}` });
+    }
+
+    const sql = fs.readFileSync(sqlPath, 'utf-8');
+    // Вырезаем SQL-комментарии ДО split(';') — см. аналогичный блок /migrate-lms
+    const cleaned = sql
+      .split('\n')
+      .map((l: string) => {
+        const i = l.indexOf('--');
+        return i >= 0 ? l.slice(0, i) : l;
+      })
+      .join('\n');
+    const statements = cleaned.split(';').filter((s: string) => s.trim());
+    const results: string[] = [];
+
+    for (const stmt of statements) {
+      try {
+        await query(stmt + ';');
+        results.push(`OK: ${stmt.trim().substring(0, 60)}`);
+      } catch (e: any) {
+        // Игнорируем «already exists» — объект создан ранее (идемпотентность)
+        if (!e.message?.includes('already exists')) {
+          results.push(`WARN: ${e.message?.substring(0, 100)}`);
+        }
+      }
+    }
+
+    res.json({ success: true, applied: results.length, details: results });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// POST /migrate-lms-kg?secret=KEY — граф знаний (ТЗ-107 v3, Задача 1)
+// Применяет src/migrations/lms_v8_knowledge_graph.sql (PostgreSQL-диалект).
+// Идемпотентна. В SQLite-режиме таблицы создаёт initSQLiteSchema() → пропускаем.
+// ═══════════════════════════════════════════════════════════════════════════
+app.post('/migrate-lms-kg', async (req, res) => {
+  const secret = req.headers['x-trigger-secret'] || req.query.secret;
+  if (secret !== CRON_SECRET_KEY) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  if (USE_SQLITE) {
+    return res.json({ skipped: true, message: 'SQLite mode: knowledge graph schema is created by initSQLiteSchema()' });
+  }
+
+  try {
+    const fs = await import('fs');
+    const path = await import('path');
+    // __dirname = /app/dist; lms_v8_knowledge_graph.sql копируется в dist/migrations через Dockerfile
+    const sqlPath = path.join(__dirname, 'migrations', 'lms_v8_knowledge_graph.sql');
+    if (!fs.existsSync(sqlPath)) {
+      return res.status(500).json({ error: `lms_v8_knowledge_graph.sql not found at ${sqlPath}` });
     }
 
     const sql = fs.readFileSync(sqlPath, 'utf-8');
@@ -4514,6 +4568,7 @@ END $$`,
       startTopicsNamingCron({ isShuttingDown: () => shuttingDown }); // ТЗ-115: нейминг тем 04:10 МСК, флаг TOPICS_ENABLED
       startEducationMatchCron({ isShuttingDown: () => shuttingDown }); // ТЗ-103: catch-up мэтчинга курсов ежечасно, флаг EDUCATION_MATCH_ENABLED
       startAnalyzeNewsCron({ isShuttingDown: () => shuttingDown }); // ТЗ-150 задача 7: ANALYZE news ежедневно 04:30 МСК
+      startKnowledgeGraphCron({ isShuttingDown: () => shuttingDown }); // ТЗ-107 v3: граф знаний ежедневно 04:50 МСК, флаг EDUCATION_GRAPH_ENABLED
       startRadioCacheMaintenance({ isShuttingDown: () => shuttingDown }); // ТЗ-65: snapshot истории 60с + алерты 5м
     }
 

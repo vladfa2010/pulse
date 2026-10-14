@@ -25,6 +25,8 @@ import { optionalAuth } from '../middleware/optionalAuth';
 import { checkRateLimit, lmsCalendarMatchLimiter, lmsFreeDownloadLimiter, lmsSubmissionLimiter } from '../middleware/rateLimit';
 import { getActivePlans, getUserSubscription, parseDbJson } from '../services/subscription';
 import { getCached } from '../services/education/cache';
+import { getGraphCached, invalidateGraphCache } from '../services/education/knowledgeGraph'; // ТЗ-107 v3: кэш графа
+import { isEducationGraphEnabled } from '../config/knowledgeGraph'; // ТЗ-107 v3: фичефлаг графа
 import { isEducationMatchEnabled } from '../services/education/match'; // ТЗ-103 Задача 6: фичефлаг мэтчинга
 import {
   courseTagIds,
@@ -1367,6 +1369,296 @@ router.delete('/paths/:slug/enroll', authMiddleware, h(async (req, res) => {
     [pathR.rows[0].id, userId],
   );
   res.status(204).end();
+}));
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ТЗ-107 v3 — Граф знаний: глобальная карта и локальный граф курса.
+// Фичефлаг EDUCATION_GRAPH_ENABLED: выключен → 404 (критерий 6).
+// Анти-энумерация (критерий 5): hidden-курсы/уроки — только записанному.
+// Координаты НЕ храним: layout детерминированный на фронте от id (принцип v1).
+// ═══════════════════════════════════════════════════════════════════════════
+
+// GET /api/education/graph — глобальная «Карта знаний» (все published-курсы,
+// уроки орбитой, рёбра из снапшота ночной джобы). Кэш 5 мин на процесс.
+router.get('/graph', optionalAuth, h(async (req, res) => {
+  if (!isEducationGraphEnabled()) return fail(res, 404, 'Not found');
+  const userId = req.user?.userId ?? null;
+  const payload = await getGraphCached(`global:${userId ?? 'anon'}`, () => buildGlobalGraph(userId));
+  res.json(payload);
+}));
+
+async function buildGlobalGraph(userId: string | null) {
+  const enrolledR = userId
+    ? await query(`SELECT course_id FROM course_enrollments WHERE user_id = $1`, [userId])
+    : { rows: [] as any[] };
+  const enrolledSet = new Set(enrolledR.rows.map((r: any) => r.course_id));
+
+  const coursesR = await query(
+    `SELECT id, slug, title, type, visibility FROM courses
+      WHERE status = 'published' AND deleted_at IS NULL`,
+    [],
+  );
+  // Анти-энумерация: hidden без записи не светимся ни в узлах, ни в рёбрах
+  const courses = coursesR.rows.filter((c: any) => c.visibility !== 'hidden' || enrolledSet.has(c.id));
+  if (courses.length === 0) return { graph: null };
+  const courseIds = courses.map((c: any) => c.id);
+  const courseVisible = new Set(courseIds);
+
+  const lessonsR = await query(
+    `SELECT id, course_id, title, unlock_after_days FROM course_lessons
+      WHERE course_id IN (SELECT id FROM courses WHERE status = 'published' AND deleted_at IS NULL)
+      ORDER BY course_id, position`,
+    [],
+  );
+  const lessons = lessonsR.rows.filter((l: any) => courseVisible.has(l.course_id));
+  if (lessons.length === 0) return { graph: null };
+  const lessonVisible = new Set(lessons.map((l: any) => l.id));
+
+  // Рёбра снапшота — только между видимыми узлами
+  const lessonEdgesR = await query(
+    `SELECT lesson_a, lesson_b, sim FROM lesson_similarity`, [],
+  );
+  const lessonEdges = lessonEdgesR.rows.filter((e: any) => lessonVisible.has(e.lesson_a) && lessonVisible.has(e.lesson_b));
+  const courseEdgesR = await query(
+    `SELECT course_a, course_b, sim FROM course_similarity`, [],
+  );
+  const courseEdges = courseEdgesR.rows.filter((e: any) => courseVisible.has(e.course_a) && courseVisible.has(e.course_b));
+
+  // Мета узлов: уроки/студенты/тарифы
+  const countsR = await query(
+    `SELECT course_id, COUNT(*) AS n FROM course_lessons GROUP BY course_id`, [],
+  );
+  const lessonsCount = new Map(countsR.rows.map((r: any) => [r.course_id, Number(r.n)]));
+  const studentsR = await query(
+    `SELECT course_id, COUNT(*) AS n FROM course_enrollments GROUP BY course_id`, [],
+  );
+  const students = new Map(studentsR.rows.map((r: any) => [r.course_id, Number(r.n)]));
+  const activePlans = await getActivePlans();
+  const tariffR = await query(`SELECT course_id, plan_id FROM course_tariffs`, []);
+  const tariffByCourse = new Map<string, string[]>();
+  for (const t of tariffR.rows) {
+    if (!tariffByCourse.has(t.course_id)) tariffByCourse.set(t.course_id, []);
+    tariffByCourse.get(t.course_id)!.push(t.plan_id);
+  }
+
+  // Прогресс текущего юзера (кольцо прогресса, подсветка точек)
+  let myProgress: Record<string, string> | undefined;
+  let myCourses: string[] | undefined;
+  if (userId) {
+    myCourses = courseIds.filter(id => enrolledSet.has(id));
+    const doneRows = (await query(
+      process.env.USE_SQLITE === 'true'
+        ? `SELECT lp.lesson_id FROM lesson_progress lp
+             JOIN course_lessons l ON l.id = lp.lesson_id
+            WHERE lp.user_id = $1 AND l.course_id IN (${courseIds.map((_, i) => `$${i + 2}`).join(',')})`
+        : `SELECT lp.lesson_id FROM lesson_progress lp
+             JOIN course_lessons l ON l.id = lp.lesson_id
+            WHERE lp.user_id = $1 AND l.course_id = ANY($2)`,
+      process.env.USE_SQLITE === 'true' ? [userId, ...courseIds] : [userId, courseIds],
+    )).rows;
+    const doneSet = new Set(doneRows.map((r: any) => r.lesson_id));
+
+    // current = первый непройденный урок каждого записанного курса;
+    // drip-замок — по правилам ТЗ-100 v13 (per-lesson unlock_after_days vs tenure)
+    const subscription = await getUserSubscription(userId);
+    const dripRows = (await query(
+      process.env.USE_SQLITE === 'true'
+        ? `SELECT id FROM courses WHERE subscription_unlock_mode = 'drip' AND id IN (${courseIds.map((_, i) => `$${i + 1}`).join(',')})`
+        : `SELECT id FROM courses WHERE id = ANY($1) AND subscription_unlock_mode = 'drip'`,
+      process.env.USE_SQLITE === 'true' ? courseIds : [courseIds],
+    )).rows;
+    const dripCourseIds = new Set(dripRows.map((r: any) => r.id));
+    let tenureDays = 0;
+    const hasDripEnroll = myCourses.some(id => dripCourseIds.has(id));
+    if (hasDripEnroll && subscription.active) tenureDays = await subscriptionTenureDays(userId);
+
+    myProgress = {};
+    for (const cid of myCourses) {
+      const courseLessons = lessons.filter((l: any) => l.course_id === cid);
+      let currentMarked = false;
+      for (const l of courseLessons) {
+        if (doneSet.has(l.id)) { myProgress[l.id] = 'done'; continue; }
+        if (!currentMarked) { myProgress[l.id] = 'current'; currentMarked = true; continue; }
+        // Замок только drip-курсов по tenure; остальные открытые — без записи
+        if (dripCourseIds.has(cid) && subscription.active && Number(l.unlock_after_days) > 0 && tenureDays < Number(l.unlock_after_days)) {
+          myProgress[l.id] = 'locked';
+        }
+      }
+    }
+  }
+
+  return {
+    graph: {
+      nodes: {
+        courses: courses.map((c: any) => ({
+          id: c.id,
+          slug: c.slug,
+          title: c.title,
+          situational: c.type === 'situational',
+          lessons_count: lessonsCount.get(c.id) || 0,
+          students: students.get(c.id) || 0,
+          included_tariffs: (tariffByCourse.get(c.id) || []).filter(p => activePlans.some(ap => (ap as any).id === p)),
+        })),
+        lessons: lessons.map((l: any) => ({ id: l.id, course_id: l.course_id, title: l.title })),
+      },
+      edges: {
+        courses: courseEdges.map((e: any) => ({ a: e.course_a, b: e.course_b, sim: Number(e.sim) })),
+        lessons: lessonEdges.map((e: any) => ({ a: e.lesson_a, b: e.lesson_b, sim: Number(e.sim) })),
+      },
+      ...(myProgress ? { my_progress: myProgress } : {}),
+      ...(myCourses ? { my_courses: myCourses } : {}),
+    },
+  };
+}
+
+// GET /api/education/courses/:slug/graph — локальный «Граф знаний» курса:
+// уроки курса + смысловые рёбра + рекомендации из других курсов (топ-6).
+router.get('/courses/:slug/graph', optionalAuth, h(async (req, res) => {
+  if (!isEducationGraphEnabled()) return fail(res, 404, 'Not found');
+  const userId = req.user?.userId ?? null;
+  const payload = await getGraphCached(`course:${req.params.slug}:${userId ?? 'anon'}`, async () => {
+    const courseR = await query(
+      `SELECT * FROM courses WHERE slug = $1 AND status = 'published' AND deleted_at IS NULL`,
+      [req.params.slug],
+    );
+    if (courseR.rows.length === 0) return { graph: null };
+    const c = courseR.rows[0];
+    const enrollment = userId
+      ? await query(`SELECT source FROM course_enrollments WHERE user_id = $1 AND course_id = $2`, [userId, c.id])
+      : { rows: [] as any[] };
+    const enrolled = enrollment.rows.length > 0;
+    if (c.visibility === 'hidden' && !enrolled) return { graph: null };
+
+    const lessonsR = await query(
+      `SELECT id, title, position, is_free_preview, unlock_after_days
+         FROM course_lessons WHERE course_id = $1 ORDER BY position ASC`,
+      [c.id],
+    );
+    const lessons = lessonsR.rows;
+
+    // ─── Состояния уроков ───
+    let subscription: any = null;
+    let tenureDays = 0;
+    if (enrolled && enrollment.rows[0].source === 'subscription' && c.subscription_unlock_mode === 'drip') {
+      subscription = await getUserSubscription(userId!);
+      if (subscription.active) tenureDays = await subscriptionTenureDays(userId!);
+    }
+    const doneSet = new Set<string>();
+    if (enrolled) {
+      const doneR = await query(
+        `SELECT lesson_id FROM lesson_progress WHERE user_id = $1`, [userId],
+      );
+      for (const r of doneR.rows) doneSet.add(r.lesson_id);
+    }
+    let currentMarked = false;
+    const nodes = lessons.map((l: any) => {
+      let state: string;
+      if (doneSet.has(l.id)) {
+        state = 'done';
+      } else if (!enrolled) {
+        // Гость: free_preview открыт (показываем как «current» — доступен),
+        // остальные закрыты (критерий: «гостю — locked кроме free_preview»)
+        state = boolDb(l.is_free_preview) ? 'current' : 'locked';
+      } else if (!currentMarked) {
+        state = 'current';
+        currentMarked = true;
+      } else if (
+        c.subscription_unlock_mode === 'drip' &&
+        enrollment.rows[0].source === 'subscription' &&
+        subscription?.active &&
+        Number(l.unlock_after_days) > 0 &&
+        tenureDays < Number(l.unlock_after_days)
+      ) {
+        state = 'locked';
+      } else {
+        // Отступление от буквы ТЗ: состояния done/current/locked не покрывают
+        // «записан, не drip, урок открыт, но не текущий» — вводим 'open'
+        state = 'open';
+      }
+      return { id: l.id, title: l.title, position: Number(l.position), state };
+    });
+
+    // ─── Рёбра ───
+    const lessonIds = lessons.map((l: any) => l.id);
+    const lessonSet = new Set(lessonIds);
+    const structPairs: number[][] = [];
+    for (let i = 0; i + 1 < lessons.length; i++) {
+      structPairs.push([Number(lessons[i].position), Number(lessons[i + 1].position)]);
+    }
+    const semR = await query(
+      `SELECT lesson_a, lesson_b, sim FROM lesson_similarity
+        WHERE (lesson_a IN (SELECT id FROM course_lessons WHERE course_id = $1)
+           OR lesson_b IN (SELECT id FROM course_lessons WHERE course_id = $1))`,
+      [c.id],
+    );
+    const semantic: { a: string; b: string; sim: number }[] = [];
+    const recCandidates: { lessonId: string; otherId: string; sim: number }[] = [];
+    for (const e of semR.rows) {
+      const aIn = lessonSet.has(e.lesson_a);
+      const bIn = lessonSet.has(e.lesson_b);
+      if (aIn && bIn) {
+        semantic.push({ a: e.lesson_a, b: e.lesson_b, sim: Number(e.sim) });
+      } else if (aIn !== bIn) {
+        recCandidates.push({ lessonId: aIn ? e.lesson_a : e.lesson_b, otherId: aIn ? e.lesson_b : e.lesson_a, sim: Number(e.sim) });
+      }
+    }
+    semantic.sort((x, y) => y.sim - x.sim);
+    recCandidates.sort((x, y) => y.sim - x.sim);
+
+    // ─── Рекомендации: целевой урок → его курс (published/видимый) ───
+    const topCandidates = recCandidates.slice(0, 20);
+    const recommendations: any[] = [];
+    const seenCourses = new Set<string>();
+    for (const cand of topCandidates) {
+      if (recommendations.length >= 6) break;
+      const otherR = await query(
+        `SELECT l.id, l.title, l.position, co.id AS course_id, co.slug, co.title AS course_title,
+                co.visibility, co.status, co.deleted_at
+           FROM course_lessons l JOIN courses co ON co.id = l.course_id
+          WHERE l.id = $1`,
+        [cand.otherId],
+      );
+      if (otherR.rows.length === 0) continue;
+      const o = otherR.rows[0];
+      if (o.status !== 'published' || o.deleted_at) continue;
+      const otherEnrolled = userId
+        ? (await query(`SELECT 1 FROM course_enrollments WHERE user_id = $1 AND course_id = $2`, [userId, o.course_id])).rows.length > 0
+        : false;
+      if (o.visibility === 'hidden' && !otherEnrolled) continue;
+      if (seenCourses.has(o.course_id) && recommendations.length >= 3) continue; // максимум 3 на один чужой курс
+      seenCourses.add(o.course_id);
+
+      // Общие теги курсов — «почему связаны» (до 3 названий)
+      const tagsR = await query(
+        `SELECT udt.tag_name FROM course_tags a
+           JOIN course_tags b ON b.tag_id = a.tag_id AND b.course_id = $1
+           LEFT JOIN user_defined_tags udt ON udt.tag_id = a.tag_id
+          WHERE a.course_id = $2
+          ORDER BY udt.tag_name LIMIT 3`,
+        [c.id, o.course_id],
+      );
+      const sharedTags = tagsR.rows.map((t: any) => t.tag_name).filter(Boolean);
+
+      recommendations.push({
+        lesson_id: o.id,
+        title: o.title,
+        course: { slug: o.slug, title: o.course_title },
+        sim: cand.sim,
+        ...(sharedTags.length ? { shared_tags: sharedTags } : {}),
+      });
+    }
+
+    return {
+      graph: {
+        lessons: nodes,
+        edges_structural: structPairs,
+        edges_semantic: semantic,
+        recommendations,
+      },
+    };
+  });
+  if (!payload.graph) return fail(res, 404, 'Курс не найден');
+  res.json(payload);
 }));
 
 // ═══════════════════════════════════════════════════════════════════════════

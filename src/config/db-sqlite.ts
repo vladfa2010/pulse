@@ -922,6 +922,37 @@ export async function initSQLiteSchema(): Promise<void> {
       created_at TEXT,
       PRIMARY KEY (path_id, user_id)
     );
+
+    -- ТЗ-107 v3: граф знаний. PG-вариант — lms_v8_knowledge_graph.sql.
+    -- Вектор — JSON-текст (тот же подход, что courses.embedding): косинус в JS.
+    CREATE TABLE IF NOT EXISTS lesson_embeddings (
+      lesson_id TEXT PRIMARY KEY,
+      model TEXT NOT NULL,
+      vector TEXT,
+      text_hash TEXT NOT NULL,
+      computed_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS lesson_similarity (
+      lesson_a TEXT NOT NULL,
+      lesson_b TEXT NOT NULL,
+      sim REAL NOT NULL,
+      cross_course INTEGER NOT NULL,
+      computed_at TEXT,
+      PRIMARY KEY (lesson_a, lesson_b),
+      CHECK (lesson_a < lesson_b)
+    );
+    CREATE INDEX IF NOT EXISTS idx_lessim_a ON lesson_similarity(lesson_a, sim DESC);
+    CREATE INDEX IF NOT EXISTS idx_lessim_b ON lesson_similarity(lesson_b, sim DESC);
+    CREATE TABLE IF NOT EXISTS course_similarity (
+      course_a TEXT NOT NULL,
+      course_b TEXT NOT NULL,
+      sim REAL NOT NULL,
+      sim_embed REAL,
+      shared_pairs INTEGER NOT NULL,
+      computed_at TEXT,
+      PRIMARY KEY (course_a, course_b),
+      CHECK (course_a < course_b)
+    );
   `;
 
   const statements = schema.split(';').filter(s => s.trim());
