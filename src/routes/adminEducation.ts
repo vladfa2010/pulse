@@ -2494,16 +2494,20 @@ router.get('/courses/:id/suggestions', h(async (req, res) => {
      ORDER BY (s.score IS NULL) ASC, s.score DESC, s.created_at DESC`,
     [courseId, status],
   );
+  // Контракт фронта (SuggestionsPanel, types.ts MatchSuggestion): news — вложенный
+  // объект, source — источник МЭТЧА (tag|embedding|both), а не источник новости.
   res.json(rows.rows.map((r: any) => ({
     id: r.id,
-    news_id: r.news_id,
-    news_slug: r.news_slug,
-    title_ru: r.title_ru,
-    published_at: r.published_at,
-    source: r.news_source,
+    news: {
+      id: r.news_id,
+      slug: r.news_slug,
+      title: r.title_ru,
+      published_at: r.published_at,
+      source: r.news_source,
+    },
     score: r.score === null ? null : Number(r.score),
     reason: r.reason,
-    match_source: r.source,
+    source: r.source,
     status: r.status,
     created_at: r.created_at,
   })));
