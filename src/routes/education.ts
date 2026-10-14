@@ -1123,7 +1123,7 @@ router.get('/paths/:slug', optionalAuth, h(async (req, res) => {
 
   const pathEnrollR = await query(
     `SELECT created_at FROM course_path_enrollments WHERE path_id = $1 AND user_id = $2`,
-    [path.id, userId ?? ''],
+    [path.id, userId ?? null],
   );
   const pathEnrolled = !!userId && pathEnrollR.rows.length > 0;
   if (path.status === 'archived' && !pathEnrolled) {
