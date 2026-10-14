@@ -15,10 +15,12 @@
 - **Сеть:** контейнер `pulse-embeddings`, порт наружу **не публикуется**.
   Бекенд ходит по внутренней сети compose: `EMBEDDINGS_URL=http://embeddings:80`
   (дефолт в `src/services/embeddings.ts`, переопределяется env).
-- **Ресурсы VDS (состояние на 2026-10-14):** хост 3 CPU / 6 ГБ; контейнеру
-  TEI `RAYON_NUM_THREADS=1` (инференс candle на одном ядре — не отнимает
-  CPU у сайта), `cpus 1.5`, mem 3G (warmup-аллокация ~2,7 ГБ; при 2,5G был
-  рестарт-луп). Флаги TEI: `--max-client-batch-size 32 --max-batch-tokens 4096
+- **Ресурсы VDS (состояние на 2026-10-14 вечер):** хост **4 CPU / 6 ГБ**
+  (CPU поднял владелец); контейнеру TEI постоянно **2 ядра**:
+  `RAYON_NUM_THREADS=2`, `cpus 2`, mem **5000m** — на 4500m warmup-спайк
+  candle (~4,55 ГБ при RAYON=2) получал cgroup-OOM, факт из dmesg 14.10.
+  Одиночный запрос: **7,2 с** (на 1 ядре было 20–60 с очереди + инференс).
+  Флаги TEI: `--max-client-batch-size 32 --max-batch-tokens 4096
   --tokenization-workers 4`. История ресурсов: DEPLOYMENT.md §ТЗ-91
   (было 22 CPU / 8G RAM, вернули после бэкфилла 2026-09-12).
 
@@ -104,6 +106,13 @@ SELECT round(sim::numeric,3), a.title, b.title
 **Типовые инциденты (хронология):**
 - **2026-09-11:** таймаут 30 с рвал ночной бэкфилл → поднят до 600 с;
   битый Unicode гасил батчи HTTP 400 → `stripLoneSurrogates`.
+- **2026-10-14 (вечер):** VDS поднят до 4 CPU, TEI постоянно на 2 ядрах
+  (RAYON=2, cpus 2); mem 4500m → 5000m (cgroup-OOM warmup-спайка при
+  RAYON=2, dmesg). E2E одиночного запроса: 244 с (холодный) → 7,2 с.
+  Флаги `EDUCATION_GRAPH_ENABLED` / `EDUCATION_MATCH_ENABLED` включены
+  (compose + `/opt/pulse/.env`), бэкфилл `courses.embedding` 8/8, первичный
+  ретроскан мэтчинга пройден (строгий LLM-фильтр: 28 кандидатов → 1
+  высококачественная связка).
 - **2026-10-14:** undici `headersTimeout 300 с` гасил запросы к однопоточному
   TEI (`UND_ERR_HEADERS_TIMEOUT`) → клиент переведён на `node:http`;
   батч KG-джобы уменьшен 32 → 8 (у `embeddings.ts` лимит общий 32, KG шлёт
