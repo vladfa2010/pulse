@@ -41,6 +41,7 @@ import { logUserEvent } from '../services/activityLog';
 import { enqueueScan } from '../services/education/virusScan';
 import { putBufferQuarantine, signedUrl, StorageError } from '../services/storage/driver';
 import { sanitizeLessonHtml } from '../services/education/contentHtml'; // ТЗ-108: description — HTML, санитизируем и на отдаче (legacy-строки)
+import { decodeUploadName } from '../utils/filename'; // ТЗ-170: originalname приходит в Latin-1
 
 const JWT_SECRET: string = process.env.JWT_SECRET!;
 const router = Router();
@@ -2144,7 +2145,8 @@ router.post('/courses/:slug/materials', authMiddleware, ugcUploadMw, h(async (re
   if (file.buffer.length > UGC_MAX_BYTES) {
     return fail(res, 400, 'Файл больше 10 МБ');
   }
-  const claimedExt = (file.originalname || '').split('.').pop()?.toLowerCase() || '';
+  const decodedName = decodeUploadName(file.originalname || ''); // ТЗ-170: originalname приходит в Latin-1
+  const claimedExt = decodedName.split('.').pop()?.toLowerCase() || '';
   if (!UGC_ALLOWED_EXTS.has(claimedExt)) {
     return fail(res, 400, 'Допустимые типы: pdf, xlsx, docx, png, jpg, webp');
   }
@@ -2154,7 +2156,7 @@ router.post('/courses/:slug/materials', authMiddleware, ugcUploadMw, h(async (re
   let put;
   try {
     // S4: сразу в карантин — до чистого скана файл вне отдаваемых каталогов
-    put = await putBufferQuarantine(file.buffer, file.originalname || `material.${claimedExt}`);
+    put = await putBufferQuarantine(file.buffer, decodedName || `material.${claimedExt}`);
   } catch (err: any) {
     if (err instanceof StorageError) return fail(res, err.status, err.message);
     throw err;

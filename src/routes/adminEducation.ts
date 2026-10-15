@@ -25,6 +25,7 @@ import fileType from 'file-type';
 import { query, pool } from '../config/db';
 import { nowSql } from '../utils/nowSql';
 import { slugify } from '../utils/slugify';
+import { decodeUploadName } from '../utils/filename';
 import { AuthRequest } from '../middleware/auth';
 import { adminMiddleware } from '../middleware/admin';
 import { checkRateLimit, lmsUploadLimiter } from '../middleware/rateLimit';
@@ -1904,7 +1905,8 @@ router.post('/courses/:id/materials/upload', uploadMw(materialUpload, 'file'), h
   if (!file || !file.buffer || file.buffer.length === 0) {
     return fail(res, 400, 'Файл не загружен (field: file)');
   }
-  const ext = await detectMaterialExt(file.buffer, file.originalname || '');
+  const origName = decodeUploadName(file.originalname || ''); // ТЗ-170: originalname приходит в Latin-1
+  const ext = await detectMaterialExt(file.buffer, origName);
   if (!ext) {
     return fail(res, 415, 'Недопустимый тип файла (pdf/office/изображения/zip/txt/md/csv)');
   }
@@ -1921,8 +1923,8 @@ router.post('/courses/:id/materials/upload', uploadMw(materialUpload, 'file'), h
     if (lr.rows.length === 0) return fail(res, 400, 'lesson_id: урок не найден или не принадлежит курсу');
   }
   try {
-    const put = await putBuffer(file.buffer, 'materials', file.originalname || `material.${ext}`);
-    const title = String((req.body?.title || file.originalname || 'Файл')).trim().substring(0, 255);
+    const put = await putBuffer(file.buffer, 'materials', origName || `material.${ext}`);
+    const title = String((req.body?.title || origName || 'Файл')).trim().substring(0, 255);
     const maxPos = lessonId
       ? await query(
           `SELECT COALESCE(MAX(position), 0) AS mp FROM course_materials WHERE course_id = $1 AND lesson_id = $2`,
