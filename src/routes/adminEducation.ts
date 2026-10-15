@@ -1701,7 +1701,16 @@ router.put('/settings', h(async (req, res) => {
   if (typeof v !== 'boolean') return fail(res, 400, 'match_llm_enabled must be a boolean');
   await setMatchLlmEnabled(v);
   logUserEvent(req.user!.userId, 'education.settings_updated', { match_llm_enabled: v });
-  res.json({ ok: true, match_llm_enabled: v });
+  // ТЗ-174: отвечаем той же формой, что GET /settings — фронт подставляет
+  // ответ в состояние блока (settings.llm_today.used), неполный объект
+  // крашил рендер.
+  const daily = getMatchDailyCount();
+  res.json({
+    ok: true,
+    match_llm_enabled: v,
+    match_master_enabled: isEducationMatchEnabled(),
+    llm_today: { used: daily.count, limit: getMatchLlmDailyLimit() },
+  });
 }));
 
 // PUT /lessons/:lessonId/test — создать/обновить тест (критерии ТЗ-100 4-5)
