@@ -28,6 +28,7 @@ import { query } from '../../config/db';
 import { nowSql } from '../../utils/nowSql';
 import { embedBatch, EMBEDDING_DIM, EMBEDDING_MAX_TEXT } from '../embeddings';
 import { VERIFIER_MODEL_TEMPERATURE } from '../../config/clustering';
+import { isMatchLlmEnabled } from './settings'; // ТЗ-172: рантайм-выключатель LLM-ранкера
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 const KIMI_API_KEY = process.env.KIMI_API_KEY;
@@ -57,6 +58,11 @@ function todayUtc(): string {
 
 export function getMatchDailyCount(): { date: string; count: number } {
   return { date: matchDailyDate, count: matchDailyCount };
+}
+
+/** Потолок LLM-вызовов для диагностики в админке (ТЗ-172). */
+export function getMatchLlmDailyLimit(): number {
+  return MATCH_LLM_DAILY_LIMIT;
 }
 
 function matchLimitAvailable(): boolean {
@@ -298,10 +304,12 @@ const RANK_PROMPT = `Ты — редактор образовательной п
 Ответь строго JSON, вердикт на каждую пару по её номеру:
 {"verdicts":[{"index":1,"score":0.0,"reason":"одна короткая фраза на русском"}]}`;
 
-async function llmRankBatch(items: RankItem[]): Promise<Map<number, { score: number; reason: string }>> {
+async function llmRankBatch(items: RankItem[], llmEnabled: boolean): Promise<Map<number, { score: number; reason: string }>> {
   const verdicts = new Map<number, { score: number; reason: string }>();
   if (items.length === 0) return verdicts;
 
+  // ТЗ-172: настройка выключена — пары пишутся только по тег-матчу (score NULL)
+  if (!llmEnabled) return verdicts;
   if (!KIMI_API_KEY) {
     console.warn('[EducationMatch] KIMI_API_KEY не задан — RANK пропущен (пары только по тег-матчу, score NULL)');
     return verdicts; // fail-closed по паттерну clusterVerifier
@@ -406,9 +414,15 @@ async function writeSuggestions(
 /** RECALL → RANK → запись для списка кандидатов одной новости/курса. */
 async function rankAndStore(items: RankItem[]): Promise<number> {
   let written = 0;
+  // ТЗ-172: настройка читается один раз на прогон (кэш 30 с в settings.ts);
+  // выключенный ранкер логируем здесь один раз, а не на каждый батч
+  const llmEnabled = await isMatchLlmEnabled();
+  if (!llmEnabled) {
+    console.log('[EducationMatch] LLM-ранкер выключен настройкой — пары только по тег-матчу (score NULL)');
+  }
   for (let start = 0; start < items.length; start += RANK_BATCH_SIZE) {
     const chunk = items.slice(start, start + RANK_BATCH_SIZE);
-    const verdicts = await llmRankBatch(chunk);
+    const verdicts = await llmRankBatch(chunk, llmEnabled);
     written += await writeSuggestions(chunk, verdicts);
   }
   return written;

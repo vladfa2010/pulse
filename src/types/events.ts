@@ -60,6 +60,8 @@ export const USER_EVENT_TYPES = [
   'education.path_published',
   'education.path_archived',
   'education.path_enroll_admin',
+  // ТЗ-172: переключение рантайм-настроек мэтчинга (выключатель LLM-ранкера)
+  'education.settings_updated',
 ] as const;
 
 export type UserEventType = typeof USER_EVENT_TYPES[number];

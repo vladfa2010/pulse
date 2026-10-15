@@ -35,7 +35,8 @@ import { invalidateEducationCache } from '../services/education/cache';
 import { scheduleEducationSeoRebuild, rebuildEducationSeoNow, fetchSeoRebuildLog, isEducationSeoRebuildPending } from '../services/education/seoRebuild'; // ТЗ-164: SEO-пересборка при сохранении + статус (Задачи 4-5)
 import { resolveSourceUrl, ResolveSourceError } from '../services/education/resolveSource';
 import { enqueueScan } from '../services/education/virusScan'; // ТЗ-102: retry-скан pending_scan при заходе в очередь
-import { isEducationMatchEnabled, onCoursePublished, scheduleCourseReembedding } from '../services/education/match'; // ТЗ-103 Задачи 1,3: эмбеддинги + ретроскан
+import { getMatchDailyCount, getMatchLlmDailyLimit, isEducationMatchEnabled, onCoursePublished, scheduleCourseReembedding } from '../services/education/match'; // ТЗ-103 Задачи 1,3: эмбеддинги + ретроскан; ТЗ-172: счётчик/лимит LLM
+import { isMatchLlmEnabled, setMatchLlmEnabled } from '../services/education/settings'; // ТЗ-172: выключатель LLM-ранкера
 import { parseCourseMd } from '../services/education/mdCourseImport'; // ТЗ-159: импорт уроков из Markdown
 import { courseTagIds, matchEventsToCourse } from '../services/education/calendarMatch'; // ТЗ-103 Задача 7: events-preview
 import { putBuffer, removeFile, StorageError } from '../services/storage/driver';
@@ -1681,6 +1682,26 @@ router.post('/seo-rebuild', h(async (req, res) => {
 router.get('/seo-status', h(async (req, res) => {
   const { last, history } = await fetchSeoRebuildLog(query);
   res.json({ pending: isEducationSeoRebuildPending(), last, history });
+}));
+
+// ТЗ-172: рантайм-настройки мэтчинга. match_master_enabled — env-флаг
+// EDUCATION_MATCH_ENABLED: выключен — мэтчинг мёртв целиком, тумблер LLM
+// значения не имеет (зафиксировано в подсказке UI).
+router.get('/settings', h(async (_req, res) => {
+  const daily = getMatchDailyCount();
+  res.json({
+    match_llm_enabled: await isMatchLlmEnabled(),
+    match_master_enabled: isEducationMatchEnabled(),
+    llm_today: { used: daily.count, limit: getMatchLlmDailyLimit() },
+  });
+}));
+
+router.put('/settings', h(async (req, res) => {
+  const v = (req.body || {}).match_llm_enabled;
+  if (typeof v !== 'boolean') return fail(res, 400, 'match_llm_enabled must be a boolean');
+  await setMatchLlmEnabled(v);
+  logUserEvent(req.user!.userId, 'education.settings_updated', { match_llm_enabled: v });
+  res.json({ ok: true, match_llm_enabled: v });
 }));
 
 // PUT /lessons/:lessonId/test — создать/обновить тест (критерии ТЗ-100 4-5)
