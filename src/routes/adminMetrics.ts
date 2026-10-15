@@ -32,6 +32,11 @@ function setCached(section: string, period: number, data: any): void {
   cache.set(key, { data, expiresAt: Date.now() + CACHE_TTL_MS });
 }
 
+// ТЗ-119 Задача 6.4: ловим label упавших safe*-запросов текущего запроса,
+// чтобы в ответе /metrics отличать «нет данных» от «метрика сломалась».
+// Устанавливается только на время обработки одной секции (см. роут ниже).
+let collectErrors: string[] | null = null;
+
 async function safeCount(sql: string, label: string): Promise<number> {
   try {
     const result = await query(sql);
@@ -41,6 +46,7 @@ async function safeCount(sql: string, label: string): Promise<number> {
     return isNaN(num) ? 0 : num;
   } catch (err: any) {
     console.error(`[Metrics] ${label} FAILED:`, err.message);
+    collectErrors?.push(label);
     return 0;
   }
 }
@@ -54,6 +60,7 @@ async function safeFloat(sql: string, label: string): Promise<number> {
     return isNaN(num) ? 0 : num;
   } catch (err: any) {
     console.error(`[Metrics] ${label} FAILED:`, err.message);
+    collectErrors?.push(label);
     return 0;
   }
 }
@@ -64,6 +71,7 @@ async function safeQuery(sql: string, label: string): Promise<any[]> {
     return result.rows || [];
   } catch (err: any) {
     console.error(`[Metrics] ${label} FAILED:`, err.message);
+    collectErrors?.push(label);
     return [];
   }
 }
@@ -75,16 +83,25 @@ function pct(part: number, total: number): number {
 async function getOverview(period: number) {
   const totalUsersCount = Math.max(1, await safeCount('SELECT COUNT(*) as c FROM users', 'totalUsers'));
 
+  // ТЗ-119 Задача 1: активность — из user_sessions (touchPresence на каждый
+  // запрос с токеном), а не user_logins: парольный логин редок (JWT 7 дней),
+  // по логинам DAU/WAU/MAU занижены.
   const dau = await safeCount(
-    `SELECT COUNT(DISTINCT user_id) as c FROM user_logins WHERE login_at > ${agoSql(1)}`,
+    USE_SQLITE
+      ? `SELECT COUNT(DISTINCT user_id) as c FROM user_sessions WHERE last_connected_at > datetime('now', '-1 days')`
+      : `SELECT COUNT(DISTINCT user_id) as c FROM user_sessions WHERE last_connected_at > NOW() - INTERVAL '1 day'`,
     'DAU'
   );
   const wau = await safeCount(
-    `SELECT COUNT(DISTINCT user_id) as c FROM user_logins WHERE login_at > ${agoSql(7)}`,
+    USE_SQLITE
+      ? `SELECT COUNT(DISTINCT user_id) as c FROM user_sessions WHERE last_connected_at > datetime('now', '-7 days')`
+      : `SELECT COUNT(DISTINCT user_id) as c FROM user_sessions WHERE last_connected_at > NOW() - INTERVAL '7 days'`,
     'WAU'
   );
   const mau = await safeCount(
-    `SELECT COUNT(DISTINCT user_id) as c FROM user_logins WHERE login_at > ${agoSql(30)}`,
+    USE_SQLITE
+      ? `SELECT COUNT(DISTINCT user_id) as c FROM user_sessions WHERE last_connected_at > datetime('now', '-30 days')`
+      : `SELECT COUNT(DISTINCT user_id) as c FROM user_sessions WHERE last_connected_at > NOW() - INTERVAL '30 days'`,
     'MAU'
   );
 
@@ -99,16 +116,36 @@ async function getOverview(period: number) {
     'pushSubs'
   );
   const revenue = await safeFloat(
-    `SELECT COALESCE(SUM(amount), 0) as c FROM payments WHERE status = 'completed' AND created_at > ${agoSql(period)}`,
+    `SELECT COALESCE(SUM(amount), 0) as c FROM payments WHERE status = 'completed' AND paid_at > ${agoSql(period)}`,
     'revenue'
   );
 
+  // ТЗ-119 Задача 4: деньги — по paid_at (момент оплаты), не created_at (создание pending).
+  // ТЗ-119 Задача 1: dormant — по user_sessions: нет строки (ни разу не заходил
+  // с токеном) ИЛИ последний визит старше N дней. Без строки — dormant до первого
+  // визита, это корректно.
   const dormant7d = await safeCount(
-    `SELECT COUNT(*) as c FROM users WHERE (last_login_at < ${agoSql(7)} OR last_login_at IS NULL) AND (is_blocked = ${USE_SQLITE ? '0' : 'FALSE'} OR is_blocked IS NULL)`,
+    USE_SQLITE
+      ? `SELECT COUNT(*) as c FROM users u
+         WHERE (NOT EXISTS (SELECT 1 FROM user_sessions s WHERE s.user_id = u.id)
+                OR (SELECT MAX(s.last_connected_at) FROM user_sessions s WHERE s.user_id = u.id) < datetime('now', '-7 days'))
+           AND (u.is_blocked = 0 OR u.is_blocked IS NULL)`
+      : `SELECT COUNT(*) as c FROM users u
+         WHERE (NOT EXISTS (SELECT 1 FROM user_sessions s WHERE s.user_id = u.id)
+                OR (SELECT MAX(s.last_connected_at) FROM user_sessions s WHERE s.user_id = u.id) < NOW() - INTERVAL '7 days')
+           AND (u.is_blocked = FALSE OR u.is_blocked IS NULL)`,
     'dormant7d'
   );
   const dormant30d = await safeCount(
-    `SELECT COUNT(*) as c FROM users WHERE (last_login_at < ${agoSql(30)} OR last_login_at IS NULL) AND (is_blocked = ${USE_SQLITE ? '0' : 'FALSE'} OR is_blocked IS NULL)`,
+    USE_SQLITE
+      ? `SELECT COUNT(*) as c FROM users u
+         WHERE (NOT EXISTS (SELECT 1 FROM user_sessions s WHERE s.user_id = u.id)
+                OR (SELECT MAX(s.last_connected_at) FROM user_sessions s WHERE s.user_id = u.id) < datetime('now', '-30 days'))
+           AND (u.is_blocked = 0 OR u.is_blocked IS NULL)`
+      : `SELECT COUNT(*) as c FROM users u
+         WHERE (NOT EXISTS (SELECT 1 FROM user_sessions s WHERE s.user_id = u.id)
+                OR (SELECT MAX(s.last_connected_at) FROM user_sessions s WHERE s.user_id = u.id) < NOW() - INTERVAL '30 days')
+           AND (u.is_blocked = FALSE OR u.is_blocked IS NULL)`,
     'dormant30d'
   );
   const noTags = await safeCount(
@@ -138,10 +175,20 @@ async function getOverview(period: number) {
 }
 
 async function getDaily(period: number) {
+  // ТЗ-119 Задача 1.2: активность дня = UNION логинов и событийной истории
+  // (DISTINCT user_id, day). У user_sessions нет истории — одна строка на юзера.
   const dailyRows = await safeQuery(
     USE_SQLITE
-      ? `SELECT date(login_at) as day, COUNT(DISTINCT user_id) as dau FROM user_logins WHERE login_at > datetime('now', '-${period} days') GROUP BY date(login_at) ORDER BY day`
-      : `SELECT DATE(login_at) as day, COUNT(DISTINCT user_id) as dau FROM user_logins WHERE login_at > NOW() - INTERVAL '${period} days' GROUP BY DATE(login_at) ORDER BY day`,
+      ? `SELECT day, COUNT(*) as dau FROM (
+           SELECT DISTINCT user_id, date(login_at) as day FROM user_logins WHERE login_at > datetime('now', '-${period} days')
+           UNION
+           SELECT DISTINCT user_id, date(created_at) as day FROM user_events WHERE created_at > datetime('now', '-${period} days')
+         ) t GROUP BY day ORDER BY day`
+      : `SELECT day, COUNT(*) as dau FROM (
+           SELECT DISTINCT user_id, DATE(login_at) as day FROM user_logins WHERE login_at > NOW() - INTERVAL '${period} days'
+           UNION
+           SELECT DISTINCT user_id, DATE(created_at) as day FROM user_events WHERE created_at > NOW() - INTERVAL '${period} days'
+         ) t GROUP BY day ORDER BY day`,
     'daily_activity'
   );
 
@@ -176,24 +223,34 @@ async function getDaily(period: number) {
 }
 
 async function getFunnel(period: number) {
+  // ТЗ-119 Задача 2: единая когорта — все шаги только внутри пользователей,
+  // зарегистрированных за период. Каждый следующий шаг дополнительно
+  // вложен в предыдущий (user_id IN (...)), тогда pct_of_prev ≤ 100 по
+  // построению: чтение новостей и подписка на тег не требуют друг друга,
+  // без вложения воронка на реальных данных давала 300–400%.
+  const cohort = `SELECT id FROM users WHERE created_at > ${agoSql(period)}`;
+  const loginSet = `SELECT DISTINCT user_id FROM user_logins WHERE login_at > ${agoSql(period)} AND user_id IN (${cohort})`;
+  const tagSet = `SELECT DISTINCT user_id FROM portfolios WHERE created_at > ${agoSql(period)} AND user_id IN (${loginSet})`;
+  const readSet = `SELECT DISTINCT user_id FROM user_news_reads WHERE read_at > ${agoSql(period)} AND user_id IN (${tagSet})`;
+
   const fReg = await safeCount(
     `SELECT COUNT(*) as c FROM users WHERE created_at > ${agoSql(period)}`,
     'funnelReg'
   );
   const fLogin = await safeCount(
-    `SELECT COUNT(DISTINCT user_id) as c FROM user_logins WHERE login_at > ${agoSql(period)}`,
+    `SELECT COUNT(*) as c FROM (${loginSet}) t`,
     'funnelLogin'
   );
   const fTag = await safeCount(
-    `SELECT COUNT(DISTINCT user_id) as c FROM portfolios WHERE created_at > ${agoSql(period)}`,
+    `SELECT COUNT(*) as c FROM (${tagSet}) t`,
     'funnelTag'
   );
   const fRead = await safeCount(
-    `SELECT COUNT(DISTINCT user_id) as c FROM user_news_reads WHERE read_at > ${agoSql(period)}`,
+    `SELECT COUNT(*) as c FROM (${readSet}) t`,
     'funnelRead'
   );
   const fPay = await safeCount(
-    `SELECT COUNT(DISTINCT user_id) as c FROM payments WHERE status = 'completed' AND created_at > ${agoSql(period)}`,
+    `SELECT COUNT(DISTINCT user_id) as c FROM payments WHERE status = 'completed' AND paid_at > ${agoSql(period)} AND user_id IN (${readSet})`,
     'funnelPay'
   );
 
@@ -209,40 +266,64 @@ async function getFunnel(period: number) {
 }
 
 async function getRetention(period: number) {
+  // ТЗ-119 Задача 5.1: когорты — по неделям (подпись cohort_week правдивая);
+  // активность dN = last_login_at (после фикса reset-password — честный)
+  // ИЛИ событие user_events позже created_at+N; незрелым когортам (не
+  // исполнилось N дней) — null вместо 0, фронт рендерит «—».
   const retentionDays = period <= 7 ? 14 : period <= 30 ? 42 : period;
   const cohortLimit = Math.ceil(retentionDays / 7);
 
   const rows = await safeQuery(
     USE_SQLITE
-      ? `SELECT date(created_at) as cohort_week,
+      ? `SELECT strftime('%Y-W%W', created_at) as cohort_week,
             COUNT(*) as w0,
-            COUNT(CASE WHEN last_login_at > datetime(created_at, '+1 days') THEN 1 END) as d1,
-            COUNT(CASE WHEN last_login_at > datetime(created_at, '+7 days') THEN 1 END) as d7,
-            COUNT(CASE WHEN last_login_at > datetime(created_at, '+30 days') THEN 1 END) as d30
+            COUNT(CASE WHEN last_login_at > datetime(created_at, '+1 days')
+                        OR EXISTS (SELECT 1 FROM user_events e WHERE e.user_id = users.id
+                                   AND e.created_at > datetime(users.created_at, '+1 days')) THEN 1 END) as d1,
+            COUNT(CASE WHEN last_login_at > datetime(created_at, '+7 days')
+                        OR EXISTS (SELECT 1 FROM user_events e WHERE e.user_id = users.id
+                                   AND e.created_at > datetime(users.created_at, '+7 days')) THEN 1 END) as d7,
+            COUNT(CASE WHEN last_login_at > datetime(created_at, '+30 days')
+                        OR EXISTS (SELECT 1 FROM user_events e WHERE e.user_id = users.id
+                                   AND e.created_at > datetime(users.created_at, '+30 days')) THEN 1 END) as d30,
+            MAX(created_at) as last_created
           FROM users
           WHERE created_at > datetime('now', '-${retentionDays} days')
-          GROUP BY date(created_at)
+          GROUP BY strftime('%Y-W%W', created_at)
           ORDER BY cohort_week DESC
           LIMIT ${cohortLimit}`
-      : `SELECT DATE(created_at) as cohort_week,
+      : `SELECT DATE_TRUNC('week', created_at) as cohort_week,
             COUNT(*) as w0,
-            COUNT(CASE WHEN last_login_at > created_at + INTERVAL '1 days' THEN 1 END) as d1,
-            COUNT(CASE WHEN last_login_at > created_at + INTERVAL '7 days' THEN 1 END) as d7,
-            COUNT(CASE WHEN last_login_at > created_at + INTERVAL '30 days' THEN 1 END) as d30
+            COUNT(CASE WHEN last_login_at > created_at + INTERVAL '1 days'
+                        OR EXISTS (SELECT 1 FROM user_events e WHERE e.user_id = users.id
+                                   AND e.created_at > users.created_at + INTERVAL '1 days') THEN 1 END) as d1,
+            COUNT(CASE WHEN last_login_at > created_at + INTERVAL '7 days'
+                        OR EXISTS (SELECT 1 FROM user_events e WHERE e.user_id = users.id
+                                   AND e.created_at > users.created_at + INTERVAL '7 days') THEN 1 END) as d7,
+            COUNT(CASE WHEN last_login_at > created_at + INTERVAL '30 days'
+                        OR EXISTS (SELECT 1 FROM user_events e WHERE e.user_id = users.id
+                                   AND e.created_at > users.created_at + INTERVAL '30 days') THEN 1 END) as d30,
+            MAX(created_at) as last_created
           FROM users
           WHERE created_at > NOW() - INTERVAL '${retentionDays} days'
-          GROUP BY DATE(created_at)
+          GROUP BY DATE_TRUNC('week', created_at)
           ORDER BY cohort_week DESC
           LIMIT ${cohortLimit}`,
     'retention'
   );
 
-  const retention = rows.map((r: any) => ({
-    cohort: r.cohort_week,
-    d1: pct(parseInt(r.d1 || 0), parseInt(r.w0)),
-    d7: pct(parseInt(r.d7 || 0), parseInt(r.w0)),
-    d30: pct(parseInt(r.d30 || 0), parseInt(r.w0)),
-  }));
+  const retention = rows.map((r: any) => {
+    const w0 = parseInt(r.w0);
+    const lastCreated = new Date(r.last_created).getTime();
+    // Когорта зрелая по N дням, когда «дожил» до N дней самый поздний юзер.
+    const mature = (days: number) => lastCreated + days * 86400000 < Date.now();
+    return {
+      cohort: USE_SQLITE ? r.cohort_week : new Date(r.cohort_week).toISOString().slice(0, 10),
+      d1: mature(1) ? pct(parseInt(r.d1 || 0), w0) : null,
+      d7: mature(7) ? pct(parseInt(r.d7 || 0), w0) : null,
+      d30: mature(30) ? pct(parseInt(r.d30 || 0), w0) : null,
+    };
+  });
 
   return { retention };
 }
@@ -427,20 +508,33 @@ async function getOnline(_period: number) {
   };
 }
 
+// Последний completed-платёж каждого юзера с активной подпиской.
+// Подписчик без платежа (admin-grant) сюда не попадает → 0 в mrr_actual.
+async function getActiveSubsLastPayments() {
+  return safeQuery(
+    `SELECT u.subscription_plan as plan_id, p.amount, p.billing_cycle, p.duration_days
+     FROM users u
+     JOIN payments p ON p.user_id = u.id AND p.status = 'completed'
+       AND p.paid_at = (SELECT MAX(p2.paid_at) FROM payments p2
+                        WHERE p2.user_id = u.id AND p2.status = 'completed')
+     WHERE u.subscription_active = ${USE_SQLITE ? '1' : 'TRUE'}
+       AND (u.subscription_expires_at IS NULL OR u.subscription_expires_at > ${nowSql()})`,
+    'activeSubsPayments'
+  );
+}
+
 async function getPlans(_period: number) {
   const rows = await safeQuery(
     USE_SQLITE
       ? `SELECT sp.id, sp.name, sp.price, sp.plan_level,
-            COUNT(u.id) as subscribers,
-            COALESCE(SUM(sp.price), 0) as revenue
+            COUNT(u.id) as subscribers
          FROM subscription_plans sp
          LEFT JOIN users u ON u.subscription_plan = sp.id AND u.subscription_active = 1
          WHERE sp.deleted_at IS NULL
          GROUP BY sp.id, sp.name, sp.price, sp.plan_level
          ORDER BY sp.plan_level`
       : `SELECT sp.id, sp.name, sp.price, sp.plan_level,
-            COUNT(u.id) as subscribers,
-            COALESCE(SUM(sp.price), 0) as revenue
+            COUNT(u.id) as subscribers
          FROM subscription_plans sp
          LEFT JOIN users u ON u.subscription_plan = sp.id AND u.subscription_active = TRUE
          WHERE sp.deleted_at IS NULL
@@ -449,44 +543,58 @@ async function getPlans(_period: number) {
     'plans'
   );
 
+  // ТЗ-119 Задача 4.3: revenue = mrr_actual (нормированный последний платёж
+  // активных подписчиков плана), не прайсовая SUM(sp.price).
+  const payRows = await getActiveSubsLastPayments();
+  const revenueByPlan = new Map<string, number>();
+  for (const r of payRows) {
+    const norm =
+      r.billing_cycle === 'monthly' ? parseFloat(r.amount)
+      : r.billing_cycle === 'yearly' ? parseFloat(r.amount) / 12
+      : r.billing_cycle === 'quarterly' ? parseFloat(r.amount) / 3
+      : r.billing_cycle === 'weekly' ? parseFloat(r.amount) * 30 / 7
+      : parseFloat(r.amount) * 30 / Math.max(parseInt(r.duration_days) || 0, 1);
+    revenueByPlan.set(r.plan_id, (revenueByPlan.get(r.plan_id) || 0) + (isFinite(norm) ? norm : 0));
+  }
+
   return {
     plans: rows.map((r: any) => ({
       id: r.id,
       name: r.name,
       price: parseFloat(r.price) || 0,
       subscribers: parseInt(r.subscribers) || 0,
-      revenue: parseFloat(r.revenue) || 0,
+      revenue: Math.round((revenueByPlan.get(r.id) || 0) * 100) / 100,
     })),
   };
 }
 
 async function getMRR(_period: number) {
-  const mrr = await safeFloat(
-    USE_SQLITE
-      ? `SELECT COALESCE(SUM(
-           CASE
-             WHEN billing_cycle = 'monthly' THEN amount
-             WHEN billing_cycle = 'yearly' THEN amount / 12.0
-             WHEN billing_cycle = 'quarterly' THEN amount / 3.0
-             WHEN billing_cycle = 'weekly' THEN amount * 30.0 / 7
-             ELSE amount * 30.0 / MAX(duration_days, 1)
-           END
-         ), 0) as c
-         FROM payments
-         WHERE status = 'completed' AND paid_at > datetime('now', '-30 days')`
-      : `SELECT COALESCE(SUM(
-           CASE
-             WHEN billing_cycle = 'monthly' THEN amount
-             WHEN billing_cycle = 'yearly' THEN amount / 12.0
-             WHEN billing_cycle = 'quarterly' THEN amount / 3.0
-             WHEN billing_cycle = 'weekly' THEN amount * 30.0 / 7
-             ELSE amount * 30.0 / GREATEST(duration_days, 1)
-           END
-         ), 0) as c
-         FROM payments
-         WHERE status = 'completed' AND paid_at > NOW() - INTERVAL '30 days'`,
-    'mrr'
+  // ТЗ-119 Задача 4.1: MRR = нормированные последние платежи АКТИВНЫХ
+  // подписчиков (не «платежи за 30 дней» — подписка, оплаченная 31 день
+  // назад, иначе исчезает из MRR).
+  const payRows = await getActiveSubsLastPayments();
+  const normOne = (r: any): number => {
+    const amount = parseFloat(r.amount) || 0;
+    switch (r.billing_cycle) {
+      case 'monthly': return amount;
+      case 'yearly': return amount / 12;
+      case 'quarterly': return amount / 3;
+      case 'weekly': return amount * 30 / 7;
+      default: return amount * 30 / Math.max(parseInt(r.duration_days) || 0, 1);
+    }
+  };
+  const mrr = payRows.reduce((sum: number, r: any) => sum + normOne(r), 0);
+
+  // Прайсовая сумма по тем же активным подписчикам — подпись для фронта.
+  const listRows = await safeQuery(
+    `SELECT COALESCE(SUM(sp.price), 0) as c
+     FROM users u
+     JOIN subscription_plans sp ON sp.id = u.subscription_plan
+     WHERE u.subscription_active = ${USE_SQLITE ? '1' : 'TRUE'}
+       AND (u.subscription_expires_at IS NULL OR u.subscription_expires_at > ${nowSql()})`,
+    'mrrList'
   );
+  const mrrList = parseFloat(listRows[0]?.c) || 0;
 
   const trendRows = await safeQuery(
     USE_SQLITE
@@ -497,7 +605,7 @@ async function getMRR(_period: number) {
                 WHEN billing_cycle = 'yearly' THEN amount / 12.0
                 WHEN billing_cycle = 'quarterly' THEN amount / 3.0
                 WHEN billing_cycle = 'weekly' THEN amount * 30.0 / 7
-                ELSE amount * 30.0 / MAX(duration_days, 1)
+                ELSE amount * 30.0 / MAX(COALESCE(duration_days, 0), 1)
               END
             ), 0) as mrr
          FROM payments
@@ -512,7 +620,7 @@ async function getMRR(_period: number) {
                 WHEN billing_cycle = 'yearly' THEN amount / 12.0
                 WHEN billing_cycle = 'quarterly' THEN amount / 3.0
                 WHEN billing_cycle = 'weekly' THEN amount * 30.0 / 7
-                ELSE amount * 30.0 / GREATEST(duration_days, 1)
+                ELSE amount * 30.0 / GREATEST(COALESCE(duration_days, 0), 1)
               END
             ), 0) as mrr
          FROM payments
@@ -525,32 +633,31 @@ async function getMRR(_period: number) {
 
   return {
     mrr: Math.round(mrr),
+    mrr_list: Math.round(mrrList),
     arr: Math.round(mrr * 12),
     trend: trendRows.map((r: any) => ({ month: r.month, mrr: Math.round(parseFloat(r.mrr) || 0) })),
   };
 }
 
 async function getPromos(_period: number) {
+  // ТЗ-119 Задача 3: деньги — только по платежам с этим promo_code (колонки
+  // promo_code пишет services/promo.ts при применении промо). JOIN через
+  // user_id раньше приписывал промо ВСЕ платежи пользователя (и с удвоением
+  // при нескольких uses). uses остаются по user_promo_uses.
   const rows = await safeQuery(
     USE_SQLITE
       ? `SELECT pc.id, pc.code, pc.discount_value as discount, pc.discount_type,
-            COUNT(DISTINCT pu.user_id) as uses,
-            COUNT(DISTINCT CASE WHEN p.status = 'completed' THEN p.user_id END) as converted_to_paid,
-            COALESCE(SUM(CASE WHEN p.status = 'completed' THEN p.amount ELSE 0 END), 0) as revenue
+            (SELECT COUNT(DISTINCT pu.user_id) FROM user_promo_uses pu WHERE pu.promo_code_id = pc.id) as uses,
+            (SELECT COUNT(DISTINCT p.user_id) FROM payments p WHERE p.promo_code = pc.code AND p.status = 'completed') as converted_to_paid,
+            COALESCE((SELECT SUM(p.amount) FROM payments p WHERE p.promo_code = pc.code AND p.status = 'completed'), 0) as revenue
          FROM promo_codes pc
-         LEFT JOIN user_promo_uses pu ON pu.promo_code_id = pc.id
-         LEFT JOIN payments p ON p.user_id = pu.user_id AND p.status = 'completed'
-         GROUP BY pc.id, pc.code, pc.discount_value, pc.discount_type
          ORDER BY uses DESC
          LIMIT 20`
       : `SELECT pc.id, pc.code, pc.discount_value as discount, pc.discount_type,
-            COUNT(DISTINCT pu.user_id) as uses,
-            COUNT(DISTINCT CASE WHEN p.status = 'completed' THEN p.user_id END) as converted_to_paid,
-            COALESCE(SUM(CASE WHEN p.status = 'completed' THEN p.amount ELSE 0 END), 0) as revenue
+            (SELECT COUNT(DISTINCT pu.user_id) FROM user_promo_uses pu WHERE pu.promo_code_id = pc.id) as uses,
+            (SELECT COUNT(DISTINCT p.user_id) FROM payments p WHERE p.promo_code = pc.code AND p.status = 'completed') as converted_to_paid,
+            COALESCE((SELECT SUM(p.amount) FROM payments p WHERE p.promo_code = pc.code AND p.status = 'completed'), 0) as revenue
          FROM promo_codes pc
-         LEFT JOIN user_promo_uses pu ON pu.promo_code_id = pc.id
-         LEFT JOIN payments p ON p.user_id = pu.user_id AND p.status = 'completed'
-         GROUP BY pc.id, pc.code, pc.discount_value, pc.discount_type
          ORDER BY uses DESC
          LIMIT 20`,
     'promos'
@@ -633,6 +740,10 @@ async function getEngagement(_period: number) {
 }
 
 async function getChurn(_period: number) {
+  // ТЗ-119 Задача 5.2: churned = подписка неактивна ИЛИ истекла, И нет
+  // completed-платежа позже first_payment+Nд (yearly с будущим expires_at
+  // «нет платежа 30 дней» — не churn). Когорты, которым не исполнилось
+  // 30/90 дней, дают null rate — фронт рендерит «—».
   const rows = await safeQuery(
     USE_SQLITE
       ? `WITH first_payments AS (
@@ -645,9 +756,13 @@ async function getChurn(_period: number) {
            SELECT
              strftime('%Y-%m', fp.first_payment) as cohort,
              COUNT(DISTINCT fp.user_id) as total_subs,
-             COUNT(DISTINCT CASE WHEN p2.user_id IS NULL THEN fp.user_id END) as churned_30d,
-             COUNT(DISTINCT CASE WHEN p3.user_id IS NULL THEN fp.user_id END) as churned_90d
+             COUNT(DISTINCT CASE WHEN (u.subscription_active = 0 OR u.subscription_expires_at < datetime('now'))
+                                  AND p2.user_id IS NULL THEN fp.user_id END) as churned_30d,
+             COUNT(DISTINCT CASE WHEN (u.subscription_active = 0 OR u.subscription_expires_at < datetime('now'))
+                                  AND p3.user_id IS NULL THEN fp.user_id END) as churned_90d,
+             MAX(fp.first_payment) as last_fp
            FROM first_payments fp
+           JOIN users u ON u.id = fp.user_id
            LEFT JOIN payments p2 ON p2.user_id = fp.user_id
              AND p2.status = 'completed'
              AND p2.paid_at > datetime(fp.first_payment, '+30 days')
@@ -656,7 +771,7 @@ async function getChurn(_period: number) {
              AND p3.paid_at > datetime(fp.first_payment, '+90 days')
            GROUP BY strftime('%Y-%m', fp.first_payment)
          )
-         SELECT cohort, total_subs, churned_30d, churned_90d
+         SELECT cohort, total_subs, churned_30d, churned_90d, last_fp
          FROM cohort_stats
          ORDER BY cohort DESC
          LIMIT 6`
@@ -670,9 +785,13 @@ async function getChurn(_period: number) {
            SELECT
              DATE_TRUNC('month', fp.first_payment) as cohort,
              COUNT(DISTINCT fp.user_id) as total_subs,
-             COUNT(DISTINCT CASE WHEN p2.user_id IS NULL THEN fp.user_id END) as churned_30d,
-             COUNT(DISTINCT CASE WHEN p3.user_id IS NULL THEN fp.user_id END) as churned_90d
+             COUNT(DISTINCT CASE WHEN (u.subscription_active = FALSE OR u.subscription_expires_at < NOW())
+                                  AND p2.user_id IS NULL THEN fp.user_id END) as churned_30d,
+             COUNT(DISTINCT CASE WHEN (u.subscription_active = FALSE OR u.subscription_expires_at < NOW())
+                                  AND p3.user_id IS NULL THEN fp.user_id END) as churned_90d,
+             MAX(fp.first_payment) as last_fp
            FROM first_payments fp
+           JOIN users u ON u.id = fp.user_id
            LEFT JOIN payments p2 ON p2.user_id = fp.user_id
              AND p2.status = 'completed'
              AND p2.paid_at > fp.first_payment + INTERVAL '30 days'
@@ -681,7 +800,7 @@ async function getChurn(_period: number) {
              AND p3.paid_at > fp.first_payment + INTERVAL '90 days'
            GROUP BY DATE_TRUNC('month', fp.first_payment)
          )
-         SELECT cohort, total_subs, churned_30d, churned_90d
+         SELECT cohort, total_subs, churned_30d, churned_90d, last_fp
          FROM cohort_stats
          ORDER BY cohort DESC
          LIMIT 6`,
@@ -693,13 +812,15 @@ async function getChurn(_period: number) {
       const total = parseInt(r.total_subs) || 0;
       const c30 = parseInt(r.churned_30d) || 0;
       const c90 = parseInt(r.churned_90d) || 0;
+      const lastFp = new Date(r.last_fp).getTime();
+      const mature = (days: number) => lastFp + days * 86400000 < Date.now();
       return {
-        month: r.cohort,
+        month: USE_SQLITE ? r.cohort : new Date(r.cohort).toISOString().slice(0, 10),
         total_subs: total,
         churned_30d: c30,
         churned_90d: c90,
-        churn_rate_30d: total > 0 ? Math.round((c30 / total) * 1000) / 10 : 0,
-        churn_rate_90d: total > 0 ? Math.round((c90 / total) * 1000) / 10 : 0,
+        churn_rate_30d: mature(30) && total > 0 ? Math.round((c30 / total) * 1000) / 10 : null,
+        churn_rate_90d: mature(90) && total > 0 ? Math.round((c90 / total) * 1000) / 10 : null,
       };
     }),
   };
@@ -740,13 +861,18 @@ router.get('/metrics', adminMiddleware, async (req, res) => {
     const cached = getCached(section, period);
     if (cached) {
       console.log(`[Metrics] cache hit ${section}:${period}`);
-      return res.json({ section, period, cached: true, data: cached });
+      return res.json({ section, period, cached: true, errors: cached.errors || [], data: cached.data });
     }
 
-    const data = await handlers[section](period);
-    setCached(section, period, data);
-
-    res.json({ section, period, cached: false, data });
+    collectErrors = [];
+    try {
+      const data = await handlers[section](period);
+      const errors = collectErrors || [];
+      setCached(section, period, { data, errors });
+      res.json({ section, period, cached: false, errors, data });
+    } finally {
+      collectErrors = null;
+    }
   } catch (err: any) {
     console.error('[Admin Metrics] Error:', err.message);
     res.status(500).json({ error: 'Failed to load metrics', details: err.message });
@@ -773,30 +899,36 @@ router.get('/metrics/at-risk-accounts', adminMiddleware, async (req, res) => {
 
     let sql: string;
     if (type === 'dormant_7d') {
+      // ТЗ-119 Задача 1: dormant — по user_sessions.last_connected_at (как в overview);
+      // колонку last_login_at в SELECT оставляем — контракт AtRiskModal не меняем.
       sql = USE_SQLITE
         ? `SELECT id, email, username, subscription_active, subscription_expires_at, last_login_at
-           FROM users
-           WHERE (last_login_at < datetime('now', '-7 days') OR last_login_at IS NULL)
+           FROM users u
+           WHERE (NOT EXISTS (SELECT 1 FROM user_sessions s WHERE s.user_id = u.id)
+                  OR (SELECT MAX(s.last_connected_at) FROM user_sessions s WHERE s.user_id = u.id) < datetime('now', '-7 days'))
              AND (is_blocked = 0 OR is_blocked IS NULL)
            ORDER BY last_login_at IS NULL, last_login_at DESC
            LIMIT ${limit}`
         : `SELECT id, email, username, subscription_active, subscription_expires_at, last_login_at
-           FROM users
-           WHERE (last_login_at < NOW() - INTERVAL '7 days' OR last_login_at IS NULL)
+           FROM users u
+           WHERE (NOT EXISTS (SELECT 1 FROM user_sessions s WHERE s.user_id = u.id)
+                  OR (SELECT MAX(s.last_connected_at) FROM user_sessions s WHERE s.user_id = u.id) < NOW() - INTERVAL '7 days')
              AND (is_blocked = FALSE OR is_blocked IS NULL)
            ORDER BY last_login_at DESC NULLS LAST
            LIMIT ${limit}`;
     } else if (type === 'dormant_30d') {
       sql = USE_SQLITE
         ? `SELECT id, email, username, subscription_active, subscription_expires_at, last_login_at
-           FROM users
-           WHERE (last_login_at < datetime('now', '-30 days') OR last_login_at IS NULL)
+           FROM users u
+           WHERE (NOT EXISTS (SELECT 1 FROM user_sessions s WHERE s.user_id = u.id)
+                  OR (SELECT MAX(s.last_connected_at) FROM user_sessions s WHERE s.user_id = u.id) < datetime('now', '-30 days'))
              AND (is_blocked = 0 OR is_blocked IS NULL)
            ORDER BY last_login_at IS NULL, last_login_at DESC
            LIMIT ${limit}`
         : `SELECT id, email, username, subscription_active, subscription_expires_at, last_login_at
-           FROM users
-           WHERE (last_login_at < NOW() - INTERVAL '30 days' OR last_login_at IS NULL)
+           FROM users u
+           WHERE (NOT EXISTS (SELECT 1 FROM user_sessions s WHERE s.user_id = u.id)
+                  OR (SELECT MAX(s.last_connected_at) FROM user_sessions s WHERE s.user_id = u.id) < NOW() - INTERVAL '30 days')
              AND (is_blocked = FALSE OR is_blocked IS NULL)
            ORDER BY last_login_at DESC NULLS LAST
            LIMIT ${limit}`;
