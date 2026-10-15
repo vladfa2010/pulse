@@ -148,6 +148,16 @@ function check(name: string, cond: boolean, detail?: any) {
   const html2 = inlineHtml.lessons[0]?.text_content || '';
   check('inline <u> дошёл до санитайзера и пережил его', html2.includes('<u>подчёркиванием</u>'), html2);
   check('inline <table> пережил санитайзер', html2.includes('<table>'), html2);
+
+  // ТЗ-176: round-trip таблицы из MD — th/td с кириллицей и экранированным |
+  // проходят sanitize без потерь, урок с таблицей не считается ошибкой.
+  const tbl = parseCourseMd('# Урок с таблицей\n\n| Параметр | Значение |\n|---|---|\n| Название | РФ \\| Мосбиржа |\n| Лот | 1 |');
+  const html3 = tbl.lessons[0]?.text_content || '';
+  check('ТЗ-176: таблица из MD без ошибок урока', tbl.errors.length === 0, tbl.errors);
+  check('ТЗ-176: th с кириллицей пережили sanitize',
+    html3.includes('<th>Параметр</th>') && html3.includes('<th>Значение</th>'), html3);
+  check('ТЗ-176: td с экранированной | пережили sanitize',
+    html3.includes('<td>РФ | Мосбиржа</td>') && (html3.match(/<td>/g) || []).length === 4, html3);
 }
 
 // ─── 9. Вредоносный md ─────────────────────────────────────────────────────

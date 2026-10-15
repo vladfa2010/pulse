@@ -85,6 +85,29 @@ function check(name: string, cond: boolean, detail?: any) {
     !/<img[^>]*\ssrc=/.test(imgExternal), imgExternal);
 }
 
+// ─── 5. Таблицы (ТЗ-176) ────────────────────────────────────────────────────
+{
+  const t = sanitizeLessonHtml(
+    '<table><thead><tr><th>A</th><th>B</th></tr></thead><tbody><tr><td>1</td><td>2</td></tr></tbody></table>',
+  );
+  check('таблица проходит без потерь (thead/tbody/tr/th/td)',
+    t.includes('<table>') && (t.match(/<th>/g) || []).length === 2 &&
+    (t.match(/<td>/g) || []).length === 2 && t.includes('<thead>') && t.includes('<tbody>'), t);
+
+  const merged = sanitizeLessonHtml(
+    '<table><tbody><tr><td colspan="2" rowspan="1">x</td></tr></tbody></table>',
+  );
+  check('colspan/rowspan вырезаются, ячейки остаются (merge в UI не даём)',
+    !merged.includes('colspan') && !merged.includes('rowspan') && merged.includes('<td>x</td>'), merged);
+
+  const evilCell = sanitizeLessonHtml(
+    '<table><tbody><tr><td onclick="x()">1</td><td><script>alert(1)</script>2</td></tr></tbody></table>',
+  );
+  check('инлайн-обработчики и script внутри ячеек вырезаются',
+    !evilCell.includes('onclick') && !evilCell.includes('<script') &&
+    evilCell.includes('<td>1</td>') && evilCell.includes('<td>2</td>'), evilCell);
+}
+
 console.log(`\ncontentHtml: ${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);
 
