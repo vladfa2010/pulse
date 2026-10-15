@@ -1960,7 +1960,24 @@ router.get('/courses/:slug/events', h(async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 router.get('/materials/:id/download', optionalAuth, h(async (req, res) => {
   const materialId = req.params.id;
-  const userId = req.user?.userId;
+  // ТЗ-173: файл открывается по прямой ссылке из браузера (<a target=_blank>),
+  // Authorization-заголовок недоступен — принимаем ?token=<JWT> как fallback
+  // (ТОЛЬКО этот эндпоинт, query-auth дальше не разносим). Невалидный/протухший
+  // токен — идём как гость (правила 401/403 ниже), сам факт плохого token
+  // не превращаем в отдельную ошибку. JWT в URL осознанно: логи/history —
+  // приемлемая цена за прямую ссылку; сам файл после 302 защищён signedUrl (TTL 1 ч).
+  let userId = req.user?.userId;
+  if (!userId) {
+    const token = String(req.query.token || '');
+    if (token) {
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET) as { userId: string };
+        userId = decoded.userId;
+      } catch {
+        // протухший/поддельный — остаёмся гостем
+      }
+    }
+  }
 
   const matR = await query(
     `SELECT m.*, c.deleted_at, c.visibility FROM course_materials m
