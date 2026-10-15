@@ -225,6 +225,8 @@ npm run build   # выход в dist/
 | `ENCRYPTION_KEY` | `(скрыт)` | 64 hex-символов (32 байта) для AES-256-GCM шифрования API-токенов брокеров. Обязателен для фичи портфелей. |
 | `MINIMAX_API_KEY` | `(скрыт)` | Minimax TTS для радио (`POST /api/radio/tts`, ТЗ-42). Установлен 2026-09-21 (в `.env` И в `environment:` backend-сервиса; бэкап `.env.bak-minimax`). Boot-лог: `[Radio] MINIMAX ready` / `...not set, /api/radio/tts returns 503`. Метрики: `GET /api/admin/metrics?section=radio`. ⚠️ Ключ передавался в чате — сгенерировать новый и ротировать до публичного релиза радио. |
 | `TRUSTED_PROXY` | — (не задан) | Доверять клиентским IP-заголовкам `cf-connecting-ip`/`true-client-ip` только при значении `cloudflare`. На VPS с Caddy НЕ задавать — иначе webhook-фильтр ЮKassa обходится поддельным заголовком (SECURITY_AUDIT_PAYMENTS_2026-10-13, S1a; коммит `71a5601`). |
+| `EDU_SEO_ENABLED` / `EDU_SEO_DIST` / `EDU_SEO_REBUILD_DEBOUNCE_SEC` | `true` / `/opt/pulse/frontend/dist` / `60` | SEO-пересборка курсов при сохранении (ТЗ-164, `services/education/seoRebuild.ts`): перегенерация витрины/карточек/sitemap прямо в dist, дебаунс + не чаще раза в 5 мин. На VPS дефолты корректны, задавать не нужно. Подробнее — `docs/education.md` (раздел ТЗ-164) и `pulse-frontend/docs/seo.md`. |
+| `EDUCATION_MATCH_ENABLED` / `EDUCATION_MATCH_LLM_DAILY_LIMIT` | `false` / `500` | Фичефлаг мэтчинга курсов↔новости (ТЗ-103) и суточный лимит LLM-батчей. Выключатель LLM-ранкера в рантайме — ключ `match_llm_enabled` в `_education_settings` (таб «Образование», ТЗ-172/174). Подробнее — `docs/education.md`. |
 
 ### Почта и системные алерты (ТЗ-09, 2026-09-16)
 

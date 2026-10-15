@@ -92,7 +92,8 @@ category с анти-энумерацией hidden), категории, кар�
 (enrollment или is_free_preview; тест без correct; subscription_expired /
 locked_by_drip по tenure; 401/403 + `IDOR blocked` в логе), complete,
 «Мои курсы», материалы-download (302 на signedUrl; is_free анониму с
-лимитом 30/час по IP), «Курс в новостях». `GET /api/news/:slug` отдаёт
+лимитом 30/час по IP; ТЗ-173: fallback `?token=` для скачивания по
+авторизационной ссылке), «Курс в новостях». `GET /api/news/:slug` отдаёт
 `attached_courses` (≤3, published+public).
 
 **Фронтенд** (таб «Образование» в `/admin`): таблица курсов (обложки, ярлыки
@@ -436,6 +437,13 @@ secret=CRON_SECRET_KEY`, идемпотентна; SQLite → `{skipped:true}`).
 **Фичефлаг:** `EDUCATION_MATCH_ENABLED` (default `'false'`): выключен —
 все эндпоинты мэтчинга 404, хук/ретроскан/cron no-op, фронт прячет блоки.
 
+**Рантайм-выключатель LLM-ранкера (ТЗ-172/174):** ключ `match_llm_enabled`
+в `_education_settings` (паттерн radioSettings, default true) — выключен:
+RECALL остаётся, LLM-батч пропускается, пишутся только тег-совпадения.
+Управление — таб «Образование» в админке. Контракт `GET/PUT
+/admin/education/settings` (ТЗ-174): PUT возвращает полную форму как GET
+(фронт после сохранения делает refresh(), а не перезаписывает форму ответом).
+
 **Env:** `EDUCATION_MATCH_ENABLED`, `EDUCATION_MATCH_LLM_DAILY_LIMIT` (500).
 
 **Бэкфилл:** `scripts/backfill-course-embeddings.js` — эмбеддинги
@@ -447,6 +455,28 @@ secret=CRON_SECRET_KEY`, идемпотентна; SQLite → `{skipped:true}`).
 (`EventsPreviewPanel`), публичные `CoursePage` / витрина `Education` /
 `CalendarTodayBlock` / `MatchedCourseChips` / «Мои предложения» в профиле
 (`SubmissionsTab`). Контракт автора UGC-материала: `submitted_by: {id, username}`.
+
+## ТЗ-164 — SEO-пересборка при сохранении курса (реализовано)
+
+`services/education/seoRebuild.ts`: event-driven перегенерация SEO-файлов
+(витрина, карточки курсов, sitemap.xml, robots.txt — те же формулы, что
+`scripts/seo-prerender.mts` pulse-frontend) напрямую в
+`/opt/pulse/frontend/dist` при любой SEO-релевантной мутации админки —
+без пересборки фронта. Build-time пререндер (ТЗ-140) остаётся первичным
+покрытием при деплое и fallback'ом.
+
+- `scheduleEducationSeoRebuild()` — неблокирующий планировщик: дебаунс
+  `EDU_SEO_REBUILD_DEBOUNCE_SEC` (60) + защита «не чаще раза в 5 минут».
+  Все мутации админки зовут только её.
+- `rebuildEducationSeoNow()` — собственно пересборка (ручной роут + heal).
+- `initEducationSeoBootHeal()` — на старте сервера: свежий dist залили
+  вручную → education/* пропал → пересобрать.
+- Атомарная запись (temp-файл + rename), ошибка → лог + alert админам,
+  старые файлы не трогаем. Env (fail-soft): `EDU_SEO_ENABLED` (default
+  true), `EDU_SEO_DIST`, `EDU_SEO_REBUILD_DEBOUNCE_SEC`. Шелла нет →
+  warn и мягкий пропуск, НЕ падение.
+- Формулы меты продублированы из `src/lib/seo.ts` фронта — при правке
+  формул ТЗ-140/163 править оба места.
 
 ## Страница урока + грейдинг теста (реализовано)
 
@@ -474,7 +504,11 @@ secret=CRON_SECRET_KEY`, идемпотентна; SQLite → `{skipped:true}`).
   на клиенте; ТЗ-165: 15 с на попытку + 2 молчаливых авто-ретрая + оверлей
   «загружается…» после 5 с), текст как HTML
   (санитизирует бэк `sanitizeLessonHtml` — вынесен в
-  `services/education/contentHtml.ts`, ТЗ-108; whitelist расширен тегом `u`),
+  `services/education/contentHtml.ts`, ТЗ-108; whitelist расширен тегом `u`;
+  ТЗ-176: редактор уроков поддерживает таблицы TipTap — вставка 3×3 с
+  шапкой, бабл редактирования строк/колонок; бэк таблицы принимал и раньше,
+  сериализационный мусор TipTap (colgroup/style) вырезается санитайзером,
+  colspan/rowspan — тоже; `.edu-content` — `overflow-x:auto` для мобильного),
   общая rich-text типографика `.edu-content` (index.css) — тот же класс, что в
   предпросмотре админки (TextFormatField, ТЗ-108) и карточке курса; тест
   (радио-варианты → грейдинг →
