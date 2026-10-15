@@ -574,6 +574,10 @@ router.get('/courses/:slug', optionalAuth, h(async (req, res) => {
     my_enrollment: enrollment
       ? { source: enrollment.source, created_at: enrollment.created_at }
       : null,
+    // ТЗ-171: «гость-админ» (админ без enrollment в превью) — витрина показывает
+    // все материалы. Только витринный флаг, на гейты уроков/drip не влияет
+    // (у них свои admin-обходы). Записанный админ — false, видит как ученик.
+    admin_preview: !!(admin && !enrollment),
     progress,
     program,
     paths: pathLinksR.rows.map((p: any) => ({ slug: p.slug, title: p.title })),
