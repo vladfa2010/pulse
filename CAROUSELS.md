@@ -95,7 +95,8 @@
 
 ### API
 ```
-GET  /api/news?limit=50
+GET  /api/news?limit=20&page=N  → лента непрочитанных, автодогрузка страниц (ТЗ-177)
+GET  /api/news/unread-count     → реальное число непрочитанных для счётчика «Прочитать всё» (ТЗ-177)
 POST /api/news/read-all  → массовая отметка всех непрочитанных как прочитанных
 ```
 
@@ -137,7 +138,7 @@ POST /api/news/read-all  → массовая отметка всех непро
 - Цвет cyan `#00D4FF` (`bg-[#00D4FF]/10`, `border-[#00D4FF]/30`).
 - Размер `h-6` — вровень со стрелками скролла.
 - Иконка `CheckCheck` + текст «Прочитать всё».
-- Справа от текста — пилюля с числом непрочитанных карточек (`articles.length`), стиль `bg-[#00D4FF]/20 text-[10px] font-semibold text-[#00D4FF]`.
+- Справа от текста — пилюля с **реальным числом непрочитанных** (`unreadTotal` из `GET /api/news/unread-count`, ключ `['unreadNewsCount']`), стиль `bg-[#00D4FF]/20 text-[10px] font-semibold text-[#00D4FF]`. Бейдж скрыт до первого ответа сервера и при 0. Синхронизация: оптимистичный декремент на карточку в `markAsRead`, `0` при «Прочитать всё», инвалидация только в `.catch` read-all (ТЗ-177).
 - Пилюля скрывается во время массовой отметки (`isMarkingAll`), вместо неё показывается спиннер.
 - Во время запроса — спиннер и `disabled`.
 
@@ -154,7 +155,9 @@ POST /api/news/read-all  → массовая отметка всех непро
     │
     ▼
 ┌─────────────────────────────┐
-│ 1. Снапшот текущих карточек │
+│ 1. Снапшот ВСЕХ загруженных │
+│    карточек (все страницы,  │
+│    ТЗ-177)                   │
 │ 2. Гасим removal/visibility │
 │    timers                     │
 │ 3. Все id → readSet,        │
@@ -175,19 +178,20 @@ POST /api/news/read-all  → массовая отметка всех непро
            │
            ▼
 После каскада:
-  • ['unreadNews'] = []
-  • снапшот prepend в ['historyNews']
+  • ['unreadNews'] = { pages: [], pageParams: [] }
+  • ['unreadNewsCount'] = 0
+  • снапшот prepend в первую страницу ['historyNews']
   • сброс markedIds / fadingIds
 ```
 
 **Анимация:**
 - Каждая карточка последовательно получает `isFading` с задержкой `113ms`.
 - Одновременно все карточки уже помечены `isMarked` (полупрозрачные + зелёная рамка).
-- Полная длительность для 20 карточек: `113 × 19 + 1125 ≈ 3.3s`.
+- Полная длительность для N карточек: `113 × (N−1) + 1125` (для 20 ≈ 3.3s). N — все догруженные карточки, не только первая страница (ТЗ-177).
 
 **Optimistic updates:**
 - Запрос к бэкенду уходит сразу, не дожидаясь окончания анимации.
-- При ошибке — `invalidateQueries(['unreadNews'])` и `invalidateQueries(['historyNews'])`, UI откатывается к серверному состоянию.
+- При ошибке — `invalidateQueries(['unreadNews'])`, `invalidateQueries(['historyNews'])` и `invalidateQueries(['unreadNewsCount'])`, UI откатывается к серверному состоянию.
 - Перенос во «Вся лента» выполняется с проверкой на дубли: карточки, уже присутствующие в первой странице истории, не добавляются повторно.
 
 **Идемпотентность:**
@@ -198,12 +202,24 @@ POST /api/news/read-all  → массовая отметка всех непро
 При `markAsRead` карточка **мгновенно переносится** из карусели 1 в карусель 2, без ожидания ответа API.
 
 ```tsx
-// Реализация через queryClient.setQueryData()
-queryClient.setQueryData(['unreadNews'], (old: News[]) =>
-  old.filter(n => n.id !== newsId)
+// Реализация через queryClient.setQueryData().
+// Кэх обеих каруселей страничный { pages, pageParams } (ТЗ-177).
+queryClient.setQueryData(['unreadNews'], (old: { pages: Page[]; pageParams: number[] } | undefined) =>
+  old && {
+    ...old,
+    pages: old.pages.map(p => ({ ...p, articles: p.articles.filter(n => n.id !== newsId) })),
+  }
 );
-queryClient.setQueryData(['historyNews'], (old: News[] = []) =>
-  [news, ...old]
+queryClient.setQueryData(['historyNews'], (old: { pages: Page[]; pageParams: number[] } | undefined) =>
+  // prepend в первую страницу, если карточки там ещё нет
+  old && {
+    ...old,
+    pages: [{ ...old.pages[0], articles: [news, ...old.pages[0].articles] }, ...old.pages.slice(1)],
+  }
+);
+// Оптимистичный декремент счётчика — без сетевого запроса на карточку
+queryClient.setQueryData(['unreadNewsCount'], (c: number | undefined) =>
+  c == null ? c : Math.max(0, c - 1)
 );
 // Затем фоном — реальный POST /api/news/:id/read
 ```
@@ -626,7 +642,7 @@ Query: ?hours=12 (default) | ?refresh=1 (принудительно)
 
 | Карусель | Endpoint | Фильтр | Пагинация | Сортировка |
 |----------|----------|--------|-----------|------------|
-| 1. "Не видели" | `GET /api/news` | теги + непрочитанные | `limit=50`, `page=N` | DESC |
+| 1. "Не видели" | `GET /api/news` | теги + непрочитанные | `limit=20`, `page=N` (автодогрузка, ТЗ-177) | DESC |
 | 2. "Вся лента" | `GET /api/news?history=true&page=N` | теги + прочитанные | `limit=50`, `page=N` | DESC |
 | 3. "Общая" | `GET /api/news/global?page=N` | все новости за 90 дней, без auth | `limit=50`, `page=N` | DESC |
 

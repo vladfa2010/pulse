@@ -149,7 +149,7 @@ GET /api/news/stream
   └── event: refresh       (когда появились новые статьи)
 ```
 
-Frontend (`useSseNews.ts`) слушает поток и вызывает `refetchQueries` для:
+Frontend (`useSseNews.ts`) слушает поток и вызывает `invalidateQueries` (TZ-40: invalidate сам рефетчит активные запросы, явные `refetchQueries` убраны как двойная работа) для:
 - `['globalNews']` — Общая лента
 - `['unreadNews']` — Это вы ещё не видели
 - `['historyNews']` — Вся лента
