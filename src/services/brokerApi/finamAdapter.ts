@@ -254,10 +254,13 @@ async function getJwt(secret: string): Promise<string> {
 }
 
 async function getAccountIds(jwt: string): Promise<{ ids: string[]; readonly: boolean }> {
+  // ТЗ-119-фикс: Финам выдаёт opaque-токен (tapi_ak_…), и на этом эндпоинте
+  // заголовок Authorization: Bearer с ним даёт 400 «Token is invalid or
+  // malformed». Токен в теле — единственный принимаемый вариант.
   const res = await axios.post(
     `${BASE_URL}/v1/sessions/details`,
     { token: jwt },
-    { headers: { ...HEADERS, Authorization: `Bearer ${jwt}` }, timeout: REQUEST_TIMEOUT_MS }
+    { headers: HEADERS, timeout: REQUEST_TIMEOUT_MS }
   );
   const ids = res.data?.account_ids;
   const readonly = !!res.data?.readonly;
