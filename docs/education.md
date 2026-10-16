@@ -20,10 +20,14 @@
   423 для нечистых; sweeper раз в минуту + retry при заходе модератора; флаг
   av_unavailable вычисляемый). Smoke: `scripts/smoke-lms-ugc.js` (14 проверок;
   с живым CLAMAV_SOCKET +EICAR и clean-контур = 16).
-- ✅ **ТЗ-103** (мэтчинг курсов с новостями и календарём, backend): миграция
+- ✅ **ТЗ-103** (мэтчинг курсов с новостями и календарём, backend; доработано
+  ТЗ-177/172): миграция
   `lms_v3_matching.sql` (`/migrate-lms-matching`), `services/education/match.ts`
   (эмбеддинги курсов + RECALL теги/косинус + RANK LLM-батч с суточным лимитом +
-  ретроскан ≤200 новостей/14 дней при publish + cron-страховка `matchUnprocessedNews`
+  запись также по тег-матчу и косинусу ≥ `embedding_threshold` курса (ТЗ-177) +
+  ретроскан ≤200 новостей/14 дней при publish и при смене порога +
+  выключатель LLM-ранкера `match_llm_enabled` (ТЗ-172) +
+  cron-страховка `matchUnprocessedNews`
   ежечасно + асинхронный хук в newsProcessor), `services/education/calendarMatch.ts`
   (правила по тегам, без LLM; in-memory кэш `education:calmatch:today:*` TTL 1 ч,
   инвалидация вместе с витриной). Принцип: система только РЕКОМЕНДУЕТ
@@ -410,7 +414,13 @@ secret=CRON_SECRET_KEY`, идемпотентна; SQLite → `{skipped:true}`).
 - RECALL: кандидаты по тегам (`course_tags` ∩ `news.matched_tags`) + top-10 по
   косинусу эмбеддинга (PG `<=>`; SQLite — косинус в JS). RANK: LLM-батч
   (по 8 пар) по паттерну `clusterVerifier`: JSON-вердикты `{score, reason}`,
-  fail-closed, общий суточный лимит. Пишутся пары `score>=0.5` ИЛИ тег-матч;
+  fail-closed, общий суточный лимит. Пишутся пары `score>=0.5` ИЛИ тег-матч
+  ИЛИ косинус ≥ `courses.embedding_threshold` (ТЗ-177, без LLM: score NULL,
+  source `'embedding'`, reason «косинус X ≥ порога Y»; порог 0.30–0.95
+  редактируется в админке, пусто — выкл; миграция `lms_v9_course_threshold`,
+  ретроскан при смене). Выключатель ранкера — настройка `match_llm_enabled`
+  (админка, таб «Образование», ТЗ-172): при выкл LLM не дёргается, пары идут
+  по тегам и порогу;
   `ON CONFLICT (course_id, news_id) DO NOTHING` — решение редактора
   (attached/dismissed) не перетирается повторным мэтчингом.
 - Пайплайн: ретроскан при publish (14 дней, ≤200 новостей) → инкрементальный

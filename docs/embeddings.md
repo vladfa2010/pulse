@@ -50,10 +50,20 @@
 | Кластеризация новостей | `services/clustering.ts` | hook в ingest (fire-and-forget при `CLUSTERING_ENABLED=true`) + cron `*/15` catch-up | `embeddingText(title_ru, summary_ru)` | `news.embedding` (pgvector) → `cluster_id` |
 | Бэкфилл новостей | `scripts/backfillEmbeddings.ts` | ручной запуск; партиции `BACKFILL_MOD/REM`, `BACKFILL_BATCH_SIZE` (деф. 16) | то же | `news.embedding`; skipped → `logs/backfill_embeddings_skipped.json` |
 | Смысловой поиск | `routes/news.ts` (`/api/news/search`) | реалтайм, по запросу юзера | запрос целиком, 1 текст (свой таймаут `SEMANTIC_SEARCH_TIMEOUT_MS`) | не пишет, ищет по `news.embedding` (HNSW) |
+
+Поиск в ленте — гибридный (ТЗ-161, 2026-10-16): точная ветка ILIKE идёт
+первыми (word-AND по словам запроса, ТЗ-163 — порядок слов не важен, слова
+≥2 символов, каждое в любом из 4 текстовых полей), семантика добивает до
+`limit` кандидатами из HNSW-топ-50 без дат-фильтра, скор = косинус + буст
+свежести (+0.10 ≤14 сут, +0.05 ≤90 сут). TEI недоступен → молчаливый
+фолбэк exact-only (5 с). Ответ помечает `match_type`/`similarity`.
 | Темы каскадов | Python-sidecar `topics-worker` (кластеризация, 03:40 МСК) + `services/cron.ts` (нейминг тем) | cron (ТЗ-115, `TOPICS_ENABLED` на VPS) | окно 14 дней, `embedding IS NOT NULL` | не считает заново — ест готовые векторы новостей |
-| Мэтчинг курсов ↔ новости | `services/education/match.ts` | триггер при сохранении курса (`scheduleCourseReembedding`, при `EDUCATION_MATCH_ENABLED`) | `title + '\n' + description + '\n' + названия уроков`, обрезка 1000 | `courses.embedding` |
+| Мэтчинг курсов ↔ новости | `services/education/match.ts` | триггер при сохранении курса (`scheduleCourseReembedding`, при `EDUCATION_MATCH_ENABLED`) + ретроскан при publish и смене порога | `title + '\n' + description + '\n' + названия уроков`, обрезка 1000 | `courses.embedding` |
 | Бэкфилл курсов | `scripts/backfill-course-embeddings.js` | ручной запуск (идемпотентен) | то же | `courses.embedding` |
 | **Граф знаний уроков** | `services/education/knowledgeGraph.ts` | cron 04:50 MSK (`education-knowledge-graph`, CronLock) + ручной запуск | `title + ' ' + plain(text_content)` (HTML→plain), обрезка 1000 | `lesson_embeddings`, `lesson_similarity`, `course_similarity` |
+
+Как из эмбеддингов курса получаются предложения новостей (RECALL → RANK →
+запись) — отдельный раздел ниже, тонкости в `education.md` §ТЗ-103.
 
 Координации «общей очереди» между продюсерами нет: TEI сериализует входящие
 батчи во внутреннюю очередь (`max-batch-tokens`), а конкуренцию разруливают
@@ -71,7 +81,54 @@ CronLock'и (кластеризация, KG-джоба), флаги и тайм�
 | `lesson_similarity` / `course_similarity` | снапшоты рёбер графа | индексы по обеим колонкам пар | `lms_v8_knowledge_graph.sql` |
 
 HNSW для `news` сознательно единственный: остальные таблицы — десятки/сотни
-строк, полный перебор дешевле индекса.
+строк, полный перебор дешевле индекса. Индекс для `news` закреплён
+файлом-стражем `news_embedding_hnsw.sql` (ТЗ-161 задача 1): на проде no-op,
+на новых окружениях создаётся вручную через `psql -f`. После бэкфилла —
+одноразовый `ANALYZE news` (задача 2; ночной cron поддерживает дальше).
+
+## Мэтчинг курсов ↔ новости: как определяются предложения
+
+Контур: `services/education/match.ts` (фичефлаг `EDUCATION_MATCH_ENABLED`),
+таблица `course_match_suggestions`, решения attach/dismiss принимает редактор
+в админке (таба «Новости» редактора курса). Текст для вектора курса —
+`title + '\n' + description + '\n' + названия уроков` (обрезка 1000); пересчёт
+вектора — при publish, смене title/description, CRUD уроков (`scheduleCourseReembedding`,
+асинхронно, без LLM-расходов на сам вектор).
+
+**Кандидат (RECALL)** — пара курс↔новость попадает в RANK, если совпал хотя
+бы один сигнал:
+- общие теги (`course_tags` ∩ `news.matched_tags`),
+- новость в топ-10 по косинусу `courses.embedding <=> news.embedding` (PG).
+
+**Запись в `course_match_suggestions` (после RANK)** — пара сохраняется,
+если выполнено ЛЮБОЕ из трёх (ТЗ-103 + ТЗ-177):
+1. **LLM-ранкер:** score ≥ 0.5. Кими оценивает батчи по 8 пар, JSON-вердикты
+   `{score, reason}`, fail-closed, общий суточный лимит. Выключатель —
+   настройка `match_llm_enabled` (вкл/выкл в админке, таб «Образование»,
+   ТЗ-172): при выключенном ранкере LLM не дёргается вообще, пары идут по
+   путям 2–3 (score NULL).
+2. **Тег-матч:** есть общие теги (reason «общий тег: X»).
+3. **Порог косинуса курса (ТЗ-177):** `courses.embedding_threshold` не NULL и
+   `sim >= порог`. Порог задаёт редактор в админке (0.30–0.95, пусто — выкл),
+   миграция `lms_v9_course_threshold.sql`. Пары без LLM: `score NULL`,
+   source `'embedding'`, reason «косинус X ≥ порога Y». Подбор порога: типичный
+   косинус курс↔новость 0.6–0.75; 0.9 недостижимо и даёт пустую выдачу.
+
+Поле `source`: `'tag'` | `'embedding'` | `'both'` (тег + есть эмбеддинги).
+`ON CONFLICT (course_id, news_id) DO NOTHING` — повторный мэтчинг не
+перетирает решение редактора.
+
+**Когда гоняется мэтчинг:**
+- новость прошла пайплайн (хук `matchNewsToCourses` в `newsProcessor`,
+  асинхронно, ошибки не валят парсинг);
+- курс опубликован → ретроскан ≤200 новостей за 14 дней;
+- **сменён порог курса → `retroscanCourse`** (триггерится из PUT
+  `/courses/:id`, асинхронно; UI перечитывает список сразу и через 30 с);
+- cron-страховка `matchUnprocessedNews()` ежечасно (новости за 2 ч без строк
+  в suggestions).
+
+Верификация на проде (курс с порогом 0.6, 2026-10-16): ретроскан дал 7/7
+предложений source='embedding', sim 0.606–0.656.
 
 ## Пороги графа знаний (env, `src/config/knowledgeGraph.ts`)
 
@@ -120,6 +177,14 @@ SELECT round(sim::numeric,3), a.title, b.title
   `courses.embedding` был NULL (триггер появился позже импорта курсов) —
   лечится `scripts/backfill-course-embeddings.js`, без него `course_similarity`
   пустой по построению.
+- **2026-10-16:** ТЗ-161/163 — гибридный поиск в ленте (word-AND exact +
+  семантика с бустом свежести, `match_type`/`similarity` в ответе) и
+  файл-страж HNSW + `ANALYZE news` после бэкфилла. ТЗ-177 — порог косинуса
+  курса (`courses.embedding_threshold`, миграция `lms_v9`): третий путь
+  записи предложений без LLM, ретроскан при смене порога; фикс потери порога
+  в UI при переключении табы (синк на уровень редактора + поле добавлено в
+  карточку курса админки). ТЗ-172 — выключатель LLM-ранкера в админке
+  (`match_llm_enabled`).
 
 **Производительность TEI (ориентиры VDS 3 CPU, 2026-10-14):** 8 коротких
 текстов — 60–300 с (очередь + инференс ~20–50 с), заголовки ответа — только
