@@ -44,16 +44,18 @@ RSS/источники → newsProcessor (тегирование чанка)
 - `embedAndClusterBatch(newsIds)` (:232) — выборка новостей без вектора → `embedBatch` (≤32) → `UPDATE news SET embedding` → `withNewsLock` → `clusterOne`.
 - `clusterEmbeddedBatch(newsIds)` (:281) — то же для уже имеющих вектор (`cluster_id IS NULL`), TEI не дёргается; для исторического бэкфилла.
 - `withNewsLock` (:98) — транзакция + `pg_try_advisory_xact_lock('cluster:'||id)` — дедупликация гонки NewsProcessor↔cron (ТЗ-95 1б).
-- `clusterOne` (:312) — пропуск рубрик (`isRubricTitle`); top-10 кандидатов по косинусу `embedding <=> $1` в окне `CANDIDATE_WINDOW_HOURS=48` назад; **трёхзонная логика**:
+- `clusterOne` (:316) — пропуск рубрик (`isRubricTitle`); top-10 кандидатов по косинусу `embedding <=> $1` в окне `CANDIDATE_WINDOW_HOURS=48` назад; **трёхзонная логика с fall-through по топ-10 кандидатов (ТЗ-181)**:
   - `sim ≥ CLUSTER_T1 (0.80)` → `attachToCluster` без LLM;
-  - `CLUSTER_T2 (0.55) ≤ sim < T1` → **серая зона** → `verifyPair()` (LLM, ТЗ-95 задача 3);
-  - `sim < T2` → одиночка.
-- `attachToCluster` (:129) — `FOR UPDATE` на кандидате и кластере; кластер старше `CLUSTER_GAP_HOURS=36` ч не принимает (новость — одиночка); `INSERT cluster_items ON CONFLICT DO NOTHING` + идемпотентный `UPDATE clusters` (size+1, `GREATEST` last_seen/max_sim, verdict не деградирует ниже ранга — ТЗ-95 1а/2); кандидат без кластера → создание `clusters(kind='cascade', source='realtime', size=2)`.
+  - `CLUSTER_T2 (0.55) ≤ sim < T1` → **серая зона** → `verifyPair()` (LLM, ТЗ-95 задача 3), максимум `MAX_VERIFY_ATTEMPTS=3` вызовов на новость; отказ верификатора → **следующий кандидат** (раньше отказ убивал склейку с кандидатом №2);
+  - `sim < T2` → одиночка (первый такой кандидат обрывает проход — список отсортирован по sim DESC).
+  - Верификатор, числовое вето и промпт работают с `title_ru || title_original` и кросс-языковыми парами (ТЗ-181): непереведённая новость больше не уходит в верификатор пустой стороной; явный отказ `attachToCluster` (мёртвый кластер по GAP) тоже переводит к следующему кандидату; при `daily_limit` верификатора проход обрывается сразу.
+- `attachToCluster` (:131) — `FOR UPDATE` на кандидате и кластере; кластер старше `CLUSTER_GAP_HOURS=36` ч не принимает (возвращает `false` — caller пробует следующего кандидата, ТЗ-181); `INSERT cluster_items ON CONFLICT DO NOTHING` + идемпотентный `UPDATE clusters` (size+1, `GREATEST` last_seen/max_sim, verdict не деградирует ниже ранга — ТЗ-95 1а/2); кандидат без кластера → создание `clusters(kind='cascade', source='realtime', size=2)`.
 
 **Правила — `src/services/clusteringRules.ts`** (чистые функции, реэкспортируются из clustering.ts):
 - `significantNumbers` — значимые числа (длина ≥2; годы 2025–2027 незначимы);
-- `numericVeto` — оба заголовка имеют значимые числа и пересечение пусто → не клеим («763 беспилотника» ≠ «258 беспилотников»);
-- `isRubricTitle` — рубрикаторы по чёрному списку `RUBRIC_BLACKLIST` (`src/config/clustering.ts`).
+- `numericVeto` — оба заголовка имеют значимые числа и пересечение пусто → не клеим («763 беспилотника» ≠ «258 беспилотников»); с ТЗ-181 работает по лучшему доступному тексту (`pickTitle`);
+- `isRubricTitle` — рубрикаторы по чёрному списку `RUBRIC_BLACKLIST` (`src/config/clustering.ts`); остаётся на `title_ru` — рубрики русскоязычны;
+- `pickTitle` / `pickSummary` (ТЗ-181) — «лучший доступный текст»: перевод предпочтительнее, original — фолбэк.
 
 **LLM-верификатор — `src/services/clusterVerifier.ts`:** `verifyPair(a, b, sim)` → Moonshot `POST /v1/chat/completions`, модель `KIMI_MODEL || 'kimi-k2.6'`, temperature 0.6, thinking off, `response_format json_object`, таймаут 60 с. Суточный потолок `VERIFIER_DAILY_LIMIT=2000` (in-memory, сброс по UTC; при превышении пары отклоняются). Парсинг только по явным ключам `same_fact/confidence/reason` — fail-closed. Промпт — `src/services/clusterVerifierPrompt.ts` («тот же факт-событие, а не тема»).
 
@@ -74,7 +76,7 @@ Story — **LLM-сущность**. Cron `0 * * * *` → `runStoryGrouping()`: �
 | Скрипт | Запуск | Параметры |
 |---|---|---|
 | `src/scripts/backfillEmbeddings.ts` | `npx ts-node --transpile-only src/scripts/backfillEmbeddings.ts` | `BACKFILL_BATCH_SIZE` (деф. 16, ≤32), `BACKFILL_MOD/BACKFILL_REM` — партиции по `hashtext(id)%MOD` для параллельных воркеров; skipped → `logs/backfill_embeddings_skipped.json` |
-| `src/scripts/backfillClusters.ts` | аналогично | `BATCH=200`, резюмируемый (`cluster_id IS NULL`), без TEI, серая зона через LLM-верификатор (суточный лимит) |
+| `src/scripts/backfillClusters.ts` | аналогично | `BATCH=200`, резюмируемый (`cluster_id IS NULL`), без TEI, серая зона через LLM-верификатор (суточный лимит); фильтр с ТЗ-181 — кандидаты с `title_original` (`title_ru IS NULL OR title_original IS NOT NULL`); опциональный аргумент — окно дней назад (`...backfillClusters.ts 14` — последние 14 суток, свежие первыми) |
 | `src/scripts/importCascadeSnapshot.ts` | аналогично | вход `cascade_import.json` в корне; исторические кластеры `source='sandbox-import'`, идемпотентен |
 | `src/scripts/dumpCalibrationPairs.ts` | аналогично | `calibration_pairs.csv`: позитивы — пары внутри sandbox-кластеров, негативы — 10 000 случайных пар с разницей >3 суток |
 

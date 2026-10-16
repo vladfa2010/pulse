@@ -31,6 +31,7 @@
     "verify:newsQueries": "npm run build && node scripts/db-news-queries-verify.js",
     "verify:translateGuard": "npm run build && node scripts/translation-guard-verify.js",
     "verify:clusteringVeto": "npm run build && node scripts/clustering-veto-verify.js",
+    "verify:clusteringTz181": "npm run build && node scripts/clustering-tz181-verify.js",
     "verify:radioPodcast": "npm run build && node scripts/radio-podcast-verify.js",
     "verify:radioMp3Cache": "npm run build && node scripts/verify-radio-mp3-cache.js",
     "verify:radioCacheDashboard": "npm run build && node scripts/verify-radio-cache-dashboard.js",

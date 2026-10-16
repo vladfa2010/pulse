@@ -47,3 +47,15 @@ export function isRubricTitle(title: string): boolean {
     .trim();
   return RUBRIC_BLACKLIST.some((r) => t.startsWith(r));
 }
+
+/** ТЗ-181: верификатор и числовое вето работают с лучшим доступным текстом —
+ *  перевод предпочтительнее, оригинал — фолбэк (по аналогии с ТЗ-162 для
+ *  эмбеддинга). Без этого непереведённая сторона уходила в верификатор пустой
+ *  → почти гарантированный fail-closed отказ. */
+export function pickTitle(r: { title_ru: string | null; title_original: string | null }): string {
+  return r.title_ru || r.title_original || '';
+}
+
+export function pickSummary(r: { summary_ru: string | null; summary_original: string | null }): string {
+  return r.summary_ru || r.summary_original || '';
+}

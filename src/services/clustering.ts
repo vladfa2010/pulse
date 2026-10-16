@@ -35,12 +35,13 @@ import {
   CLUSTER_T2,
   CLUSTER_GAP_HOURS,
   CANDIDATE_WINDOW_HOURS,
+  MAX_VERIFY_ATTEMPTS,
 } from '../config/clustering';
-import { significantNumbers, numericVeto, isRubricTitle } from './clusteringRules';
+import { significantNumbers, numericVeto, isRubricTitle, pickTitle, pickSummary } from './clusteringRules';
 
 // Реэкспорт правил (ТЗ-95 задача 4): внешние импорты из clustering.ts
 // продолжают работать, чистые функции живут в clusteringRules.ts.
-export { significantNumbers, numericVeto, isRubricTitle };
+export { significantNumbers, numericVeto, isRubricTitle, pickTitle, pickSummary };
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Вспомогательное
@@ -60,6 +61,8 @@ interface Candidate {
   id: string;
   title_ru: string | null;
   summary_ru: string | null;
+  title_original: string | null;   // ТЗ-181: верификатор и вето видят непереведённые новости
+  summary_original: string | null;
   cluster_id: string | null;
   source: string | null;
   published_at: string;
@@ -133,7 +136,7 @@ async function attachToCluster(
   candidate: Candidate,
   sim: number,
   client: PoolClient
-): Promise<void> {
+): Promise<boolean> {
   if (!pool) {
     // fail-loud (ТЗ-95 задача 1в): молчаливый пропуск кластеризации недопустим
     throw new Error('[Clustering] pool недоступен — проверьте конфигурацию БД');
@@ -145,7 +148,7 @@ async function attachToCluster(
     [candidate.id]
   );
   if (candRes.rows.length === 0) {
-    return; // кандидат исчез — нечего приклеивать (откат делает withNewsLock)
+    return false; // кандидат исчез — нечего приклеивать (откат делает withNewsLock)
   }
   const candClusterId: string | null = candRes.rows[0].cluster_id;
 
@@ -159,7 +162,7 @@ async function attachToCluster(
       [clusterId]
     );
     if (clRes.rows.length === 0) {
-      return;
+      return false;
     }
     const lastSeen = new Date(clRes.rows[0].last_seen_at).getTime();
     const pub = new Date(news.published_at).getTime();
@@ -167,7 +170,7 @@ async function attachToCluster(
       console.log(
         `[Clustering] кластер ${clusterId} мёртв (gap ${((pub - lastSeen) / 3600000).toFixed(1)}ч > ${CLUSTER_GAP_HOURS}ч) — новость ${news.id} остаётся одиночкой`
       );
-      return;
+      return false; // ТЗ-181: caller (fall-through) пробует следующего кандидата
     }
     const firstPub = clRes.rows[0].first_published_at;
     const lagMin = Math.max(
@@ -200,6 +203,7 @@ async function attachToCluster(
       await client.query('UPDATE news SET cluster_id = $1 WHERE id = $2', [clusterId, news.id]);
     }
     // rowCount === 0 → новость уже член кластера: UPDATE пропускаем целиком
+    return true;
   } else {
     // Кандидат без кластера — создаём кластер на двоих.
     // first_published_at = published_at кандидата (первоисточник).
@@ -224,6 +228,7 @@ async function attachToCluster(
     }
     await client.query('UPDATE news SET cluster_id = $1 WHERE id = $2', [clusterId, candidate.id]);
     await client.query('UPDATE news SET cluster_id = $1 WHERE id = $2', [clusterId, news.id]);
+    return true;
   }
 }
 
@@ -286,10 +291,11 @@ export async function clusterEmbeddedBatch(newsIds: string[]): Promise<void> {
   if (!Array.isArray(newsIds) || newsIds.length === 0) return;
 
   const res = await query(
-    `SELECT id, title_ru, summary_ru, source, published_at, embedding::text AS embedding_text
+    `SELECT id, title_ru, summary_ru, title_original, summary_original, source, published_at,
+            embedding::text AS embedding_text
      FROM news
      WHERE id = ANY($1::uuid[])
-       AND title_ru IS NOT NULL
+       AND (title_ru IS NOT NULL OR title_original IS NOT NULL)
        AND embedding IS NOT NULL
        AND cluster_id IS NULL`,
     [newsIds]
@@ -322,7 +328,8 @@ async function clusterOne(news: NewsRow, vector: number[], client: PoolClient): 
   const from = new Date(pub.getTime() - CANDIDATE_WINDOW_HOURS * 3600 * 1000);
 
   const candRes = await client.query(
-    `SELECT n.id, n.title_ru, n.summary_ru, n.cluster_id, n.source, n.published_at,
+    `SELECT n.id, n.title_ru, n.summary_ru, n.title_original, n.summary_original,
+            n.cluster_id, n.source, n.published_at,
             1 - (n.embedding <=> $1::vector) AS sim
      FROM news n
      WHERE n.embedding IS NOT NULL
@@ -335,44 +342,49 @@ async function clusterOne(news: NewsRow, vector: number[], client: PoolClient): 
   );
   const candidates = candRes.rows as Candidate[];
 
-  // Лучший кандидат, прошедший числовое вето
-  let best: Candidate | null = null;
+  // ТЗ-181: проход по кандидатам сверху вниз:
+  //   ≥ T1 → склейка без LLM; T2..T1 → верификатор (максимум MAX_VERIFY_ATTEMPTS
+  //   вызовов на новость); отказ верификатора → СЛЕДУЮЩИЙ кандидат;
+  //   первый кандидат с sim < T2 обрывает проход (список отсортирован по sim DESC).
+  let verifyAttempts = 0;
   for (const c of candidates) {
     if (isRubricTitle(c.title_ru || '')) continue; // рубрики не сид кластера
-    if (numericVeto(news.title_ru || '', c.title_ru || '')) continue;
-    best = c;
-    break; // кандидаты отсортированы по sim DESC — первый прошедший вето и есть лучший
-  }
-  if (!best) return;
+    if (numericVeto(pickTitle(news), pickTitle(c))) continue;
 
-  if (best.sim >= CLUSTER_T1) {
-    await attachToCluster(news, best, best.sim, client);
-    return;
-  }
-
-  if (best.sim >= CLUSTER_T2) {
-    const verdict = await verifyPair(
-      {
-        id: news.id,
-        title: news.title_ru || '',
-        summary: news.summary_ru || '',
-        source: news.source || undefined,
-        publishedAt: new Date(news.published_at).toISOString(),
-      },
-      {
-        id: best.id,
-        title: best.title_ru || '',
-        summary: best.summary_ru || '', // ТЗ-95 задача 3: верификатор видит оба summary
-        source: best.source || undefined,
-        publishedAt: new Date(best.published_at).toISOString(),
-      },
-      best.sim
-    );
-    if (verdict.sameEvent) {
-      await attachToCluster(news, best, best.sim, client);
+    if (c.sim >= CLUSTER_T1) {
+      if (await attachToCluster(news, c, c.sim, client)) return;
+      continue; // ТЗ-181: attach отказал (кластер мёртв по GAP) — пробуем следующего
     }
-    return;
-  }
 
-  // sim < T2 — одиночка, кластеры из одной новости не создаём
+    if (c.sim >= CLUSTER_T2) {
+      if (verifyAttempts >= MAX_VERIFY_ATTEMPTS) break; // лимит LLM-вызовов на новость
+      verifyAttempts++;
+      const verdict = await verifyPair(
+        {
+          id: news.id,
+          title: pickTitle(news),
+          summary: pickSummary(news),
+          source: news.source || undefined,
+          publishedAt: new Date(news.published_at).toISOString(),
+        },
+        {
+          id: c.id,
+          title: pickTitle(c),
+          summary: pickSummary(c),
+          source: c.source || undefined,
+          publishedAt: new Date(c.published_at).toISOString(),
+        },
+        c.sim
+      );
+      if (verdict.reason === 'daily_limit') break; // лимит глобальный — дальше бессмысленно
+      if (verdict.sameEvent) {
+        if (await attachToCluster(news, c, c.sim, client)) return;
+        continue; // attach отказал (GAP) — следующий кандидат
+      }
+      continue; // ТЗ-181: отказ верификатора — пробуем следующего кандидата
+    }
+
+    break; // sim < T2 — остальные хуже, одиночка
+  }
+  // все кандидаты исчерпаны — одиночка, кластеры из одной новости не создаём
 }
