@@ -241,6 +241,86 @@ router.get('/users/export.csv', adminMiddleware, async (req: AuthRequest, res) =
   }
 });
 
+// GET /api/admin/push/stats — дашборд «Пуши»: дневные счётчики, разрез по типам,
+// топ получателей, лента последних отправлений, здоровье подписок.
+router.get('/push/stats', adminMiddleware, async (_req, res) => {
+  try {
+    const [totals, daily, bySource, topUsers, recent, subs, subsByKind, subsDaily, channels] =
+      await Promise.all([
+        query(
+          `SELECT
+             count(*) FILTER (WHERE sent_at > now() - interval '1 day')::int  AS today,
+             count(*) FILTER (WHERE sent_at > now() - interval '7 days')::int  AS week,
+             count(*) FILTER (WHERE sent_at > now() - interval '30 days')::int AS month
+           FROM push_notifications_sent`
+        ),
+        query(
+          `SELECT sent_at::date AS day, count(*)::int AS count
+           FROM push_notifications_sent
+           WHERE sent_at > now() - interval '30 days'
+           GROUP BY 1 ORDER BY 1`
+        ),
+        query(
+          `SELECT source, count(*)::int AS count
+           FROM push_notifications_sent
+           WHERE sent_at > now() - interval '30 days'
+           GROUP BY 1 ORDER BY 2 DESC`
+        ),
+        query(
+          `SELECT ps.user_id, u.email, u.username, count(*)::int AS count
+           FROM push_notifications_sent ps
+           LEFT JOIN users u ON u.id = ps.user_id
+           WHERE ps.sent_at > now() - interval '7 days'
+           GROUP BY 1, 2, 3 ORDER BY 4 DESC LIMIT 10`
+        ),
+        query(
+          `SELECT ps.user_id, u.email, left(ps.title, 80) AS title, ps.source, ps.sent_at
+           FROM push_notifications_sent ps
+           LEFT JOIN users u ON u.id = ps.user_id
+           ORDER BY ps.sent_at DESC LIMIT 50`
+        ),
+        query(
+          `SELECT count(*)::int AS total,
+                  count(*) FILTER (WHERE is_active)::int AS active
+           FROM push_subscriptions`
+        ),
+        query(
+          `SELECT count(*) FILTER (WHERE endpoint LIKE 'https://web.push.apple.com%')::int AS apple,
+                  count(*) FILTER (WHERE is_active AND endpoint LIKE 'https://web.push.apple.com%')::int AS apple_active,
+                  count(*) FILTER (WHERE endpoint NOT LIKE 'https://web.push.apple.com%')::int AS fcm,
+                  count(*) FILTER (WHERE is_active AND endpoint NOT LIKE 'https://web.push.apple.com%')::int AS fcm_active
+           FROM push_subscriptions`
+        ),
+        query(
+          `SELECT created_at::date AS day, count(*)::int AS count
+           FROM push_subscriptions
+           WHERE created_at > now() - interval '30 days'
+           GROUP BY 1 ORDER BY 1`
+        ),
+        query(
+          `SELECT count(*)::int AS c FROM user_channels WHERE channel = 'push' AND is_active`
+        ),
+      ]);
+
+    res.json({
+      totals: totals.rows[0],
+      daily: daily.rows,
+      bySource: bySource.rows,
+      topUsers: topUsers.rows,
+      recent: recent.rows,
+      subscriptions: {
+        ...subs.rows[0],
+        ...subsByKind.rows[0],
+        createdDaily: subsDaily.rows,
+        activeChannels: channels.rows[0].c,
+      },
+    });
+  } catch (err) {
+    console.error('[Admin] Push stats failed:', err);
+    res.status(500).json({ error: 'Push stats failed' });
+  }
+});
+
 // GET /api/admin/users/:id — detailed user profile for admin card (matches UserDetailModal)
 router.get('/users/:id', adminMiddleware, async (req: AuthRequest, res) => {
   try {
