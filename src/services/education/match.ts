@@ -382,11 +382,13 @@ async function sharedTagNames(courseId: string, newsTags: string[]): Promise<str
   return r.rows.map((row: any) => row.tag_name || row.tag_id);
 }
 
-/** Записать пары: только score >= 0.5 ИЛИ тег-матч; ON CONFLICT DO NOTHING —
- * повторный мэтчинг не перетирает решение редактора (ТЗ-103 критерий 6). */
+/** Записать пары: score >= 0.5 ИЛИ тег-матч ИЛИ косинус >= порога курса
+ * (ТЗ-177, без LLM); ON CONFLICT DO NOTHING — повторный мэтчинг не
+ * перетирает решение редактора (ТЗ-103 критерий 6). */
 async function writeSuggestions(
   items: RankItem[],
   verdicts: Map<number, { score: number; reason: string }>,
+  thresholds: Map<string, number | null>,
 ): Promise<number> {
   let written = 0;
   for (let i = 0; i < items.length; i++) {
@@ -395,10 +397,14 @@ async function writeSuggestions(
     const score = verdict ? verdict.score : null;
     const hasTagReason = it.sharedTagNames.length > 0;
     // В БД пишем только пары со score >= 0.5 ИЛИ с тег-матчем (Задача 2 п.2)
-    if (!(score !== null && score >= 0.5) && !it.tagMatch) continue;
+    // ИЛИ с косинусом >= embedding_threshold курса (ТЗ-177, LLM не нужен)
+    const threshold = thresholds.get(it.courseId) ?? null;
+    const byThreshold = threshold !== null && it.sim !== null && it.sim >= threshold;
+    if (!(score !== null && score >= 0.5) && !it.tagMatch && !byThreshold) continue;
     const source = it.tagMatch && it.sim !== null ? 'both' : it.tagMatch ? 'tag' : 'embedding';
     const reason = verdict?.reason
-      || (hasTagReason ? `общий тег: ${it.sharedTagNames.join(', ')}`.slice(0, 300) : null);
+      || (hasTagReason ? `общий тег: ${it.sharedTagNames.join(', ')}`.slice(0, 300) : null)
+      || (byThreshold ? `косинус ${it.sim!.toFixed(3)} ≥ порога ${threshold}` : null);
     const r = await query(
       `INSERT INTO course_match_suggestions
          (id, course_id, news_id, score, reason, source, status, created_at)
@@ -418,12 +424,22 @@ async function rankAndStore(items: RankItem[]): Promise<number> {
   // выключенный ранкер логируем здесь один раз, а не на каждый батч
   const llmEnabled = await isMatchLlmEnabled();
   if (!llmEnabled) {
-    console.log('[EducationMatch] LLM-ранкер выключен настройкой — пары только по тег-матчу (score NULL)');
+    console.log('[EducationMatch] LLM-ранкер выключен настройкой — пары по тег-матчу и порогу косинуса курса (score NULL)');
   }
+  // ТЗ-177: пороги курсов одним запросом по distinct courseId батча
+  const courseIds = [...new Set(items.map((it) => it.courseId))];
+  const ph = courseIds.map((_, i) => `$${i + 1}`).join(',');
+  const thrR = await query(
+    `SELECT id, embedding_threshold FROM courses WHERE id IN (${ph})`,
+    courseIds,
+  );
+  const thresholds = new Map<string, number | null>(
+    thrR.rows.map((r: any) => [r.id, r.embedding_threshold === null ? null : Number(r.embedding_threshold)]),
+  );
   for (let start = 0; start < items.length; start += RANK_BATCH_SIZE) {
     const chunk = items.slice(start, start + RANK_BATCH_SIZE);
     const verdicts = await llmRankBatch(chunk, llmEnabled);
-    written += await writeSuggestions(chunk, verdicts);
+    written += await writeSuggestions(chunk, verdicts, thresholds);
   }
   return written;
 }

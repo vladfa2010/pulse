@@ -35,7 +35,7 @@ import { invalidateEducationCache } from '../services/education/cache';
 import { scheduleEducationSeoRebuild, rebuildEducationSeoNow, fetchSeoRebuildLog, isEducationSeoRebuildPending } from '../services/education/seoRebuild'; // ТЗ-164: SEO-пересборка при сохранении + статус (Задачи 4-5)
 import { resolveSourceUrl, ResolveSourceError } from '../services/education/resolveSource';
 import { enqueueScan } from '../services/education/virusScan'; // ТЗ-102: retry-скан pending_scan при заходе в очередь
-import { getMatchDailyCount, getMatchLlmDailyLimit, isEducationMatchEnabled, onCoursePublished, scheduleCourseReembedding } from '../services/education/match'; // ТЗ-103 Задачи 1,3: эмбеддинги + ретроскан; ТЗ-172: счётчик/лимит LLM
+import { getMatchDailyCount, getMatchLlmDailyLimit, isEducationMatchEnabled, onCoursePublished, retroscanCourse, scheduleCourseReembedding } from '../services/education/match'; // ТЗ-103 Задачи 1,3: эмбеддинги + ретроскан; ТЗ-172: счётчик/лимит LLM; ТЗ-177: повторный ретроскан при смене порога
 import { isMatchLlmEnabled, setMatchLlmEnabled } from '../services/education/settings'; // ТЗ-172: выключатель LLM-ранкера
 import { parseCourseMd } from '../services/education/mdCourseImport'; // ТЗ-159: импорт уроков из Markdown
 import { courseTagIds, matchEventsToCourse } from '../services/education/calendarMatch'; // ТЗ-103 Задача 7: events-preview
@@ -885,6 +885,21 @@ router.put('/courses/:id', h(async (req, res) => {
     }
     setField('subscription_unlock_mode = ?', String(body.subscription_unlock_mode));
   }
+  // ТЗ-177: порог косинусной записи предложений курса (NULL — выкл, как раньше)
+  let thresholdChanged = false;
+  if (body.embedding_threshold !== undefined) {
+    if (body.embedding_threshold === null) {
+      thresholdChanged = course.embedding_threshold !== null;
+      setField('embedding_threshold = ?', null);
+    } else {
+      const thr = Number(body.embedding_threshold);
+      if (!Number.isFinite(thr) || thr < 0.3 || thr > 0.95) {
+        return fail(res, 400, 'embedding_threshold — число 0.30–0.95 или null');
+      }
+      thresholdChanged = Number(course.embedding_threshold) !== thr;
+      setField('embedding_threshold = ?', thr);
+    }
+  }
 
   // Тип курса и источник (v11/v13): situational → source обязателен;
   // situational → course: обнуляем source_* и relevant_until (news_course_links НЕ трогаем)
@@ -940,6 +955,14 @@ router.put('/courses/:id', h(async (req, res) => {
       `UPDATE courses SET ${sets.join(', ')} WHERE id = $${params.length + 1}`,
       [...params, courseId],
     );
+  }
+
+  // ТЗ-177: смена порога косинуса → повторный ретроскан, чтобы предложения
+  // по новому порогу появились без ручной перепубликации (асинхронно)
+  if (thresholdChanged && isEducationMatchEnabled()) {
+    void retroscanCourse(courseId).catch((err: any) => {
+      console.warn(`[EducationMatch] retroscan after threshold change ${courseId} failed:`, err?.message);
+    });
   }
 
   // Тарифы курса (v6): полная замена, валидация активных планов (критерий 17)
