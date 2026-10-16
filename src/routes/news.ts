@@ -403,16 +403,27 @@ router.get('/search', authMiddleware, async (req: AuthRequest, res) => {
     const timeFilter = timeFilterSql();
     const likePattern = `%${escapeLikePattern(q)}%`;
 
+    // ТЗ-163: word-AND — порядок слов не важен; слова ≥2 символов, каждое
+    // в любом из 4 полей; при отсутствии таких — фолбэк на подстроку целиком.
+    const searchWords = q
+      .split(/\s+/)
+      .map((t) => t.replace(/^\W+|\W+$/gu, ''))
+      .filter((t) => t.length >= 2);
+
     let articles: any[];
     let total: number;
 
     if (USE_SQLITE) {
       const tagCondition = tagId ? `matched_tags LIKE ? AND ` : '';
       const tagParams = tagId ? [`%"${tagId}"%`] : [];
-      const searchCondition = `(LOWER(title_ru) LIKE LOWER(?) ESCAPE '\\' OR LOWER(title_original) LIKE LOWER(?) ESCAPE '\\' OR LOWER(summary_ru) LIKE LOWER(?) ESCAPE '\\' OR LOWER(summary_original) LIKE LOWER(?) ESCAPE '\\')`;
+      // ТЗ-163: word-AND на LIKE — зеркально PG-ветке.
+      const allFieldsSql = `LOWER(COALESCE(title_ru,'') || ' ' || COALESCE(summary_ru,'') || ' ' || COALESCE(title_original,'') || ' ' || COALESCE(summary_original,''))`;
+      const searchCondition = searchWords.length > 0
+        ? `(${searchWords.map(() => `${allFieldsSql} LIKE LOWER(?) ESCAPE '\\'`).join(' AND ')})`
+        : `(LOWER(title_ru) LIKE LOWER(?) ESCAPE '\\' OR LOWER(title_original) LIKE LOWER(?) ESCAPE '\\' OR LOWER(summary_ru) LIKE LOWER(?) ESCAPE '\\' OR LOWER(summary_original) LIKE LOWER(?) ESCAPE '\\')`;
 
       const where = `${tagCondition}${timeFilter} AND ${searchCondition}`;
-      const params = [...tagParams, likePattern, likePattern, likePattern, likePattern];
+      const params = [...tagParams, ...searchWords.map((w) => `%${escapeLikePattern(w)}%`), ...(!searchWords.length ? [likePattern, likePattern, likePattern, likePattern] : [])];
 
       const countResult = await query(
         `SELECT COUNT(*) as count FROM news WHERE ${where}`,
@@ -435,11 +446,25 @@ router.get('/search', authMiddleware, async (req: AuthRequest, res) => {
         ? `($1 = ANY(matched_tags) OR matched_tags @> ARRAY[$1]::text[]) AND `
         : '';
       const tagParams = tagId ? [tagId] : [];
-      const searchParamIndex = tagId ? '$2' : '$1';
-      const searchCondition = `(title_ru ILIKE ${searchParamIndex} ESCAPE '\\' OR title_original ILIKE ${searchParamIndex} ESCAPE '\\' OR summary_ru ILIKE ${searchParamIndex} ESCAPE '\\' OR summary_original ILIKE ${searchParamIndex} ESCAPE '\\')`;
+      // ТЗ-163: word-AND — каждое слово в любом из 4 полей (склейка полей);
+      // фолбэк без подходящих слов — подстрока запроса целиком, как раньше.
+      const allFieldsSql = `(COALESCE(title_ru,'') || ' ' || COALESCE(summary_ru,'') || ' ' || COALESCE(title_original,'') || ' ' || COALESCE(summary_original,''))`;
+      let searchCondition: string;
+      if (searchWords.length > 0) {
+        const parts = searchWords.map(
+          (_w, i) => `${allFieldsSql} ILIKE $${tagParams.length + 1 + i} ESCAPE '\\'`,
+        );
+        searchCondition = `(${parts.join(' AND ')})`;
+      } else {
+        const idx = tagParams.length + 1;
+        searchCondition = `(title_ru ILIKE $${idx} ESCAPE '\\' OR title_original ILIKE $${idx} ESCAPE '\\' OR summary_ru ILIKE $${idx} ESCAPE '\\' OR summary_original ILIKE $${idx} ESCAPE '\\')`;
+      }
+      const searchParams = searchWords.length > 0
+        ? searchWords.map((w) => `%${escapeLikePattern(w)}%`)
+        : [likePattern];
 
       const where = `${tagCondition}${timeFilter} AND ${searchCondition}`;
-      const params = [...tagParams, likePattern];
+      const params = [...tagParams, ...searchParams];
 
       const countResult = await query(
         `SELECT COUNT(*) as count FROM news WHERE ${where}`,
