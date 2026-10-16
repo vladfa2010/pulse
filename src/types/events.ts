@@ -44,6 +44,11 @@ export const USER_EVENT_TYPES = [
   'education.unenroll_admin',
   // ТЗ-106: самозапись по подписке (source='subscription')
   'education.enroll_subscribed',
+  // ТЗ-179: студенческие события обучения (аналитика воронки; админы не логируются)
+  'education.course_started',
+  'education.lesson_started',
+  'education.material_downloaded',
+  'education.test_attempt',
   // ТЗ-102: модерация UGC — аудит решений админа (approve/reject/delete)
   'education.moderation_approve',
   'education.moderation_reject',

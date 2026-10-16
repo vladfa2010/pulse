@@ -788,6 +788,39 @@ router.get('/lessons/:lessonId', optionalAuth, h(async (req, res) => {
     url: m.kind === 'link' || boolDb(m.is_free) ? m.url : null,
   }));
 
+  // ТЗ-179: старт урока/курса — только авторизованным, без админов (их проходы
+  // по гейтам засорили бы воронку). Дедуп: первый старт урока/курса юзером.
+  if (userId && !admin) {
+    void (async () => {
+      const dupR = await query(
+        `SELECT 1 FROM user_events
+         WHERE user_id = $1 AND event_type = 'education.lesson_started'
+           AND event_data->>'lesson_id' = $2`,
+        [userId, lessonId],
+      );
+      if (dupR.rows.length > 0) return;
+      const courseDupR = await query(
+        `SELECT 1 FROM user_events
+         WHERE user_id = $1 AND event_type = 'education.lesson_started'
+           AND event_data->>'course_id' = $2`,
+        [userId, lesson.course_id],
+      );
+      const firstInCourse = courseDupR.rows.length === 0;
+      logUserEvent(userId, 'education.lesson_started', {
+        course_id: lesson.course_id,
+        lesson_id: lessonId,
+        position: lesson.position,
+      });
+      if (firstInCourse) {
+        logUserEvent(userId, 'education.course_started', {
+          course_id: lesson.course_id,
+          lesson_id: lessonId,
+          source: enrollment?.source ?? 'preview',
+        });
+      }
+    })().catch(() => undefined);
+  }
+
   res.json({
     id: lesson.id,
     course_id: lesson.course_id,
@@ -988,6 +1021,16 @@ router.post('/lessons/:lessonId/test', authMiddleware, h(async (req, res) => {
     ? Math.round((correctCount / questions.length) * 100)
     : 100;
   const passScore = Number(testR.rows[0].pass_score);
+
+  // ТЗ-179: каждая попытка — событие (история баллов без новой таблицы;
+  // lesson_progress.test_score по-прежнему хранит только последний зачёт).
+  logUserEvent(userId, 'education.test_attempt', {
+    course_id: lesson.course_id,
+    lesson_id: lessonId,
+    score: testScore,
+    pass_score: passScore,
+    passed: testScore >= passScore,
+  });
 
   res.json({ test_score: testScore, pass_score: passScore, passed: testScore >= passScore });
 }));
@@ -2024,6 +2067,15 @@ router.get('/materials/:id/download', optionalAuth, h(async (req, res) => {
   }
 
   // 302 на HMAC-signedUrl, TTL 1 час (доступ уже проверен ДО выдачи ссылки)
+  // ТЗ-179: скачивание — событие (строго после всех гейтов). Только авторизованным:
+  // гостевые is_free-скачивания структурно не логируются (user_id обязателен).
+  if (userId) {
+    logUserEvent(userId, 'education.material_downloaded', {
+      course_id: material.course_id,
+      material_id: materialId,
+      kind: material.kind,
+    });
+  }
   const target = signedUrl(String(material.url), 3600);
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.redirect(302, target);

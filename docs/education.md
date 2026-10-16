@@ -698,3 +698,38 @@ FNV-1a(id), без библиотек. `graph: null` → секция не ре�
 прогон — `retroscanCourse` по каждому published-курсу (ретеншн-окно,
 LLM-ранжирование), дальше хук в newsProcessor + cron `0 * * * *`
 (`matchUnprocessedNews`, окно 2 ч).
+
+## ТЗ-179 — события обучения в user_events (2026-10-17)
+
+Четыре студенческих события для аналитики воронки (записался → начал → прошёл),
+популярности материалов и истории попыток теста. Новых таблиц нет — всё пишется
+`logUserEvent` в существующие `user_events` (JSONB, fire-and-forget, падение
+insert не влияет на ответы API). Смоук: `scripts/smoke-lms-events.js` (12 проверок).
+
+**Типы** (`src/types/events.ts`, блок LMS): `education.course_started`,
+`education.lesson_started`, `education.material_downloaded`, `education.test_attempt`.
+
+**Правила:**
+- Логируются ТОЛЬКО авторизованные не-админы. Админские проходы по гейтам
+  (`hasAccess = enrollment || admin || is_free_preview`) воронку не засоряют;
+  анонимы структурно не логируются (`user_id` обязателен).
+- `lesson_started` — первый просмотр урока (дедуп по `event_data->>'lesson_id'`),
+  event_data `{course_id, lesson_id, position}`.
+- `course_started` — первый `lesson_started` юзера в курсе (дедуп по
+  `event_data->>'course_id'`), event_data `{course_id, lesson_id, source}`
+  (source из enrollment: free/purchase/subscription/admin_grant, либо `preview`
+  для гостевого free-урока, открытого залогиненным без записи).
+- `material_downloaded` — строго после всех гейтов скачивания (антивирус 423,
+  UGC-модерация 403, is_free/enrollment), перед 302 на signedUrl. Без дедупа
+  (каждое скачивание — событие), event_data `{course_id, material_id, kind}`
+  (title не кладём — кракозябры legacy, ТЗ-170). Слепая зона: гостевые is_free
+  скачивания (гейт разрешает анонимам, логировать некому).
+- `test_attempt` — каждый POST `/lessons/:id/test` после грейдинга, event_data
+  `{course_id, lesson_id, score, pass_score, passed}`. История попыток живёт
+  здесь; `lesson_progress.test_score` по-прежнему хранит ТОЛЬКО последний зачёт
+  (пересдача затирает, ТЗ-100) — для динамики score по попыткам смотрим события.
+
+**TG-алерты:** фильтр `admin_tg_settings.event_types` — whitelist
+(`adminAlerts.ts`, `parseEventTypes` NULL→[], нетипизированные типы отсекаются),
+поэтому новые события не попадают в TG ни у кого без явной подписки. Правок
+`adminAlerts` не потребовалось; `ALERT_EVENT_TYPES` не расширяли.
