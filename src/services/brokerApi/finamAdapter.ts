@@ -68,6 +68,11 @@ function normalizeError(error: any): { code: string; status?: number; message: s
     if (status === 401 || isFinamUnauthorized(data)) {
       return { code: 'broker_key_invalid', status, message };
     }
+    // Finam code:16 — «Invalid secret key» / «Api token must not be empty»:
+    // проблема с учётными данными, а не с доступностью.
+    if (status === 400 && data?.code === 16) {
+      return { code: 'broker_key_invalid', status, message };
+    }
     if (status === 503 && isInMaintenanceWindow()) {
       return { code: 'broker_maintenance', status, message: 'Finam maintenance window' };
     }
