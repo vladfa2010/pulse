@@ -99,7 +99,7 @@ router.get('/global', async (req, res) => {
 //
 // Логика:
 //   1. Получаем теги пользователя из portfolios
-//   2. Ищем новости за 14 дней WHERE matched_tags && user_tags
+//   2. Ищем новости за 90 дней (timeFilterSql) WHERE matched_tags && user_tags
 //   3. Если ?all не задан → ИСКЛЮЧАЕМ прочитанные (user_news_reads)
 //   4. ORDER BY published_at DESC LIMIT 50
 router.get('/', authMiddleware, async (req: AuthRequest, res) => {
@@ -260,6 +260,53 @@ router.post('/read-all', authMiddleware, async (req: AuthRequest, res) => {
   } catch (err: any) {
     console.error('[News] Read-all error:', err.message);
     res.status(500).json({ error: 'Failed to mark all as read' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GET /api/news/unread-count — реальное число непрочитанных (ТЗ-177)
+// ═══════════════════════════════════════════════════════════════════════════
+// Для счётчика «Прочитать всё» в карусели «Это вы ещё не видели»: показывает
+// все непрочитанные, а не ≤20 первой страницы. Те же условия, что у списка
+// выше: активные теги портфеля + timeFilterSql (90 дней) + anti-join
+// user_news_reads. NOT EXISTS — как в списке (:147/:181): news_id формально
+// nullable, NOT IN с NULL обнулил бы выборку. COUNT(*), а не limit+1, —
+// отдельным эндпоинтом, чтобы TZ-40 (total: null) не трогать.
+router.get('/unread-count', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.userId;
+    const portfolioResult = await query(
+      `SELECT tag_id FROM portfolios WHERE user_id = $1 AND is_frozen = ${USE_SQLITE ? '0' : 'FALSE'}`,
+      [userId]
+    );
+    const tagIds = portfolioResult.rows.map(r => r.tag_id);
+    if (tagIds.length === 0) return res.json({ count: 0 });
+
+    if (USE_SQLITE) {
+      const conditions = tagIds.map(() => 'matched_tags LIKE ?').join(' OR ');
+      const likeParams = tagIds.map(id => `%"${id}"%`);
+      // Каст без `::int`: адаптер (db-sqlite.ts) конвертит только `::text[]`/`::jsonb`
+      const result = await query(
+        `SELECT COUNT(*) AS count FROM news
+         WHERE (${conditions})
+           AND ${timeFilterSql()}
+           AND NOT EXISTS (SELECT 1 FROM user_news_reads r WHERE r.user_id = ? AND r.news_id = news.id)`,
+        [...likeParams, userId]
+      );
+      return res.json({ count: Number(result.rows[0]?.count ?? 0) });
+    }
+
+    const result = await query(
+      `SELECT COUNT(*)::int AS count FROM news
+       WHERE matched_tags && $1::text[]
+         AND ${timeFilterSql()}
+         AND NOT EXISTS (SELECT 1 FROM user_news_reads r WHERE r.user_id = $2 AND r.news_id = news.id)`,
+      [tagIds, userId]
+    );
+    res.json({ count: result.rows[0]?.count ?? 0 });
+  } catch (err: any) {
+    console.error('[News] unread-count error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch unread count' });
   }
 });
 
