@@ -27,7 +27,7 @@ import {
 } from '../services/subscription';
 import { listAllFeatures, createFeature, updateFeature } from './features';
 import { getPromoByCode } from '../services/promo';
-import { logAdminChangedPlan, logAdminExtendedSubscription } from '../services/activityLog';
+import { logAdminChangedPlan, logAdminExtendedSubscription, logUserEvent } from '../services/activityLog';
 import {
   getRadioFlags,
   setRadioFlag,
@@ -201,6 +201,43 @@ router.get('/users', adminMiddleware, async (_req, res) => {
   } catch (err) {
     console.error('[Admin] Failed to fetch users:', err);
     res.status(500).json({ error: 'Failed to fetch users' });
+  }
+});
+
+// ТЗ-120: выгрузка базы пользователей в CSV. Роут ОБЯЗАН быть выше
+// /users/:id — иначе Express сматчит 'export.csv' как :id.
+router.get('/users/export.csv', adminMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const result = await query(
+      'SELECT username, email, created_at FROM users ORDER BY created_at DESC'
+    );
+
+    const esc = (v: string) => (/[;"\n\r]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+    const fmtDate = (d: any) => {
+      if (!d) return '';
+      const dt = new Date(d);
+      const p = (n: number) => String(n).padStart(2, '0');
+      return `${dt.getUTCFullYear()}-${p(dt.getUTCMonth() + 1)}-${p(dt.getUTCDate())} ${p(dt.getUTCHours())}:${p(dt.getUTCMinutes())}`;
+    };
+
+    const lines = ['Имя;Почта;Дата регистрации'];
+    for (const row of result.rows) {
+      lines.push([esc(row.username ?? ''), esc(row.email ?? ''), fmtDate(row.created_at)].join(';'));
+    }
+
+    const day = new Date().toISOString().slice(0, 10);
+    res.set({
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="pulse-users-${day}.csv"`,
+      'Cache-Control': 'no-store',
+    });
+    res.send('﻿' + lines.join('\r\n'));
+
+    // Аудит: кто выгрузил и сколько строк. Не блокируем ответ.
+    logUserEvent(req.user!.userId, 'admin_export_users', { rows: result.rows.length }).catch(() => {});
+  } catch (err) {
+    console.error('[Admin] Users export failed:', err);
+    res.status(500).json({ error: 'Export failed' });
   }
 });
 

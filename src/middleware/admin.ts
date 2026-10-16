@@ -26,15 +26,17 @@ export function adminMiddleware(req: AuthRequest, res: any, next: any) {
       }
 
       const result = await query(
-        'SELECT is_admin FROM users WHERE id = $1',
+        'SELECT is_admin, is_blocked FROM users WHERE id = $1',
         [userId]
       );
 
-      const isAdmin = USE_SQLITE
-        ? (result.rows[0]?.is_admin === 1)
-        : (result.rows[0]?.is_admin === true);
+      const row = result.rows[0];
+      const isAdmin = USE_SQLITE ? row?.is_admin === 1 : row?.is_admin === true;
+      // ТЗ-120: is_blocked проверялся только при логине — заблокированный админ
+      // с живым JWT (7 дней) сохранял доступ. Теперь каждый запрос свежий.
+      const isBlocked = USE_SQLITE ? row?.is_blocked === 1 : row?.is_blocked === true;
 
-      if (!isAdmin) {
+      if (!isAdmin || isBlocked) {
         return res.status(403).json({ error: 'Admin access required' });
       }
 
