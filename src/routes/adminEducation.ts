@@ -647,6 +647,10 @@ async function fetchCourseCard(courseId: string): Promise<any | null> {
     category_name: c.category_name || null,
     author: c.author,
     relevant_until: c.relevant_until,
+    // ТЗ-177: порог косинуса — редактор показывает после перезахода в табу.
+    embedding_threshold: c.embedding_threshold === null || c.embedding_threshold === undefined
+      ? null
+      : Number(c.embedding_threshold),
     source_type: c.source_type,
     source_news_id: c.source_news_id,
     source,
