@@ -354,7 +354,7 @@ router.get('/cascades', async (req, res) => {
          WHERE ci.cluster_id = c.id
        ) sc ON true
        WHERE c.last_seen_at > NOW() - INTERVAL '${interval}'
-       ORDER BY c.size DESC
+       ORDER BY c.size DESC, c.last_seen_at DESC NULLS LAST
        LIMIT 200`,
       []
     );
