@@ -769,3 +769,40 @@ insert не влияет на ответы API). Смоук: `scripts/smoke-lms-
 **Тесты:** фронт — vitest `statspanel.tz180.test.tsx` (7 проверок); бэкенд —
 live-API `src/tests/educationStatsOverview.test.ts` (паттерн ТЗ-174, прогон
 на проде после деплоя).
+
+## ТЗ-181 — детальная статистика курса (2026-10-19)
+
+Второй уровень дрилл-дауна из сводной табы (ТЗ-180): клик по строке курса
+открывает детальный экран внутри той же табы (не редактор). Состояние в URL
+(`?course=<id>`) — перезагрузка/шаринг сохраняют экран; период 7/30/90 общий
+со сводной.
+
+**Эндпоинт:** `GET /api/admin/education/courses/:id/stats?days=7|30|90`
+(дефолт 30, фолбек на 30 для невалидного; 404 — курс не найден). Роут:
+`adminEducation.ts` (`/courses/:id/stats`). Один запрос = весь экран; «кто
+записан» НЕ дублируется — фронт берёт существующий
+`GET /courses/:id/enrollments`.
+
+**Формулы:**
+- `funnel.enrolled` — все записи; `started` — distinct user_id событий
+  `education.course_started` (ТЗ-179, не ретроактивны); `halfway` — юзеры с
+  ≥ ceil(lessons/2) завершёнными; `completed` — все уроки курса.
+- `sources` — разложение enrolled по `course_enrollments.source`.
+- `activity_timeline` — user_events за период по дням + `lesson_completed`
+  из `lesson_progress.completed_at` (события не логируются, по дизайну);
+  бэк отдаёт только ненулевые дни — фронт достраивает полную ось.
+- `lessons[].drop_vs_prev` — доля завершивших урок минус доля предыдущего
+  (от enrolled); первый урок — null. `median_day` — медиана
+  (completed_at − дата записи) в днях, считается в JS (кросс-диалектность).
+- Задача 2: событие `education.test_attempt` дополнено `answers: number[]`
+  (индексы выбранных вариантов). `lessons[].per_question` — топ-3 вопроса
+  по wrong_rate (сверка с `lesson_tests.questions[].correct`, считается в JS).
+
+**Фронт:** `CourseStatsView.tsx` — воронка (бары), stacked bars SVG руками
+(4 серии, детерминированно), «кто записан» (enrollments + локальный поиск) |
+«активные за 7 дней», таблица уроков со стопперами, топ-3 завальных вопросов,
+материалы (нулевые скачивания не выкидываются — видно «мёртвые» файлы).
+
+**Тесты:** фронт — vitest `coursestats.tz181.test.tsx` + дрилл-даун в
+`statspanel.tz180.test.tsx`; бэкенд — live-API `courseStatsDetail.test.ts`
+(прогон на проде после деплоя).

@@ -1024,12 +1024,15 @@ router.post('/lessons/:lessonId/test', authMiddleware, h(async (req, res) => {
 
   // ТЗ-179: каждая попытка — событие (история баллов без новой таблицы;
   // lesson_progress.test_score по-прежнему хранит только последний зачёт).
+  // ТЗ-181 Задача 2: ответы — индексы выбранных вариантов для per-вопросной
+  // аналитики «завальных вопросов».
   logUserEvent(userId, 'education.test_attempt', {
     course_id: lesson.course_id,
     lesson_id: lessonId,
     score: testScore,
     pass_score: passScore,
     passed: testScore >= passScore,
+    answers: answers.map((a: unknown) => Number(a)),
   });
 
   res.json({ test_score: testScore, pass_score: passScore, passed: testScore >= passScore });

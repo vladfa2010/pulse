@@ -30,7 +30,7 @@ import { AuthRequest } from '../middleware/auth';
 import { adminMiddleware } from '../middleware/admin';
 import { checkRateLimit, lmsUploadLimiter } from '../middleware/rateLimit';
 import { logUserEvent } from '../services/activityLog';
-import { getActivePlans } from '../services/subscription';
+import { getActivePlans, parseDbJson } from '../services/subscription';
 import { invalidateEducationCache } from '../services/education/cache';
 import { scheduleEducationSeoRebuild, rebuildEducationSeoNow, fetchSeoRebuildLog, isEducationSeoRebuildPending } from '../services/education/seoRebuild'; // ТЗ-164: SEO-пересборка при сохранении + статус (Задачи 4-5)
 import { resolveSourceUrl, ResolveSourceError } from '../services/education/resolveSource';
@@ -1859,6 +1859,260 @@ router.get('/stats/overview', h(async (req, res) => {
   courses.sort((a, b) => b.enrolled_period - a.enrolled_period || b.enrolled_total - a.enrolled_total);
 
   res.json({ period_days: days, generated_at: new Date().toISOString(), courses });
+}));
+
+// ТЗ-181: детальная статистика курса — дрилл-даун из сводной табы (ТЗ-180).
+// Воронка «записался → начал → середина → прошёл», источники записи, таймлайн
+// активности (события ТЗ-179 + завершения из lesson_progress.completed_at),
+// активные за 7 дней, уроки-стопперы (в т.ч. per-вопросный разрез — ответы
+// кладём в событие test_attempt, Задача 2 ТЗ-181), материалы. Медианы и
+// per-question считаем в JS — кросс-диалектно PG/sql.js (percentile_cont в
+// шиме нет). Деление на ноль → null (конвенция ТЗ-180). «Кто записан» здесь
+// не дублируем — фронт берёт готовый GET /courses/:id/enrollments.
+router.get('/courses/:id/stats', h(async (req, res) => {
+  const courseId = req.params.id;
+  const daysParam = Number(req.query.days ?? 30);
+  const days = [7, 30, 90].includes(daysParam) ? daysParam : 30;
+  const since = new Date(Date.now() - days * 86400000).toISOString();
+  const since7d = new Date(Date.now() - 7 * 86400000).toISOString();
+
+  const courseR = await query(
+    `SELECT c.id, c.title, c.status, c.type, c.created_at,
+            (SELECT COUNT(*) FROM course_lessons cl WHERE cl.course_id = c.id) AS lessons_count
+     FROM courses c WHERE c.id = $1`,
+    [courseId],
+  );
+  if (courseR.rows.length === 0) return fail(res, 404, 'Курс не найден');
+  const course = courseR.rows[0];
+  const lessonsCount = Number(course.lessons_count);
+  const halfwayNeed = lessonsCount > 0 ? Math.ceil(lessonsCount / 2) : 0;
+
+  const [
+    enrollR, startedR, progressR, eventsR, completedR,
+    activeR, lessonsR, lessonDoneR, medianR, testEventsR,
+    testsMetaR, materialsR, downloadsR,
+  ] = await Promise.all([
+    query(`SELECT user_id, source FROM course_enrollments WHERE course_id = $1`, [courseId]),
+    query(
+      `SELECT count(DISTINCT user_id) AS n FROM user_events
+       WHERE event_type = 'education.course_started' AND event_data->>'course_id' = $1`,
+      [courseId],
+    ),
+    query(
+      `SELECT lp.user_id, count(DISTINCT lp.lesson_id) AS done
+       FROM lesson_progress lp JOIN course_lessons cl ON cl.id = lp.lesson_id
+       WHERE cl.course_id = $1 GROUP BY lp.user_id`,
+      [courseId],
+    ),
+    // таймлайн: события за период по дням ($2 — since)
+    query(
+      `SELECT substr(CAST(created_at AS TEXT), 1, 10) AS day, event_type, count(*) AS n
+       FROM user_events
+       WHERE event_type IN ('education.lesson_started', 'education.test_attempt', 'education.material_downloaded')
+         AND created_at >= $2 AND event_data->>'course_id' = $1
+       GROUP BY 1, 2`,
+      [courseId, since],
+    ),
+    // завершения уроков за период — из lesson_progress.completed_at (события не логируются, ТЗ-181)
+    query(
+      `SELECT substr(CAST(lp.completed_at AS TEXT), 1, 10) AS day, count(*) AS n
+       FROM lesson_progress lp JOIN course_lessons cl ON cl.id = lp.lesson_id
+       WHERE cl.course_id = $1 AND lp.completed_at >= $2
+       GROUP BY 1`,
+      [courseId, since],
+    ),
+    // активные за 7 дней: последнее событие + счётчик, JOIN users
+    query(
+      `SELECT ue.user_id, max(ue.created_at) AS last_event_at, count(*) AS events_7d,
+              u.username, u.email
+       FROM user_events ue JOIN users u ON u.id = ue.user_id
+       WHERE ue.event_type IN ('education.lesson_started', 'education.test_attempt', 'education.material_downloaded')
+         AND ue.created_at >= $2 AND ue.event_data->>'course_id' = $1
+       GROUP BY ue.user_id, u.username, u.email
+       ORDER BY last_event_at DESC LIMIT 100`,
+      [courseId, since7d],
+    ),
+    query(`SELECT id, position, title FROM course_lessons WHERE course_id = $1 ORDER BY position ASC`, [courseId]),
+    query(
+      `SELECT lp.lesson_id, count(*) AS n
+       FROM lesson_progress lp JOIN course_lessons cl ON cl.id = lp.lesson_id
+       WHERE cl.course_id = $1 GROUP BY lp.lesson_id`,
+      [courseId],
+    ),
+    // медианный день: дата завершения − дата записи юзера (считаем в JS)
+    query(
+      `SELECT lp.lesson_id, lp.completed_at, ce.created_at AS enrolled_at
+       FROM lesson_progress lp
+       JOIN course_lessons cl ON cl.id = lp.lesson_id
+       JOIN course_enrollments ce ON ce.user_id = lp.user_id AND ce.course_id = cl.course_id
+       WHERE cl.course_id = $1`,
+      [courseId],
+    ),
+    // попытки тестов за период: score/passed/answers/lesson_id из event_data
+    query(
+      `SELECT event_data FROM user_events
+       WHERE event_type = 'education.test_attempt' AND created_at >= $2 AND event_data->>'course_id' = $1`,
+      [courseId, since],
+    ),
+    // правильные ответы тестов — для per_question
+    query(
+      `SELECT lt.lesson_id, lt.questions FROM lesson_tests lt
+       JOIN course_lessons cl ON cl.id = lt.lesson_id WHERE cl.course_id = $1`,
+      [courseId],
+    ),
+    query(
+      `SELECT id, title, kind, lesson_id, position FROM course_materials WHERE course_id = $1
+       ORDER BY position ASC, title ASC`,
+      [courseId],
+    ),
+    query(
+      `SELECT event_data->>'material_id' AS material_id, count(*) AS n
+       FROM user_events
+       WHERE event_type = 'education.material_downloaded' AND created_at >= $2 AND event_data->>'course_id' = $1
+       GROUP BY 1`,
+      [courseId, since],
+    ),
+  ]);
+
+  const enrolled = enrollR.rows.length;
+  const started = Number(startedR.rows[0]?.n || 0);
+  let halfway = 0;
+  let completed = 0;
+  for (const r of progressR.rows as any[]) {
+    const done = Number(r.done);
+    if (lessonsCount > 0 && done >= lessonsCount) completed += 1;
+    if (halfwayNeed > 0 && done >= halfwayNeed) halfway += 1;
+  }
+  const sources: Record<string, number> = { free: 0, purchase: 0, subscription: 0, admin_grant: 0 };
+  for (const r of enrollR.rows as any[]) {
+    const s = String((r as any).source || 'free');
+    sources[s] = (sources[s] ?? 0) + 1;
+  }
+
+  // Таймлайн: бэк отдаёт только ненулевые дни — фронт достраивает ось (Задача 4).
+  const timelineMap = new Map<string, any>();
+  const timelineDay = (day: string) => {
+    let slot = timelineMap.get(day);
+    if (!slot) {
+      slot = { day, lesson_started: 0, test_attempt: 0, material_downloaded: 0, lesson_completed: 0 };
+      timelineMap.set(day, slot);
+    }
+    return slot;
+  };
+  for (const r of eventsR.rows as any[]) {
+    const key = String(r.event_type).replace('education.', '');
+    timelineDay(String(r.day))[key] = Number(r.n);
+  }
+  for (const r of completedR.rows as any[]) {
+    timelineDay(String(r.day)).lesson_completed = Number(r.n);
+  }
+  const activity_timeline = [...timelineMap.values()].sort((a, b) => a.day.localeCompare(b.day));
+
+  const doneByLesson = new Map<string, number>(lessonDoneR.rows.map((r: any) => [String(r.lesson_id), Number(r.n)]));
+  // медианный день завершения урока (0 — день записи)
+  const medianDays = new Map<string, number[]>();
+  for (const r of medianR.rows as any[]) {
+    const t0 = new Date(r.enrolled_at).getTime();
+    const t1 = new Date(r.completed_at).getTime();
+    if (Number.isNaN(t0) || Number.isNaN(t1)) continue;
+    const day = Math.max(0, Math.floor((t1 - t0) / 86400000));
+    const key = String(r.lesson_id);
+    if (!medianDays.has(key)) medianDays.set(key, []);
+    medianDays.get(key)!.push(day);
+  }
+  const medianOf = (xs: number[]): number => {
+    const s = [...xs].sort((a, b) => a - b);
+    const mid = Math.floor(s.length / 2);
+    return s.length % 2 === 1 ? s[mid] : Math.round((s[mid - 1] + s[mid]) / 2);
+  };
+
+  // Статистика тестов за период + per-вопросный разрез (Задача 2)
+  const testsMeta = new Map<string, any[]>(testsMetaR.rows.map((r: any) => [String(r.lesson_id), parseDbJson<any[]>(r.questions) || []]));
+  const testAgg = new Map<string, { attempts: number; passed: number; scoreSum: number }>();
+  const perQ = new Map<string, { attempts: number[]; wrong: number[] }>();
+  for (const row of testEventsR.rows as any[]) {
+    const ed = parseDbJson<any>(row.event_data) || {};
+    const lessonId = String(ed.lesson_id || '');
+    if (!lessonId) continue;
+    let agg = testAgg.get(lessonId);
+    if (!agg) { agg = { attempts: 0, passed: 0, scoreSum: 0 }; testAgg.set(lessonId, agg); }
+    agg.attempts += 1;
+    if (ed.passed === true) agg.passed += 1;
+    agg.scoreSum += Number(ed.score) || 0;
+
+    const questions = testsMeta.get(lessonId);
+    const answers = Array.isArray(ed.answers) ? ed.answers : null;
+    if (!questions || !answers) continue;
+    let slot = perQ.get(lessonId);
+    if (!slot) { slot = { attempts: [], wrong: [] }; perQ.set(lessonId, slot); }
+    const len = Math.min(answers.length, questions.length);
+    for (let i = 0; i < len; i++) {
+      slot.attempts[i] = (slot.attempts[i] || 0) + 1;
+      if (Number(answers[i]) !== Number(questions[i]?.correct)) slot.wrong[i] = (slot.wrong[i] || 0) + 1;
+    }
+  }
+
+  const lessons = (lessonsR.rows as any[]).map((l, idx, arr) => {
+    const id = String(l.id);
+    const doneCount = doneByLesson.get(id) ?? 0;
+    const agg = testAgg.get(id);
+    const prev = idx > 0 ? arr[idx - 1] : null;
+    const prevShare = prev && enrolled > 0 ? (doneByLesson.get(String(prev.id)) ?? 0) / enrolled : null;
+    const share = enrolled > 0 ? doneCount / enrolled : null;
+    const questions = testsMeta.get(id) || [];
+    const qSlot = perQ.get(id);
+    const per_question = qSlot
+      ? qSlot.attempts
+          .map((attempts, i) => ({
+            q: String(questions[i]?.text || `Вопрос ${i + 1}`),
+            attempts,
+            wrong_rate: attempts > 0 ? Math.round(((qSlot.wrong[i] || 0) / attempts) * 100) / 100 : null,
+          }))
+          .filter((x) => x.attempts > 0)
+          .sort((a, b) => (b.wrong_rate ?? 0) - (a.wrong_rate ?? 0))
+          .slice(0, 3)
+      : [];
+    return {
+      id,
+      position: Number(l.position),
+      title: l.title,
+      completed: doneCount,
+      pct_of_enrolled: share === null ? null : Math.round(share * 100) / 100,
+      median_day: medianDays.has(id) ? medianOf(medianDays.get(id)!) : null,
+      drop_vs_prev: share === null || prevShare === null ? null : Math.round((share - prevShare) * 100) / 100,
+      test_attempts: agg?.attempts ?? 0,
+      test_pass_rate: agg && agg.attempts > 0 ? Math.round((agg.passed / agg.attempts) * 100) / 100 : null,
+      avg_score: agg && agg.attempts > 0 ? Math.round(agg.scoreSum / agg.attempts) : null,
+      per_question,
+    };
+  });
+
+  const downloadsByMaterial = new Map<string, number>(downloadsR.rows.map((r: any) => [String(r.material_id), Number(r.n)]));
+  const materials = (materialsR.rows as any[]).map((m) => ({
+    id: String(m.id),
+    title: m.title,
+    kind: m.kind,
+    lesson_id: m.lesson_id ? String(m.lesson_id) : null,
+    downloads: downloadsByMaterial.get(String(m.id)) ?? 0,
+  })).sort((a, b) => b.downloads - a.downloads || a.title.localeCompare(b.title));
+
+  res.json({
+    course: {
+      id: String(course.id), title: course.title, status: course.status, type: course.type,
+      lessons_count: lessonsCount, created_at: course.created_at,
+    },
+    period_days: days,
+    generated_at: new Date().toISOString(),
+    funnel: { enrolled, started, halfway, completed },
+    sources,
+    activity_timeline,
+    active_7d: activeR.rows.map((r: any) => ({
+      user_id: String(r.user_id), username: r.username, email: r.email,
+      last_event_at: r.last_event_at, events_7d: Number(r.events_7d),
+    })),
+    lessons,
+    materials,
+  });
 }));
 
 // PUT /lessons/:lessonId/test — создать/обновить тест (критерии ТЗ-100 4-5)
