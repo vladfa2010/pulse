@@ -340,7 +340,7 @@ router.get('/cascades', async (req, res) => {
               sc.sources AS sources
        FROM clusters c
        LEFT JOIN LATERAL (
-         SELECT n.title_ru AS title, n.source, n.url, n.published_at
+         SELECT COALESCE(n.title_ru, n.title_original) AS title, n.source, n.url, n.published_at
          FROM cluster_items ci
          JOIN news n ON n.id = ci.news_id
          WHERE ci.cluster_id = c.id
@@ -412,7 +412,7 @@ router.get('/cascade-graph', async (req, res) => {
       `SELECT c.id AS cluster_id, c.story_id,
               (SELECT json_agg(sub ORDER BY sub.lag) FROM (
                  SELECT ci.lag_min AS lag, n.source,
-                        n.title_ru AS title,
+                        COALESCE(n.title_ru, n.title_original) AS title,
                         EXTRACT(EPOCH FROM n.published_at)::bigint AS t
                  FROM cluster_items ci
                  JOIN news n ON n.id = ci.news_id
@@ -708,7 +708,8 @@ router.get('/cascade-chart', async (req, res) => {
     // ТЗ-99: id и url новости — список новостей каскада в деталь-панели
     // становится кликабельным (ссылка на первоисточник / карточку новости).
     const newsRes = await query(
-      `SELECT n.id, n.url, n.published_at, n.title_ru, n.source
+      `SELECT n.id, n.url, n.published_at,
+              COALESCE(n.title_ru, n.title_original) AS title_ru, n.source
        FROM cluster_items ci
        JOIN news n ON n.id = ci.news_id
        WHERE ci.cluster_id = $1
@@ -915,7 +916,8 @@ router.get('/topic', async (req, res) => {
     const t = tRes.rows[0];
 
     const newsRes = await query(
-      `SELECT n.id, n.published_at, n.source, n.title_ru, n.url
+      `SELECT n.id, n.published_at, n.source,
+              COALESCE(n.title_ru, n.title_original) AS title_ru, n.url
        FROM topic_items ti
        JOIN news n ON n.id = ti.news_id
        WHERE ti.topic_id = $1
@@ -934,7 +936,7 @@ router.get('/topic', async (req, res) => {
        JOIN cluster_items ci ON ci.news_id = ti.news_id
        JOIN clusters c ON c.id = ci.cluster_id
        LEFT JOIN LATERAL (
-         SELECT n.title_ru AS title
+         SELECT COALESCE(n.title_ru, n.title_original) AS title
          FROM cluster_items ci2
          JOIN news n ON n.id = ci2.news_id
          WHERE ci2.cluster_id = c.id
