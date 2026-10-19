@@ -41,6 +41,8 @@ async function req(path: string, token: string): Promise<{ status: number; data:
 
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 const isRate = (v: unknown): boolean => v === null || (isNum(v) && v >= 0 && v <= 1);
+// drop_vs_prev — разность долей, диапазон −1..1 (в отличие от остальных rate).
+const isDrop = (v: unknown): boolean => v === null || (isNum(v) && v >= -1 && v <= 1);
 
 async function main() {
   if (!ADMIN_EMAIL || !ADMIN_PASSWORD) {
@@ -87,8 +89,11 @@ async function main() {
   const f = d.funnel || {};
   if (isNum(f.enrolled) && isNum(f.started) && isNum(f.halfway) && isNum(f.completed)) ok('funnel — 4 числа');
   else { bad('funnel — 4 числа', f); finish(); return; }
-  if (f.enrolled >= f.started && f.started >= f.halfway && f.halfway >= f.completed) ok('воронка монотонна (enrolled ≥ started ≥ halfway ≥ completed)');
-  else bad('воронка монотонна', f);
+  // Инварианты: started — только события ТЗ-179 (с даты выката), прогресс — за
+  // всю историю, поэтому halfway/completed могут превышать started на legacy-
+  // данных; enrolled ≥ started (события только у записанных), halfway ≥ completed.
+  if (f.enrolled >= f.started && f.halfway >= f.completed) ok('инварианты воронки (enrolled ≥ started, halfway ≥ completed)');
+  else bad('инварианты воронки', f);
   if (f.halfway === 0 || (first.lessons_count > 0 && f.halfway <= f.enrolled)) ok('halfway рассчитан от ceil(N/2) уроков');
   const srcSum = Object.values(d.sources || {}).reduce((s: number, v) => s + (isNum(v) ? v : 0), 0);
   if (srcSum === f.enrolled) ok('sources — разложение enrolled по источникам');
@@ -102,7 +107,7 @@ async function main() {
   let lessonsOk = true;
   (d.lessons as any[]).forEach((l, i) => {
     if (!isNum(l.completed) || l.completed < 0) lessonsOk = false;
-    if (!isRate(l.pct_of_enrolled) || !isRate(l.drop_vs_prev) || !isRate(l.test_pass_rate)) lessonsOk = false;
+    if (!isRate(l.pct_of_enrolled) || !isDrop(l.drop_vs_prev) || !isRate(l.test_pass_rate)) lessonsOk = false;
     if (i === 0 && l.drop_vs_prev !== null) lessonsOk = false;
     if (!Array.isArray(l.per_question)) lessonsOk = false;
   });
