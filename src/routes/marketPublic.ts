@@ -846,10 +846,18 @@ router.get('/topics', async (req, res) => {
     } else {
       const run = runRes.rows[0];
       const topicsRes = await query(
-        `SELECT id, name, summary, named, news_count, span_days, sources_count, trend, daily
-         FROM topics
-         WHERE run_id = $1
-         ORDER BY news_count DESC`,
+        `SELECT t.id, t.name, t.summary, t.named, t.news_count, t.span_days, t.sources_count,
+                t.trend, t.daily,
+                le.last_event_at
+         FROM topics t
+         LEFT JOIN LATERAL (
+           SELECT MAX(n.published_at) AS last_event_at
+           FROM topic_items ti
+           JOIN news n ON n.id = ti.news_id
+           WHERE ti.topic_id = t.id
+         ) le ON true
+         WHERE t.run_id = $1
+         ORDER BY t.news_count DESC`,
         [run.id]
       );
       payload = {
@@ -868,6 +876,8 @@ router.get('/topics', async (req, res) => {
           sources_count: r.sources_count != null ? Number(r.sources_count) : null,
           trend: r.trend,
           daily: r.daily || [],
+          // ТЗ-184 v3: MAX(published_at) членов темы — для сортировки «по событию»
+          last_event_at: r.last_event_at ?? null,
         })),
       };
     }
