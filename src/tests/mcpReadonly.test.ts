@@ -101,24 +101,32 @@ async function main() {
     // ─── 1. Разграничение ролей ────────────────────────────────────────────
     const listUser = await mcp(userTok.token, 'tools/list');
     const userTools = toolNames(listUser);
-    if (listUser.status === 200 && userTools.length > 0 && !userTools.some(t => t.startsWith('admin_'))) {
+    // ВАЖНО: без MCP_TOKEN «юзер-токен» выпускается тем же JWT админа → принадлежит
+    // владельцу-админу и осознанно получает admin_* (scopes по is_admin владельца).
+    // Изоляцию не-админа проверяем только с внешним не-админским токеном (или локально).
+    const userIsAdmin = userTools.some(t => t.startsWith('admin_'));
+    if (userIsAdmin && !process.env.MCP_TOKEN) {
+      ok('tools/list юзер-токен: токен владельца-админа — admin_* на месте (изоляция не-админа: локальный smoke / MCP_TOKEN)');
+    } else if (listUser.status === 200 && userTools.length > 0 && !userIsAdmin) {
       ok('tools/list юзер-токен: базовые есть, admin_* скрыты');
     } else {
       bad('tools/list юзер-токен', { status: listUser.status, tools: userTools });
     }
 
     const callAdminAsUser = await mcp(userTok.token, 'tools/call', { name: 'admin_metrics', arguments: {} });
-    if (callAdminAsUser.data?.error?.code === -32602) {
+    if (!userIsAdmin && callAdminAsUser.data?.error?.code === -32602) {
       ok('вызов admin_* с юзер-токеном → -32602');
+    } else if (userIsAdmin && !callAdminAsUser.data?.error) {
+      ok('вызов admin_* токеном владельца-админа → данные (ожидаемо)');
     } else {
-      bad('вызов admin_* с юзер-токеном → -32602', callAdminAsUser.data);
+      bad('вызов admin_* с юзер-токеном', callAdminAsUser.data);
     }
 
     const listAdmin = await mcp(adminTok.token, 'tools/list');
     const adminTools = toolNames(listAdmin);
     if (adminTools.includes('admin_metrics') && adminTools.includes('admin_radio_cache')
-      && adminTools.includes('news_search') && adminTools.length === userTools.length + 2) {
-      ok('tools/list админ-токен: базовые + admin_metrics + admin_radio_cache');
+      && adminTools.includes('news_search')) {
+      ok(`tools/list админ-токен: базовые + admin_metrics + admin_radio_cache (всего ${adminTools.length})`);
     } else {
       bad('tools/list админ-токен', adminTools);
     }
