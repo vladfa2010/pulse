@@ -124,6 +124,8 @@ API читает всегда **последний done-прогон** (`ORDER B
   `news` (topic_items JOIN news, time DESC, лимит 200) + каскады в теме
   (JOIN cluster_items по news_id, overlap DESC, лимит 20) + сюжеты в теме
   (news_id → cluster_items → clusters.story_id, overlap DESC, лимит 20).
+  Заголовки новостей и каскадов — `COALESCE(title_ru, title_original)`
+  (ТЗ-182: непереведённые новости иначе показывались прочерком).
   Ошибки: 400 `id required`, 404 `topic_not_found`.
 
 ## Флаги и параметры
