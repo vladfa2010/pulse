@@ -84,6 +84,8 @@ export const apiLimiter = rateLimit({
     if (path.startsWith('/api/webhook/')) return true;
     // Админка имеет свой собственный лимитер (adminLimiter, 3×)
     if (path.startsWith('/api/admin')) return true;
+    // MCP имеет свой собственный лимитер (mcpLimiter, ТЗ-183 Задача 5)
+    if (path === '/mcp' || path.startsWith('/mcp/')) return true;
     // Статус-страница и debug
     if (path === '/' || path === '/debug/version') return true;
     return false;
@@ -106,6 +108,39 @@ export const adminLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => (req as any).user?.userId || req.ip || 'unknown',
+  validate: { trustProxy: false },
+});
+
+// ─── MCP — 120 запросов / 15 мин на токен (ТЗ-183 Задача 5) ────────────────
+// Клиенты MCP дёргают tools/list + вызовы; общий apiLimiter для /mcp отключён
+// (skip ниже), иначе двойной учёт. Ключ — mcpTokenId из res.locals
+// (ставит authenticateMcpToken до этого лимитера).
+export const mcpLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,  // 15 минут
+  max: 120,
+  message: {
+    error: 'MCP rate limit exceeded',
+    retryAfter: '15 minutes',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req, res) => (res as any).locals?.mcpTokenId || req.ip || 'unknown',
+  validate: { trustProxy: false },
+});
+
+// ─── MCP auth — 20 неудач / 15 мин на IP (ИБ-6, анти-перебор токена) ───────
+// Применяется вручную только на НЕУДАЧНУЮ аутентификацию (checkRateLimit в
+// цепочке /mcp), иначе легитимные 401-штормы съели бы лимит у честных IP.
+export const mcpAuthLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,  // 15 минут
+  max: 20,
+  message: {
+    error: 'Too many auth attempts. Try later.',
+    retryAfter: '15 minutes',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.ip || 'unknown',
   validate: { trustProxy: false },
 });
 

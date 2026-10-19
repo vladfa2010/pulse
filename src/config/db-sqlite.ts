@@ -682,6 +682,41 @@ export async function initSQLiteSchema(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_user_events_type ON user_events(event_type);
     CREATE INDEX IF NOT EXISTS idx_user_events_created_at ON user_events(created_at DESC);
 
+    -- ТЗ-183/ТЗ-185: MCP-токены и аудит (SQLite-вариант mcp_v1.sql)
+    CREATE TABLE IF NOT EXISTS mcp_tokens (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      prefix TEXT NOT NULL,
+      scopes TEXT NOT NULL DEFAULT 'read',
+      created_at TEXT DEFAULT (datetime('now')),
+      expires_at TEXT NOT NULL,
+      last_used_at TEXT,
+      revoked_at TEXT,
+      revoked_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      requests_count INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_mcp_tokens_user_id ON mcp_tokens (user_id);
+    CREATE INDEX IF NOT EXISTS idx_mcp_tokens_expires ON mcp_tokens (expires_at);
+
+    CREATE TABLE IF NOT EXISTS mcp_audit_log (
+      id TEXT PRIMARY KEY,
+      token_id TEXT REFERENCES mcp_tokens(id) ON DELETE SET NULL,
+      user_id TEXT NOT NULL,
+      tool TEXT NOT NULL,
+      args TEXT DEFAULT '{}',
+      status TEXT NOT NULL,
+      duration_ms INTEGER,
+      ip TEXT,
+      user_agent TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_mcp_audit_created ON mcp_audit_log (created_at);
+    CREATE INDEX IF NOT EXISTS idx_mcp_audit_token ON mcp_audit_log (token_id);
+
     -- TZ_FACTCHECK_PAGE v1.3 §8.3: ad-hoc фактчекинг (ручной дубль схемы).
     -- is_public INTEGER 0/1 — все проверки частные (v1), result TEXT (JSON).
     CREATE TABLE IF NOT EXISTS fact_check_requests (

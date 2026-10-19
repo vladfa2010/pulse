@@ -24,6 +24,8 @@ RUN cp src/migrations/lms_v6_lesson_idempotency.sql dist/migrations/lms_v6_lesso
 RUN cp src/migrations/lms_v7_paths.sql dist/migrations/lms_v7_paths.sql
 # ТЗ-107 v3: граф знаний для POST /migrate-lms-kg
 RUN cp src/migrations/lms_v8_knowledge_graph.sql dist/migrations/lms_v8_knowledge_graph.sql
+# ТЗ-183/ТЗ-185: MCP-токены и аудит для POST /migrate-mcp
+RUN cp src/migrations/mcp_v1.sql dist/migrations/mcp_v1.sql
 # ТЗ-177: порог косинуса курса для POST /migrate-lms-course-threshold
 RUN cp src/migrations/lms_v9_course_threshold.sql dist/migrations/lms_v9_course_threshold.sql
 EXPOSE 3001

@@ -37,6 +37,7 @@ import { embedAndClusterBatch } from './clustering';      // ТЗ-92, задач
 import { runStoryGrouping } from './storyGrouper';        // ТЗ-92, задача 5
 import { matchUnprocessedNews } from './education/match'; // ТЗ-103, задача 3: cron-страховка мэтчинга курсов
 import { rebuildKnowledgeGraph } from './education/knowledgeGraph'; // ТЗ-107 v3: ночной пересчёт графа знаний
+import { sendMcpRotationReminderEmail } from './mcpEmails'; // ТЗ-183 Задача 5: напоминания о ротации токенов
 import { isEducationGraphEnabled } from '../config/knowledgeGraph'; // ТЗ-107 v3: фичефлаг графа
 import { VERIFIER_MODEL_TEMPERATURE } from '../config/clustering'; // ТЗ-115: температура LLM по конвенции §9.1
 
@@ -797,4 +798,65 @@ export function startKnowledgeGraphCron(opts?: { isShuttingDown?: () => boolean 
     }
   }, { timezone: 'Europe/Moscow' });
   console.log('[Cron] Knowledge graph rebuild scheduled daily at 04:50 Europe/Moscow');
+}
+
+// ─── MCP-обслуживание (ТЗ-183 Задача 5 / ТЗ-185) ───────────────────────────
+
+/**
+ * Очистка mcp_audit_log старше 90 дней (ИБ-5) + каскадное удаление токенов
+ * (отозванных/истёкших старше 90 дней) + ежедневные напоминания о ротации
+ * (expires_at в окне 7 дней, ИБ-1). Ротационные напоминания идемпотентны по
+ * сути: окно «до 7 дней» узкое, повторное письмо в соседние дни допустимо.
+ */
+export function startMcpCron(opts?: { isShuttingDown?: () => boolean }) {
+  // 06:20 МСК — после ночных джоб, до утреннего трафика
+  cron.schedule('20 6 * * *', async () => {
+    if (opts?.isShuttingDown?.()) return;
+    const acquired = await acquireCronLock('mcp-maintenance');
+    if (!acquired) return;
+    try {
+      // 1. Аудит старше 90 дней (ИБ-5)
+      const audit = await query(
+        `DELETE FROM mcp_audit_log WHERE created_at < ${USE_SQLITE
+          ? "datetime('now', '-90 days')"
+          : "NOW() - INTERVAL '90 days'"}`,
+      );
+      if (audit.rowCount) console.log(`[Cron] MCP audit cleanup: ${audit.rowCount} rows`);
+
+      // 2. Токены: отозванные/истёкшие старше 90 дней (история реестра — 90 дней)
+      const tokens = await query(
+        `DELETE FROM mcp_tokens
+         WHERE (revoked_at IS NOT NULL OR expires_at <= ${USE_SQLITE ? "datetime('now')" : 'NOW()'})
+           AND COALESCE(revoked_at, expires_at) < ${USE_SQLITE
+             ? "datetime('now', '-90 days')"
+             : "NOW() - INTERVAL '90 days'"}`,
+      );
+      if (tokens.rowCount) console.log(`[Cron] MCP tokens cleanup: ${tokens.rowCount} rows`);
+
+      // 3. Напоминания о ротации (expires_at в окне 7 дней, только активные)
+      const expiring = await query(
+        `SELECT id, user_id, name, expires_at FROM mcp_tokens
+         WHERE revoked_at IS NULL AND expires_at > ${USE_SQLITE ? "datetime('now')" : 'NOW()'}
+           AND expires_at <= ${USE_SQLITE
+             ? "datetime('now', '+7 days')"
+             : "NOW() + INTERVAL '7 days'"}
+         LIMIT 500`,
+      );
+      for (const t of expiring.rows) {
+        try {
+          await sendMcpRotationReminderEmail(t.user_id, t.name, String(t.expires_at));
+        } catch (e: any) {
+          console.warn('[Cron] MCP rotation reminder failed:', e.message);
+        }
+      }
+      if (expiring.rows.length > 0) {
+        console.log(`[Cron] MCP rotation reminders sent: ${expiring.rows.length}`);
+      }
+    } catch (err: any) {
+      console.error('[Cron] MCP maintenance failed:', err.message);
+    } finally {
+      await releaseCronLock('mcp-maintenance');
+    }
+  }, { timezone: 'Europe/Moscow' });
+  console.log('[Cron] MCP maintenance scheduled daily at 06:20 Europe/Moscow');
 }
