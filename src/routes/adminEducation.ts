@@ -1740,6 +1740,127 @@ router.put('/settings', h(async (req, res) => {
   });
 }));
 
+// ТЗ-180: сводная статистика обучения по всем курсам (воронка «записался →
+// начал → прошёл», тесты, материалы). Источники: course_enrollments,
+// lesson_progress, user_events (ТЗ-179: course_started / lesson_started /
+// test_attempt / material_downloaded). События появились с выката ТЗ-179 —
+// до него счётчики событий честно 0 (фронт показывает плашку-оговорку).
+// Деление на ноль → null, не 0. Период — ISO-граница в JS (кросс-диалектно
+// PG/SQLite, без INTERVAL-литералов).
+router.get('/stats/overview', h(async (req, res) => {
+  const daysParam = Number(req.query.days ?? 30);
+  const days = [7, 30, 90].includes(daysParam) ? daysParam : 30;
+  const since = new Date(Date.now() - days * 86400000).toISOString();
+  const since7d = new Date(Date.now() - 7 * 86400000).toISOString();
+
+  const [coursesR, lessonsR, enrollR, startedR, progressR, testsR, matsR, activeR] =
+    await Promise.all([
+      query(
+        `SELECT id, title, status, type FROM courses
+         WHERE deleted_at IS NULL AND status IN ('published','archived')`,
+      ),
+      query(`SELECT course_id, count(*) AS n FROM course_lessons GROUP BY course_id`),
+      query(
+        `SELECT course_id, count(*) AS total,
+                sum(CASE WHEN created_at >= $1 THEN 1 ELSE 0 END) AS period
+         FROM course_enrollments GROUP BY course_id`,
+        [since],
+      ),
+      query(
+        `SELECT event_data->>'course_id' AS course_id, count(DISTINCT user_id) AS n
+         FROM user_events
+         WHERE event_type = 'education.course_started' AND created_at >= $1
+         GROUP BY 1`,
+        [since],
+      ),
+      query(
+        `SELECT cl.course_id, lp.user_id, count(DISTINCT lp.lesson_id) AS done
+         FROM lesson_progress lp JOIN course_lessons cl ON cl.id = lp.lesson_id
+         GROUP BY cl.course_id, lp.user_id`,
+      ),
+      query(
+        `SELECT event_data->>'course_id' AS course_id, count(*) AS attempts,
+                sum(CASE WHEN event_data->>'passed' = 'true' THEN 1 ELSE 0 END) AS passed,
+                avg(CAST(event_data->>'score' AS REAL)) AS avg_score
+         FROM user_events
+         WHERE event_type = 'education.test_attempt' AND created_at >= $1
+         GROUP BY 1`,
+        [since],
+      ),
+      query(
+        `SELECT event_data->>'course_id' AS course_id, count(*) AS n
+         FROM user_events
+         WHERE event_type = 'education.material_downloaded' AND created_at >= $1
+         GROUP BY 1`,
+        [since],
+      ),
+      query(
+        `SELECT event_data->>'course_id' AS course_id, count(DISTINCT user_id) AS n
+         FROM user_events
+         WHERE event_type IN ('education.lesson_started', 'education.test_attempt', 'education.material_downloaded')
+           AND created_at >= $1
+         GROUP BY 1`,
+        [since7d],
+      ),
+    ]);
+
+  const lessonsByCourse = new Map<string, number>(lessonsR.rows.map((r: any) => [String(r.course_id), Number(r.n)]));
+  const enrollByCourse = new Map<string, { total: number; period: number }>(
+    enrollR.rows.map((r: any) => [String(r.course_id), { total: Number(r.total), period: Number(r.period || 0) }]),
+  );
+  const startedByCourse = new Map<string, number>(startedR.rows.map((r: any) => [String(r.course_id), Number(r.n)]));
+  const completedByCourse = new Map<string, number>();
+  for (const r of progressR.rows as any[]) {
+    const courseId = String(r.course_id);
+    const need = lessonsByCourse.get(courseId) ?? 0;
+    if (need > 0 && Number(r.done) >= need) {
+      completedByCourse.set(courseId, (completedByCourse.get(courseId) ?? 0) + 1);
+    }
+  }
+  const testsByCourse = new Map<string, { attempts: number; passed: number; avg: number | null }>(
+    testsR.rows.map((r: any) => [String(r.course_id), {
+      attempts: Number(r.attempts),
+      passed: Number(r.passed || 0),
+      avg: r.avg_score === null ? null : Math.round(Number(r.avg_score)),
+    }]),
+  );
+  const matsByCourse = new Map<string, number>(matsR.rows.map((r: any) => [String(r.course_id), Number(r.n)]));
+  const activeByCourse = new Map<string, number>(activeR.rows.map((r: any) => [String(r.course_id), Number(r.n)]));
+
+  const courses = (coursesR.rows as any[]).map((c) => {
+    const id = String(c.id);
+    const lessonsCount = lessonsByCourse.get(id) ?? 0;
+    const enrolledTotal = enrollByCourse.get(id)?.total ?? 0;
+    const enrolledPeriod = enrollByCourse.get(id)?.period ?? 0;
+    const startedPeriod = startedByCourse.get(id) ?? 0;
+    const completedTotal = completedByCourse.get(id) ?? 0;
+    const tests = testsByCourse.get(id);
+    return {
+      id,
+      title: c.title,
+      status: c.status,
+      type: c.type,
+      lessons_count: lessonsCount,
+      enrolled_total: enrolledTotal,
+      enrolled_period: enrolledPeriod,
+      started_period: startedPeriod,
+      start_rate: enrolledPeriod > 0 ? Math.round((startedPeriod / enrolledPeriod) * 100) / 100 : null,
+      completed_total: completedTotal,
+      completion_rate: enrolledTotal > 0 ? Math.round((completedTotal / enrolledTotal) * 100) / 100 : null,
+      test_attempts_period: tests?.attempts ?? 0,
+      test_pass_rate: tests && tests.attempts > 0 ? Math.round((tests.passed / tests.attempts) * 100) / 100 : null,
+      avg_test_score: tests?.avg ?? null,
+      materials_downloads_period: matsByCourse.get(id) ?? 0,
+      active_learners_7d: activeByCourse.get(id) ?? 0,
+    };
+  });
+
+  // Сортировка по умолчанию: записи за период, потом всего (ТЗ-180 Задача 1).
+  courses.sort((a, b) => b.enrolled_period - a.enrolled_period || b.enrolled_total - a.enrolled_total);
+
+  res.json({ period_days: days, generated_at: new Date().toISOString(), courses });
+}));
+
 // PUT /lessons/:lessonId/test — создать/обновить тест (критерии ТЗ-100 4-5)
 router.put('/lessons/:lessonId/test', h(async (req, res) => {
   const lessonId = req.params.lessonId;

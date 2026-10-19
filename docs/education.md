@@ -733,3 +733,39 @@ insert не влияет на ответы API). Смоук: `scripts/smoke-lms-
 (`adminAlerts.ts`, `parseEventTypes` NULL→[], нетипизированные типы отсекаются),
 поэтому новые события не попадают в TG ни у кого без явной подписки. Правок
 `adminAlerts` не потребовалось; `ALERT_EVENT_TYPES` не расширяли.
+
+## ТЗ-180 — сводная статистика обучения (2026-10-19)
+
+Третья под-вкладка «Статистика» в табе «Образование» админки: дешборд
+«записался → начал → прошёл» по каждому курсу (published/archived, не удалённые).
+
+**Эндпоинт:** `GET /api/admin/education/stats/overview?days=7|30|90`
+(дефолт 30; не из списка — фолбек на 30, не 400). Роут: `adminEducation.ts`
+(`/stats/overview`). Ответ: `{ period_days, generated_at, courses: [...] }`.
+
+**Формулы** (деление на ноль → `null`, фронт рендерит «—», а не 0%):
+- `start_rate = started_period / enrolled_period` — старты за период из событий
+  `education.course_started` (distinct user_id), записи за период — по
+  `course_enrollments.created_at`.
+- `completion_rate = completed_total / enrolled_total` — завершивших считаем из
+  `lesson_progress` (distinct уроков >= уроков курса), записи — за всю историю.
+- `test_pass_rate = passed / attempts`, `avg_test_score` — из событий
+  `education.test_attempt` (score округляется до целого). Поля событий читаем
+  через `event_data->>'...'` — работает и в PG, и в sql.js (SQLite ≥3.38).
+- `active_learners_7d` — distinct user_id по трём типам событий за 7 дней
+  (не зависит от выбранного периода).
+- Сортировка по умолчанию: `enrolled_period` DESC, тай-брейк `enrolled_total` DESC.
+
+**Фронт:** `StatsPanel.tsx` — чипы периода, сводка-чипы (суммы по всем курсам),
+сортируемая таблица (клик по заголовку), клик по строке → редактор курса.
+Янтарная подсветка (`C.warning`) при `start_rate < 0.3` или
+`completion_rate < 0.1` при `enrolled_period >= 10` (константы
+`WARN_*` вверху файла). Панель держится смонтированной в `EducationTab.tsx`
+(`display:none`) — ленивая загрузка один раз, переключения вкладок сеть не дёргают.
+
+**Оговорка:** старты/тесты/скачивания — только с даты выката ТЗ-179 (события
+не ретроактивны); записи и завершения — за всю историю. Плашка об этом в UI.
+
+**Тесты:** фронт — vitest `statspanel.tz180.test.tsx` (7 проверок); бэкенд —
+live-API `src/tests/educationStatsOverview.test.ts` (паттерн ТЗ-174, прогон
+на проде после деплоя).
