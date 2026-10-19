@@ -354,8 +354,10 @@ router.get('/cascades', async (req, res) => {
          WHERE ci.cluster_id = c.id
        ) sc ON true
        WHERE c.last_seen_at > NOW() - INTERVAL '${interval}'
-       ORDER BY c.size DESC, c.last_seen_at DESC NULLS LAST
-       LIMIT 200`,
+       -- ТЗ-184 v4: дефолт «от свежего к прошлому». LIMIT 200→500 (Правка 1):
+       -- клиентская сортировка «Разм.» не теряет крупные затухшие каскады длинных окон.
+       ORDER BY c.last_seen_at DESC NULLS LAST, c.size DESC
+       LIMIT 500`,
       []
     );
 
