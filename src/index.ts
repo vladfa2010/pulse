@@ -37,6 +37,8 @@ import promoRoutes from './routes/promo';
 import featuresRoutes from './routes/features';
 import radioRoutes from './routes/radio';
 import userRoutes from './routes/user';
+import mcpTokensRoutes from './routes/mcpTokens'; // ТЗ-183: MCP-токены личного кабинета
+import adminMcpRoutes from './routes/adminMcp'; // ТЗ-185: админ-таба «МСП» (реестр токенов, отзыв)
 import globalSummaryRoutes from './routes/globalSummary';
 import { startGlobalSummaryCron } from './services/globalSummary';
 import translateRoutes from './routes/translate';
@@ -67,7 +69,9 @@ import { startVirusScanSweeper } from './services/education/virusScan'; // ТЗ-
 import { initEducationSeoBootHeal } from './services/education/seoRebuild'; // ТЗ-164: heal пропавших SEO-файлов после ручной заливки dist
 import { mediaGuard } from './services/storage/media';       // ТЗ-100 v15: отдача файлов /media
 import { apiLimiter, authLimiter, webhookLimiter, forgotPasswordLimiter, passwordResetFlowLimiter, promoValidateLimiter, adminLimiter } from './middleware/rateLimit';
-import { startCron, startHeatmapFreezeCron, startClusteringCron, startTopicsNamingCron, startEducationMatchCron, startAnalyzeNewsCron, startKnowledgeGraphCron } from './services/cron';   // startCron (RSS) отключен (TZ_REMOVE_DUPLICATE_RSS_CRON); heatmap freeze — TZ-49; clustering — ТЗ-92 (флаг CLUSTERING_ENABLED); topics naming — ТЗ-115 (флаг TOPICS_ENABLED); education match catch-up — ТЗ-103 (флаг EDUCATION_MATCH_ENABLED); analyze news — ТЗ-150 задача 7 (без флага); knowledge graph — ТЗ-107 v3 (флаг EDUCATION_GRAPH_ENABLED)
+import { startCron, startHeatmapFreezeCron, startClusteringCron, startTopicsNamingCron, startEducationMatchCron, startAnalyzeNewsCron, startKnowledgeGraphCron, startMcpCron } from './services/cron';   // startCron (RSS) отключен (TZ_REMOVE_DUPLICATE_RSS_CRON); heatmap freeze — TZ-49; clustering — ТЗ-92 (флаг CLUSTERING_ENABLED); topics naming — ТЗ-115 (флаг TOPICS_ENABLED); education match catch-up — ТЗ-103 (флаг EDUCATION_MATCH_ENABLED); analyze news — ТЗ-150 задача 7 (без флага); knowledge graph — ТЗ-107 v3 (флаг EDUCATION_GRAPH_ENABLED); MCP-обслуживание — ТЗ-183 Задача 5
+import { mountMcp } from './mcp/index'; // ТЗ-183 Задача 1: транспорт /mcp (streamable HTTP, токены)
+import { startMcpCounterFlush } from './mcp/counters'; // ТЗ-185 Задача 1: requests_count, flush раз в минуту
 import { sendWeeklyReportForUser } from './services/reports'; // ← Еженедельные репорты (manual + API)
 import { startDigestCron, sendAllDigests, setDigestEnabled } from './services/digest'; // ← дайджест (каждый час) — через notification matrix
 import { startRadioCacheMaintenance } from './services/radioMp3CacheMaintenance'; // ТЗ-65: snapshot истории 60с + алерты 5м
@@ -936,6 +940,69 @@ app.post('/migrate-lms', async (req, res) => {
     // Вырезаем SQL-комментарии ДО split(';'): иначе точка с запятой внутри
     // комментария («…идемпотентна; …») режет следующий за ним CREATE TABLE
     // пополам → syntax error. Строковых литералов с '--' в миграции нет.
+    const cleaned = sql
+      .split('\n')
+      .map((l: string) => {
+        const i = l.indexOf('--');
+        return i >= 0 ? l.slice(0, i) : l;
+      })
+      .join('\n');
+    const statements = cleaned.split(';').filter((s: string) => s.trim());
+    const results: string[] = [];
+
+    for (const stmt of statements) {
+      try {
+        await query(stmt + ';');
+        results.push(`OK: ${stmt.trim().substring(0, 60)}`);
+      } catch (e: any) {
+        // Игнорируем «already exists» — объект создан ранее (идемпотентность)
+        if (!e.message?.includes('already exists')) {
+          results.push(`WARN: ${e.message?.substring(0, 100)}`);
+        }
+      }
+    }
+
+    res.json({ success: true, applied: results.length, details: results });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GET /debug/mcp — живость MCP-контура (ТЗ-183 Задача 5, ИБ-9):
+// ТОЛЬКО { status: 'ok' } — без версии и состава инструментов (не раскрываем
+// наружу). Полная диагностика — в логи сервера.
+// ═══════════════════════════════════════════════════════════════════════════
+app.get('/debug/mcp', (_req, res) => {
+  res.json({ status: 'ok' });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// POST /migrate-mcp?secret=KEY — MCP: токены + аудит (ТЗ-183 Задача 2 / ТЗ-185 Задача 1)
+// Применяет src/migrations/mcp_v1.sql (PostgreSQL-диалект). Идемпотентна.
+// В SQLite-режиме таблицы создаёт initSQLiteSchema() → пропускаем.
+// ═══════════════════════════════════════════════════════════════════════════
+app.post('/migrate-mcp', async (req, res) => {
+  const secret = req.headers['x-trigger-secret'] || req.query.secret;
+  if (secret !== CRON_SECRET_KEY) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  if (USE_SQLITE) {
+    return res.json({ skipped: true, message: 'SQLite mode: MCP schema is created by initSQLiteSchema()' });
+  }
+
+  try {
+    const fs = await import('fs');
+    const path = await import('path');
+    // __dirname = /app/dist; mcp_v1.sql копируется в dist/migrations через Dockerfile
+    const sqlPath = path.join(__dirname, 'migrations', 'mcp_v1.sql');
+    if (!fs.existsSync(sqlPath)) {
+      return res.status(500).json({ error: `mcp_v1.sql not found at ${sqlPath}` });
+    }
+
+    const sql = fs.readFileSync(sqlPath, 'utf-8');
+    // Вырезаем SQL-комментарии ДО split(';') — та же оговорка, что в /migrate-lms
     const cleaned = sql
       .split('\n')
       .map((l: string) => {
@@ -2880,6 +2947,8 @@ app.use('/api/promo/validate', promoValidateLimiter, promoRoutes); // GET /api/p
 app.use('/api/features', featuresRoutes); // GET /api/features
 app.use('/api/radio', radioRoutes);   // POST /api/radio/tts, GET /api/radio/config (ТЗ-42)
 app.use('/api/user', userRoutes);       // GET/POST/DELETE /api/user/tags
+app.use('/api/user/mcp-tokens', mcpTokensRoutes); // ТЗ-183 Задача 2: MCP-токены ЛК (authMiddleware внутри)
+mountMcp(app); // ТЗ-183 Задача 1: POST/GET/DELETE /mcp — MCP Streamable HTTP (свои лимитеры)
 app.use('/api/user', globalSummaryRoutes); // GET /api/user/summary-global
 app.use('/api/user', notificationsRouter); // Notification matrix (GET/PUT /notification-matrix, quiet-hours)
 app.use('/api/translate', translateRoutes);
@@ -2888,6 +2957,7 @@ app.use('/api/admin', adminLimiter, adminRoutes);     // GET /api/admin/users, /
 app.use('/api/admin', adminLimiter, adminMetricsRoutes); // GET /api/admin/metrics?section=...
 app.use('/api/admin/radio/mp3-cache', adminLimiter, adminRadioCacheRoutes); // ТЗ-65: dashboard MP3-кеша (stats/history/top-keys/clear/prewarm)
 app.use('/api/admin/education', adminLimiter, adminEducationRoutes); // ТЗ-101: LMS «Образование» (все методы за adminMiddleware)
+app.use('/api/admin/mcp', adminLimiter, adminMcpRoutes); // ТЗ-185: таба «МСП» — реестр токенов + отзыв (adminMiddleware внутри)
 // ТЗ-118: dual mount. Legacy-префикс '/admin' удалить в Задаче 3.
 app.use(['/admin', '/api/admin'], adminLegacyRoutes); // legacy admin UI endpoints (moved from index.ts)
 
@@ -4621,6 +4691,8 @@ END $$`,
       startEducationMatchCron({ isShuttingDown: () => shuttingDown }); // ТЗ-103: catch-up мэтчинга курсов ежечасно, флаг EDUCATION_MATCH_ENABLED
       startAnalyzeNewsCron({ isShuttingDown: () => shuttingDown }); // ТЗ-150 задача 7: ANALYZE news ежедневно 04:30 МСК
       startKnowledgeGraphCron({ isShuttingDown: () => shuttingDown }); // ТЗ-107 v3: граф знаний ежедневно 04:50 МСК, флаг EDUCATION_GRAPH_ENABLED
+      startMcpCron({ isShuttingDown: () => shuttingDown }); // ТЗ-183 Задача 5: MCP-обслуживание ежедневно 06:20 МСК (аудит 90д, чистка токенов, ротация)
+      startMcpCounterFlush(); // ТЗ-185 Задача 1: flush requests_count раз в минуту
       startRadioCacheMaintenance({ isShuttingDown: () => shuttingDown }); // ТЗ-65: snapshot истории 60с + алерты 5м
     }
 

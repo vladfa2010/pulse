@@ -826,7 +826,8 @@ async function getChurn(_period: number) {
   };
 }
 
-const handlers: Record<string, (period: number) => Promise<any>> = {
+// Экспорт для MCP-инструмента admin_metrics (ТЗ-183): тот же набор секций, без HTTP-слоя
+export const handlers: Record<string, (period: number) => Promise<any>> = {
   overview: getOverview,
   daily: getDaily,
   funnel: getFunnel,
