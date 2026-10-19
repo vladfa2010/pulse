@@ -148,6 +148,20 @@ Push-канал реализован через Firebase Cloud Messaging (FCM) �
 | GET | `/api/admin/stats` | Статистика |
 | GET | `/api/admin/users` | Список пользователей |
 
+### MCP (Model Context Protocol) — ТЗ-183/ТЗ-185
+| Method | Endpoint | Описание |
+|--------|----------|----------|
+| ALL | `/mcp` | MCP Streamable HTTP (токены из ЛК, только заголовок Bearer) |
+| GET | `/api/user/mcp-tokens` | MCP-токены юзера (ЛК) |
+| POST | `/api/user/mcp-tokens` | Создание токена (≤5 активных, 180 дней) |
+| DELETE | `/api/user/mcp-tokens/:id` | Отзыв своего токена |
+| GET | `/api/admin/mcp/tokens` | Реестр токенов платформы (админ; без token_hash) |
+| POST | `/api/admin/mcp/tokens/:id/revoke` | Принудительный отзыв (админ) |
+| GET | `/debug/mcp` | Живость контура — только `{status:'ok'}` |
+
+Read-only релиз: 7 базовых + 2 админских инструмента, писалок нет.
+Подробности: [docs/mcp.md](docs/mcp.md).
+
 ---
 
 ## Деплой

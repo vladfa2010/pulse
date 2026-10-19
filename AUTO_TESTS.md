@@ -261,3 +261,7 @@ curl https://pulse-api-bsov.onrender.com/api/user/tags \
 ---
 
 *Обновлять при изменении логики auth / тегов / попапов.*
+## Деплойный чек-лист (дополнения)
+
+- `npm run audit` (`npm audit --audit-level=high`) — зелёно перед деплоем (ИБ-11, ТЗ-183; CI-сборки нет, только telegram-notify).
+- После первого деплоя MCP: применить миграцию `POST /migrate-mcp?secret=<CRON_SECRET>`, затем live-тесты `src/tests/mcpReadonly.test.ts` и `src/tests/adminMcpTokens.test.ts` (см. `docs/mcp.md`).
