@@ -69,7 +69,7 @@ import { startVirusScanSweeper } from './services/education/virusScan'; // ТЗ-
 import { initEducationSeoBootHeal } from './services/education/seoRebuild'; // ТЗ-164: heal пропавших SEO-файлов после ручной заливки dist
 import { mediaGuard } from './services/storage/media';       // ТЗ-100 v15: отдача файлов /media
 import { apiLimiter, authLimiter, webhookLimiter, forgotPasswordLimiter, passwordResetFlowLimiter, promoValidateLimiter, adminLimiter } from './middleware/rateLimit';
-import { startCron, startHeatmapFreezeCron, startClusteringCron, startTopicsNamingCron, startEducationMatchCron, startAnalyzeNewsCron, startKnowledgeGraphCron, startMcpCron, startViralityCron } from './services/cron';   // startCron (RSS) отключен (TZ_REMOVE_DUPLICATE_RSS_CRON); heatmap freeze — TZ-49; clustering — ТЗ-92 (флаг CLUSTERING_ENABLED); topics naming — ТЗ-115 (флаг TOPICS_ENABLED); education match catch-up — ТЗ-103 (флаг EDUCATION_MATCH_ENABLED); analyze news — ТЗ-150 задача 7 (без флага); knowledge graph — ТЗ-107 v3 (флаг EDUCATION_GRAPH_ENABLED); MCP-обслуживание — ТЗ-183 Задача 5; virality analytics — ТЗ-185
+import { startCron, startHeatmapFreezeCron, startClusteringCron, startTopicsNamingCron, startEducationMatchCron, startAnalyzeNewsCron, startKnowledgeGraphCron, startMcpCron, startViralityCron, startSourceStatsCron } from './services/cron';   // startCron (RSS) отключен (TZ_REMOVE_DUPLICATE_RSS_CRON); heatmap freeze — TZ-49; clustering — ТЗ-92 (флаг CLUSTERING_ENABLED); topics naming — ТЗ-115 (флаг TOPICS_ENABLED); education match catch-up — ТЗ-103 (флаг EDUCATION_MATCH_ENABLED); analyze news — ТЗ-150 задача 7 (без флага); knowledge graph — ТЗ-107 v3 (флаг EDUCATION_GRAPH_ENABLED); MCP-обслуживание — ТЗ-183 Задача 5; virality analytics — ТЗ-185; source stats daily — ТЗ-186
 import { mountMcp } from './mcp/index'; // ТЗ-183 Задача 1: транспорт /mcp (streamable HTTP, токены)
 import { startMcpCounterFlush } from './mcp/counters'; // ТЗ-185 Задача 1: requests_count, flush раз в минуту
 import { sendWeeklyReportForUser } from './services/reports'; // ← Еженедельные репорты (manual + API)
@@ -4693,6 +4693,7 @@ END $$`,
       startKnowledgeGraphCron({ isShuttingDown: () => shuttingDown }); // ТЗ-107 v3: граф знаний ежедневно 04:50 МСК, флаг EDUCATION_GRAPH_ENABLED
       startMcpCron({ isShuttingDown: () => shuttingDown }); // ТЗ-183 Задача 5: MCP-обслуживание ежедневно 06:20 МСК (аудит 90д, чистка токенов, ротация)
       startViralityCron({ isShuttingDown: () => shuttingDown }); // ТЗ-185: аналитика виральности ежедневно 05:30 МСК (после topics-нейминга)
+      startSourceStatsCron({ isShuttingDown: () => shuttingDown }); // ТЗ-186: срезы эффективности источников ежедневно 05:40 МСК (после виральности)
       startMcpCounterFlush(); // ТЗ-185 Задача 1: flush requests_count раз в минуту
       startRadioCacheMaintenance({ isShuttingDown: () => shuttingDown }); // ТЗ-65: snapshot истории 60с + алерты 5м
     }

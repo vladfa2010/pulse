@@ -283,6 +283,8 @@ const STORIES_CACHE_TTL_MS = 15 * 60 * 1000;    // 15 мин
 const TOPICS_CACHE_TTL_MS = 15 * 60 * 1000;     // 15 мин
 // ТЗ-185: отчёты виральности генерируются раз в сутки (05:30 МСК) — TTL 15 мин
 const VIRALITY_CACHE_TTL_MS = 15 * 60 * 1000;   // 15 мин
+// ТЗ-186: срезы source_stats_daily пишутся раз в сутки (05:40 МСК) — TTL 15 мин
+const SOURCE_STATS_CACHE_TTL_MS = 15 * 60 * 1000;   // 15 мин
 // ТЗ-115: темы живут только на VPS — на Render (флаг выключен) ручки отвечают
 // 404 topics_disabled БЕЗ обращения к таблицам (там их нет)
 const TOPICS_ENABLED = process.env.TOPICS_ENABLED === 'true';
@@ -295,6 +297,8 @@ const topicsCache = new Map<string, { at: number; payload: any }>();
 const topicCache = new Map<string, { at: number; payload: any }>();
 // ТЗ-185, задача 4 — кэш аналитики виральности (как storiesCache)
 const viralityCache = new Map<string, { at: number; payload: any }>();
+// ТЗ-186, задача 4 — кэш срезов эффективности источников (ключ = days)
+const sourceStatsCache = new Map<string, { at: number; payload: any }>();
 // ТЗ-93: данные графа и ресерч-статистика — кэш по окну, TTL 15 мин
 const cascadeGraphCache = new Map<string, { at: number; payload: any }>();
 const cascadeResearchCache = new Map<string, { at: number; payload: any }>();
@@ -939,6 +943,103 @@ router.get('/virality', async (req, res) => {
   } catch (err: any) {
     console.error('[marketPublic] virality error:', err.message);
     return res.status(500).json({ error: 'virality_unavailable' });
+  }
+});
+
+/**
+ * GET /api/market/source-stats?days=30 (ТЗ-186, задача 4)
+ * Динамика эффективности источников по ночным срезам source_stats_daily
+ * (окно 7 дней, конец окна — конец суток МСК; срезы пишет cron 05:40 МСК).
+ * Контракт: sources[] — все источники за период, points отсортированы по дате,
+ * latest — последний срез, week_ago — срез, ближайший к (latest − 7 дней)
+ * (не строго ровно 7: округление до ближайшего имеющегося среза снизу).
+ * Пустое состояние (срезов ещё нет) — sources: [], не ошибка.
+ * TTL 15 мин, ключ = days. Публичная, read-only, без флагов.
+ */
+router.get('/source-stats', async (req, res) => {
+  try {
+    const daysRaw = parseInt((req.query.days as string) ?? '', 10);
+    const days = Number.isFinite(daysRaw) && daysRaw > 0 ? Math.min(daysRaw, 365) : 30;
+    const cacheKey = String(days);
+
+    const cached = cacheGet(sourceStatsCache, cacheKey, SOURCE_STATS_CACHE_TTL_MS);
+    if (cached) {
+      res.setHeader('X-Cache', 'hit');
+      return res.json(cached);
+    }
+
+    const firstRes = await query(
+      `SELECT MIN(stat_date) AS first_date FROM source_stats_daily WHERE window_days = 7`,
+      []
+    );
+    const result = await query(
+      `SELECT stat_date, source, first_count, share, participations, median_lag_not_first_min
+       FROM source_stats_daily
+       WHERE window_days = 7
+         AND stat_date >= (NOW() AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Moscow')::date - $1::int
+       ORDER BY stat_date ASC`,
+      [days]
+    );
+
+    const snapshotsFrom =
+      firstRes.rows[0]?.first_date != null ? String(firstRes.rows[0].first_date).slice(0, 10) : null;
+
+    interface SourcePoint {
+      date: string;
+      first_count: number;
+      share: number;
+      participations: number;
+      median_lag_not_first_min: number | null;
+    }
+    const bySource = new Map<string, SourcePoint[]>();
+    for (const r of result.rows) {
+      const source = String(r.source);
+      const point: SourcePoint = {
+        date: String(r.stat_date).slice(0, 10),
+        first_count: Number(r.first_count),
+        share: Number(r.share),
+        participations: Number(r.participations),
+        median_lag_not_first_min: r.median_lag_not_first_min != null ? Number(r.median_lag_not_first_min) : null,
+      };
+      const arr = bySource.get(source) || [];
+      arr.push(point);
+      bySource.set(source, arr);
+    }
+
+    const sources = Array.from(bySource.entries()).map(([source, points]) => {
+      const latest = points[points.length - 1];
+      // week_ago: срез, ближайший к (latest − 7 дней); «снизу» = самый поздний
+      // имеющийся не раньше целевой даты, иначе — самый ранний имеющийся
+      let weekAgo: { date: string; share: number } | null = null;
+      if (points.length > 1) {
+        const target = new Date(`${latest.date}T00:00:00Z`).getTime() - 7 * 24 * 60 * 60 * 1000;
+        let floor: SourcePoint | null = null;
+        let ceil: SourcePoint | null = null;
+        for (const p of points) {
+          const t = new Date(`${p.date}T00:00:00Z`).getTime();
+          if (t <= target && (!floor || t > new Date(`${floor.date}T00:00:00Z`).getTime())) floor = p;
+          if (t >= target && (!ceil || t < new Date(`${ceil.date}T00:00:00Z`).getTime())) ceil = p;
+        }
+        const pick = floor ?? ceil;
+        if (pick && pick.date !== latest.date) {
+          weekAgo = { date: pick.date, share: pick.share };
+        }
+      }
+      return {
+        source,
+        points,
+        latest: { date: latest.date, share: latest.share, first_count: latest.first_count },
+        week_ago: weekAgo,
+      };
+    });
+
+    const payload = { days, snapshots_from: snapshotsFrom, sources };
+    cacheSet(sourceStatsCache, cacheKey, payload);
+    res.setHeader('X-Cache', 'miss');
+    return res.json(payload);
+  } catch (err: any) {
+    console.error('[marketPublic] source-stats error:', err.message);
+    return res.status(500).json({ error: 'source_stats_unavailable' });
   }
 });
 

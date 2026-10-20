@@ -36,6 +36,7 @@ import { freezeHeatmapRecentDays } from './heatmapDaily';
 import { embedAndClusterBatch } from './clustering';      // ТЗ-92, задача 4
 import { runStoryGrouping } from './storyGrouper';        // ТЗ-92, задача 5
 import { runViralityAnalytics } from './viralityAnalytics'; // ТЗ-185: аналитика виральности 05:30 МСК
+import { runSourceStatsDaily } from './sourceStatsDaily'; // ТЗ-186: срезы эффективности источников 05:40 МСК
 import { matchUnprocessedNews } from './education/match'; // ТЗ-103, задача 3: cron-страховка мэтчинга курсов
 import { rebuildKnowledgeGraph } from './education/knowledgeGraph'; // ТЗ-107 v3: ночной пересчёт графа знаний
 import { sendMcpRotationReminderEmail } from './mcpEmails'; // ТЗ-183 Задача 5: напоминания о ротации токенов
@@ -735,6 +736,30 @@ export function startViralityCron(opts?: { isShuttingDown?: () => boolean }) {
     }
   }, { timezone: 'Europe/Moscow' });
   console.log('[Cron] Virality analytics scheduled daily at 05:30 Europe/Moscow');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ТЗ-186, задача 3 — ночные срезы эффективности источников (source_stats_daily)
+// ═══════════════════════════════════════════════════════════════════════════
+// Ежедневно 05:40 МСК — после виральности 05:30 (ТЗ-185), до MCP 06:20.
+// Без фиче-флага: таблица clusters есть на любом окружении, LLM не
+// используется. Джоба read-only кроме source_stats_daily, пересчитывает
+// последние 3 среза (каскады дорисовываются часами — см. sourceStatsDaily).
+
+export function startSourceStatsCron(opts?: { isShuttingDown?: () => boolean }) {
+  cron.schedule('40 5 * * *', async () => {
+    if (opts?.isShuttingDown?.()) return;
+    const acquired = await acquireCronLock('source-stats-daily');
+    if (!acquired) return;
+    try {
+      await runSourceStatsDaily();
+    } catch (err: any) {
+      console.error('[Cron] Source stats daily failed:', err.message);
+    } finally {
+      await releaseCronLock('source-stats-daily');
+    }
+  }, { timezone: 'Europe/Moscow' });
+  console.log('[Cron] Source stats daily scheduled daily at 05:40 Europe/Moscow');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
