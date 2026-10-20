@@ -1,5 +1,9 @@
 FROM node:20-alpine
 WORKDIR /app
+# ТЗ-184: fontconfig + DejaVu — без них sharp/libvips в alpine-контейнере не
+# находит ни одного шрифта и кириллица рендерится квадратиками (подтверждено
+# тестовым рендером на проде 2026-10-20). WOFF2-вариант не используем.
+RUN apk add --no-cache fontconfig ttf-dejavu
 COPY package*.json ./
 RUN npm install
 # Clear cache to ensure fresh source

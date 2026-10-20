@@ -50,11 +50,19 @@ export async function isQuietHours(userId: string): Promise<boolean> {
 // ═══════════════════════════════════════════════════════════════════════════
 // Send email (universal)
 // ═══════════════════════════════════════════════════════════════════════════
+export interface EmailAttachment {
+  filename: string;
+  content: Buffer;
+  /** Content-ID для inline-вставки через cid: (ТЗ-184, картинка weekly_report) */
+  contentId?: string;
+}
+
 export async function sendEmail(
-  to: string, subject: string, html: string
+  to: string, subject: string, html: string,
+  attachments?: EmailAttachment[]
 ): Promise<boolean> {
   if (EMAIL_PROVIDER === 'resend' && RESEND_API_KEY) {
-    return sendViaResend(to, subject, html);
+    return sendViaResend(to, subject, html, attachments);
   }
   console.log('[Email] No provider configured. Skipped.');
   return false;
@@ -64,7 +72,8 @@ export async function sendEmail(
 // Resend API
 // ═══════════════════════════════════════════════════════════════════════════
 async function sendViaResend(
-  to: string, subject: string, html: string
+  to: string, subject: string, html: string,
+  attachments?: EmailAttachment[]
 ): Promise<boolean> {
   try {
     const resp = await axios.post(
@@ -74,6 +83,15 @@ async function sendViaResend(
         to,
         subject,
         html,
+        // Resend API официально поддерживает inline-вложения:
+        // attachments[].content_id + <img src="cid:..."> в HTML (ТЗ-184).
+        ...(attachments?.length ? {
+          attachments: attachments.map(a => ({
+            filename: a.filename,
+            content: a.content.toString('base64'),
+            ...(a.contentId ? { content_id: a.contentId } : {}),
+          })),
+        } : {}),
       },
       {
         headers: { Authorization: `Bearer ${RESEND_API_KEY}` },

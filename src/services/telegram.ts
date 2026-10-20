@@ -1,4 +1,5 @@
 import axios from 'axios';
+import FormData from 'form-data';
 import { query } from '../config/db';
 import { setDigestEnabled } from './notifications/subscriptions';
 import { isQuietHoursMsk } from './notifications/quietHours';
@@ -66,6 +67,41 @@ export async function sendTelegramMessage(
     }
 
     console.error('[Telegram] Send failed:', err.response?.status, errorCode, description, (err as Error).message, '— data:', JSON.stringify(err.response?.data ?? {}));
+    return false;
+  }
+}
+
+// Send photo via Telegram Bot API (sendPhoto, multipart/form-data).
+// ТЗ-184: инфографика weekly_report первым сообщением. Caption ≤1024 символов
+// обрезаем на всякий случай. Возвращает false при любой ошибке — вызывающий
+// код (dispatcher) продолжает слать текстовый отчёт (деградация, не сбой).
+export async function sendTelegramPhoto(
+  chatId: string,
+  photo: Buffer,
+  caption?: string
+): Promise<boolean> {
+  if (!isConfigured()) {
+    console.warn('[Telegram] Bot token not configured');
+    return false;
+  }
+
+  try {
+    const form = new FormData();
+    form.append('chat_id', chatId);
+    form.append('photo', photo, { filename: 'weekly-chart.png', contentType: 'image/png' });
+    if (caption) {
+      form.append('caption', caption.slice(0, 1024));
+      form.append('parse_mode', 'HTML');
+    }
+    await axios.post(`${TELEGRAM_API}/sendPhoto`, form, {
+      headers: form.getHeaders(),
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity,
+    });
+    return true;
+  } catch (err: any) {
+    console.warn('[Telegram] Send photo failed:',
+      err.response?.status, err.response?.data?.error_code, err.response?.data?.description || (err as Error).message);
     return false;
   }
 }

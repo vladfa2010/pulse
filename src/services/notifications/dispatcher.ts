@@ -7,15 +7,17 @@
  * Воркеры (cron) больше не содержат ни тарифной логики, ни знания о каналах.
  */
 
-import { sendTelegramMessage } from '../telegram';
-import { sendEmail } from '../email';
+import { sendTelegramMessage, sendTelegramPhoto } from '../telegram';
+import { sendEmail, EmailAttachment } from '../email';
 import { sendPushNotification } from '../push';
 import { sendWebPushToUser } from '../webPush';
 import { buildDigestContent, DigestContent } from './digestContent';
 import { buildWeeklyReportContent, WeeklyReportContent } from './weeklyReportContent';
+import { renderWeeklyChart } from './weeklyChart';
 import {
   formatDigestTelegram, formatDigestEmail, formatDigestPush,
   formatWeeklyReportTelegram, formatWeeklyReportEmail, formatWeeklyReportPush,
+  formatWeeklyReportChartCaption,
 } from './formatters';
 import { getEntitlement } from './entitlement';
 import { isQuietHoursForProduct } from './quietHours';
@@ -42,7 +44,8 @@ async function deliver(
   product: Product,
   channel: Channel,
   content: NotificationContent,
-  frequency: string
+  frequency: string,
+  chart?: Buffer | null
 ): Promise<boolean> {
   if (product === 'digest') {
     const c = content as DigestContent;
@@ -89,6 +92,17 @@ async function deliver(
       case 'telegram': {
         const target = await getDeliveryTarget(userId, 'telegram', product);
         if (!target) return false;
+        // ТЗ-184: картинка первым сообщением, текст следует. Падение фото
+        // не отменяет текст (деградация → текстовый отчёт как раньше).
+        if (chart) {
+          const caption = formatWeeklyReportChartCaption(c);
+          const photoOk = await sendTelegramPhoto(target.target, chart, caption ?? undefined);
+          if (!photoOk) {
+            console.warn(`[Dispatcher] user=${userId} product=weekly_report photo failed, sending text only`);
+          } else {
+            await sleep(500);
+          }
+        }
         const text = formatWeeklyReportTelegram(c);
         const chunks = splitTelegramMessage(text, 4000);
         for (let i = 0; i < chunks.length; i++) {
@@ -101,8 +115,11 @@ async function deliver(
       case 'email': {
         const target = await getDeliveryTarget(userId, 'email', product);
         if (!target) return false;
-        const { subject, html } = formatWeeklyReportEmail(c);
-        return sendEmail(target.target, subject, html);
+        const { subject, html } = formatWeeklyReportEmail(c, !!chart);
+        const attachments: EmailAttachment[] | undefined = chart
+          ? [{ filename: 'weekly-chart.png', content: chart, contentId: 'weekly-chart' }]
+          : undefined;
+        return sendEmail(target.target, subject, html, attachments);
       }
       case 'push': {
         const { title, body, data } = formatWeeklyReportPush(c);
@@ -154,6 +171,12 @@ export async function dispatchToUser(userId: string, product: Product): Promise<
       return 'empty';
     }
 
+    // ТЗ-184: PNG инфографики — один раз на юзера, до фан-аута по каналам.
+    // Рендер упал → null → каналы шлют текст (текущее поведение сохраняется).
+    const chart = product === 'weekly_report'
+      ? await renderWeeklyChart(content as WeeklyReportContent)
+      : null;
+
     // 5. Фан-аут по каналам; last_sent_at обновляется per-channel после успеха.
     //    Доступ к КАНАЛУ — тоже из тарифа (features плана: telegram/push).
     let anySent = false;
@@ -164,7 +187,7 @@ export async function dispatchToUser(userId: string, product: Product): Promise<
         console.log(`[Dispatcher] user=${userId} product=${product} channel=${sub.channel} blocked: ${channelEnt.reason}`);
         continue;
       }
-      const ok = await deliver(userId, product, sub.channel, content, sub.frequency ?? '1h');
+      const ok = await deliver(userId, product, sub.channel, content, sub.frequency ?? '1h', chart);
       if (ok) {
         await markSent(userId, product, sub.channel);
         anySent = true;
@@ -200,7 +223,10 @@ export async function dispatchToUserNow(
     const content = await buildContent(userId, product, null, null, 'manual');
     if (!content || isEmptyContent(content)) return 'empty';
 
-    const ok = await deliver(userId, product, channel, content, '1h');
+    const chart = product === 'weekly_report'
+      ? await renderWeeklyChart(content as WeeklyReportContent)
+      : null;
+    const ok = await deliver(userId, product, channel, content, '1h', chart);
     if (!ok) return 'error';
     await markSent(userId, product, channel);
     return 'sent';

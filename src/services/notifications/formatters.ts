@@ -5,6 +5,7 @@
 
 import { DigestArticle, DigestContent } from './digestContent';
 import { WeeklyReportContent } from './weeklyReportContent';
+import { statsCurrentTotal } from './weeklyStats';
 import { FREQUENCY_LABELS } from './types';
 
 const MAX_MESSAGE_LENGTH = 3900;
@@ -194,18 +195,34 @@ export const PUSH_BODY_MAX = 140;
 
 // ── Weekly Report (Telegram HTML) ───────────────────────────────────────────
 
+/**
+ * ТЗ-184: счётчики («Всего новостей», тональность, «(N)» у тега) берутся из
+ * агрегатов stats (точные числа без лимита 200). При stats=null — fallback
+ * на старые значения из списка статей (деградация → текст как раньше).
+ */
 export function formatWeeklyReportTelegram(content: WeeklyReportContent): string {
+  const stats = content.stats;
+  const total = stats ? statsCurrentTotal(stats) : content.totalArticles;
+  const breakdown = stats
+    ? { positive: stats.sentiment.positive, negative: stats.sentiment.negative, neutral: stats.sentiment.neutral }
+    : content.sentimentBreakdown;
+  const tagCount = new Map<string, number>();
+  if (stats) {
+    for (const t of stats.perTag) tagCount.set(t.tagId, t.current);
+  }
+
   let text = `📊 <b>PULSE — Еженедельный отчёт</b>\n`;
   text += `📅 ${content.period}\n\n`;
 
   text += `📈 Статистика:\n`;
-  text += `   Всего новостей: ${content.totalArticles}\n`;
-  text += `   🟢 Позитивных: ${content.sentimentBreakdown.positive}\n`;
-  text += `   🔴 Негативных: ${content.sentimentBreakdown.negative}\n`;
-  text += `   ⚪ Нейтральных: ${content.sentimentBreakdown.neutral}\n\n`;
+  text += `   Всего новостей: ${total}\n`;
+  text += `   🟢 Позитивных: ${breakdown.positive}\n`;
+  text += `   🔴 Негативных: ${breakdown.negative}\n`;
+  text += `   ⚪ Нейтральных: ${breakdown.neutral}\n\n`;
 
   for (const tag of content.tagSummaries) {
-    text += `━━━ <b>${escapeHtml(tag.tagName.toUpperCase())}</b> (${tag.articles.length}) ━━━\n\n`;
+    const n = tagCount.get(tag.tagId) ?? tag.articles.length;
+    text += `━━━ <b>${escapeHtml(tag.tagName.toUpperCase())}</b> (${n}) ━━━\n\n`;
 
     for (const article of tag.articles.slice(0, 5)) {
       const emoji = article.sentiment === 'positive' ? '🟢' : article.sentiment === 'negative' ? '🔴' : '⚪';
@@ -223,27 +240,70 @@ export function formatWeeklyReportTelegram(content: WeeklyReportContent): string
   return text;
 }
 
+/**
+ * Caption для sendPhoto (ТЗ-184): заголовок + KPI одной строкой.
+ * Telegram лимит caption — 1024 символа. null — когда нет stats (фото не шлём).
+ */
+export function formatWeeklyReportChartCaption(content: WeeklyReportContent): string | null {
+  const stats = content.stats;
+  if (!stats) return null;
+  const total = statsCurrentTotal(stats);
+  const fmtDelta = (pct: number | null) =>
+    pct === null ? '—' : `${pct > 0 ? '▲' : pct < 0 ? '▼' : ''}${Math.round(pct)}%`;
+  const topTag = stats.perTag.find(t => t.tagId === stats.kpis.topTagId);
+  const topTagName = topTag ? topTag.tagName : null;
+
+  let caption = `📊 <b>PULSE — Еженедельный отчёт</b>\n`;
+  caption += `📅 ${content.period}\n`;
+  caption += `Всего новостей: ${total}`;
+  caption += ` (${fmtDelta(stats.kpis.totalDeltaWeekPct)} к пр. неделе`;
+  caption += ` · ${fmtDelta(stats.kpis.totalDeltaMonthPct)} к мес. среднему)`;
+  if (topTagName) {
+    // имя тега задаёт юзер — escape для Telegram HTML parse_mode
+    caption += `\nСамый обсуждаемый: ${escapeHtml(topTagName)}`;
+  }
+  return caption.length > 1024 ? caption.slice(0, 1023) + '…' : caption;
+}
+
 function formatShortDate(d: Date): string {
   return new Date(d).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 }
 
 // ── Weekly Report (Email HTML) ───────────────────────────────────────────────
 
-export function formatWeeklyReportEmail(content: WeeklyReportContent): { subject: string; html: string } {
+export function formatWeeklyReportEmail(
+  content: WeeklyReportContent,
+  withChart?: boolean
+): { subject: string; html: string } {
   const subject = '📊 PULSE — Еженедельный отчёт';
 
+  const stats = content.stats;
+  const total = stats ? statsCurrentTotal(stats) : content.totalArticles;
+  const breakdown = stats
+    ? { positive: stats.sentiment.positive, negative: stats.sentiment.negative, neutral: stats.sentiment.neutral }
+    : content.sentimentBreakdown;
+  const tagCount = new Map<string, number>();
+  if (stats) {
+    for (const t of stats.perTag) tagCount.set(t.tagId, t.current);
+  }
+
   let html = `<div style="margin-bottom:24px;">`;
+  // ТЗ-184: инфографика в начале письма — inline-вложение cid:weekly-chart
+  if (withChart) {
+    html += `<img src="cid:weekly-chart" alt="Инфографика недели" style="width:100%;max-width:640px;border-radius:12px;display:block;margin-bottom:20px;" />`;
+  }
   html += `<h3 style="color:#1a1a2e; margin:0 0 16px;">📊 Сводка за неделю</h3>`;
   html += `<div style="display:flex; gap:16px; margin-bottom:24px; flex-wrap:wrap;">`;
-  html += statCardHtml(content.totalArticles.toString(), 'Всего новостей', '#10b981');
-  html += statCardHtml(content.sentimentBreakdown.positive.toString(), 'Позитив', '#10b981');
-  html += statCardHtml(content.sentimentBreakdown.negative.toString(), 'Негатив', '#ef4444');
+  html += statCardHtml(total.toString(), 'Всего новостей', '#10b981');
+  html += statCardHtml(breakdown.positive.toString(), 'Позитив', '#10b981');
+  html += statCardHtml(breakdown.negative.toString(), 'Негатив', '#ef4444');
   html += `</div></div>`;
 
   for (const tag of content.tagSummaries) {
+    const n = tagCount.get(tag.tagId) ?? tag.articles.length;
     html += `<div style="margin-bottom:32px;">`;
     html += `<h4 style="color:#1a1a2e; margin:0 0 12px; padding-bottom:8px; border-bottom:2px solid #e5e7eb;">`;
-    html += `${escapeHtml(tag.tagName)} <span style="color:#8e8e93; font-weight:400;">(${tag.articles.length})</span></h4>`;
+    html += `${escapeHtml(tag.tagName)} <span style="color:#8e8e93; font-weight:400;">(${n})</span></h4>`;
 
     for (const article of tag.articles.slice(0, 5)) {
       const tagClass = article.sentiment === 'positive' ? 'tag-positive'

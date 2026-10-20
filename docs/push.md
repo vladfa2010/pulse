@@ -24,6 +24,15 @@
 | `digest` (n=1) | заголовок статьи | `source · tag` → fallback `'1 новая статья'` | `type`, `count` |
 | `digest` (n=0) | `Нет непрочитанных новостей` | `Новые статьи по вашим тегам появятся позже` | `type`, `count: '0'` |
 | `weekly_report` | `📊 Еженедельный отчёт: {period}` | `N новостей за неделю · {topTag}` | `type`, `count`, `period` |
+
+**weekly_report в Telegram/Email (ТЗ-184):** помимо push, в воскресенье юзер
+получает PNG-инфографику (рендер `notifications/weeklyChart.ts`, sharp → SVG,
+1200×~1000 @2x) и текстовый отчёт со счётчиками из агрегатов без лимита
+(`notifications/weeklyStats.ts`). Telegram: `sendPhoto` (caption ≤1024) +
+текст вторым сообщением (`sendTelegramPhoto` в `telegram.ts`). Email: то же
+PNG inline-вложением `cid:weekly-chart` (`attachments[].content_id` в Resend).
+Детали, SQL-агрегаты, палитра и поведение при деградации —
+в `docs/weekly-report-chart.md`.
 | `sentiment_vote` / engagement | **текст в `data.title`/`data.body`** (backend не меняется) | — | `type`, `title`, `body` |
 | `billing` | `Подписка истекает` / `Оплата прошла` | детали тарифа | `type`, `subtype` |
 

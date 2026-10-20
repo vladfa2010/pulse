@@ -7,6 +7,7 @@
 
 import { query } from '../../config/db';
 import { HARD_TAG_CAP } from './types';
+import { WeeklyStats, computeWeeklyStatsForTags } from './weeklyStats';
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
@@ -30,6 +31,13 @@ export interface WeeklyReportContent {
   tagSummaries: WeeklyReportTagSummary[];
   totalArticles: number;
   sentimentBreakdown: { positive: number; negative: number; neutral: number };
+  /**
+   * Агрегаты без лимита (ТЗ-184): точные счётчики по тегам/дням/тональности
+   * за 7/14/30 дней. null — при сбое агрегатов: контент строится, но
+   * счётчики в тексте остаются на старых значениях из списка статей,
+   * картинка не рендерится (деградация → текст).
+   */
+  stats: WeeklyStats | null;
 }
 
 function formatDate(d: Date): string {
@@ -141,11 +149,23 @@ export async function buildWeeklyReportContent(
     return null;
   }
 
+  // ТЗ-184: агрегаты без лимита (точные счётчики для текста и графика).
+  // Ошибка агрегатов не ломает отчёт — контент уходит со stats=null.
+  let stats: WeeklyStats | null = null;
+  try {
+    stats = await computeWeeklyStatsForTags(
+      tagRows.map(r => ({ tagId: r.tag_id, tagName: r.tag_name }))
+    );
+  } catch (err) {
+    console.error(`[WeeklyReport] user=${userId} stats aggregation failed, report without stats:`, err);
+  }
+
   return {
     period: `${formatDate(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000))} — ${formatDate(new Date())}`,
     tagSummaries,
     totalArticles: articles.length,
     sentimentBreakdown,
+    stats,
   };
 }
 

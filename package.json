@@ -58,6 +58,7 @@
     "express-rate-limit": "^7.1.0",
     "fast-xml-parser": "^5.10.0",
     "file-type": "^16.5.4",
+    "form-data": "^4.0.5",
     "firebase-admin": "^14.1.0",
     "jsonwebtoken": "^9.0.0",
     "markdown-it": "^14.3.2",
