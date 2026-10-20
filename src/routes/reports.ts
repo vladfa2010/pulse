@@ -263,11 +263,23 @@ async function buildWeekChart(params: WeekChartParams): Promise<{
     covered_until: last.time,
   };
 
+  // ТЗ-192: отсекаем события вне окна графика. d0/d1 — даты недели в таймзоне
+  // биржи; в UTC это ≈ [weekStartUtc + сдвиг tz, +7 дней]. Без отсечки маркер
+  // вне окна (напр. новость след. недели в ретро-снапшоте) снапился бы
+  // findNearestTimeIndex к крайней свече и визуально «переезжал» на другой день.
+  // Паддинг 12 ч покрывает сдвиг таймзон бирж относительно МСК (±10 ч).
+  const windowStartMs = weekStartUtc.getTime() - 12 * 3600 * 1000;
+  const windowEndMs = (liveEnd ? liveEnd.getTime() : weekStartUtc.getTime() + 7 * 24 * 3600 * 1000) + 12 * 3600 * 1000;
+  const visibleEvents = events.filter((e) => {
+    const t = new Date(e.published_at).getTime();
+    return t >= windowStartMs && t <= windowEndMs;
+  });
+
   const payload = {
     chart,
     // форма маркеров — как у cascade-chart (ТЗ-97), id синтетические (в payload
     // снапшота id новостей не храним — клик ведёт по url)
-    news_markers: events.map((e, i) => ({
+    news_markers: visibleEvents.map((e, i) => ({
       id: `${params.markerIdPrefix}:${i}`,
       url: e.url,
       published_at: e.published_at,

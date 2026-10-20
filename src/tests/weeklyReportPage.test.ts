@@ -709,6 +709,30 @@ async function main(): Promise<void> {
       c4.status === 200 && c4.data.chart === null && c4.data.reason === 'market_unavailable', c4.data);
     marketMode = 'ok';
 
+    // ── ТЗ-192: маркеры вне окна недели отсекаются (анти-снап к крайней свече) ─
+    const tzId = crypto.randomUUID();
+    const tzContent: any = {
+      period: '5 — 11 октября',
+      tagSummaries: [{
+        tagId: 'tag-sber', tagName: 'Сбербанк',
+        articles: [
+          { ...makeArticle('sber', 1), publishedAt: '2026-10-06T10:05:00+03:00' }, // внутри недели
+          { ...makeArticle('sber', 9), publishedAt: '2026-10-03T10:00:00+03:00' }, // до начала недели
+          { ...makeArticle('sber', 8), publishedAt: '2026-10-13T10:00:00+03:00' }, // после конца недели
+        ],
+      }],
+      totalArticles: 3,
+      sentimentBreakdown: { positive: 1, negative: 0, neutral: 2 },
+      stats: null,
+    };
+    await q(`INSERT INTO weekly_reports (id, user_id, week_start, payload, created_at, updated_at)
+             VALUES ($1, 'owner', '2026-10-05', $2, datetime('now'), datetime('now'))`,
+      [tzId, JSON.stringify({ content: tzContent, ai: null })]);
+    const cTz = await httpGet(`/weekly/${tzId}/chart?tag_id=tag-sber`, J('owner'));
+    check('ТЗ-192: маркер внутри недели остался, вне окна отсечены (без снапа к крайней свече)',
+      cTz.status === 200 && cTz.data.news_markers?.length === 1
+      && cTz.data.news_markers[0].url === 'https://example.com/sber-1', cTz.data.news_markers);
+
     // ── 7. Архив (HTTP) ─────────────────────────────────────────────────────
     const archive = await httpGet(`/weekly`, J('archive-user'));
     const reports: any[] = archive.data.reports ?? [];
