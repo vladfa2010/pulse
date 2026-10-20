@@ -176,7 +176,7 @@ npm run build   # выход в dist/
 | `SentimentIndex-*.js` | `/sentiment`, `SentimentChartCard`, `recharts` | Только при `/sentiment` |
 | `Profile-*.js`, `Pricing-*.js`, `NewsFeed-*.js`, `PortfolioPage-*.js` и др. | Соответствующие страницы | Только при переходе |
 
-- **Lazy-маршруты:** `/admin`, `/sentiment`, `/pricing`, `/profile`, `/feed`, `/instructions`, `/terms`, `/privacy`, `/portfolio`, `/download` загружаются через `React.lazy` + `Suspense`.
+- **Lazy-маршруты:** `/admin`, `/sentiment`, `/pricing`, `/profile`, `/feed`, `/terms`, `/privacy`, `/portfolio`, `/download` загружаются через `React.lazy` + `Suspense`. (Страница `/instructions` — удалена 2026-10-19, коммит `94a35b2` в pulse-frontend.)
 - **firebase/analytics:** не входит в начальный бандл; загружается динамически при первом вызове `initAnalytics()` / `logAnalyticsEvent()`.
 - **echarts** используется только в админском `TagMarketTimeline` и подгружается динамически; **recharts** уехал в админский и сентимент-чанки через lazy-маршруты.
 - **Цель:** основной чанк ≤ 300 КБ brotli; фактически ~307 КБ gzip (brotli ещё меньше).
@@ -337,6 +337,9 @@ docker compose up -d postgres embeddings backend
 # Эмбеддинги (ТЗ-91) + страж HNSW-индекса (ТЗ-161, источник правды для новых окружений):
 docker exec -i pulse-postgres psql -U pulse_user -d pulse -f - < src/migrations/news_embeddings_v1.sql
 docker exec -i pulse-postgres psql -U pulse_user -d pulse -f - < src/migrations/news_embedding_hnsw.sql
+# Ночная аналитика каскадов (ТЗ-185/186, как news_embeddings_v1.sql — вручную через psql):
+docker exec -i pulse-postgres psql -U pulse_user -d pulse -f - < src/migrations/virality_reports_v1.sql
+docker exec -i pulse-postgres psql -U pulse_user -d pulse -f - < src/migrations/source_stats_daily_v1.sql
 ```
 
 В проде `news_embedding_hnsw` уже существует (построен вручную по ТЗ-91 задача 6,
@@ -370,6 +373,9 @@ docker exec -i pulse-postgres psql -U pulse_user -d pulse -f - < src/migrations/
 │                        # Два домена (прод + sslip), прокси /api, статика фронта,
 │                        # /media/* → backend (mediaGuard), исключения
 │                        # /media/tile-reveal/* и /media/hero-video-2.mp4 → dist,
+│                        # + ТЗ-183/187: прокси MCP — @mcp path /mcp /mcp/* +
+│                        # handle @mcp (точный матч; wildcard /mcp* теневил бы
+│                        # SPA-маршруты /mcp-…), + /debug/mcp (мониторинг MCP).
 │                        # + ТЗ-118: временный блок @adminLegacyApi (УДАЛИТЬ в
 │                        # Задаче 3 ТЗ-118). Бэкапы: Caddyfile.bak-*
 ├── frontend/dist/       # собранный фронт (API_BASE захардкожен → pulse.inside-trade.ru)
@@ -775,6 +781,40 @@ up -d --build backend`) вместо `/opt/pulse`. Оба каталога да�
   (`/api/clusters*`, `/api/stories`) от env не зависят — работают всегда и
   везде. Второй флаг страницы, `VITE_CASCADE_EXPAND` (ТЗ-101), по умолчанию
   включён (выключается явным `'false'`).
+
+### ТЗ-185/186 (2026-10-19): ночная аналитика каскадов — фактическое состояние
+
+Две ночные LLM/срезовые джобы поверх пайплайна каскадов (детали —
+`docs/cascades.md`):
+
+- **Аналитика виральности (ТЗ-185, backend `393d03b`, frontend `c85906d`):**
+  `src/services/viralityAnalytics.ts`, таблица `virality_reports`
+  (миграция `src/migrations/virality_reports_v1.sql` — **применять вручную
+  через psql**, как `news_embeddings_v1.sql`). Cron `startViralityCron`
+  ежедневно **05:30 МСК** (после topics-нейминга 04:10, до source stats 05:40;
+  лок `acquireCronLock('virality-analytics')`). Три скоупа — `cascades_24h`,
+  `stories_7d`, `topics` (на Render без `TOPICS_ENABLED` мягко пропускается).
+  API: `GET /api/market/virality` — публичный, read-only, кэш 15 мин.
+  **Таблица нужна и на VPS, и на Render** (скоупы каскадов/сюжетов работают
+  на обеих сборках).
+- **Динамика эффективности источников (ТЗ-186, backend `5b58368` + fix
+  `521adfa`, frontend `61dd031`):** `src/services/sourceStatsDaily.ts`, таблица
+  `source_stats_daily` (миграция `src/migrations/source_stats_daily_v1.sql` —
+  **вручную через psql**). Cron `startSourceStatsCron` ежедневно **05:40 МСК**
+  (после виральности 05:30, до MCP-крона 06:20; лок
+  `acquireCronLock('source-stats-daily')`). LLM нет, фиче-флагов нет.
+  API: `GET /api/market/source-stats?days=30` — публичный, read-only,
+  кэш 15 мин.
+- **Фронт:** новые вкладки страницы `/cascades` (без флагов сборки, работают
+  и на Render): «Аналитика» — строго между «Темы» и «Граф»; «Динамика» —
+  строго между «Ресерч» и «Методология»; в ресерч-таблице — колонка
+  «Тренд 30д» (скрывается, пока срезов < 7 или API не отвечает).
+- **Caddy (ТЗ-187, backend `c2b4c86`):** wildcard `handle /mcp*` в
+  `deploy/Caddyfile` заменён на `@mcp path /mcp /mcp/*` + `handle @mcp` —
+  `handle` не принимает список путей даже в Caddy 2.11.4 (матчинг через
+  named matcher); точный матч не перехватывает будущие SPA-маршруты вида
+  `/mcp-…`. Деплой — обычный (`update-backend.sh` сам синхронизирует
+  Caddyfile).
 
 ### Операции
 

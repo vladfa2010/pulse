@@ -1,6 +1,6 @@
 # Каскады и сюжеты — бэкенд
 
-Поиск новостных каскадов (одно событие — много перепечаток) и сюжетов (группы каскадов об одном факте). Публичный блок `/api/market/*`, фиче-флаг всего пайплайна — `CLUSTERING_ENABLED=true` (по умолчанию выключено). Третий уровень пирамиды — «темы» (ночная HDBSCAN-кластеризация, только VPS) — описан отдельно в `topics.md`. Методология — `Методология_поиска_новостных_каскадов_PULSE.md` в корне workspace, ТЗ-91 (эмбеддинги), ТЗ-92 (реалтайм), ТЗ-95 (доработки по ревью), ТЗ-97 (многодневный график), ТЗ-99 (id/url маркеров).
+Поиск новостных каскадов (одно событие — много перепечаток) и сюжетов (группы каскадов об одном факте). Публичный блок `/api/market/*`, фиче-флаг всего пайплайна — `CLUSTERING_ENABLED=true` (по умолчанию выключено). Третий уровень пирамиды — «темы» (ночная HDBSCAN-кластеризация, только VPS) — описан отдельно в `topics.md`. Методология — `Методология_поиска_новостных_каскадов_PULSE.md` в корне workspace, ТЗ-91 (эмбеддинги), ТЗ-92 (реалтайм), ТЗ-95 (доработки по ревью), ТЗ-97 (многодневный график), ТЗ-99 (id/url маркеров), ТЗ-184 (свежесть: last_event_at тем, дефолт «от свежего», LIMIT 500), ТЗ-185 (аналитика виральности), ТЗ-186 (динамика эффективности источников).
 
 ## Карта пайплайна
 
@@ -26,12 +26,16 @@ RSS/источники → newsProcessor (тегирование чанка)
 
 | Эндпоинт | Строки | TTL кэша |
 |---|---|---|
-| `GET /news-chart?news_id=` | :81 | 60 с / 24 ч / 15 мин |
-| `GET /cascades?window=24h\|7d\|30d` | :292 | 60 с |
-| `GET /cascade-graph?window=7d\|30d` | :369 | 15 мин |
-| `GET /cascade-research?window=7d\|30d` | :444 | 15 мин |
-| `GET /cascade-chart?cluster_id=` | :561 | 15 мин |
-| `GET /stories` | :725 | 15 мин |
+| `GET /news-chart?news_id=` | :101 | 60 с / 24 ч / 15 мин |
+| `GET /cascades?window=24h\|7d\|30d` | :328 | 60 с |
+| `GET /cascade-graph?window=7d\|30d` | :407 | 15 мин |
+| `GET /cascade-research?window=7d\|30d` | :482 | 15 мин |
+| `GET /cascade-chart?cluster_id=` | :599 | 15 мин |
+| `GET /stories` | :764 | 15 мин |
+| `GET /virality` | :911 | 15 мин |
+| `GET /source-stats?days=30` | :959 | 15 мин (ключ = days) |
+
+Эндпоинты тем — `GET /topics` (:825) и `GET /topic?id=` (:1053), см. `topics.md`.
 
 Заметка: `src/routes/market.ts` (админские `/admin/market/candles_*`) импортируется в `index.ts`, но не смонтирован — мёртвый импорт, кандидат на чистку.
 
@@ -65,11 +69,64 @@ Story — **LLM-сущность**. Cron `0 * * * *` → `runStoryGrouping()`: �
 
 ## Эндпоинты — что откуда берётся
 
-- **/market/cascades** (:292) — один SQL из `clusters`, фильтр `last_seen_at > NOW() - window`, `ORDER BY size DESC LIMIT 200`; `first_news` и `sources` — через `LEFT JOIN LATERAL` к `cluster_items`/`news`; заголовок — `COALESCE(title_ru, title_original)` (ТЗ-182: непереведённая первая новость иначе давала прочерк).
+- **/market/cascades** (:328) — один SQL из `clusters`, фильтр `last_seen_at > NOW() - window`, `ORDER BY last_seen_at DESC NULLS LAST, size DESC LIMIT 500` (ТЗ-184 v4: дефолт «от свежего», лимит 200→500 — клиентская сортировка «Разм.» не теряет крупные затухшие каскады длинных окон); `first_news` и `sources` — через `LEFT JOIN LATERAL` к `cluster_items`/`news`; заголовок — `COALESCE(title_ru, title_original)` (ТЗ-182: непереведённая первая новость иначе давала прочерк).
 - **/market/cascade-chart** (:561) — якорь `clusters.first_published_at ?? last_seen_at`; теги — `unnest(matched_tags)` членов (fallback `clusters.tags`); свечи — `buildInstrumentsForTags()` (:133): до 3 тегов с инструментом (`enriched_data.symbol` вида `TICKER@MIC`), провайдер `marketRouter.getIntraday5min` (Finam Trade API — единственный зарегистрированный), при пустом дне сдвиг к ближайшему торговому (назад до 5 дней, потом вперёд), флаг `shifted`. Многодневность (ТЗ-97): `getIntraday5minRange`, крышка `CASCADE_CHART_MAX_RANGE_DAYS=14`, `truncated=true` при обрезке, «дотяжка» следующих торговых дней, `range_fallback=true` если Finam не отдал; `dates`/`covered_until` — только многодневным. `news_markers` (:682, ТЗ-99): `n.id, n.url, n.published_at, COALESCE(n.title_ru, n.title_original) AS title_ru, n.source` по `cluster_items` ASC (фолбэк — ТЗ-182).
 - **/market/stories** (:725) — `stories LEFT JOIN clusters`, `ORDER BY last_seen_at DESC, size DESC LIMIT 500`.
 - **/market/cascade-graph** (:369) — каскады окна с `items[{lag, source, title, t}]` (`json_agg`, title — `COALESCE(title_ru, title_original)`, ТЗ-182), сюжеты этих кластеров, `feed` — ВСЕ новости окна (фон force-графа).
-- **/market/cascade-research** (:444) — один CTE: первоисточники (`row_number ORDER BY lag_min`), медианный второй лаг, доли дублей ≤10/≤60 мин, по источникам `first_count/participations/median_lag_not_first`.
+- **/market/cascade-research** (:482) — один CTE: первоисточники (`row_number ORDER BY lag_min`), медианный второй лаг, доли дублей ≤10/≤60 мин, по источникам `first_count/participations/median_lag_not_first`.
+
+## Аналитика виральности — `src/services/viralityAnalytics.ts` (ТЗ-185)
+
+Ночной LLM-синтез по топ-20 самых разгоняемых сущностей: три скоупа —
+`cascades_24h` (топ каскадов за 24 ч, рубрикаторы по `RUBRIC_BLACKLIST`
+отфильтрованы), `stories_7d` (топ сюжетов по суммарному размеру кластеров),
+`topics` (топ-20 тем последнего done-прогона; на сборке без `TOPICS_ENABLED`
+скоуп мягко пропускается). Один LLM-вызов на скоуп (конвенции §9.1: Kimi,
+temperature 0.6, thinking off, `response_format json_object`, таймаут
+верификатора). LLM fail-closed (§9.3): невалидный JSON / нет обязательных
+ключей → старый отчёт остаётся, скоуп не падает. Результат — `INSERT` в
+`virality_reports` (`scope, generated_at, input_ids` UUID[] — снапшот топ-20
+для аудита галлюцинаций, `payload` JSONB). Ручного обновления нет: cron
+`startViralityCron` ежедневно **05:30 МСК** (после topics-нейминга 04:10,
+до source stats 05:40), лок `acquireCronLock('virality-analytics')`; разово —
+вызов `runViralityAnalytics()`.
+
+- **GET `/api/market/virality`** — последний отчёт по каждому скоупу
+  (`DISTINCT ON (scope)`), публичный, read-only, без флагов. Payload:
+  `generated_at, scopes: { cascades_24h?, stories_7d?, topics? }`;
+  внутри скоупа `top_topics[] {title, takeaway}`, `virality_triggers[]`,
+  `ignition {sources, takeaway}`, `tempo {fast_vs_slow, takeaway}`, `summary`.
+  Null-скоуп — норма (прогона ещё не было или скоуп недоступен на сборке).
+  Кэш in-memory TTL 15 мин, заголовок `X-Cache`. Ошибка — 500
+  `virality_unavailable`.
+
+## Динамика эффективности источников — `src/services/sourceStatsDaily.ts` (ТЗ-186)
+
+Ночной срез статистики «Ресерч: кто первый» (`/cascade-research`, тот же CTE:
+ranked/firsts/per_source/first_counts/window_clusters), но окно
+параметризовано концом суток D (МСК) вместо NOW(): срез за дату D = окно
+`[(D+1)::date − 7 дней, (D+1)::date)` по МСК (детерминированный конец окна
+— приём как в `heatmapDaily`/`tagMarket`). Метрики скорости каскада
+(медианный второй лаг и т.п.) не снимаются. LLM не используется, фиче-флагов
+нет (таблица `clusters` есть на любом окружении). Каждую ночь пересчитываются
+последние **3 среза** (каскады дорисовываются часами — свежие срезы без
+пересчёта занижали бы цифры); запись идемпотентна
+(`ON CONFLICT (stat_date, source, window_days) DO UPDATE`). Cron
+`startSourceStatsCron` ежедневно **05:40 МСК** (после виральности 05:30,
+до MCP-крона 06:20), лок `acquireCronLock('source-stats-daily')`; разово —
+`runSourceStatsDaily()`.
+
+- **GET `/api/market/source-stats?days=30`** — динамика по ночным срезам.
+  Публичный, read-only, без флагов. `days` — глубина истории (default 30,
+  максимум 365), кэш TTL 15 мин с ключом `days`. Payload:
+  `days, snapshots_from, sources[]` — по каждому источнику `source`,
+  `points[]` (`date, share, first_count, participations,
+  median_lag_not_first_min` — срез = строка `source_stats_daily`,
+  `stat_date::text` — фикс 521adfa: pg вертит `Date`), отсортированные по
+  дате, плюс `latest {date, share, first_count}` и `week_ago {date, share}
+  | null` (срез, ближайший к latest − 7 дней; Δ доли считает клиент —
+  порог окраски ±0.5 п.п.). Пустое состояние (`sources: []`) — не
+  ошибка (срезов ещё нет). Ошибка — 500 `source_stats_unavailable`.
 
 ## Бэкфиллы и скрипты
 
@@ -80,16 +137,18 @@ Story — **LLM-сущность**. Cron `0 * * * *` → `runStoryGrouping()`: �
 | `src/scripts/importCascadeSnapshot.ts` | аналогично | вход `cascade_import.json` в корне; исторические кластеры `source='sandbox-import'`, идемпотентен |
 | `src/scripts/dumpCalibrationPairs.ts` | аналогично | `calibration_pairs.csv`: позитивы — пары внутри sandbox-кластеров, негативы — 10 000 случайных пар с разницей >3 суток |
 
-Cron-запуска для бэкфиллов нет — только ручной. Регулярные cron (`src/services/cron.ts`, `startClusteringCron()`): `*/15 * * * *` — catch-up эмбеддингов (≤200, `embedding IS NULL AND published_at > NOW() - 7 days`); `0 * * * *` — `runStoryGrouping()`. Блокировка — `acquireCronLock`.
+Cron-запуска для бэкфиллов нет — только ручной. Регулярные cron (`src/services/cron.ts`, `startClusteringCron()`): `*/15 * * * *` — catch-up эмбеддингов (≤200, `embedding IS NULL AND published_at > NOW() - 7 days`); `0 * * * *` — `runStoryGrouping()`; `30 5 * * *` (05:30 МСК) — `runViralityAnalytics()` (ТЗ-185, `startViralityCron`, лок `virality-analytics`); `40 5 * * *` (05:40 МСК) — `runSourceStatsDaily()` (ТЗ-186, `startSourceStatsCron`, лок `source-stats-daily`). Блокировка — `acquireCronLock`.
 
 ## Таблицы и индексы
 
-Миграции **только ручные** (`psql -f`): `src/migrations/news_embeddings_v1.sql` (ТЗ-91), `news_embeddings_v2.sql` (ТЗ-92). В `src/models/schema.sql` кластерных таблиц нет.
+Миграции **только ручные** (`psql -f`): `src/migrations/news_embeddings_v1.sql` (ТЗ-91), `news_embeddings_v2.sql` (ТЗ-92), `virality_reports_v1.sql` (ТЗ-185), `source_stats_daily_v1.sql` (ТЗ-186). В `src/models/schema.sql` кластерных таблиц нет.
 
 - `news`: `+ embedding vector(1024)`, `+ cluster_id UUID`.
 - `clusters`: `id, kind (cascade|story_candidate), tags[], verdict (сильный|средний|сомнительный), max_sim, first_published_at, last_seen_at, size, source (realtime|sandbox-import), story_id (v2)`.
 - `cluster_items`: `cluster_id, news_id` (FK ON DELETE CASCADE), `lag_min`, PK `(cluster_id, news_id)`; индексы `cluster_items_news(news_id)`, `clusters_last_seen(last_seen_at)`.
 - `stories`: `id, title, summary, started_at, last_seen_at`; индекс `clusters_story(story_id)`.
+- `virality_reports` (ТЗ-185): `id` (uuid, pgcrypto), `scope` (`cascades_24h | stories_7d | topics`), `generated_at`, `input_ids` UUID[] (снапшот топ-20, аудит галлюцинаций), `payload` JSONB; индекс `virality_reports_scope_time(scope, generated_at DESC)`. API читает последний отчёт по скоупу (`DISTINCT ON (scope)`). Нужна и на VPS, и на Render (скоуп `topics` на Render мягко пропускается — `TOPICS_ENABLED != 'true'`).
+- `source_stats_daily` (ТЗ-186): PK `(stat_date, source, window_days)`; `first_count, participations, median_lag_not_first_min, clusters_total, share, computed_at`. Одна строка = один источник в одном срезе; ретеншн-очистка не нужна (рост — десятки строк/сутки). Без фиче-флага — нужна на любой сборке с каскадами.
 - **HNSW в миграциях нет** — строится вручную после бэкфилла: `CREATE INDEX CONCURRENTLY news_embedding_hnsw ON news USING hnsw (embedding vector_cosine_ops); ANALYZE news;` (см. `DEPLOYMENT.md`, `ARCHITECTURE.md`).
 
 ## Внешние сервисы

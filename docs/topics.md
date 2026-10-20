@@ -116,7 +116,9 @@ API читает всегда **последний done-прогон** (`ORDER B
 
 - **GET `/api/market/topics`** — темы последнего done-прогона, сортировка
   `news_count DESC`. Payload: `run_at`, `window_days`, `topics_total`,
-  `news_covered`, `noise_count`, `topics[]`. Unnamed-темы отдаются строго с
+  `news_covered`, `noise_count`, `topics[]` (+ `last_event_at` на тему —
+  `MAX(published_at)` членов темы, ТЗ-184 v3: для сортировки «по событию»
+  на фронте). Unnamed-темы отдаются строго с
   `name=null, summary=null` (не пустая строка) — фронт показывает
   «Тема без названия (формируется)». Прогонов ещё не было → пустое состояние
   `topics_total: 0` (не ошибка).

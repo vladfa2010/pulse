@@ -25,6 +25,12 @@
 
 ## Архитектура
 
+- **Caddy-прокси** (`deploy/Caddyfile`): `@mcp path /mcp /mcp/*` + `handle @mcp`
+  → backend (ТЗ-183; точный матч — ТЗ-187: wildcard `/mcp*` перехватывал бы
+  будущие SPA-маршруты вида `/mcp-…`, а `handle` не принимает список путей
+  даже в Caddy 2.11.4 — матчинг через named matcher). Без этого правила
+  Caddy отдавал SPA-шелл (200 с index.html) — MCP-клиент получал мусор
+  вместо JSON-RPC. Живость контура снаружи — `GET /debug/mcp` (тоже прокси).
 - **Транспорт**: `POST/GET/DELETE /mcp` — `@modelcontextprotocol/server`
   (`createMcpHandler`, фабрика на запрос) + `@modelcontextprotocol/node`
   (`toWebRequest`). Обе эры протокола (2025-11-25 и 2026-07-28) обслуживаются

@@ -2987,7 +2987,7 @@ WHERE matched_tags = '{}'::text[] AND sentiment_source IS NULL
 | 5 | Frontend | `src/pages/Pricing.tsx` | 37 | Текст на странице | `10 тегов` | `25 тегов` |
 | 6 | Frontend | `src/pages/Profile.tsx` | 553 | Текст в карточке | `До 10` | `До 25` |
 | 7 | Frontend | `src/components/PremiumPromptModal.tsx` | 84 | Текст в модалке | `До 10` | `До 25` |
-| 8 | Frontend | `src/pages/Instructions.tsx` | 118 | Текст в инструкции | `(10 тегов)` | `(25 тегов)` |
+| ~~8~~ | ~~Frontend~~ | ~~`src/pages/Instructions.tsx`~~ | ~~118~~ | ~~Текст в инструкции~~ | ~~`(10 тегов)`~~ | ~~`(25 тегов)`~~ — **страница `/instructions` удалена 2026-10-19 (pulse-frontend `94a35b2`), пункта больше нет** |
 
 #### 🔴 Критическая зависимость (почему user.ts — важнее всех)
 
@@ -3034,7 +3034,7 @@ Backend API: отвечает 403 "Tag limit reached (10)"
 - [ ] `Pricing.tsx` — текст на странице
 - [ ] `Profile.tsx` — текст в карточке и бейджи
 - [ ] `PremiumPromptModal.tsx` — текст в модалке
-- [ ] `Instructions.tsx` — текст в инструкции
+- [ ] ~~`Instructions.tsx` — текст в инструкции~~ (страница удалена 2026-10-19, `94a35b2`)
 - [ ] `ARCHITECTURE.md` — раздел 16.1 (таблица лимитов)
 - [ ] `ARCHITECTURE.md` — раздел 16.3 (жизненный цикл)
 - [ ] `docs/subscriptions.md` — подписки и downgrade
