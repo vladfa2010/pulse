@@ -47,10 +47,14 @@ function formatDate(d: Date): string {
 /**
  * @param userId  пользователь
  * @param maxTags лимит тегов из Entitlement (null = без plan-лимита)
+ * @param windowStart ТЗ-191 live-режим: левая граница окна (понедельник недели
+ *                    по МСК) вместо скользящих 7 дней; stats при этом заменяет
+ *                    вызывающий (computeLiveWeeklyStats), здесь rolling-агрегаты
  */
 export async function buildWeeklyReportContent(
   userId: string,
-  maxTags: number | null
+  maxTags: number | null,
+  windowStart?: Date
 ): Promise<WeeklyReportContent | null> {
   // Cap: min(tagLimit, 200). Бесконечные (-1) и ручной запуск (null) → 200.
   const rawLimit = maxTags ?? HARD_TAG_CAP;
@@ -74,9 +78,12 @@ export async function buildWeeklyReportContent(
   const tagNames: Record<string, string> = {};
   for (const r of tagRows) tagNames[r.tag_id] = r.tag_name;
 
-  // RSS — 7 дней, API-источники — 8 дней (fetched_at fallback)
-  const sincePublished = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-  const sinceFetched = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
+  // RSS — 7 дней, API-источники — 8 дней (fetched_at fallback).
+  // ТЗ-191 live: окно — от понедельника текущей недели (прошедшие дни).
+  const sincePublished = windowStart ?? new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const sinceFetched = windowStart
+    ? new Date(windowStart.getTime() - 24 * 60 * 60 * 1000)
+    : new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
 
   console.log(
     `[WeeklyReport] user=${userId} tags=${tagIds.length} limit=${limit}`
@@ -161,7 +168,9 @@ export async function buildWeeklyReportContent(
   }
 
   return {
-    period: `${formatDate(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000))} — ${formatDate(new Date())}`,
+    period: windowStart
+      ? `${formatDate(windowStart)} — ${formatDate(new Date())}`
+      : `${formatDate(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000))} — ${formatDate(new Date())}`,
     tagSummaries,
     totalArticles: articles.length,
     sentimentBreakdown,

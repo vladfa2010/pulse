@@ -21,6 +21,7 @@ import {
 } from './formatters';
 import { getEntitlement } from './entitlement';
 import { isQuietHoursForProduct } from './quietHours';
+import { getCurrentWeekSnapshot, markSnapshotSent } from './weeklyReportSnapshot';
 import {
   getRecipients, getEnabledSubscriptions, getDeliveryTarget, getQuietHours,
   isDueByFrequency, markSent,
@@ -138,6 +139,9 @@ async function deliver(
 // ── Плановая рассылка одному юзеру (все его включённые каналы продукта) ────
 
 export async function dispatchToUser(userId: string, product: Product): Promise<SendResult> {
+  // ТЗ-191: id снапшота текущей недели (weekly_report) — для markSnapshotSent в finally
+  let weeklySnapshotId: string | null = null;
+  let weeklySent = false;
   try {
     // 1. Тариф на уровне продукта (доступ + лимит тегов из плана)
     const ent = await getEntitlement(userId, product);
@@ -165,7 +169,23 @@ export async function dispatchToUser(userId: string, product: Product): Promise<
       .filter((d): d is Date => d !== null)
       .sort((a, b) => a.getTime() - b.getTime())[0] ?? null;
 
-    const content = await buildContent(userId, product, ent.maxTags, earliest);
+    // ТЗ-191: для weekly_report контент — ИЗ СНАПШОТА фазы генерации (11:00),
+    // buildContent здесь НЕ вызывается (иначе двойная работа и риск расхождения).
+    // Ветка weekly_report в buildContent остаётся для совместимости (manual /now).
+    // Нет снапшота (генерация не успела/упала) → skipped + warn: юзеру не ломаем,
+    // дорассылка произойдёт при следующем подходящем окне (sent_at остаётся NULL).
+    let content: NotificationContent | null;
+    if (product === 'weekly_report') {
+      const snapshot = await getCurrentWeekSnapshot(userId);
+      if (!snapshot) {
+        console.warn(`[Dispatcher] user=${userId} product=weekly_report no current-week snapshot, skipped`);
+        return 'skipped';
+      }
+      content = snapshot.content;
+      weeklySnapshotId = snapshot.id;
+    } else {
+      content = await buildContent(userId, product, ent.maxTags, earliest);
+    }
     if (!content || isEmptyContent(content)) {
       console.log(`[Dispatcher] user=${userId} product=${product} no content`);
       return 'empty';
@@ -191,6 +211,7 @@ export async function dispatchToUser(userId: string, product: Product): Promise<
       if (ok) {
         await markSent(userId, product, sub.channel);
         anySent = true;
+        weeklySent = true;
       } else {
         anyError = true;
         console.error(`[Dispatcher] user=${userId} product=${product} channel=${sub.channel} failed`);
@@ -202,6 +223,16 @@ export async function dispatchToUser(userId: string, product: Product): Promise<
   } catch (err) {
     console.error(`[Dispatcher] user=${userId} product=${product} error:`, err);
     return 'error';
+  } finally {
+    // ТЗ-191: гейт идемпотентной отправки — только после успешного фан-аута.
+    // Тихие часы/отсутствие due-каналов оставляют sent_at = NULL (дорассылка позже).
+    if (weeklySent && weeklySnapshotId) {
+      try {
+        await markSnapshotSent(weeklySnapshotId);
+      } catch (e) {
+        console.error(`[Dispatcher] markSnapshotSent failed for ${weeklySnapshotId}:`, e);
+      }
+    }
   }
 }
 

@@ -56,6 +56,7 @@ import newsHeatmapRoutes from './routes/newsHeatmap';
 import tagMarketRoutes from './routes/tagMarket';
 import sentimentRoutes from './routes/sentiment';
 import calendarRoutes from './routes/calendar';
+import reportsRoutes from './routes/reports'; // ТЗ-191: еженедельный отчёт (архив/live/графики/ahead)
 import { runCalendarV2Migrations } from './services/calendar';
 import { runRadioMigrations } from './services/radioSettings';
 import { ensureMusicDir } from './services/radioMusic'; // TZ70: папка фоновой музыки
@@ -1003,6 +1004,61 @@ app.post('/migrate-mcp', async (req, res) => {
 
     const sql = fs.readFileSync(sqlPath, 'utf-8');
     // Вырезаем SQL-комментарии ДО split(';') — та же оговорка, что в /migrate-lms
+    const cleaned = sql
+      .split('\n')
+      .map((l: string) => {
+        const i = l.indexOf('--');
+        return i >= 0 ? l.slice(0, i) : l;
+      })
+      .join('\n');
+    const statements = cleaned.split(';').filter((s: string) => s.trim());
+    const results: string[] = [];
+
+    for (const stmt of statements) {
+      try {
+        await query(stmt + ';');
+        results.push(`OK: ${stmt.trim().substring(0, 60)}`);
+      } catch (e: any) {
+        // Игнорируем «already exists» — объект создан ранее (идемпотентность)
+        if (!e.message?.includes('already exists')) {
+          results.push(`WARN: ${e.message?.substring(0, 100)}`);
+        }
+      }
+    }
+
+    res.json({ success: true, applied: results.length, details: results });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// POST /migrate-weekly-reports?secret=KEY — ТЗ-191: снапшоты weekly_reports +
+// magic-токены report_access_tokens. Применяет src/migrations/weekly_reports_v1.sql
+// (PostgreSQL-диалект). Идемпотентна. В SQLite-режиме таблицы создаёт
+// initSQLiteSchema() (src/config/db-sqlite.ts) → пропускаем.
+// ═══════════════════════════════════════════════════════════════════════════
+app.post('/migrate-weekly-reports', async (req, res) => {
+  const secret = req.headers['x-trigger-secret'] || req.query.secret;
+  if (secret !== CRON_SECRET_KEY) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  if (USE_SQLITE) {
+    return res.json({ skipped: true, message: 'SQLite mode: weekly reports schema is created by initSQLiteSchema()' });
+  }
+
+  try {
+    const fs = await import('fs');
+    const path = await import('path');
+    // __dirname = /app/dist; weekly_reports_v1.sql копируется в dist/migrations через Dockerfile
+    const sqlPath = path.join(__dirname, 'migrations', 'weekly_reports_v1.sql');
+    if (!fs.existsSync(sqlPath)) {
+      return res.status(500).json({ error: `weekly_reports_v1.sql not found at ${sqlPath}` });
+    }
+
+    const sql = fs.readFileSync(sqlPath, 'utf-8');
+    // Вырезаем SQL-комментарии ДО split(';') — та же оговорка, что в /migrate-mcp
     const cleaned = sql
       .split('\n')
       .map((l: string) => {
@@ -2940,6 +2996,7 @@ app.use('/api/market', marketDialogRoutes); // GET /api/market/market-dialog —
 app.use('/api/public', publicStatsRoutes); // GET /api/public/efficiency — публичный «Объём информации» (ТЗ-56)
 app.use('/api/news_heatmap', newsHeatmapRoutes); // News heatmap (TZ 11.11)
 app.use('/api/calendar', calendarRoutes); // Public investor calendar
+app.use('/api/reports', reportsRoutes);   // ТЗ-191: weekly report page API (apiLimiter применится автоматически)
 app.use('/api/payment', paymentRoutes); // POST /api/payment/create, /confirm
 app.use('/api/plans', plansRoutes);     // GET /api/plans
 app.use('/api/education', educationRoutes); // ТЗ-100 Задача 2: витрина LMS (apiLimiter применится автоматически)

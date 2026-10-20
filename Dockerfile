@@ -32,6 +32,8 @@ RUN cp src/migrations/lms_v8_knowledge_graph.sql dist/migrations/lms_v8_knowledg
 RUN cp src/migrations/mcp_v1.sql dist/migrations/mcp_v1.sql
 # ТЗ-177: порог косинуса курса для POST /migrate-lms-course-threshold
 RUN cp src/migrations/lms_v9_course_threshold.sql dist/migrations/lms_v9_course_threshold.sql
+# ТЗ-191: снапшоты weekly_reports + magic-токены для POST /migrate-weekly-reports
+RUN cp src/migrations/weekly_reports_v1.sql dist/migrations/weekly_reports_v1.sql
 EXPOSE 3001
 ENV BUILD_TIMESTAMP=1779922500
 CMD ["node", "dist/index.js"]

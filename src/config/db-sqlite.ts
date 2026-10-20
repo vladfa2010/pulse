@@ -988,6 +988,29 @@ export async function initSQLiteSchema(): Promise<void> {
       PRIMARY KEY (course_a, course_b),
       CHECK (course_a < course_b)
     );
+    -- ТЗ-191: снапшоты еженедельного отчёта и magic-токены (PG-вариант — weekly_reports_v1.sql)
+    CREATE TABLE IF NOT EXISTS weekly_reports (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      week_start TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now')),
+      sent_at TEXT,
+      UNIQUE (user_id, week_start)
+    );
+    CREATE INDEX IF NOT EXISTS idx_weekly_reports_user_week ON weekly_reports(user_id, week_start DESC);
+    CREATE INDEX IF NOT EXISTS idx_weekly_reports_week ON weekly_reports(week_start);
+    CREATE TABLE IF NOT EXISTS report_access_tokens (
+      id TEXT PRIMARY KEY,
+      report_id TEXT NOT NULL REFERENCES weekly_reports(id) ON DELETE CASCADE,
+      token_hash TEXT NOT NULL UNIQUE,
+      expires_at TEXT NOT NULL,
+      last_used_at TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE (report_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_report_tokens_expires ON report_access_tokens(expires_at);
   `;
 
   const statements = schema.split(';').filter(s => s.trim());
