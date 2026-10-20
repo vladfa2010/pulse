@@ -969,11 +969,11 @@ router.get('/source-stats', async (req, res) => {
     }
 
     const firstRes = await query(
-      `SELECT MIN(stat_date) AS first_date FROM source_stats_daily WHERE window_days = 7`,
+      `SELECT MIN(stat_date)::text AS first_date FROM source_stats_daily WHERE window_days = 7`,
       []
     );
     const result = await query(
-      `SELECT stat_date, source, first_count, share, participations, median_lag_not_first_min
+      `SELECT stat_date::text AS stat_date, source, first_count, share, participations, median_lag_not_first_min
        FROM source_stats_daily
        WHERE window_days = 7
          AND stat_date >= (NOW() AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Moscow')::date - $1::int
