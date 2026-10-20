@@ -281,6 +281,8 @@ const CASCADE_CHART_MAX_RANGE_DAYS = 14;
 const STORIES_CACHE_TTL_MS = 15 * 60 * 1000;    // 15 мин
 // ТЗ-115: темы меняются раз в сутки — TTL как у /stories (15 мин)
 const TOPICS_CACHE_TTL_MS = 15 * 60 * 1000;     // 15 мин
+// ТЗ-185: отчёты виральности генерируются раз в сутки (05:30 МСК) — TTL 15 мин
+const VIRALITY_CACHE_TTL_MS = 15 * 60 * 1000;   // 15 мин
 // ТЗ-115: темы живут только на VPS — на Render (флаг выключен) ручки отвечают
 // 404 topics_disabled БЕЗ обращения к таблицам (там их нет)
 const TOPICS_ENABLED = process.env.TOPICS_ENABLED === 'true';
@@ -291,6 +293,8 @@ const storiesCache = new Map<string, { at: number; payload: any }>();
 // ТЗ-115, задача 4 — кэши тем (как storiesCache: Map + cacheGet/cacheSet)
 const topicsCache = new Map<string, { at: number; payload: any }>();
 const topicCache = new Map<string, { at: number; payload: any }>();
+// ТЗ-185, задача 4 — кэш аналитики виральности (как storiesCache)
+const viralityCache = new Map<string, { at: number; payload: any }>();
 // ТЗ-93: данные графа и ресерч-статистика — кэш по окну, TTL 15 мин
 const cascadeGraphCache = new Map<string, { at: number; payload: any }>();
 const cascadeResearchCache = new Map<string, { at: number; payload: any }>();
@@ -890,6 +894,51 @@ router.get('/topics', async (req, res) => {
   } catch (err: any) {
     console.error('[marketPublic] topics error:', err.message);
     return res.status(500).json({ error: 'topics_unavailable' });
+  }
+});
+
+/**
+ * GET /api/market/virality (ТЗ-185, задача 4)
+ * Сводный отчёт аналитики виральности: последний отчёт по каждому скоупу
+ * (cascades_24h | stories_7d | topics) из virality_reports.
+ * Публичная, read-only, без флагов: null-скоуп — норма (прогона ещё не было
+ * или скоуп недоступен на сборке). TTL 15 мин.
+ */
+router.get('/virality', async (req, res) => {
+  try {
+    const cached = cacheGet(viralityCache, 'all', VIRALITY_CACHE_TTL_MS);
+    if (cached) {
+      res.setHeader('X-Cache', 'hit');
+      return res.json(cached);
+    }
+
+    const result = await query(
+      `SELECT DISTINCT ON (scope) scope, generated_at, payload
+       FROM virality_reports
+       WHERE scope IN ('cascades_24h', 'stories_7d', 'topics')
+       ORDER BY scope, generated_at DESC`,
+      []
+    );
+
+    const scopes: Record<string, any> = {
+      cascades_24h: null,
+      stories_7d: null,
+      topics: null,
+    };
+    let generatedAt: string | null = null;
+    for (const r of result.rows) {
+      scopes[r.scope] = r.payload;
+      const t = new Date(r.generated_at).toISOString();
+      if (!generatedAt || t > generatedAt) generatedAt = t;
+    }
+
+    const payload = { generated_at: generatedAt, scopes };
+    cacheSet(viralityCache, 'all', payload);
+    res.setHeader('X-Cache', 'miss');
+    return res.json(payload);
+  } catch (err: any) {
+    console.error('[marketPublic] virality error:', err.message);
+    return res.status(500).json({ error: 'virality_unavailable' });
   }
 });
 

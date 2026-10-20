@@ -35,6 +35,7 @@ import { analyzeUnifiedBatch, UnifiedResult } from './smartTagMatcher';
 import { freezeHeatmapRecentDays } from './heatmapDaily';
 import { embedAndClusterBatch } from './clustering';      // ТЗ-92, задача 4
 import { runStoryGrouping } from './storyGrouper';        // ТЗ-92, задача 5
+import { runViralityAnalytics } from './viralityAnalytics'; // ТЗ-185: аналитика виральности 05:30 МСК
 import { matchUnprocessedNews } from './education/match'; // ТЗ-103, задача 3: cron-страховка мэтчинга курсов
 import { rebuildKnowledgeGraph } from './education/knowledgeGraph'; // ТЗ-107 v3: ночной пересчёт графа знаний
 import { sendMcpRotationReminderEmail } from './mcpEmails'; // ТЗ-183 Задача 5: напоминания о ротации токенов
@@ -709,6 +710,31 @@ export function startTopicsNamingCron(opts?: { isShuttingDown?: () => boolean })
     }
   }, { timezone: 'Europe/Moscow' });
   console.log('[Cron] Topics naming scheduled daily at 04:10 Europe/Moscow');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ТЗ-185, задача 3 — аналитика виральности (топ-20 каскадов/сюжетов/тем)
+// ═══════════════════════════════════════════════════════════════════════════
+// Ежедневно 05:30 МСК — после topics-нейминга 04:10 (темы успевают получить
+// имена). 3 LLM-вызова/сутки. Без фиче-флага: каскады/сюжеты работают и на
+// Render; скоуп topics внутри runViralityAnalytics мягко пропускается при
+// TOPICS_ENABLED != 'true'. Падение одного скоупа не отменяет остальные
+// (try/catch внутри сервиса), старый отчёт при сбое LLM остаётся (fail-closed).
+
+export function startViralityCron(opts?: { isShuttingDown?: () => boolean }) {
+  cron.schedule('30 5 * * *', async () => {
+    if (opts?.isShuttingDown?.()) return;
+    const acquired = await acquireCronLock('virality-analytics');
+    if (!acquired) return;
+    try {
+      await runViralityAnalytics();
+    } catch (err: any) {
+      console.error('[Cron] Virality analytics failed:', err.message);
+    } finally {
+      await releaseCronLock('virality-analytics');
+    }
+  }, { timezone: 'Europe/Moscow' });
+  console.log('[Cron] Virality analytics scheduled daily at 05:30 Europe/Moscow');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
