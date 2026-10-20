@@ -15,7 +15,11 @@
 	# ТЗ-183: MCP Streamable HTTP — внешние ИИ-клиенты (Claude Desktop, Cursor)
 	# ходят на /mcp с Bearer-токеном. Без этого правила Caddy отдавал SPA-шелл
 	# (200 с index.html) — MCP-клиент получал мусор вместо JSON-RPC.
-	handle /mcp* {
+	# ТЗ-187: матчим ровно /mcp и подпути — не /mcp*, чтобы не перехватывать
+	# будущие SPA-маршруты вида /mcp-… (находка аудита ИБ от 2026-10-19).
+	# handle не принимает список путей — через named matcher @mcp.
+	@mcp path /mcp /mcp/*
+	handle @mcp {
 		reverse_proxy backend:3001
 	}
 
