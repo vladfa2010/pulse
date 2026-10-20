@@ -288,6 +288,15 @@ Flow табы построен на resolve-first:
 Роутер (`marketRouter.ts`) пропускает любой валидный MIC к Finam-адаптеру через
 `resolveProvider()` / `resolveMic()`, поэтому ручной ввод MIC тоже работает.
 
+## Потребители роутера: графики еженедельного отчёта (ТЗ-191)
+
+Эндпоинты `GET /api/reports/weekly/:id/chart` и `GET /api/reports/weekly/current/chart`
+(`src/routes/reports.ts`) вызывают `getIntraday5minRange(mic, ticker, d0, d1)` с окном
+7 дней недели отчёта. Ticker/MIC берутся **строго из данных тега** из payload отчёта
+(SSRF-гард — пользовательский ввод в маркет-запрос не попадает). Деградация:
+200 `{chart: null}` / `{chart: null, reason: 'market_unavailable'}`. Поведение роутера
+не меняется. Подробности — [docs/weekly-report.md](weekly-report.md), п.8.
+
 ## Связанные файлы
 
 - `pulse-backend/src/routes/marketPublic.ts`
@@ -295,6 +304,7 @@ Flow табы построен на resolve-first:
 - `pulse-backend/src/services/market/marketRouter.ts`
 - `pulse-backend/src/services/market/finamMarketAdapter.ts`
 - `pulse-backend/src/services/market/exchangeTimezones.ts`
+- `pulse-backend/src/routes/reports.ts` (графики еженедельного отчёта)
 - `pulse-frontend/src/components/NewsCard.tsx`
 - `pulse-frontend/src/components/NewsReactionChart.tsx`
 - `pulse-frontend/src/components/CandleChart.tsx`

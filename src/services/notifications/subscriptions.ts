@@ -166,9 +166,12 @@ export async function markSent(
   product: Product,
   channel: Channel
 ): Promise<void> {
+  // SQLite: datetime('now') отдаёт UTC БЕЗ суффикса, а new Date('YYYY-MM-DD HH:MM:SS')
+  // парсит его как ЛОКАЛЬНОЕ время — метка «уезжает» на смещение TZ машины и
+  // дедуп частоты рассылает повторно. Пишем ISO-UTC (T + Z) — парсится однозначно.
   await query(
     `UPDATE notification_subscriptions
-     SET last_sent_at = ${USE_SQLITE ? "datetime('now')" : 'NOW()'}
+     SET last_sent_at = ${USE_SQLITE ? "strftime('%Y-%m-%dT%H:%M:%SZ', 'now')" : 'NOW()'}
      WHERE user_id = $1 AND product = $2 AND channel = $3`,
     [userId, product, channel]
   );

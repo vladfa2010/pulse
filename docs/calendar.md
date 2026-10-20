@@ -94,6 +94,14 @@ manual > investmint > smartlab > bcs > global > legacy
 { "error": "calendar_not_loaded" }
 ```
 
+#### `GET /api/reports/weekly/:id/ahead` и `GET /api/reports/weekly/current/ahead`
+
+Авторизованные (платный тариф; архив — также по magic-link `?k=`). Календарный блок
+страницы еженедельного отчёта (ТЗ-191, см. [docs/weekly-report.md](weekly-report.md)):
+события canonical-слоя на **следующую неделю** (пн–вс), отфильтрованные по активным
+тегам портфеля владельца отчёта (архив) / текущего юзера (live). Живые данные,
+не снапшот. Календарь пуст → 200 `{ahead: null}`.
+
 ---
 
 ### `POST /api/admin/calendar/:source`

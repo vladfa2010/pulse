@@ -197,6 +197,33 @@ export async function markSnapshotSent(reportId: string): Promise<void> {
   );
 }
 
+// ── ТЗ-191 Задача 6: ретеншн 12 недель (hard delete, каскадно с токенами) ──
+
+export const WEEKLY_REPORT_RETENTION_WEEKS = 12;
+
+/**
+ * Hard delete снапшотов старше retentionWeeks календарных недель.
+ * Исключение (ТЗ-191 Задача 6): невысланные снапшоты текущей недели
+ * (sent_at IS NULL AND week_start = текущая) не трогаем. Токены доступа
+ * сносятся ON DELETE CASCADE. Ошибки — на вызывающем cron (warning, не падение).
+ * Возвращает число удалённых строк (для cron_log).
+ */
+export async function cleanupOldWeeklyReports(
+  retentionWeeks: number = WEEKLY_REPORT_RETENTION_WEEKS
+): Promise<number> {
+  const thresholdDate = weekStartMskDate(new Date(Date.now() - retentionWeeks * 7 * 24 * 60 * 60 * 1000));
+  const currentWeek = weekStartMskDate();
+  // week_start хранится как 'YYYY-MM-DD' (SQLite TEXT / PG DATE) —
+  // лексикографическое сравнение строк корректно для ISO-дат.
+  const result = await query(
+    `DELETE FROM weekly_reports
+     WHERE week_start < $1
+       AND NOT (sent_at IS NULL AND week_start = $2)`,
+    [thresholdDate, currentWeek]
+  );
+  return result.rowCount ?? 0;
+}
+
 // ── Magic-токены (только архив; live — сессия only) ─────────────────────────
 
 const SQL_EXPIRES_AT = USE_SQLITE

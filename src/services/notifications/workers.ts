@@ -10,10 +10,11 @@ import cron from 'node-cron';
 import { query } from '../../config/db';
 import { broadcastProduct } from './dispatcher';
 import { generateWeeklySnapshots } from './weeklyReportGenerate';
+import { cleanupOldWeeklyReports } from './weeklyReportSnapshot';
 import { Product } from './types';
 import { nowSql } from '../../utils/nowSql';
 
-type TaskName = 'digest' | 'weekly_report' | 'weekly_report_generate';
+type TaskName = 'digest' | 'weekly_report' | 'weekly_report_generate' | 'weekly_report_cleanup';
 
 export function startNotificationWorkers(): void {
   // Дайджест — каждый час в :00 МСК
@@ -34,6 +35,13 @@ export function startNotificationWorkers(): void {
     runBroadcast('weekly_report').catch(e => console.error('[Worker:weekly_report] error:', e));
   }, { timezone: 'Europe/Moscow' });
   console.log('[Worker:weekly_report] Scheduled Sunday at 13:00 Europe/Moscow');
+
+  // ТЗ-191 Задача 6: ретеншн — понедельник 06:30 МСК, hard delete старше 12 недель
+  // (каскадно с report_access_tokens; невысланный снапшот текущей недели не трогаем)
+  cron.schedule('30 6 * * 1', () => {
+    runWeeklyReportCleanup().catch(e => console.error('[Worker:weekly_report_cleanup] error:', e));
+  }, { timezone: 'Europe/Moscow' });
+  console.log('[Worker:weekly_report_cleanup] Scheduled Monday at 06:30 Europe/Moscow');
 }
 
 async function runBroadcast(product: Product): Promise<void> {
@@ -54,10 +62,12 @@ async function runBroadcast(product: Product): Promise<void> {
   const result = await broadcastProduct(product);
 
   try {
+    // ТЗ-191 Задача 5: счётчики фазы отправки — fetched = все исходы,
+    // saved = sent, merged = errors (skipped/empty входят в сумму fetched)
     await query(
       `UPDATE cron_log SET finished_at = ${nowSql()}, status = 'completed',
-       articles_fetched = $2, articles_saved = $3 WHERE task_name = $1`,
-      [taskName, result.sent + result.skipped + result.empty + result.errors, result.sent]
+       articles_fetched = $2, articles_saved = $3, articles_merged = $4 WHERE task_name = $1`,
+      [taskName, result.sent + result.skipped + result.empty + result.errors, result.sent, result.errors]
     );
   } catch { /* ignore */ }
 }
@@ -93,6 +103,44 @@ async function runGenerateWeeklySnapshots(): Promise<void> {
       [taskName, result.generated, result.llmCalls, result.errors]
     );
   } catch { /* ignore */ }
+}
+
+// ТЗ-191 Задача 6: аудит очистки ретеншна — одна строка cron_log
+// (articles_fetched = удалено). Ошибки — warning, джоба не падает.
+async function runWeeklyReportCleanup(): Promise<void> {
+  const taskName: TaskName = 'weekly_report_cleanup';
+
+  try {
+    const upd = await query(
+      `UPDATE cron_log SET started_at = ${nowSql()}, status = 'running', finished_at = NULL,
+       articles_fetched = NULL, articles_saved = NULL WHERE task_name = $1`,
+      [taskName]
+    );
+    if (upd.rowCount === 0) {
+      await query(`INSERT INTO cron_log (task_name, started_at, status) VALUES ($1, ${nowSql()}, 'running')`, [taskName]);
+    }
+  } catch { /* cron_log — best effort */ }
+
+  let deleted = 0;
+  let status = 'completed';
+  try {
+    deleted = await cleanupOldWeeklyReports();
+  } catch (e) {
+    // ТЗ-191 Задача 6: ошибка очистки — warning, НЕ падение джобы
+    console.error('[Worker:weekly_report_cleanup] cleanup failed (skipped):', e);
+    status = 'completed'; // джоба отработала (с деградацией), крон зелёный
+  }
+
+  try {
+    await query(
+      `UPDATE cron_log SET finished_at = ${nowSql()}, status = $2, articles_fetched = $3 WHERE task_name = $1`,
+      [taskName, status, deleted]
+    );
+  } catch { /* ignore */ }
+
+  if (deleted > 0) {
+    console.log(`[Worker:weekly_report_cleanup] deleted ${deleted} old weekly reports`);
+  }
 }
 
 export { runBroadcast };

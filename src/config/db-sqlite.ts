@@ -50,6 +50,11 @@ export function saveDb(): void {
   if (!db) return;
   const data = db.export();
   fs.writeFileSync(DB_FILE, Buffer.from(data));
+  // ВАЖНО: db.export() СБРАСЫВАЕТ PRAGMA foreign_keys на соединении (sql.js) —
+  // без повторного включения ON DELETE CASCADE (user_news_reads, fact_check_*,
+  // report_access_tokens и т.д.) молча не срабатывает. Восстанавливаем после
+  // каждой записи, т.к. query() зовёт saveDb после каждого write.
+  db.exec('PRAGMA foreign_keys = ON');
 }
 
 // Query helper — compatible with pg interface
@@ -428,6 +433,7 @@ export async function initSQLiteSchema(): Promise<void> {
       summary_ru TEXT,
       title_original TEXT,
       lang_original TEXT,
+      summary_original TEXT,
       source TEXT,
       source_id TEXT,
       url TEXT,
@@ -1038,6 +1044,15 @@ export async function initSQLiteSchema(): Promise<void> {
   try {
     db.run('ALTER TABLE users ADD COLUMN ai_file_consent_at TEXT');
     console.log('[SQLite] Migration: added ai_file_consent_at column');
+  } catch {
+    // Column already exists — ignore
+  }
+
+  // Migration: weekly-report (ТЗ-184/191) — SQLite-путь контента читает
+  // summary_original (паритет с PG); в старых файлах колонки не было
+  try {
+    db.run('ALTER TABLE news ADD COLUMN summary_original TEXT');
+    console.log('[SQLite] Migration: added news.summary_original column');
   } catch {
     // Column already exists — ignore
   }

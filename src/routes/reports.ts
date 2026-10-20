@@ -111,10 +111,11 @@ async function checkArchiveAccess(req: AuthRequest, reportId: string): Promise<A
   const k = typeof req.query.k === 'string' ? req.query.k : null;
 
   if (k) {
-    const valid = await validateReportAccessToken(reportId, k);
-    if (!valid) return { ok: false, status: 401 };
+    // Сначала существование отчёта (удалён → 404), потом валидность токена (→ 401)
     const snapshot = await getWeeklyReportSnapshot(reportId);
     if (!snapshot) return { ok: false, status: 404 };
+    const valid = await validateReportAccessToken(reportId, k);
+    if (!valid) return { ok: false, status: 401 };
     return { ok: true, snapshot, isAdmin: false, isOwner: false };
   }
 
@@ -338,7 +339,11 @@ router.get('/weekly/current', async (req: AuthRequest, res) => {
   );
   let liveStats = null;
   if (tagsResult.rows.length > 0) {
-    liveStats = await computeLiveWeeklyStats(query, tagsResult.rows, now);
+    liveStats = await computeLiveWeeklyStats(
+      query,
+      tagsResult.rows.map((r: any) => ({ tagId: r.tag_id, tagName: r.tag_name })),
+      now
+    );
     if (content) content.stats = liveStats;
   }
 

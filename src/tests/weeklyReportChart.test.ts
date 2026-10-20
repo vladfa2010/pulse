@@ -284,8 +284,8 @@ async function runDegradationTests(): Promise<void> {
       stats: null,
     };
     const text = fmtMod.formatWeeklyReportTelegram(contentNoStats);
-    check('текстовый отчёт при stats=null: fallback-счётчики (Всего: 2, (2) у тега)',
-      text.includes('Всего новостей: 2') && text.includes('(2)'), text.slice(0, 120));
+    check('текстовый отчёт при stats=null: fallback-счётчики (Всего: 2, тег — 2)',
+      text.includes('Всего новостей: 2') && text.includes('Сбербанк — 2'), text.slice(0, 160));
     check('caption-форматтер при stats=null → null (фото не шлём)',
       fmtMod.formatWeeklyReportChartCaption(contentNoStats) === null);
   } finally {

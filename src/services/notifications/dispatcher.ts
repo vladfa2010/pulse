@@ -7,21 +7,22 @@
  * Воркеры (cron) больше не содержат ни тарифной логики, ни знания о каналах.
  */
 
-import { sendTelegramMessage, sendTelegramPhoto } from '../telegram';
+import { sendTelegramMessage, sendTelegramPhoto, InlineKeyboard } from '../telegram';
 import { sendEmail, EmailAttachment } from '../email';
 import { sendPushNotification } from '../push';
 import { sendWebPushToUser } from '../webPush';
 import { buildDigestContent, DigestContent } from './digestContent';
 import { buildWeeklyReportContent, WeeklyReportContent } from './weeklyReportContent';
+import { WeeklyAISummaries } from './weeklySummaryAI';
 import { renderWeeklyChart } from './weeklyChart';
 import {
   formatDigestTelegram, formatDigestEmail, formatDigestPush,
   formatWeeklyReportTelegram, formatWeeklyReportEmail, formatWeeklyReportPush,
-  formatWeeklyReportChartCaption,
+  formatWeeklyReportChartCaption, WeeklyReportDeliveryOptions,
 } from './formatters';
 import { getEntitlement } from './entitlement';
 import { isQuietHoursForProduct } from './quietHours';
-import { getCurrentWeekSnapshot, markSnapshotSent } from './weeklyReportSnapshot';
+import { getCurrentWeekSnapshot, markSnapshotSent, issueReportAccessToken } from './weeklyReportSnapshot';
 import {
   getRecipients, getEnabledSubscriptions, getDeliveryTarget, getQuietHours,
   isDueByFrequency, markSent,
@@ -38,6 +39,35 @@ const READ_ALL_KEYBOARD = {
   inline_keyboard: [[{ text: '✅ Прочитано', callback_data: 'digest_read_all' }]],
 };
 
+// ── ТЗ-191 Задача 5: ссылка на страницу отчёта для дистрибуции ──────────────
+
+/** Единственное место сборки URL отчёта: ${FRONTEND_URL}/reports/weekly/:id?k=…&utm_… */
+function weeklyReportUrl(reportId: string, token: string, channel: Channel): string {
+  const base = (process.env.FRONTEND_URL || 'https://pulse.inside-trade.ru').replace(/\/+$/, '');
+  return `${base}/reports/weekly/${reportId}?k=${token}&utm_source=${channel}&utm_medium=weekly_report`;
+}
+
+/** Дополнительный контекст доставки weekly_report (ссылка + AI из снапшота) */
+interface WeeklyDeliveryExtra {
+  reportId: string;
+  token: string | null;
+  ai: WeeklyAISummaries | null;
+}
+
+function weeklyChannelOptions(extra: WeeklyDeliveryExtra | null, channel: Channel): WeeklyReportDeliveryOptions {
+  if (!extra) return {};
+  return {
+    ai: extra.ai,
+    reportUrl: extra.token ? weeklyReportUrl(extra.reportId, extra.token, channel) : undefined,
+  };
+}
+
+/** Inline-кнопка «Открыть полный отчёт» (ссылка с magic-токеном) */
+function weeklyReportKeyboard(url: string | undefined): InlineKeyboard | undefined {
+  if (!url) return undefined;
+  return { inline_keyboard: [[{ text: '📊 Открыть полный отчёт', url }]] };
+}
+
 // ── Отправка одного продукта в один канал ───────────────────────────────────
 
 async function deliver(
@@ -46,7 +76,8 @@ async function deliver(
   channel: Channel,
   content: NotificationContent,
   frequency: string,
-  chart?: Buffer | null
+  chart?: Buffer | null,
+  weeklyExtra?: WeeklyDeliveryExtra | null
 ): Promise<boolean> {
   if (product === 'digest') {
     const c = content as DigestContent;
@@ -89,41 +120,53 @@ async function deliver(
 
   if (product === 'weekly_report') {
     const c = content as WeeklyReportContent;
+    const opts = weeklyChannelOptions(weeklyExtra ?? null, channel);
     switch (channel) {
       case 'telegram': {
         const target = await getDeliveryTarget(userId, 'telegram', product);
         if (!target) return false;
-        // ТЗ-184: картинка первым сообщением, текст следует. Падение фото
-        // не отменяет текст (деградация → текстовый отчёт как раньше).
+        // ТЗ-184/191: картинка первым сообщением с inline-кнопкой на страницу
+        // отчёта. Падение фото не отменяет текст (деградация → текстовая
+        // сводка с кнопкой в последнем чанке).
+        let photoSent = false;
         if (chart) {
           const caption = formatWeeklyReportChartCaption(c);
-          const photoOk = await sendTelegramPhoto(target.target, chart, caption ?? undefined);
-          if (!photoOk) {
+          const keyboard = weeklyReportKeyboard(opts.reportUrl);
+          photoSent = await sendTelegramPhoto(target.target, chart, caption ?? undefined, keyboard);
+          if (!photoSent) {
             console.warn(`[Dispatcher] user=${userId} product=weekly_report photo failed, sending text only`);
           } else {
             await sleep(500);
           }
         }
-        const text = formatWeeklyReportTelegram(c);
+        const text = formatWeeklyReportTelegram(c, opts);
         const chunks = splitTelegramMessage(text, 4000);
+        // Кнопку дублируем под текстом, только если фото не ушло (иначе она под фото)
+        const fallbackKeyboard = photoSent ? undefined : weeklyReportKeyboard(opts.reportUrl);
         for (let i = 0; i < chunks.length; i++) {
-          const ok = await sendTelegramMessage(target.target, chunks[i]);
+          const isLast = i === chunks.length - 1;
+          const ok = await sendTelegramMessage(
+            target.target,
+            chunks[i],
+            'HTML',
+            isLast ? fallbackKeyboard : undefined
+          );
           if (!ok) return false;
-          if (i < chunks.length - 1) await sleep(500);
+          if (!isLast) await sleep(500);
         }
         return true;
       }
       case 'email': {
         const target = await getDeliveryTarget(userId, 'email', product);
         if (!target) return false;
-        const { subject, html } = formatWeeklyReportEmail(c, !!chart);
+        const { subject, html } = formatWeeklyReportEmail(c, { withChart: !!chart, ...opts });
         const attachments: EmailAttachment[] | undefined = chart
           ? [{ filename: 'weekly-chart.png', content: chart, contentId: 'weekly-chart' }]
           : undefined;
         return sendEmail(target.target, subject, html, attachments);
       }
       case 'push': {
-        const { title, body, data } = formatWeeklyReportPush(c);
+        const { title, body, data } = formatWeeklyReportPush(c, opts.reportUrl);
         const [fcmOk, vapidCount] = await Promise.all([
           sendPushNotification(userId, title, body, data),
           sendWebPushToUser(userId, title, body, data),
@@ -141,6 +184,8 @@ async function deliver(
 export async function dispatchToUser(userId: string, product: Product): Promise<SendResult> {
   // ТЗ-191: id снапшота текущей недели (weekly_report) — для markSnapshotSent в finally
   let weeklySnapshotId: string | null = null;
+  let weeklySnapshotAi: WeeklyAISummaries | null = null;
+  let weeklyToken: string | null = null;
   let weeklySent = false;
   try {
     // 1. Тариф на уровне продукта (доступ + лимит тегов из плана)
@@ -183,6 +228,15 @@ export async function dispatchToUser(userId: string, product: Product): Promise<
       }
       content = snapshot.content;
       weeklySnapshotId = snapshot.id;
+      weeklySnapshotAi = snapshot.ai;
+      // ТЗ-191 Задача 5: plaintext-токена в БД нет — перевыпускаем (upsert той же
+      // строки, срок 7 дней от отправки) и вставляем в ссылки письма/TG/push.
+      // Ошибка выпуска токена не отменяет рассылку — уйдёт сводка без кнопки.
+      try {
+        weeklyToken = await issueReportAccessToken(snapshot.id);
+      } catch (e) {
+        console.error(`[Dispatcher] issueReportAccessToken failed for ${snapshot.id}, sending without link:`, e);
+      }
     } else {
       content = await buildContent(userId, product, ent.maxTags, earliest);
     }
@@ -207,7 +261,10 @@ export async function dispatchToUser(userId: string, product: Product): Promise<
         console.log(`[Dispatcher] user=${userId} product=${product} channel=${sub.channel} blocked: ${channelEnt.reason}`);
         continue;
       }
-      const ok = await deliver(userId, product, sub.channel, content, sub.frequency ?? '1h', chart);
+      const weeklyExtra: WeeklyDeliveryExtra | null = product === 'weekly_report'
+        ? { reportId: weeklySnapshotId!, token: weeklyToken, ai: weeklySnapshotAi }
+        : null;
+      const ok = await deliver(userId, product, sub.channel, content, sub.frequency ?? '1h', chart, weeklyExtra);
       if (ok) {
         await markSent(userId, product, sub.channel);
         anySent = true;

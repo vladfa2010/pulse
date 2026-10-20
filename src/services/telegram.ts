@@ -12,8 +12,15 @@ function isConfigured(): boolean {
   return !!BOT_TOKEN && BOT_TOKEN.length > 10;
 }
 
+export interface InlineKeyboardButton {
+  text: string;
+  callback_data?: string;
+  /** URL-кнопка (ТЗ-191 Задача 5: «Открыть полный отчёт» со ссылкой magic-link) */
+  url?: string;
+}
+
 export interface InlineKeyboard {
-  inline_keyboard: Array<Array<{ text: string; callback_data: string }>>;
+  inline_keyboard: InlineKeyboardButton[][];
 }
 
 // Send message via Telegram Bot API
@@ -75,10 +82,12 @@ export async function sendTelegramMessage(
 // ТЗ-184: инфографика weekly_report первым сообщением. Caption ≤1024 символов
 // обрезаем на всякий случай. Возвращает false при любой ошибке — вызывающий
 // код (dispatcher) продолжает слать текстовый отчёт (деградация, не сбой).
+// ТЗ-191 Задача 5: replyMarkup — inline-кнопка со ссылкой на страницу отчёта.
 export async function sendTelegramPhoto(
   chatId: string,
   photo: Buffer,
-  caption?: string
+  caption?: string,
+  replyMarkup?: InlineKeyboard
 ): Promise<boolean> {
   if (!isConfigured()) {
     console.warn('[Telegram] Bot token not configured');
@@ -92,6 +101,9 @@ export async function sendTelegramPhoto(
     if (caption) {
       form.append('caption', caption.slice(0, 1024));
       form.append('parse_mode', 'HTML');
+    }
+    if (replyMarkup) {
+      form.append('reply_markup', JSON.stringify(replyMarkup));
     }
     await axios.post(`${TELEGRAM_API}/sendPhoto`, form, {
       headers: form.getHeaders(),

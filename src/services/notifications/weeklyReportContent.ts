@@ -91,8 +91,11 @@ export async function buildWeeklyReportContent(
 
   let newsResult;
   if (USE_SQLITE) {
+    // SQLite-dev паритет с PG `matched_tags && $1::text[]`: matched_tags — JSON-текст
+    // вида '["uuid-a","uuid-b"]', поэтому матчим по '"id"' (PG-стиль), а не по
+    // ';"id";' — JSON не содержит ';' и старый паттерн никогда не срабатывал.
     const conditions = tagIds.map(() => 'matched_tags LIKE ?').join(' OR ');
-    const likeParams = tagIds.map(id => `%;"${id}";%`);
+    const likeParams = tagIds.map(id => `%"${id}"%`);
     newsResult = await query(
       `SELECT COALESCE(title_ru, title_original) as title,
               COALESCE(summary_ru, summary_original) as summary,
@@ -136,7 +139,18 @@ export async function buildWeeklyReportContent(
     const sentiment = row.sentiment || 'neutral';
     sentimentBreakdown[sentiment as keyof typeof sentimentBreakdown]++;
 
-    for (const tagId of row.matched_tags || []) {
+    // PG возвращает matched_tags массивом, SQLite — JSON-текстом: приводим к массиву
+    let matched: string[] = [];
+    if (Array.isArray(row.matched_tags)) {
+      matched = row.matched_tags;
+    } else if (typeof row.matched_tags === 'string' && row.matched_tags) {
+      try {
+        const parsed = JSON.parse(row.matched_tags);
+        if (Array.isArray(parsed)) matched = parsed;
+      } catch { /* пустые matched_tags */ }
+    }
+
+    for (const tagId of matched) {
       if (tagMap.has(tagId)) {
         tagMap.get(tagId)!.articles.push({
           title: row.title,

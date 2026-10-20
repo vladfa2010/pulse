@@ -5,6 +5,7 @@
 
 import { DigestArticle, DigestContent } from './digestContent';
 import { WeeklyReportContent } from './weeklyReportContent';
+import { WeeklyAISummaries } from './weeklySummaryAI';
 import { statsCurrentTotal } from './weeklyStats';
 import { FREQUENCY_LABELS } from './types';
 
@@ -193,23 +194,60 @@ export function truncateTextSmart(text: string, maxLength: number): string {
 export const PUSH_TITLE_MAX = 60;
 export const PUSH_BODY_MAX = 140;
 
+// ── Weekly Report: дистрибуция «сводка + ссылка» (ТЗ-191, Задача 5) ─────────
+
+/**
+ * Опции доставки weekly_report после ТЗ-191: письмо/Telegram — короткая
+ * сводка + ссылка на страницу отчёта (magic-link ?k=), полный текст живёт
+ * на странице. AI-саммари приходит из payload снапшота (фаза генерации);
+ * при отсутствии (LLM недоступен / stats без ai) сводка строится без него.
+ */
+export interface WeeklyReportDeliveryOptions {
+  /** Полный URL страницы отчёта с токеном и UTM (диспетчер); без него — без кнопки */
+  reportUrl?: string;
+  /** AI-саммари из снапшота */
+  ai?: WeeklyAISummaries | null;
+}
+
+/** Топ-3 тега недели со счётчиками (для сводки в письме/Telegram) */
+function weeklyTopTags(content: WeeklyReportContent, limit = 3): Array<{ tagName: string; count: number }> {
+  const tagCount = new Map<string, number>();
+  if (content.stats) {
+    for (const t of content.stats.perTag) tagCount.set(t.tagId, t.current);
+  }
+  const sorted = [...content.tagSummaries].sort((a, b) =>
+    (tagCount.get(b.tagId) ?? b.articles.length) - (tagCount.get(a.tagId) ?? a.articles.length)
+  );
+  return sorted.slice(0, limit).map((t) => ({
+    tagName: t.tagName,
+    count: tagCount.get(t.tagId) ?? t.articles.length,
+  }));
+}
+
+/** Первый абзац общего AI-саммари (для письма — целиком не нужен) */
+function firstParagraph(text: string): string {
+  return text.split(/\n\s*\n/)[0]?.trim() ?? '';
+}
+
 // ── Weekly Report (Telegram HTML) ───────────────────────────────────────────
 
 /**
- * ТЗ-184: счётчики («Всего новостей», тональность, «(N)» у тега) берутся из
- * агрегатов stats (точные числа без лимита 200). При stats=null — fallback
- * на старые значения из списка статей (деградация → текст как раньше).
+ * ТЗ-191 Задача 5: формат рассылки — «сводка + ссылка», полный отчёт на странице.
+ * Тело: статистика + общее AI-саммари целиком + топ-3 тега со счётчиками;
+ * ссылку с magic-токеном несёт inline-кнопка (диспетчер, reply_markup).
+ * Все внешние строки (имена тегов, саммари LLM) — escapeHtml: caption и
+ * текст парсятся Telegram как HTML. Счётчики — из stats (ТЗ-184), при
+ * stats=null — fallback на старые значения из списка статей.
  */
-export function formatWeeklyReportTelegram(content: WeeklyReportContent): string {
+export function formatWeeklyReportTelegram(
+  content: WeeklyReportContent,
+  opts: WeeklyReportDeliveryOptions = {}
+): string {
   const stats = content.stats;
   const total = stats ? statsCurrentTotal(stats) : content.totalArticles;
   const breakdown = stats
     ? { positive: stats.sentiment.positive, negative: stats.sentiment.negative, neutral: stats.sentiment.neutral }
     : content.sentimentBreakdown;
-  const tagCount = new Map<string, number>();
-  if (stats) {
-    for (const t of stats.perTag) tagCount.set(t.tagId, t.current);
-  }
 
   let text = `📊 <b>PULSE — Еженедельный отчёт</b>\n`;
   text += `📅 ${content.period}\n\n`;
@@ -220,23 +258,21 @@ export function formatWeeklyReportTelegram(content: WeeklyReportContent): string
   text += `   🔴 Негативных: ${breakdown.negative}\n`;
   text += `   ⚪ Нейтральных: ${breakdown.neutral}\n\n`;
 
-  for (const tag of content.tagSummaries) {
-    const n = tagCount.get(tag.tagId) ?? tag.articles.length;
-    text += `━━━ <b>${escapeHtml(tag.tagName.toUpperCase())}</b> (${n}) ━━━\n\n`;
-
-    for (const article of tag.articles.slice(0, 5)) {
-      const emoji = article.sentiment === 'positive' ? '🟢' : article.sentiment === 'negative' ? '🔴' : '⚪';
-      const date = formatShortDate(article.publishedAt);
-      text += `${emoji} <a href="${article.url}">${escapeHtml(article.title)}</a>\n`;
-      text += `   <i>${escapeHtml(article.source)}</i> · ${date}\n\n`;
-    }
-
-    if (tag.articles.length > 5) {
-      text += `<i>…и ещё ${tag.articles.length - 5} новостей</i>\n\n`;
-    }
+  const overall = opts.ai?.overall;
+  if (overall) {
+    text += `🧠 <b>Итоги недели:</b>\n${escapeHtml(overall)}\n\n`;
   }
 
-  text += `━━━\n<i>Отчёт составлен автоматически сервисом PULSE</i>`;
+  const top = weeklyTopTags(content);
+  if (top.length > 0) {
+    text += `🏷 <b>Главные темы:</b>\n`;
+    for (let i = 0; i < top.length; i++) {
+      text += `${i + 1}. ${escapeHtml(top[i].tagName)} — ${top[i].count}\n`;
+    }
+    text += `\n`;
+  }
+
+  text += `<i>Полный отчёт — на странице PULSE (кнопка ниже)</i>`;
   return text;
 }
 
@@ -265,15 +301,18 @@ export function formatWeeklyReportChartCaption(content: WeeklyReportContent): st
   return caption.length > 1024 ? caption.slice(0, 1023) + '…' : caption;
 }
 
-function formatShortDate(d: Date): string {
-  return new Date(d).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
-}
-
 // ── Weekly Report (Email HTML) ───────────────────────────────────────────────
 
+/**
+ * ТЗ-191 Задача 5: письмо — сводка + ссылка. Тело: PNG-инфографика (ТЗ-184,
+ * inline cid:), KPI-карточки (всего/позитив/негатив), первый абзац общего
+ * AI-саммари, топ-3 тега со счётчиками и кнопка «Открыть полный отчёт»
+ * (magic-link с токеном). Фолбэк для клиентов без картинок — табличная
+ * вёрстка читается и без PNG. Все внешние строки — escapeHtml.
+ */
 export function formatWeeklyReportEmail(
   content: WeeklyReportContent,
-  withChart?: boolean
+  opts: WeeklyReportDeliveryOptions & { withChart?: boolean } = {}
 ): { subject: string; html: string } {
   const subject = '📊 PULSE — Еженедельный отчёт';
 
@@ -282,14 +321,10 @@ export function formatWeeklyReportEmail(
   const breakdown = stats
     ? { positive: stats.sentiment.positive, negative: stats.sentiment.negative, neutral: stats.sentiment.neutral }
     : content.sentimentBreakdown;
-  const tagCount = new Map<string, number>();
-  if (stats) {
-    for (const t of stats.perTag) tagCount.set(t.tagId, t.current);
-  }
 
   let html = `<div style="margin-bottom:24px;">`;
   // ТЗ-184: инфографика в начале письма — inline-вложение cid:weekly-chart
-  if (withChart) {
+  if (opts.withChart) {
     html += `<img src="cid:weekly-chart" alt="Инфографика недели" style="width:100%;max-width:640px;border-radius:12px;display:block;margin-bottom:20px;" />`;
   }
   html += `<h3 style="color:#1a1a2e; margin:0 0 16px;">📊 Сводка за неделю</h3>`;
@@ -297,35 +332,34 @@ export function formatWeeklyReportEmail(
   html += statCardHtml(total.toString(), 'Всего новостей', '#10b981');
   html += statCardHtml(breakdown.positive.toString(), 'Позитив', '#10b981');
   html += statCardHtml(breakdown.negative.toString(), 'Негатив', '#ef4444');
-  html += `</div></div>`;
+  html += `</div>`;
 
-  for (const tag of content.tagSummaries) {
-    const n = tagCount.get(tag.tagId) ?? tag.articles.length;
-    html += `<div style="margin-bottom:32px;">`;
-    html += `<h4 style="color:#1a1a2e; margin:0 0 12px; padding-bottom:8px; border-bottom:2px solid #e5e7eb;">`;
-    html += `${escapeHtml(tag.tagName)} <span style="color:#8e8e93; font-weight:400;">(${n})</span></h4>`;
+  // Первый абзац общего AI-саммари (полный текст — на странице отчёта)
+  const overallFirst = opts.ai?.overall ? firstParagraph(opts.ai.overall) : '';
+  if (overallFirst) {
+    html += `<div style="margin-bottom:24px; padding:16px; background:#f0f9ff; border-left:3px solid #0ea5e9; border-radius:8px;">`;
+    html += `<div style="font-size:12px; color:#0369a1; margin-bottom:8px;">🧠 Итоги недели</div>`;
+    html += `<div style="color:#1a1a2e; line-height:1.5;">${escapeHtml(overallFirst)}</div></div>`;
+  }
 
-    for (const article of tag.articles.slice(0, 5)) {
-      const tagClass = article.sentiment === 'positive' ? 'tag-positive'
-        : article.sentiment === 'negative' ? 'tag-negative' : 'tag-neutral';
-      const sentimentLabel = article.sentiment === 'positive' ? 'Позитив'
-        : article.sentiment === 'negative' ? 'Негатив' : 'Нейтрал';
-
-      html += `<div style="margin-bottom:12px; padding:12px; background:#fafafa; border-radius:8px;">`;
-      html += `<div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">`;
-      html += `<a href="${article.url}" style="font-weight:500; color:#1a1a2e; text-decoration:none; flex:1;">${escapeHtml(article.title)}</a>`;
-      html += `<span class="tag ${tagClass}">${sentimentLabel}</span></div>`;
-      html += `<div style="margin-top:6px; color:#8e8e93; font-size:12px;">`;
-      html += `${escapeHtml(article.source)} · ${formatShortDate(article.publishedAt)}</div>`;
-      html += `</div>`;
+  const top = weeklyTopTags(content);
+  if (top.length > 0) {
+    html += `<div style="margin-bottom:24px;"><h4 style="color:#1a1a2e; margin:0 0 12px;">Главные темы</h4>`;
+    for (const t of top) {
+      html += `<div style="margin-bottom:8px; padding:10px 12px; background:#fafafa; border-radius:8px; color:#1a1a2e;">`;
+      html += `${escapeHtml(t.tagName)} <span style="color:#8e8e93;">— ${t.count} новостей</span></div>`;
     }
-
-    if (tag.articles.length > 5) {
-      html += `<p style="color:#8e8e93; font-size:12px;">…и ещё ${tag.articles.length - 5} новостей</p>`;
-    }
-
     html += `</div>`;
   }
+
+  if (opts.reportUrl) {
+    html += `<div style="margin-bottom:24px;">`;
+    html += `<a href="${escapeHtml(opts.reportUrl)}" style="display:inline-block; background:#0ea5e9; color:#ffffff; padding:12px 24px; border-radius:8px; text-decoration:none; font-weight:600;">Открыть полный отчёт</a>`;
+    html += `<div style="margin-top:8px; color:#8e8e93; font-size:12px;">Полный отчёт: динамика по дням, графики по тегам, AI-итоги и календарь недели</div>`;
+    html += `</div>`;
+  }
+
+  html += `</div>`;
 
   return { subject, html };
 }
@@ -338,7 +372,10 @@ function statCardHtml(value: string, label: string, color: string): string {
 
 // ── Weekly Report (Push) ───────────────────────────────────────────────────
 
-export function formatWeeklyReportPush(content: WeeklyReportContent): { title: string; body: string; data: Record<string, string> } {
+export function formatWeeklyReportPush(
+  content: WeeklyReportContent,
+  reportUrl?: string
+): { title: string; body: string; data: Record<string, string> } {
   const n = content.totalArticles;
   const topTag = content.tagSummaries[0]?.tagName || '';
 
@@ -352,9 +389,9 @@ export function formatWeeklyReportPush(content: WeeklyReportContent): { title: s
     body = topTag ? truncateTextSmart(`${base} · ${topTag}`, PUSH_BODY_MAX) : base;
   }
 
-  return {
-    title,
-    body,
-    data: { type: 'weekly_report', count: String(n), period: content.period },
-  };
+  const data: Record<string, string> = { type: 'weekly_report', count: String(n), period: content.period };
+  // ТЗ-191 Задача 5: deeplink на страницу отчёта (объём уведомления не меняется)
+  if (reportUrl) data.report_url = reportUrl;
+
+  return { title, body, data };
 }

@@ -108,7 +108,7 @@ PRIMARY KEY: `(user_id, product, channel)`.
 | Продукт | Каналы | Описание |
 |---------|--------|----------|
 | `digest` | `telegram`, `email`, `push` | Периодическая подборка непрочитанных |
-| `weekly_report` | `telegram`, `email`, `push` | Еженедельный отчёт (воскресенье, 13:00 МСК) |
+| `weekly_report` | `telegram`, `email`, `push` | Еженедельный отчёт (воскресенье, 13:00 МСК). Дистрибуция — сводка + ссылка на страницу отчёта (magic-link, см. [docs/weekly-report.md](weekly-report.md)); токен выпускается при генерации (вс 11:00) и перевыпускается при отправке |
 | `fact_check` | `telegram`, `email` | Результат on-demand факт-чека |
 | `news_alert` | `push` | Мгновенный пуш при выходе новости по тегу |
 | `billing` | `email`, `push` | Подписка, оплата, истечение, grace |
