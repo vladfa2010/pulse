@@ -772,9 +772,18 @@ router.get('/stories', async (req, res) => {
     const result = await query(
       `SELECT s.id, s.title, s.summary, s.started_at, s.last_seen_at,
               c.id AS cluster_id, c.size, c.max_sim, c.verdict, c.tags,
-              c.first_published_at, c.last_seen_at AS cluster_last_seen_at
+              c.first_published_at, c.last_seen_at AS cluster_last_seen_at,
+              fn.title AS cluster_first_title
        FROM stories s
        LEFT JOIN clusters c ON c.story_id = s.id
+       LEFT JOIN LATERAL (
+         SELECT COALESCE(n.title_ru, n.title_original) AS title
+         FROM cluster_items ci
+         JOIN news n ON n.id = ci.news_id
+         WHERE ci.cluster_id = c.id
+         ORDER BY n.published_at ASC
+         LIMIT 1
+       ) fn ON true
        ORDER BY s.last_seen_at DESC NULLS LAST, c.size DESC NULLS LAST
        LIMIT 500`,
       []
@@ -801,6 +810,7 @@ router.get('/stories', async (req, res) => {
           tags: r.tags || [],
           first_published_at: r.first_published_at,
           last_seen_at: r.cluster_last_seen_at,
+          first_title: r.cluster_first_title ?? null, // ТЗ-187: заголовок первой новости каскада
         });
       }
     }
