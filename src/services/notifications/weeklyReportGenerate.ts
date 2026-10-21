@@ -17,6 +17,7 @@ import { getEntitlement } from './entitlement';
 import { hasFeature } from '../subscription';
 import { buildWeeklyReportContent } from './weeklyReportContent';
 import { generateWeeklyAISummaries } from './weeklySummaryAI';
+import { weekStartMskDate, weeklyReportTargetWeekStart } from './weeklyStats';
 import {
   saveWeeklyReportSnapshot,
   issueReportAccessToken,
@@ -24,6 +25,7 @@ import {
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 const CONCURRENCY = 5;
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
 export interface WeeklyGenerateResult {
   /** снапшотов создано/обновлено */
@@ -63,8 +65,11 @@ async function generateForUser(userId: string): Promise<{ llmCalls: number }> {
     return { llmCalls: 0 };
   }
 
-  // 2. Контент (с stats из ТЗ-184) — как в фазе отправки раньше
-  const content = await buildWeeklyReportContent(userId, ent.maxTags);
+  // 2. Контент за календарную неделю [понедельник, следующий понедельник) —
+  // ПРАВКА-2 к ТЗ-191: скользящие 7 дней подтягивали «вчера–сегодня» вместо недели
+  const windowStart = weeklyReportTargetWeekStart();
+  const windowEnd = new Date(windowStart.getTime() + WEEK_MS);
+  const content = await buildWeeklyReportContent(userId, ent.maxTags, windowStart, windowEnd);
   if (!content || content.tagSummaries.length === 0) {
     console.log(`[WeeklyReportGenerate] user=${userId} no content, skipped`);
     return { llmCalls: 0 };
@@ -75,7 +80,7 @@ async function generateForUser(userId: string): Promise<{ llmCalls: number }> {
   const ai = await generateWeeklyAISummaries(content, { perTagEnabled });
 
   // 4. Снапшот (upsert по (user_id, week_start)) + magic-токен (один на отчёт)
-  const saved = await saveWeeklyReportSnapshot(userId, content, ai.summaries);
+  const saved = await saveWeeklyReportSnapshot(userId, content, ai.summaries, weekStartMskDate(windowStart));
   await issueReportAccessToken(saved.id);
 
   console.log(

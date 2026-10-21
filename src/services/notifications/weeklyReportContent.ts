@@ -20,10 +20,24 @@ export interface WeeklyReportArticle {
   sentiment: string;
 }
 
+/** Лёгкая форма события для графика недели (маркеры + сантимент-фон):
+ *  ПРАВКА к ТЗ-191 — БЕЗ кепа по свежести, покрывает всю отчётную неделю */
+export interface WeeklyChartEvent {
+  title: string;
+  source: string;
+  url: string;
+  publishedAt: Date;
+  sentiment: string;
+}
+
 export interface WeeklyReportTagSummary {
   tagId: string;
   tagName: string;
+  /** Кепнутые свежие статьи — для ИИ-итогов и текстовых блоков (лимит см. в builder) */
   articles: WeeklyReportArticle[];
+  /** ВСЕ новости тега за окно недели — источник маркеров/фона графика.
+   *  Старые снапшоты поля не имеют — фронт/чарт фолбечатся на articles */
+  chartEvents?: WeeklyChartEvent[];
 }
 
 export interface WeeklyReportContent {
@@ -44,17 +58,34 @@ function formatDate(d: Date): string {
   return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
 }
 
+/** PG возвращает matched_tags массивом, SQLite — JSON-текстом: приводим к массиву */
+function normalizeMatchedTags(raw: unknown): string[] {
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === 'string' && raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    } catch { /* пустые matched_tags */ }
+  }
+  return [];
+}
+
 /**
  * @param userId  пользователь
  * @param maxTags лимит тегов из Entitlement (null = без plan-лимита)
  * @param windowStart ТЗ-191 live-режим: левая граница окна (понедельник недели
  *                    по МСК) вместо скользящих 7 дней; stats при этом заменяет
  *                    вызывающий (computeLiveWeeklyStats), здесь rolling-агрегаты
+ * @param windowEnd ПРАВКА-2 к ТЗ-191: правая граница окна (конец недели / now).
+ *                    С windowStart+windowEnd curated-выборка режется по
+ *                    published_at В окно (а не «свежие 200»), и дополнительно
+ *                    собирается chartEvents — ВСЕ новости окна для графика
  */
 export async function buildWeeklyReportContent(
   userId: string,
   maxTags: number | null,
-  windowStart?: Date
+  windowStart?: Date,
+  windowEnd?: Date
 ): Promise<WeeklyReportContent | null> {
   // Cap: min(tagLimit, 200). Бесконечные (-1) и ручной запуск (null) → 200.
   const rawLimit = maxTags ?? HARD_TAG_CAP;
@@ -84,6 +115,11 @@ export async function buildWeeklyReportContent(
   const sinceFetched = windowStart
     ? new Date(windowStart.getTime() - 24 * 60 * 60 * 1000)
     : new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
+  // ПРАВКА-2 к ТЗ-191: календарное окно [windowStart, windowEnd) по published_at —
+  // иначе кеп свежести LIMIT 200 вытягивает «вчера—сегодня», а неделя остаётся пустой
+  const windowed = windowStart != null && windowEnd != null;
+  const windowClauseSqlite = windowed ? ' AND published_at >= ? AND published_at < ?' : '';
+  const windowClausePg = windowed ? ' AND published_at >= $4 AND published_at < $5' : '';
 
   console.log(
     `[WeeklyReport] user=${userId} tags=${tagIds.length} limit=${limit}`
@@ -102,10 +138,13 @@ export async function buildWeeklyReportContent(
               source, url, published_at, sentiment, matched_tags
        FROM news
        WHERE (${conditions})
-         AND (fetched_at > ? OR published_at > ?)
+         AND (fetched_at > ? OR published_at > ?)${windowClauseSqlite}
        ORDER BY fetched_at DESC
        LIMIT 200`,
-      [...likeParams, sinceFetched.toISOString(), sincePublished.toISOString()]
+      windowed
+        ? [...likeParams, sinceFetched.toISOString(), sincePublished.toISOString(),
+           windowStart!.toISOString(), windowEnd!.toISOString()]
+        : [...likeParams, sinceFetched.toISOString(), sincePublished.toISOString()]
     );
   } else {
     newsResult = await query(
@@ -114,11 +153,55 @@ export async function buildWeeklyReportContent(
               source, url, published_at, sentiment, matched_tags
        FROM news
        WHERE matched_tags && $1::text[]
-         AND (fetched_at > $2 OR published_at > $3)
+         AND (fetched_at > $2 OR published_at > $3)${windowClausePg}
        ORDER BY GREATEST(fetched_at, published_at) DESC
        LIMIT 200`,
-      [tagIds, sinceFetched.toISOString(), sincePublished.toISOString()]
+      windowed
+        ? [tagIds, sinceFetched.toISOString(), sincePublished.toISOString(),
+           windowStart!.toISOString(), windowEnd!.toISOString()]
+        : [tagIds, sinceFetched.toISOString(), sincePublished.toISOString()]
     );
+  }
+
+  // chartEvents: ВСЕ новости тегов за окно (без кепа) — маркеры/фон графика.
+  // Отдельный лёгкий запрос: curated-выборка выше намеренно кепнута для ИИ-итогов.
+  // matchedTags — служебное поле для раскладки по тегам, в payload не уходит.
+  let chartEvents: Array<WeeklyChartEvent & { matchedTags: string[] }> = [];
+  if (windowed) {
+    let evResult;
+    if (USE_SQLITE) {
+      const conditions = tagIds.map(() => 'matched_tags LIKE ?').join(' OR ');
+      const likeParams = tagIds.map(id => `%"${id}"%`);
+      evResult = await query(
+        `SELECT COALESCE(title_ru, title_original) as title,
+                source, url, published_at, sentiment, matched_tags
+         FROM news
+         WHERE (${conditions})
+           AND published_at >= ? AND published_at < ?
+         ORDER BY published_at ASC
+         LIMIT 5000`,
+        [...likeParams, windowStart!.toISOString(), windowEnd!.toISOString()]
+      );
+    } else {
+      evResult = await query(
+        `SELECT COALESCE(title_ru, title_original) as title,
+                source, url, published_at, sentiment, matched_tags
+         FROM news
+         WHERE matched_tags && $1::text[]
+           AND published_at >= $2 AND published_at < $3
+         ORDER BY published_at ASC
+         LIMIT 5000`,
+        [tagIds, windowStart!.toISOString(), windowEnd!.toISOString()]
+      );
+    }
+    chartEvents = evResult.rows.map((row: any) => ({
+      title: row.title,
+      source: row.source,
+      url: row.url,
+      publishedAt: row.published_at ? new Date(row.published_at) : new Date(),
+      sentiment: row.sentiment || 'neutral',
+      matchedTags: normalizeMatchedTags(row.matched_tags),
+    })) as Array<WeeklyChartEvent & { matchedTags: string[] }>;
   }
 
   const articles = newsResult.rows;
@@ -140,15 +223,7 @@ export async function buildWeeklyReportContent(
     sentimentBreakdown[sentiment as keyof typeof sentimentBreakdown]++;
 
     // PG возвращает matched_tags массивом, SQLite — JSON-текстом: приводим к массиву
-    let matched: string[] = [];
-    if (Array.isArray(row.matched_tags)) {
-      matched = row.matched_tags;
-    } else if (typeof row.matched_tags === 'string' && row.matched_tags) {
-      try {
-        const parsed = JSON.parse(row.matched_tags);
-        if (Array.isArray(parsed)) matched = parsed;
-      } catch { /* пустые matched_tags */ }
-    }
+    const matched = normalizeMatchedTags(row.matched_tags);
 
     for (const tagId of matched) {
       if (tagMap.has(tagId)) {
@@ -164,7 +239,20 @@ export async function buildWeeklyReportContent(
     }
   }
 
-  const tagSummaries = Array.from(tagMap.values()).filter(t => t.articles.length > 0);
+  // Раскладываем chartEvents по тегам (новость может быть привязана к нескольким)
+  for (const ev of chartEvents) {
+    const { matchedTags, ...event } = ev;
+    for (const tagId of matchedTags) {
+      const summary = tagMap.get(tagId);
+      if (!summary) continue;
+      summary.chartEvents ??= [];
+      summary.chartEvents.push(event);
+    }
+  }
+
+  const tagSummaries = Array.from(tagMap.values()).filter(
+    t => t.articles.length > 0 || (t.chartEvents?.length ?? 0) > 0
+  );
   if (tagSummaries.length === 0) {
     console.log(`[WeeklyReport] user=${userId} no matching tags with articles`);
     return null;
@@ -182,8 +270,10 @@ export async function buildWeeklyReportContent(
   }
 
   return {
+    // Правую границу показываем как последний день окна (воскресенье), а не
+    // exclusive-конец (понедельник 00:00); для live (windowEnd=now) — сегодня
     period: windowStart
-      ? `${formatDate(windowStart)} — ${formatDate(new Date())}`
+      ? `${formatDate(windowStart)} — ${formatDate(new Date((windowEnd ?? new Date()).getTime() - 1))}`
       : `${formatDate(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000))} — ${formatDate(new Date())}`,
     tagSummaries,
     totalArticles: articles.length,

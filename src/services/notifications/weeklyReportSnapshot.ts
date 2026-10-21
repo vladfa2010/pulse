@@ -90,13 +90,18 @@ function mapRow(row: any): WeeklyReportSnapshot | null {
 /**
  * Upsert по (user_id, week_start): повторная генерация в ту же неделю
  * обновляет payload, id сохраняется (ТЗ-191 решение 4).
+ * @param weekStartDate ПРАВКА-2 к ТЗ-191: понедельник отчётной недели (МСК).
+ *                      По умолчанию — текущая неделя; генерация передаёт
+ *                      целевую неделю, чтобы retry в понедельник+ не писал
+ *                      отчёт за неё в week_start новой недели.
  */
 export async function saveWeeklyReportSnapshot(
   userId: string,
   content: WeeklyReportContent,
-  ai: WeeklyAISummaries | null
+  ai: WeeklyAISummaries | null,
+  weekStartDate?: string
 ): Promise<{ id: string; created: boolean }> {
-  const weekStart = weekStartMskDate();
+  const weekStart = weekStartDate ?? weekStartMskDate();
   const payload = JSON.stringify({ content, ai });
 
   const existing = await query(
@@ -131,12 +136,14 @@ export async function getWeeklyReportSnapshot(reportId: string): Promise<WeeklyR
   return mapRow(result.rows[0]);
 }
 
-/** Снапшот юзера за текущую неделю (фаза отправки 13:00, live→архив редирект) */
-export async function getCurrentWeekSnapshot(userId: string): Promise<WeeklyReportSnapshot | null> {
+/** Снапшот юзера за текущую неделю (фаза отправки 13:00, live→архив редирект).
+ *  @param weekStartDate ПРАВКА-2 к ТЗ-191: явный понедельник недели (retry в пн–сб
+ *                       ищет завершившуюся неделю); по умолчанию — текущая */
+export async function getCurrentWeekSnapshot(userId: string, weekStartDate?: string): Promise<WeeklyReportSnapshot | null> {
   const result = await query(
     `SELECT id, user_id, week_start, payload, created_at, updated_at, sent_at
      FROM weekly_reports WHERE user_id = $1 AND week_start = $2`,
-    [userId, weekStartMskDate()]
+    [userId, weekStartDate ?? weekStartMskDate()]
   );
   if (result.rows.length === 0) return null;
   return mapRow(result.rows[0]);
@@ -176,17 +183,21 @@ export async function listWeeklyReports(userId: string, limit = 12): Promise<Wee
   return items;
 }
 
-/** Маппинг tagSummaries[].articles в события графика (отдельной таблицей не дублируем) */
+/** События тега из payload снапшота — источник news_markers недельного графика.
+ *  ПРАВКА-2 к ТЗ-191: предпочитаем chartEvents (все новости недели); старые
+ *  снапшоты его не имеют — фолбэк на articles (кепнутые свежие 200). */
 export function getTagEventsFromSnapshot(snapshot: WeeklyReportSnapshot, tagId: string): WeeklyTagEvent[] {
   const tag = snapshot.content.tagSummaries.find((t) => t.tagId === tagId);
   if (!tag) return [];
-  return tag.articles.map((a) => ({
+  const toEvent = (a: { publishedAt: Date | string; title: string; sentiment: string; url: string; source: string }): WeeklyTagEvent => ({
     published_at: a.publishedAt instanceof Date ? a.publishedAt.toISOString() : String(a.publishedAt),
     title: a.title,
     sentiment: a.sentiment,
     url: a.url,
     source: a.source,
-  }));
+  });
+  if (tag.chartEvents && tag.chartEvents.length > 0) return tag.chartEvents.map(toEvent);
+  return tag.articles.map(toEvent);
 }
 
 /** Гейт идемпотентной отправки: после успешного фан-аута (ТЗ-191 решение 3) */

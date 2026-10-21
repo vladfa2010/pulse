@@ -222,6 +222,22 @@ export function weekStartMskDate(now: Date = new Date()): string {
   return monday.toISOString().slice(0, 10);
 }
 
+/**
+ * Понедельник отчётной недели для кронов отчёта (ПРАВКА-2 к ТЗ-191).
+ * Основной прогон — воскресенье 11:00 (неделя завершается сегодня) → текущая.
+ * Retry/ручной прогон в понедельник–субботу дособирает уже завершившуюся
+ * на прошлом воскресенье неделю → предыдущая. И генерация, и фаза отправки
+ * используют одну функцию, чтобы снапшот находился по тем же week_start.
+ */
+export function weeklyReportTargetWeekStart(now: Date = new Date()): Date {
+  const start = weekStartMsk(now);
+  const mskDow = new Date(now.getTime() + MSK_OFFSET_MS).getUTCDay();
+  if (mskDow >= 1 && mskDow <= 6) {
+    return new Date(start.getTime() - 7 * DAY_MS);
+  }
+  return start;
+}
+
 /** Прошедшие будние дни текущей недели: пн=1 … сб=6, воскресенье — тоже 6 */
 export function elapsedWeekdays(now: Date = new Date()): number {
   const dow = new Date(now.getTime() + MSK_OFFSET_MS).getUTCDay();

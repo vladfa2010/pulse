@@ -175,6 +175,10 @@ async function main(): Promise<void> {
   const fmtMod = await import('../services/notifications/formatters');
   const statsMod = await import('../services/notifications/weeklyStats');
   const axios = (await import('axios')).default;
+  // ПРАВКА-2 к ТЗ-191: генерация пишет снапшот в ОТЧЁТНУЮ неделю (в пн–сб —
+  // завершившаяся на прошлом вс) — сиды новостей кладём внутрь её окна
+  const genTargetWs = statsMod.weeklyReportTargetWeekStart();
+  const genTargetWeek = statsMod.weekStartMskDate(genTargetWs);
 
   // ═════════════════════════════════════════════════════════════════════════
   console.log('\nТЗ-191.1/13 Генерация: upsert идемпотентность, created-флаг');
@@ -287,9 +291,9 @@ async function main(): Promise<void> {
   const genMod = require('../services/notifications/weeklyReportGenerate');
   await seedUser('gen-err-user', 'gen-err@test.local', { plan: 'premium' });
   await seedPortfolio('gen-err-user', 'tag-gen-err', 'ГенОшибка');
-  await seedNews('gen-err-1', 'tag-gen-err', 'positive', new Date(Date.now() - 2 * 3600 * 1000));
+  await seedNews('gen-err-1', 'tag-gen-err', 'positive', new Date(genTargetWs.getTime() + 10 * 3600 * 1000));
   const genRes = await genMod.generateWeeklySnapshots();
-  const errSnap = await snap.getCurrentWeekSnapshot('gen-err-user');
+  const errSnap = await snap.getCurrentWeekSnapshot('gen-err-user', genTargetWeek);
   check('генерация при недоступном LLM: снапшот создан, ai.overall=null, errors=0, 0 LLM-вызовов',
     !!errSnap && errSnap.ai?.overall === null && genRes.errors === 0 && genRes.llmCalls === 0,
     { generated: genRes.generated, errors: genRes.errors, llm: genRes.llmCalls });
@@ -431,13 +435,13 @@ async function main(): Promise<void> {
     await q(`INSERT INTO notification_settings (user_id, quiet_hours_enabled) VALUES ($1, 0)`, [userId]);
   };
   // gen-err-user уже снапшотится в секции 3e — используем его для проверки стабильности id
-  const errSnapBefore = await snap.getCurrentWeekSnapshot('gen-err-user');
+  const errSnapBefore = await snap.getCurrentWeekSnapshot('gen-err-user', genTargetWeek);
   await seedUser('gen-user-1', 'gen1@test.local', { plan: 'premium' });   // entitled, БЕЗ подписок
   await seedPortfolio('gen-user-1', 'tag-g1', 'ГенОдин');
-  await seedNews('g1-1', 'tag-g1', 'positive', new Date(Date.now() - 3 * 3600 * 1000));
+  await seedNews('g1-1', 'tag-g1', 'positive', new Date(genTargetWs.getTime() + 11 * 3600 * 1000));
   await seedUser('gen-user-2', 'gen2@test.local', { plan: 'premium' });   // entitled + telegram-канал
   await seedPortfolio('gen-user-2', 'tag-g2', 'ГенДва');
-  await seedNews('g2-1', 'tag-g2', 'positive', new Date(Date.now() - 4 * 3600 * 1000));
+  await seedNews('g2-1', 'tag-g2', 'positive', new Date(genTargetWs.getTime() + 12 * 3600 * 1000));
   await seedSettings('gen-user-2');
   await q(`INSERT INTO user_channels (id, user_id, channel, target, is_active)
            VALUES ($1, 'gen-user-2', 'telegram', '424242', 1)`, [crypto.randomUUID()]);
@@ -445,7 +449,7 @@ async function main(): Promise<void> {
            VALUES ('gen-user-2', 'weekly_report', 'telegram', 1, 'weekly')`);
   await seedUser('gen-user-3', 'gen3@test.local', { plan: 'premium' });   // для фолбэка «фото упало»
   await seedPortfolio('gen-user-3', 'tag-g3', 'ГенТри');
-  await seedNews('g3-1', 'tag-g3', 'positive', new Date(Date.now() - 5 * 3600 * 1000));
+  await seedNews('g3-1', 'tag-g3', 'positive', new Date(genTargetWs.getTime() + 13 * 3600 * 1000));
   await seedSettings('gen-user-3');
   await q(`INSERT INTO user_channels (id, user_id, channel, target, is_active)
            VALUES ($1, 'gen-user-3', 'telegram', '434343', 1)`, [crypto.randomUUID()]);
@@ -454,9 +458,9 @@ async function main(): Promise<void> {
 
   const genMod2 = require('../services/notifications/weeklyReportGenerate');
   const res2 = await genMod2.generateWeeklySnapshots();
-  const s1 = await snap.getCurrentWeekSnapshot('gen-user-1');
-  const s2 = await snap.getCurrentWeekSnapshot('gen-user-2');
-  const s3 = await snap.getCurrentWeekSnapshot('gen-user-3');
+  const s1 = await snap.getCurrentWeekSnapshot('gen-user-1', genTargetWeek);
+  const s2 = await snap.getCurrentWeekSnapshot('gen-user-2', genTargetWeek);
+  const s3 = await snap.getCurrentWeekSnapshot('gen-user-3', genTargetWeek);
   check('entitled БЕЗ подписок на каналы — снапшот создан (страница обещана всем entitled)',
     !!s1 && s1.content.tagSummaries.length > 0);
   check('entitled с подписками — снапшот создан', !!s2);
@@ -466,9 +470,11 @@ async function main(): Promise<void> {
     (await q(`SELECT 1 FROM report_access_tokens WHERE report_id = $1`, [s1!.id])).rows.length === 1);
   check('повторный прогон: ошибок 0', res2.errors === 0, res2.errors);
 
-  const errSnapAfter = await snap.getCurrentWeekSnapshot('gen-err-user');
+  const errSnapAfter = await snap.getCurrentWeekSnapshot('gen-err-user', genTargetWeek);
   check('повторный прогон: id снапшота стабилен (upsert)', !!errSnapBefore && errSnapAfter?.id === errSnapBefore.id,
     { before: errSnapBefore?.id, after: errSnapAfter?.id });
+  check('ПРАВКА-2: сгенерированный снапшот содержит chartEvents (все новости недели)',
+    (s1?.content.tagSummaries[0]?.chartEvents?.length ?? 0) === 1, s1?.content.tagSummaries[0]);
   skip('конкурентность ≤5', 'нужны мок-таймеры; пул на промисах проверен код-ревью (CONCURRENCY=5)');
   skip('окно тихих часов → sent_at NULL + дорассылка', 'нужен сдвиг часов/окно 22:00–08:00 МСК — ручная проверка');
 
@@ -739,6 +745,37 @@ async function main(): Promise<void> {
     check('ТЗ-192: маркер внутри недели остался, вне окна отсечены (без снапа к крайней свече)',
       cTz.status === 200 && cTz.data.news_markers?.length === 1
       && cTz.data.news_markers[0].url === 'https://example.com/sber-1', cTz.data.news_markers);
+
+    // ── ПРАВКА-2 к ТЗ-191: маркеры/сантимент из chartEvents (все новости недели),
+    //    а не из кепнутых articles ────────────────────────────────────────────
+    const ceId = crypto.randomUUID();
+    const ceContent: any = {
+      period: '28 сентября — 4 октября',
+      tagSummaries: [{
+        tagId: 'tag-sber', tagName: 'Сбербанк',
+        articles: [makeArticle('sber', 1)], // кепнутая свежая 1 статья
+        chartEvents: ['2026-09-28T10:01:00+03:00', '2026-09-29T10:02:00+03:00',
+                      '2026-09-30T10:03:00+03:00', '2026-10-01T10:04:00+03:00'].map((iso, i) => ({
+          title: `Событие недели ${i + 1}`, source: 'РБК', sentiment: i % 2 ? 'neutral' : 'positive',
+          url: `https://example.com/week-ev-${i + 1}`,
+          publishedAt: iso,
+        })),
+      }],
+      totalArticles: 1,
+      sentimentBreakdown: { positive: 1, negative: 0, neutral: 0 },
+      stats: null,
+    };
+    await q(`INSERT INTO weekly_reports (id, user_id, week_start, payload, created_at, updated_at)
+             VALUES ($1, 'owner', '2026-09-28', $2, datetime('now'), datetime('now'))`,
+      [ceId, JSON.stringify({ content: ceContent, ai: null })]);
+    const cCe = await httpGet(`/weekly/${ceId}/chart?tag_id=tag-sber`, J('owner'));
+    check('ПРАВКА-2: маркеры ВСЕ из chartEvents (4 шт, url week-ev-*), а не из кепнутой 1 articles',
+      cCe.status === 200 && cCe.data.news_markers?.length === 4
+      && cCe.data.news_markers.every((m: any) => m.url.startsWith('https://example.com/week-ev-')),
+      cCe.data.news_markers?.map((m: any) => m.url));
+    check('ПРАВКА-2: сантимент строится из chartEvents (4 события → ненулевые бакеты есть)',
+      Array.isArray(cCe.data.sentiment) && cCe.data.sentiment.some((p: any) => p.score !== 0),
+      cCe.data.sentiment?.filter((p: any) => p.score !== 0).length);
 
     // ── 7. Архив (HTTP) ─────────────────────────────────────────────────────
     const archive = await httpGet(`/weekly`, J('archive-user'));

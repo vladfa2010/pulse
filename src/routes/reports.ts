@@ -349,7 +349,7 @@ router.get('/weekly/current', async (req: AuthRequest, res) => {
   // существующего /api/user/summary, perTag в live пустой).
   const now = new Date();
   const weekStart = weekStartMsk(now);
-  let content = await buildWeeklyReportContent(userId, ent.maxTags, weekStart);
+  let content = await buildWeeklyReportContent(userId, ent.maxTags, weekStart, now);
 
   const tagsResult = await query(
     `SELECT tag_id, tag_name FROM portfolios WHERE user_id = $1 AND is_frozen = FALSE`,
@@ -408,7 +408,7 @@ router.get('/weekly/current/chart', async (req: AuthRequest, res) => {
 
   const now = new Date();
   const weekStart = weekStartMsk(now);
-  const content = await buildWeeklyReportContent(userId, ent.maxTags, weekStart);
+  const content = await buildWeeklyReportContent(userId, ent.maxTags, weekStart, now);
   const tag = content?.tagSummaries.find((t) => t.tagId === tagId);
   if (!content || !tag) {
     return res.status(404).json({ error: 'Tag not in current week' });
@@ -422,7 +422,11 @@ router.get('/weekly/current/chart', async (req: AuthRequest, res) => {
       tagId: tag.tagId,
       tagName: tag.tagName,
       markerIdPrefix: `${userId}:${tagId}`,
-      events: tag.articles.map((a) => ({
+      // ПРАВКА-2 к ТЗ-191: маркеры — из chartEvents (все новости окна), фолбэк articles
+      events: (tag.chartEvents ?? tag.articles.map((a) => ({
+        title: a.title, source: a.source, url: a.url,
+        publishedAt: a.publishedAt, sentiment: a.sentiment,
+      }))).map((a) => ({
         published_at: a.publishedAt instanceof Date ? a.publishedAt.toISOString() : String(a.publishedAt),
         title: a.title,
         sentiment: a.sentiment,

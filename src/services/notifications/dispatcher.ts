@@ -23,6 +23,7 @@ import {
 import { getEntitlement } from './entitlement';
 import { isQuietHoursForProduct } from './quietHours';
 import { getCurrentWeekSnapshot, markSnapshotSent, issueReportAccessToken } from './weeklyReportSnapshot';
+import { weekStartMskDate, weeklyReportTargetWeekStart } from './weeklyStats';
 import {
   getRecipients, getEnabledSubscriptions, getDeliveryTarget, getQuietHours,
   isDueByFrequency, markSent,
@@ -221,7 +222,12 @@ export async function dispatchToUser(userId: string, product: Product): Promise<
     // дорассылка произойдёт при следующем подходящем окне (sent_at остаётся NULL).
     let content: NotificationContent | null;
     if (product === 'weekly_report') {
-      const snapshot = await getCurrentWeekSnapshot(userId);
+      // ПРАВКА-2 к ТЗ-191: ищем по той же отчётной неделе, что пишет генерация
+      // (в пн–сб — завершившаяся на вчерашнем вс неделя, в вс — текущая)
+      const snapshot = await getCurrentWeekSnapshot(
+        userId,
+        weekStartMskDate(weeklyReportTargetWeekStart())
+      );
       if (!snapshot) {
         console.warn(`[Dispatcher] user=${userId} product=weekly_report no current-week snapshot, skipped`);
         return 'skipped';
