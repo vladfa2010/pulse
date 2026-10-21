@@ -19,11 +19,13 @@ import { Router } from 'express';
 import clientsRouter from './clients';
 import summariesRouter from './summaries';
 import eventsRouter from './events';
+import telegramRouter from './telegramRoutes';
 
 const router = Router();
 
 router.use('/clients', clientsRouter);
 router.use('/summaries', summariesRouter);
 router.use('/events', eventsRouter);
+router.use(telegramRouter); // ТЗ-183: /telegram/link|unlink|status, /prefs
 
 export default router;

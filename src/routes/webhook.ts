@@ -373,6 +373,45 @@ router.post('/telegram', async (req, res) => {
       const payload = startMatch[1];
       console.log(`[TG Bot] Start payload: ${payload}`);
       const parts = payload.split(':');
+
+      // ТЗ-183 Задача 2: модульный токен advisor — userId:timestamp:signature
+      // (HMAC-паттерн как verifyLinkToken, TTL 15 мин, одноразовый: после
+      // привязки telegram_chat_id IS NOT NULL → токен не принимается).
+      // ВСЁ в try/catch: kill-switch модуля не должен ломать ядерный /start.
+      if (parts.length === 3) {
+        try {
+          const [advUserId, advTs, advSig] = parts;
+          const { verifyAdvisorLinkToken } = require('../advisor/telegram');
+          const check = verifyAdvisorLinkToken(advUserId, advTs, advSig);
+          if (check === 'ok') {
+            const settingsResult = await query(
+              `SELECT telegram_chat_id FROM advisor_settings WHERE user_id = $1`,
+              [advUserId]
+            );
+            if (settingsResult.rows[0]?.telegram_chat_id) {
+              await sendMessage(chatId, 'ℹ️ Telegram уже привязан к Advisor.\n\nОтвяжите его в настройках на странице «Клиенты», чтобы привязать заново.');
+            } else {
+              await query(
+                `INSERT INTO advisor_settings (user_id, telegram_chat_id, created_at)
+                 VALUES ($1, $2, ${nowSql()})
+                 ON CONFLICT (user_id) DO UPDATE SET telegram_chat_id = EXCLUDED.telegram_chat_id`,
+                [advUserId, chatId]
+              );
+              console.log(`[TG Bot] Advisor Telegram linked: user=${advUserId} chat=${chatId}`);
+              await sendMessage(chatId,
+                '✅ Telegram подключён к Advisor!\n\nОбзоры по клиентам, важные новости и алерты будут приходить сюда по расписанию.\n\nВсе карточки: pulse.inside-trade.ru/adviser'
+              );
+            }
+          } else {
+            await sendMessage(chatId, '⚠️ Ссылка устарела или недействительна.\n\nЗапросите новую на странице «Клиенты».');
+          }
+        } catch (err: any) {
+          console.error('[TG Bot] Advisor link error (ignored):', err.message);
+          try { await sendMessage(chatId, '⚠️ Не удалось подключить Advisor. Попробуйте позже.'); } catch { /* ignore */ }
+        }
+        return res.sendStatus(200);
+      }
+
       if (parts.length === 2) {
         const tokenValid = verifyLinkToken(parts[0], parts[1]);
         console.log(`[TG Bot] verifyLinkToken(${parts[0]}, ...): ${tokenValid}`);

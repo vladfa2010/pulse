@@ -14,6 +14,10 @@
  *   LLM-вызовов; лог [AdvisorSummaries] slot=HHMSK users=A clients=B
  *   generated=C skipped_empty=D duration=Xs.
  *
+ * ТЗ-183: после пула в слоте — алерты сентимента (alerts.ts, после генерации
+ * каждого саммари) и TG-дайджест + топ-5 новостей по клиентам (digest.ts,
+ * после прогона пула; без дополнительных LLM-вызовов).
+ *
  * Зависимости Задачи 5: selectNewsByTags / buildSummaryPrompt / callSummaryLLM
  * (services/userSummary.ts — та же выборка и тот же LLM-контракт, что у ядра;
  * копипаста запрещена, см. риск «дрейф логики» в ТЗ-182 §5).
@@ -32,6 +36,8 @@ import { hasFeature } from '../services/subscription';
 import { acquireCronLock, releaseCronLock } from '../services/cron';
 import { nowSql } from '../utils/nowSql';
 import { getOwnedClient } from './service';
+import { maybeSendSentimentAlert } from './alerts';
+import { sendAdvisorSlotMessages } from './digest';
 
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
@@ -434,10 +440,12 @@ export async function runAdvisorPrecompute(hourMsk?: number, opts?: PoolOptions)
   }
 
   const jobs: { userId: string; clientId: number }[] = [];
+  const slotUsers: string[] = [];
   for (const [userId, clientIds] of byUser) {
     if (!(await hasFeature(userId, 'multi_portfolio'))) continue;
     const slots = await getEffectiveSlots(userId);
     if (!slots.includes(slot)) continue;
+    slotUsers.push(userId);
     for (const clientId of clientIds) jobs.push({ userId, clientId });
   }
 
@@ -449,8 +457,30 @@ export async function runAdvisorPrecompute(hourMsk?: number, opts?: PoolOptions)
   await runPool(jobs, concurrency, async (job) => {
     const result = await generateClientSummary(job.clientId, DEFAULT_PERIOD_HOURS);
     if (result.skippedEmpty) skippedEmpty++;
-    else generated++;
+    else {
+      generated++;
+      // ТЗ-183 Задача 5: алерт сентимента по свежему саммари (LLM не нужен)
+      try {
+        await maybeSendSentimentAlert(job.userId, job.clientId);
+      } catch (err: any) {
+        console.error('[AdvisorAlerts] Error:', err.message);
+      }
+    }
   });
+
+  // ТЗ-183 Задачи 3–4: после прогона пула — сводный дайджест и топ-5 новостей
+  // в TG пользователям слота (без LLM-вызовов). Ошибки одного пользователя
+  // не роняют рассылку остальным.
+  for (const userId of slotUsers) {
+    try {
+      const sent = await sendAdvisorSlotMessages(userId, slot);
+      if (sent.digest || sent.news) {
+        console.log(`[AdvisorDigest] user=${userId} digest=${sent.digest} news=${sent.news}`);
+      }
+    } catch (err: any) {
+      console.error('[AdvisorDigest] Send error:', err.message);
+    }
+  }
 
   const durationSec = ((Date.now() - startedAt) / 1000).toFixed(1);
   console.log(`[AdvisorSummaries] slot=${String(slot).padStart(2, '0')}MSK users=${usersInSlot} clients=${jobs.length} generated=${generated} skipped_empty=${skippedEmpty} duration=${durationSec}s`);

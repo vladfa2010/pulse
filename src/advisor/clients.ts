@@ -36,6 +36,7 @@ const CreateClientSchema = z.object({
 const PatchClientSchema = z.object({
   name: z.string().min(1).max(100).optional(),
   is_archived: z.boolean().optional(),
+  notes: z.string().max(2000).optional(),
 });
 
 const AddClientTagSchema = z.object({
@@ -207,7 +208,7 @@ router.patch('/:id', validate(PatchClientSchema), async (req: AuthRequest, res) 
     const clientId = parseClientId(req.params.id, res);
     if (clientId === null) return;
 
-    const { name, is_archived } = req.body as { name?: string; is_archived?: boolean };
+    const { name, is_archived, notes } = req.body as { name?: string; is_archived?: boolean; notes?: string };
 
     // Восстановление (is_archived: false) — единственная write-операция над
     // архивным клиентом; rename/archive на архивном → 403.
@@ -240,6 +241,12 @@ router.patch('/:id', validate(PatchClientSchema), async (req: AuthRequest, res) 
       }
       await query(`UPDATE advisor_clients SET name = $1 WHERE id = $2`, [trimmed, clientId]);
       advisorAudit(userId, 'rename', clientId);
+    }
+    if (notes !== undefined) {
+      // ТЗ-183 Задача 7: заметки приватны — в «Копировать» и TG не попадают
+      const trimmed = notes.trim();
+      await query(`UPDATE advisor_clients SET notes = $1 WHERE id = $2`, [trimmed === '' ? null : trimmed, clientId]);
+      advisorAudit(userId, 'note_update', clientId);
     }
     if (is_archived === true && !client.is_archived) {
       await query(`UPDATE advisor_clients SET is_archived = TRUE WHERE id = $1`, [clientId]);

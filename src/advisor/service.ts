@@ -13,6 +13,7 @@
  */
 
 import { query } from '../config/db';
+import { nowSql } from '../utils/nowSql';
 
 export interface OwnedClient {
   id: number;
@@ -53,7 +54,7 @@ export async function getOwnedClient(clientId: number, userId: string): Promise<
  */
 export function advisorAudit(
   userId: string,
-  action: 'create' | 'archive' | 'restore' | 'rename' | 'tag_add' | 'tag_remove' | 'downgrade_archive',
+  action: 'create' | 'archive' | 'restore' | 'rename' | 'tag_add' | 'tag_remove' | 'downgrade_archive' | 'note_update',
   clientId: number
 ): void {
   console.log(`[Advisor] user=${userId} action=${action} client=${clientId}`);
@@ -91,4 +92,60 @@ export async function archiveExcessAdvisorClients(userId: string, newLimit: numb
     console.log(`[Advisor] Downgrade archive: user=${userId} archived=${archived} limit=${newLimit}`);
   }
   return archived;
+}
+
+// ─── Настройки уведомлений пакета (ТЗ-183 Задача 1) ────────────────────────
+
+/**
+ * Флаги уведомлений модуля (JSON в advisor_settings.notify_prefs).
+ * advisor_tg_enabled / advisor_tg_failed_count — внутренние служебные ключи
+ * авто-отключения TG (риск-таблица ТЗ-183), фронту не отдаются.
+ */
+export interface NotifyPrefs {
+  advisor_digest: boolean;
+  advisor_news: boolean;
+  advisor_alert_neg: boolean;
+  advisor_alert_pos: boolean;
+  advisor_weekly: boolean;
+  advisor_tg_enabled?: boolean;
+  advisor_tg_failed_count?: number;
+  [key: string]: unknown;
+}
+
+/** Дефолты ТЗ-183: все каналы пакета ON. */
+export const DEFAULT_NOTIFY_PREFS: Readonly<NotifyPrefs> = {
+  advisor_digest: true,
+  advisor_news: true,
+  advisor_alert_neg: true,
+  advisor_alert_pos: true,
+  advisor_weekly: true,
+};
+
+/** Чтение notify_prefs; NULL/битый JSON → дефолты. */
+export async function getNotifyPrefs(userId: string): Promise<NotifyPrefs> {
+  const result = await query(
+    `SELECT notify_prefs FROM advisor_settings WHERE user_id = $1`,
+    [userId]
+  );
+  const raw = result.rows[0]?.notify_prefs;
+  let stored: Record<string, unknown> = {};
+  if (raw) {
+    try {
+      stored = typeof raw === 'string' ? JSON.parse(raw) : (raw as Record<string, unknown>);
+      if (!stored || typeof stored !== 'object' || Array.isArray(stored)) stored = {};
+    } catch { /* битый JSON — дефолты */ }
+  }
+  return { ...DEFAULT_NOTIFY_PREFS, ...stored };
+}
+
+/** UPSERT с merge: patch накладывается на текущее значение (служебные ключи сохраняются). */
+export async function saveNotifyPrefs(userId: string, patch: Partial<NotifyPrefs>): Promise<NotifyPrefs> {
+  const merged = { ...(await getNotifyPrefs(userId)), ...patch };
+  await query(
+    `INSERT INTO advisor_settings (user_id, notify_prefs, created_at)
+     VALUES ($1, $2, ${nowSql()})
+     ON CONFLICT (user_id) DO UPDATE SET notify_prefs = EXCLUDED.notify_prefs`,
+    [userId, JSON.stringify(merged)]
+  );
+  return merged;
 }
