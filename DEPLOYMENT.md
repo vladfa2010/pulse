@@ -1092,8 +1092,10 @@ df -h /                     # проверить
 
 **Техническая учётка пробника логина** (мониторинг incident-watch, ТЗ-150):
 - `vladfa@ya2.ru` / `!1234567890`, username `test2`, помечена в БД
-  `registration_source='monitoring-probe'`; TG-алерты «Вход» для неё подавлены,
-  следы проб стираются из `user_logins`/`users`. Креды в `/opt/pulse/.env`
+  `registration_source='monitoring-probe'`; TG-алерты для неё подавлены
+  целиком — пропускаются ВСЕ типы алертов, не только «Вход»
+  (`src/services/adminAlerts.ts`, `notifyAdmins`), следы проб стираются из
+  `user_logins`/`users`. Креды в `/opt/pulse/.env`
   (`LOGIN_PROBE_EMAIL`/`LOGIN_PROBE_PASSWORD`), проба раз в 5 минут.
   Не использовать для ручных тестов без необходимости — следы удаляются.
 

@@ -1,6 +1,6 @@
 # PULSE — Product Metrics (Admin Analytics)
 
-> Дата актуализации: 2026-07-23  
+> Дата актуализации: 2026-07-23 | Актуализировано: 2026-10-21 (ТЗ-119, ТЗ-122: секции radio/flow, правки источников метрик)
 > Файл backend: `pulse-backend/src/routes/adminMetrics.ts`  
 > Файл frontend: `pulse-frontend/src/pages/admin/ProductMetricsTab.tsx`  
 > Endpoint: `GET /admin/metrics?section=<section>&period=<period>`
@@ -36,12 +36,17 @@
 | `section` | string | Название секции (см. список ниже) |
 | `period` | number | Период в днях: `1`, `7`, `30`, `90` |
 
-**Доступные секции:**
+**Доступные секции (16):**
 
 ```
 overview, daily, funnel, retention, sentiment, tags, revenue, adoption,
-online, plans, mrr, promos, engagement, churn
+online, plans, mrr, promos, engagement, churn, radio, flow
 ```
+
+| Секция | Пояснение |
+|--------|-----------|
+| `radio` | Radio TTS-метрики (in-memory с момента старта процесса, `period` игнорируется) |
+| `flow` | ТЗ-122: визуализация потока действий (см. `GET /metrics/flow` ниже) |
 
 **Ответ:**
 
@@ -61,6 +66,48 @@ online, plans, mrr, promos, engagement, churn
 
 ---
 
+## 2.1 `GET /metrics/flow` (ТЗ-122)
+
+Отдельный endpoint визуализации потока действий пользователей. Не входит в общий список секций — свой роут.
+
+**Query params:**
+
+| Параметр | Тип | Описание |
+|----------|-----|----------|
+| `period` | number | Период в днях: `1`, `7`, `30`, `90` |
+| `user_id` | uuid (опционально) | Конкретный пользователь; валидируется как uuid (невалидный → 400). Per-user запрос **не кэшируется** |
+
+**Источник данных — единая лента:**
+
+- `user_events` за период, **без** событий с префиксом `admin_%` (`event_type NOT LIKE 'admin_%'`)
+- `user_news_reads` → приводится к типу `read_article` (`read_at AS created_at`)
+
+**Сессия:** разрыв между последовательными событиями пользователя > **1800 сек** (= 30 мин) начинает новую сессию. Переходы считаются только внутри сессии.
+
+**Ответ (4 блока):**
+
+```json
+{
+  "period": 7,
+  "user_id": null,
+  "transitions": [{ "from": "login", "to": "page_view_feed", "count": 120 }],
+  "session_starts": [{ "event_type": "login", "count": 80 }],
+  "bubbles": [{ "hour": 9, "event_type": "page_view_feed", "count": 15 }],
+  "timeline": []
+}
+```
+
+| Блок | Описание |
+|------|----------|
+| `transitions` | Пары `prev → next` внутри сессий. Серии одинаковых подряд схлопываются (X→X не пишется), переход через границу сессии не считается. Топ-30 связок по count, остаток сворачивается в `other` по `from` |
+| `session_starts` | Топ-10 типов событий, которыми начинаются сессии (первое событие юзера или после разрыва > 1800 с) |
+| `bubbles` | Активность по часам: час (UTC) × тип события × count |
+| `timeline` | Последние 300 событий `[{ t, type }]` — **только при запросе с `user_id`**, порядок ASC. В агрегате пустой массив |
+
+**Кэш:** агрегат (без `user_id`) кэшируется 60 с с ключом `flow:all:<period>`; per-user — без кэша.
+
+---
+
 ## 3. Секции
 
 ### 3.1 `overview`
@@ -70,16 +117,16 @@ online, plans, mrr, promos, engagement, churn
 | Поле | Источник | Описание |
 |------|----------|----------|
 | `total_users` | `users` | Всего пользователей |
-| `dau` | `user_logins` | Уникальные за 24ч |
-| `wau` | `user_logins` | Уникальные за 7 дней |
-| `mau` | `user_logins` | Уникальные за 30 дней |
+| `dau` | `user_sessions` | Уникальные за 24ч — `COUNT(DISTINCT user_id)` по `last_connected_at` (ТЗ-119, не `user_logins`) |
+| `wau` | `user_sessions` | Уникальные за 7 дней — по `last_connected_at` |
+| `mau` | `user_sessions` | Уникальные за 30 дней — по `last_connected_at` |
 | `new_users_today` | `users` | Зарегистрированы сегодня |
 | `new_users_week` | `users` | Зарегистрированы за 7 дней |
 | `active_subscriptions` | `users` | `subscription_active = TRUE` |
 | `push_subscribers` | `push_subscriptions` | Активные push-подписки |
-| `total_revenue` | `payments` | Сумма `completed` за период |
-| `dormant_7d` | `users` | Не заходили 7+ дней |
-| `dormant_30d` | `users` | Не заходили 30+ дней |
+| `total_revenue` | `payments` | Сумма `completed` за период **по `paid_at`** (момент оплаты, не `created_at` pending) |
+| `dormant_7d` | `users` + `user_sessions` | Не заходили 7+ дней — `MAX(user_sessions.last_connected_at)` |
+| `dormant_30d` | `users` + `user_sessions` | Не заходили 30+ дней — `MAX(user_sessions.last_connected_at)` |
 | `no_tags` | `users` | Пользователи без портфеля |
 | `sub_expiring_7d` | `users` | Подписка истекает ≤7 дней |
 
@@ -96,6 +143,8 @@ online, plans, mrr, promos, engagement, churn
 }
 ```
 
+**Логика (ТЗ-119):** активность дня = `UNION` логинов и событийной истории — `DISTINCT user_id, day` из `user_logins.login_at` **плюс** `user_events.created_at` за период. У `user_sessions` нет истории (одна строка на юзера), поэтому для daily она не подходит.
+
 ---
 
 ### 3.3 `funnel`
@@ -110,19 +159,27 @@ online, plans, mrr, promos, engagement, churn
 | Read Article | `user_news_reads.read_at` |
 | Paid | `payments.status = 'completed'` |
 
+**Логика (ТЗ-119):** единая когорта — все шаги только внутри пользователей, зарегистрированных за период. Каждый следующий шаг **вложен в предыдущий** (`user_id IN (предыдущий шаг)`), тогда `pct_of_prev ≤ 100` по построению: чтение новостей и подписка на тег не требуют друг друга, без вложения воронка на реальных данных давала 300–400%.
+
 ---
 
 ### 3.4 `retention`
 
-Когорты по дню регистрации, retention D1/D7/D30.
+Когорты, retention D1/D7/D30.
 
 ```json
 {
   "retention": [
-    { "cohort": "2026-07-15", "d1": 45.2, "d7": 28.5, "d30": 12.1 }
+    { "cohort": "2026-07-15", "d1": 45.2, "d7": 28.5, "d30": null }
   ]
 }
 ```
+
+**Логика (ТЗ-119):**
+
+- Когорты — **по неделям** (`DATE_TRUNC('week', created_at)` / SQLite `strftime('%Y-W%W')`), не по дням; лимит когорт — `ceil(retentionDays / 7)`.
+- Активность dN = `last_login_at > created_at + N days` **ИЛИ** событие в `user_events` позже `created_at + N`.
+- **Незрелым когортам** (самому позднему юзеру когорты не исполнилось N дней) — `null` вместо 0, фронт рендерит «—».
 
 ---
 
@@ -186,7 +243,7 @@ online, plans, mrr, promos, engagement, churn
 
 **SQL-логика:**
 
-- `online_now` — `COUNT(DISTINCT user_id)` из `user_sessions` с `last_connected_at` в последние 5 минут.
+- `online_now` — `COUNT(DISTINCT user_id)` из `user_sessions` с `last_connected_at` в последние **15 минут** (ТЗ-119; раньше было 5 — порог расширен).
 - `history` — слоты по 30 минут за последние 12 часов.
 
 ---
@@ -225,12 +282,13 @@ Monthly Recurring Revenue и Annual Recurring Revenue.
 ```json
 {
   "mrr": 45000,
+  "mrr_list": 52000,
   "arr": 540000,
   "trend": [{ "month": "2026-07-01", "mrr": 45000 }]
 }
 ```
 
-**Логика:**
+**Логика (ТЗ-119):**
 
 | `billing_cycle` | MRR-вклад |
 |-----------------|-----------|
@@ -240,7 +298,9 @@ Monthly Recurring Revenue и Annual Recurring Revenue.
 | `weekly` | `amount × 30 / 7` |
 | `NULL` / `one_time` / другое | `amount × 30 / duration_days` (fallback) |
 
-MRR берётся за последние 30 дней; trend — по месяцам, последние 6.
+- `mrr` — нормированные **последние платежи активных подписчиков** (`subscription_active = TRUE`, подписка не истекла), а не «платежи за 30 дней»: подписка, оплаченная 31 день назад, иначе исчезает из MRR.
+- `mrr_list` — прайсовая сумма (`subscription_plans.price`) по тем же активным подписчикам; подпись для фронта («списочный» MRR).
+- `arr` = `mrr × 12`; `trend` — по месяцам (`paid_at`), последние 6.
 
 ---
 
@@ -264,11 +324,11 @@ MRR берётся за последние 30 дней; trend — по меся�
 }
 ```
 
-**Логика:**
+**Логика (ТЗ-119):**
 
 - `uses` — уникальные пользователи в `user_promo_uses`.
-- `converted_to_paid` — из них те, у кого есть `completed` платёж.
-- `revenue` — сумма всех `completed` платежей пользователей, применивших промокод.
+- `converted_to_paid` — уникальные пользователи с `completed` платежом, у которого `payments.promo_code = <код>`.
+- `revenue` — сумма **только тех `completed` платежей, у которых проставлен этот `promo_code`** (колонку пишет `services/promo.ts` при применении промо). Ранний JOIN через `user_id` приписывал промо все платежи пользователя (и с удвоением при нескольких uses).
 
 ---
 
@@ -340,7 +400,7 @@ MRR берётся за последние 30 дней; trend — по меся�
 
 ## 5. UI (ProductMetricsTab)
 
-Все 14 секций отображаются на одной странице админки.
+Все 26 блоков отображаются на одной странице админки.
 
 | # | Блок | Секция | Визуализация |
 |---|------|--------|--------------|
@@ -369,6 +429,7 @@ MRR берётся за последние 30 дней; trend — по меся�
 | 23 | Промокоды | `promos` | Table |
 | 24 | Событий на пользователя | `engagement` | KPI + bar chart |
 | 25 | Churn-когорты | `churn` | Table |
+| 26 | Сценарии (ТЗ-122) | `flow` (агрегат `GET /metrics/flow`) | Sankey переходов + топ-10 стартов сессий (`FlowCharts.tsx`, ленивый `echartsLoader`) |
 
 > **Примечание:** нумерация в UI отличается от нумерации в `TZ_V6_METRICS.md` (где новые метрики названы 27–32), потому что общий список блоков в frontend не разбивался на отдельные карточки Placeholder.
 
@@ -414,6 +475,14 @@ curl -H "Authorization: Bearer <admin-token>" \
 # Churn
 curl -H "Authorization: Bearer <admin-token>" \
   "https://pulse-api-bsov.onrender.com/admin/metrics?section=churn&period=30"
+
+# Flow (ТЗ-122): агрегат
+curl -H "Authorization: Bearer <admin-token>" \
+  "https://pulse-api-bsov.onrender.com/admin/metrics/flow?period=7"
+
+# Flow: таймлайн конкретного пользователя (per-user, без кэша)
+curl -H "Authorization: Bearer <admin-token>" \
+  "https://pulse-api-bsov.onrender.com/admin/metrics/flow?period=7&user_id=<uuid>"
 
 # At-risk accounts
 curl -H "Authorization: Bearer <admin-token>" \

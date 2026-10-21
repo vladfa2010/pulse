@@ -730,9 +730,15 @@ insert не влияет на ответы API). Смоук: `scripts/smoke-lms-
   (пересдача затирает, ТЗ-100) — для динамики score по попыткам смотрим события.
 
 **TG-алерты:** фильтр `admin_tg_settings.event_types` — whitelist
-(`adminAlerts.ts`, `parseEventTypes` NULL→[], нетипизированные типы отсекаются),
-поэтому новые события не попадают в TG ни у кого без явной подписки. Правок
-`adminAlerts` не потребовалось; `ALERT_EVENT_TYPES` не расширяли.
+(`adminAlerts.ts`, `parseEventTypes` NULL→[], неизвестные типы отсекает
+`saveAdminTgSettings`), поэтому события не попадают в TG без явной подписки
+админа. Правки `ALERT_EVENT_TYPES` для этого не требовались — после ТЗ-123
+в нём уже есть flat-типы `course_started`, `lesson_completed`,
+`course_completed` (записываются рядом с `education.*` тем же
+`logUserEvent`), и админы могут на них подписаться во вкладке Alerts.
+Антифлуд: на текущий момент `minIntervalMin` ни на один образовательный
+тип не задан, лимитирован только `page_view_feed` (60 мин) — см.
+`TELEGRAM_NOTIFICATIONS.md` §6.1 «Антифлуд (ТЗ-123)».
 
 ## ТЗ-180 — сводная статистика обучения (2026-10-19)
 

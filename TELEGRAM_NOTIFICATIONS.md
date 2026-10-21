@@ -1195,8 +1195,45 @@ ${sentimentEmoji} <b>${newsItem.title_ru}</b>
 | `page_view_portfolio` | Просмотр портфеля | Пользователь открыл страницу `/portfolio` |
 | `portfolio_add_clicked` | Нажал + Портфель | Пользователь открыл форму добавления портфеля |
 | `portfolio_created` | Портфель создан | Пользователь успешно создал портфель |
+| `position_added` | Позиция добавлена | ТЗ-123: добавлена позиция в портфеле |
+| `position_closed` | Позиция закрыта | ТЗ-123: позиция закрыта |
+| `course_started` | Начал курс | ТЗ-123: первый урок курса (flat-тип, для TG-алертов; события с префиксом `education.*` существуют отдельно) |
+| `lesson_completed` | Прошёл урок | ТЗ-123: урок завершён |
+| `course_completed` | Прошёл курс | ТЗ-123: курс завершён |
+| `weekly_report_viewed` | Открыл еженедельный репорт | ТЗ-123: открыта страница `/weekly-report` |
+| `cascades_viewed` | Открыл каскады | ТЗ-123: открыта страница каскадов |
+| `page_view_feed` | Открыл ленту | ТЗ-123: открыта лента новостей; антифлуд `minIntervalMin: 60` |
+| `admin_export_users` | ⚠️ Выгрузка базы пользователей | ТЗ-120/ТЗ-123: админ выгрузил базу пользователей |
+
+Всего **28 типов** (`ALERT_EVENT_TYPES`, `src/services/adminAlerts.ts:18-49`). Каждый тип — `{ value, label, minIntervalMin? }`.
 
 > **Примечание:** типы `channel_connected` / `channel_disconnected` (универсальные) устарели; используются специфичные `telegram_connected` / `telegram_disconnected` / `email_connected` / `email_disconnected`.
+
+### Антифлуд (ТЗ-123)
+
+Для типов с `minIntervalMin` действует per-type антифлуд: одинаковое событие от одного пользователя чаще, чем раз в `minIntervalMin` минут, не отправляется.
+
+| Аспект | Реализация |
+|--------|------------|
+| Хранилище | Module-level in-memory `lastAlertSent: Map<string, number>` (`src/services/adminAlerts.ts:259`) |
+| Ключ | `` `${eventType}:${userId ?? 'system'}` `` |
+| Логика | Если `Date.now() - last < minIntervalMin * 60_000` — событие пропускается с логом `[AdminAlerts] antiflood skip: <key> (minIntervalMin=N)` |
+| Типы с лимитом | На текущий момент только `page_view_feed` (`minIntervalMin: 60`) |
+| Масштабирование | In-memory намеренно: backend — один инстанс (in-process cron, см. `DEPLOYMENT.md`). При горизонтальном масштабировании (>1 инстанса) перенести в Redis (есть в compose) |
+
+### Skip технических учёток (monitoring-probe)
+
+События от пользователей с `registration_source = 'monitoring-probe'` (пробник логина мониторинга, см. `DEPLOYMENT.md` → «Тестовый логин») пропускаются **целиком** — до фильтра подписок и антифлуда (`src/services/adminAlerts.ts:282-287`, лог `[AdminAlerts] skip alert for monitoring-probe user ...`). Это касается всех типов алертов, не только «Вход».
+
+### Системные алерты
+
+`notifyAdminsSystemAlert(text)` (`src/services/adminAlerts.ts:327-340`) рассылает сообщение **всем активным админам** вне зависимости от `event_types` — это операционные инциденты, а не пользовательские события. Не переиспользует `notifyAdmins` (иначе алерт мог бы не сработать, пока админ не включит галочку). Подробнее — `DEPLOYMENT.md:247` (раздел «Системные алерты»).
+
+### Фильтрация неизвестных типов
+
+`saveAdminTgSettings` отсекает типы, которых нет в `ALERT_EVENT_TYPES` (`src/services/adminAlerts.ts:209`) — старые подписки не ломаются при расширении списка, мусор из API не сохраняется.
+
+> Актуализировано: 2026-10-21 (ТЗ-123: 28 типов алертов, антифлуд `minIntervalMin`, skip `monitoring-probe`).
 
 ### Тестовое сообщение не сбрасывает события
 
@@ -1994,7 +2031,7 @@ const bot = new TelegramBot(TOKEN);
 | Нет Premium в профиле, подписка активна | `subscription_active = 1` (булев баг) | Исправлено на `= TRUE` в v5.2 |
 | Дайджест не приходит | Тихие часы или нет новостей | Проверить настройки в профиле, убедиться что тегам есть новости |
 | 403 Forbidden от Telegram | Пользователь заблокировал бота | Бот автоматически отключает `is_active = FALSE` |
-| **Админские алерты не приходят** | `event_types` сброшен в пустой массив (старый баг теста) или событие не логируется | Проверить `admin_tg_settings.event_types`, повторно сохранить настройки; проверить логи `[ActivityLog]` и `[AdminAlerts]` |
+| **Админские алерты не приходят** | `event_types` сброшен в пустой массив (старый баг теста), событие не логируется, антифлуд-сработка (`minIntervalMin`) или пользователь с `registration_source='monitoring-probe'` | Проверить `admin_tg_settings.event_types`, повторно сохранить настройки; проверить логи `[ActivityLog]` и `[AdminAlerts]` (ищите `antiflood skip` / `skip alert for monitoring-probe`) |
 
 #### Проблема: Админские TG-алерты не приходят
 
@@ -2022,6 +2059,18 @@ const bot = new TelegramBot(TOKEN);
 │     [ActivityLog] event logged: ...                │
 │     [AdminAlerts] notifyAdmins called: ...           │
 │     [AdminAlerts] message sent to ...                │
+│                                                      │
+│  4а. Если в логах есть antiflood skip:               │
+│     → Сработал антифлуд minIntervalMin (ТЗ-123):     │
+│       одинаковое событие от того же юзера шлётся     │
+│       не чаще раза в minIntervalMin минут.           │
+│     → Для page_view_feed лимит 60 мин — это норма,   │
+│       а не поломка.                                  │
+│                                                      │
+│  4б. Если в логах есть skip alert for monitoring-    │
+│     → Событие от технической учётки пробника         │
+│       (registration_source='monitoring-probe') —     │
+│       алерты для неё подавлены целиком (ТЗ-123).     │
 │                                                      │
 │  5. Для page_view_plans:                             │
 │     → Убедиться, что production frontend задеплоен.  │

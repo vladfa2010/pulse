@@ -357,6 +357,8 @@ CREATE INDEX IF NOT EXISTS idx_users_lower_email ON users (LOWER(email));
 | `payment_completed` | `POST /api/payments/...` | Успешная оплата |
 | `subscription_activated` | — | Подписка активирована |
 | `subscription_cancelled` | — | Подписка отменена |
+| `channel_connected` | — | Универсальный тип (устарел, в алертах не используется) |
+| `channel_disconnected` | — | Универсальный тип (устарел) |
 | `telegram_connected` | `POST /api/auth/telegram` | Подключён Telegram |
 | `telegram_disconnected` | — | Telegram отключён |
 | `email_connected` | `register` | Email подключён |
@@ -369,8 +371,21 @@ CREATE INDEX IF NOT EXISTS idx_users_lower_email ON users (LOWER(email));
 | `portfolio_created` | `POST /api/portfolio` | Портфель создан |
 | `admin_changed_plan` | admin | Ручная смена тарифа |
 | `admin_extended_subscription` | admin | Ручное продление подписки |
+| `admin_radio_flag_changed` | admin | Переключение флага радио у пользователя |
+| `admin_export_users` | admin | ТЗ-120: выгрузка базы пользователей |
+| `position_added` | `brokerPortfolioService` | ТЗ-123: позиция добавлена |
+| `position_closed` | `brokerPortfolioService` | ТЗ-123: позиция закрыта |
+| `course_started` | `routes/education.ts` | ТЗ-123: начал курс (flat-тип для TG-алертов) |
+| `lesson_completed` | `routes/education.ts` | ТЗ-123: прошёл урок |
+| `course_completed` | `routes/education.ts` | ТЗ-123: прошёл курс |
+| `weekly_report_viewed` | `POST /api/events/page-view` | ТЗ-123: открыл еженедельный репорт |
+| `cascades_viewed` | `POST /api/events/page-view` | ТЗ-123: открыл каскады |
+| `page_view_feed` | `POST /api/events/page-view` | ТЗ-123: открыл ленту |
+| `education.*` | LMS | 26 событий LMS (создание/модерация курсов, записи, студенческая аналитика). Полный перечень — `src/types/events.ts` и `docs/education.md` |
 
 События просмотра страниц (`page_view_*`) и кликов (`portfolio_add_clicked`) логируются с фронтенда через dedicated endpoints. Ошибки запросов игнорируются — не влияют на UX.
+
+> **Полный список типов** (на текущий момент 59) — `USER_EVENT_TYPES` в `src/types/events.ts`. Это **единый источник правды**: новые типы добавляются туда, а хелперы `src/services/activityLog.ts` и алерты `src/services/adminAlerts.ts` берут их из одного места (файл вынесен, чтобы разорвать циклическую зависимость).
 
 ---
 
