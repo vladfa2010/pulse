@@ -273,7 +273,9 @@ export interface CalendarResponse {
 - `POST /api/admin/calendar?mode=<replace|merge>` (защита существующим `adminMiddleware`)
   - `replace`: удаляет raw-срез `source = 'legacy'` и записывает новый файл в `calendar_events_raw` с `source = 'legacy'`, затем пересобирает canonical-таблицу.
   - `merge` (режим по умолчанию в UI): добавляет новый legacy-срез поверх старых raw-строк, затем пересобирает canonical. Существующие группы в canonical не трогаются напрямую; дедупликация происходит на этапе rebuild.
-- Body: `{ "days": CalendarDay[] }` — JSON целиком. Лимит `express.json` поднят до **5 МБ**, чтобы вмещать полные снапшоты от разных провайдеров.
+- Body: `{ "days": CalendarDay[] }` — JSON целиком. Лимит `express.json` на момент
+  п.5.1 был 5 МБ (v1.2, A1), сейчас глобально **15 МБ** (base64-загрузки фактчека);
+  контур `/mcp` исключён из глобального лимита и живёт на своих 1 МБ (ТЗ-189).
 - Валидация: массив непустой, у каждого дня `date` формата `YYYY-MM-DD`, `weekday`, непустой `groups`; у групп — `title`, `kind`, `status`, `companies[]` с `name`+`ticker`
 - После коммита — broadcast SSE-события `calendar:refresh` (новый тип события в существующем канале, payload пустой): всем открытым клиентам → `invalidateQueries(['calendar'])`. Отдельный тип, а не переиспользование новостного refresh с фильтром по payload — контракт чище, подписчики не пересекаются
 - Фронт админки: модалка «Загрузка снапшота» с выбором файла, предпросмотром (дни / события / компании / период) и радио-кнопками режима `merge`/`replace` (merge по умолчанию).
