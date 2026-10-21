@@ -17,6 +17,8 @@ CREATE TABLE IF NOT EXISTS subscription_plans (
   billing_frequency VARCHAR(20) NOT NULL DEFAULT 'monthly',
   yearly_discount INTEGER DEFAULT 0,
   tag_limit       INTEGER NOT NULL,
+  -- ТЗ-182: лимит клиентских портфелей (advisor_clients); -1 = без лимита
+  portfolio_limit INTEGER NOT NULL DEFAULT 0,
   features        JSONB NOT NULL DEFAULT '{}',
   display_order   INTEGER NOT NULL DEFAULT 0,
   is_active       BOOLEAN DEFAULT TRUE,
@@ -29,27 +31,27 @@ CREATE TABLE IF NOT EXISTS subscription_plans (
 );
 
 INSERT INTO subscription_plans
-  (id, name, price, price_monthly, price_yearly, billing_frequency, yearly_discount, tag_limit, features, display_order, is_active, is_popular, coming_soon_label, plan_level)
+  (id, name, price, price_monthly, price_yearly, billing_frequency, yearly_discount, tag_limit, portfolio_limit, features, display_order, is_active, is_popular, coming_soon_label, plan_level)
 VALUES
   ('free',    'Free',    0,     0,     0,
-   'monthly', 0,  3,
+   'monthly', 0,  3, 0,
    '{"telegram":false,"push":false,"ai_summary":false,"alerts":false,"priority":"normal"}',
    1, TRUE, FALSE, NULL, 0),
   ('base',    'Base',    100,   100,   960,
-   'monthly', 20, 10,
+   'monthly', 20, 10, 0,
    '{"telegram":true,"push":true,"ai_summary":false,"alerts":false,"priority":"normal"}',
    2, TRUE, FALSE, NULL, 1),
   ('premium', 'Premium', 990,   990,   9504,
-   'monthly', 20, 25,
-   '{"telegram":true,"push":true,"ai_summary":true,"alerts":true,"priority":"high"}',
+   'monthly', 20, 25, 3,
+   '{"telegram":true,"push":true,"ai_summary":true,"alerts":true,"priority":"high","multi_portfolio":true}',
    3, TRUE, TRUE, NULL, 2),
   ('club',    'Club',    2500,  2500,  24000,
-   'monthly', 20, -1,
-   '{"telegram":true,"push":true,"ai_summary":true,"alerts":true,"priority":"max","early_delivery":true,"custom_thresholds":true,"club_access":true}',
+   'monthly', 20, -1, 5,
+   '{"telegram":true,"push":true,"ai_summary":true,"alerts":true,"priority":"max","early_delivery":true,"custom_thresholds":true,"club_access":true,"multi_portfolio":true}',
    4, TRUE, FALSE, 'Скоро', 3),
   ('pro',     'Pro',     2500,  2500,  24000,
-   'monthly', 20, -1,
-   '{"telegram":true,"push":true,"ai_summary":true,"alerts":true,"priority":"max","early_delivery":true,"custom_thresholds":true,"api_access":true}',
+   'monthly', 20, -1, 20,
+   '{"telegram":true,"push":true,"ai_summary":true,"alerts":true,"priority":"max","early_delivery":true,"custom_thresholds":true,"api_access":true,"multi_portfolio":true}',
    5, TRUE, FALSE, 'Скоро', 4)
 ON CONFLICT (id) DO NOTHING;
 
@@ -216,7 +218,8 @@ INSERT INTO features_registry (id, label, description, integration_status) VALUE
   ('early_delivery', 'Ранняя доставка', 'Доступ к новостям на 5 минут раньше', 'pending'),
   ('custom_thresholds', 'Кастомные пороги', 'Настройка порогов для алертов', 'pending'),
   ('club_access', 'Club доступ', 'Доступ к закрытому Telegram-чату', 'pending'),
-  ('api_access', 'API доступ', 'Доступ к REST API с токеном', 'pending')
+  ('api_access', 'API доступ', 'Доступ к REST API с токеном', 'pending'),
+  ('multi_portfolio', 'Клиентские портфели', 'Несколько именованных клиентских портфелей Adviser (ТЗ-182)', 'pending')
 ON CONFLICT (id) DO NOTHING;
 
 -- ============================================================

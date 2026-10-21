@@ -21,6 +21,7 @@ import { setDigestEnabled } from '../services/digest';
 import { setSubscription, getSubscription, setQuietHours, ensureDefaultSubscriptions } from '../services/notifications/subscriptions';
 import { nowSql } from '../utils/nowSql';
 import { getUserPlanId } from '../utils/users';
+import { selectNewsByTags, buildSummaryPrompt, callSummaryLLM } from '../services/userSummary';
 
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
@@ -672,8 +673,9 @@ router.post('/email-settings', authMiddleware, async (req: AuthRequest, res) => 
 // Daily AI Summary — новости по тегам пользователя за последние N часов
 // ═══════════════════════════════════════════════════════════════════════════
 
+// ТЗ-182 Задача 5: выборка новостей и сборка промпта/LLM-вызов вынесены в
+// services/userSummary.ts (библиотека модуля advisor). Поведение не меняется.
 const KIMI_API_KEY_SUMMARY = process.env.KIMI_API_KEY;
-const KIMI_MODEL_SUMMARY = process.env.KIMI_MODEL || 'kimi-k2.6';
 
 interface SummaryCacheEntry {
   text: string;
@@ -729,39 +731,7 @@ function summaryCacheSet(key: string, entry: SummaryCacheEntry): void {
   summaryCache.set(key, entry);
 }
 
-// Build prompt for daily summary
-function buildSummaryPrompt(
-  tagNames: string[],
-  articles: { title: string; summary: string; tags: string[]; sentiment: string }[]
-): string {
-  const tagList = tagNames.join(', ');
-
-  const articlesText = articles
-    .map((a, i) => {
-      const tagStr = a.tags?.join(', ') || '';
-      const emoji = a.sentiment === 'positive' ? '🟢' : a.sentiment === 'negative' ? '🔴' : '⚪';
-      return `${i + 1}. ${emoji} ${a.title}\n   ${a.summary.slice(0, 200)}\n   Теги: ${tagStr}`;
-    })
-    .join('\n\n');
-
-  return `Ты — инвестиционный аналитик PULSE. Подготовь краткое саммари для клиента о событиях, затрагивающих его активы.
-
-Активы клиента: ${tagList}
-
-Новости за последние 12 часов:
-${articlesText}
-
-Требования к саммари:
-1. Напиши на русском языке
-2. Общий объем — 80-150 слов (3-5 коротких абзацев)
-3. Стиль: уверенный аналитический, без воды, конкретные выводы
-4. Укажи ключевые события и их влияние на активы клиента
-5. Если новостей нет или мало — напиши "За последние 12 часов значимых событий по вашим активам не зафиксировано."
-6. Не используй markdown-заголовки, списки, эмодзи — только плавный текст
-7. Начинай с фразы типа "За последние 12 часов..." или "В фокусе..."
-
-Саммари:`;
-}
+// Build prompt for daily summary — см. services/userSummary.ts (ТЗ-182 Задача 5)
 
 // GET /api/user/summary — AI summary of recent news for user's active tags
 router.get('/summary', authMiddleware, async (req: AuthRequest, res) => {
@@ -817,23 +787,8 @@ router.get('/summary', authMiddleware, async (req: AuthRequest, res) => {
       const tagIds = userTags.map((t: any) => t.tag_id);
       const tagNames = userTags.map((t: any) => t.tag_name);
 
-      // Fetch recent news matching user's active tags
-      const newsResult = await query(
-        `SELECT title_ru, summary_ru, matched_tags, sentiment
-         FROM news
-         WHERE published_at > NOW() - INTERVAL '${hours} hours'
-           AND matched_tags && $1
-         ORDER BY published_at DESC
-         LIMIT 30`,
-        [tagIds]
-      );
-
-      const articles = newsResult.rows.map((row: any) => ({
-        title: row.title_ru || '',
-        summary: row.summary_ru || '',
-        tags: row.matched_tags || [],
-        sentiment: row.sentiment || 'neutral',
-      }));
+      // Fetch recent news matching user's active tags (ТЗ-182 Задача 5: библиотека)
+      const articles = await selectNewsByTags(tagIds, hours);
 
       // If no LLM key — return fallback (not cached)
       if (!KIMI_API_KEY_SUMMARY) {
@@ -844,40 +799,13 @@ router.get('/summary', authMiddleware, async (req: AuthRequest, res) => {
         };
       }
 
-      // Call LLM for summary
-      const prompt = buildSummaryPrompt(tagNames, articles);
+      // Call LLM for summary (ТЗ-182 Задача 5: единый вызов из библиотеки)
+      const prompt = buildSummaryPrompt(tagNames, articles, hours);
 
       console.log(`[Summary] Generating for user ${userId.slice(0, 8)}, hours=${hours}, tags: ${tagNames.join(', ')}, articles: ${articles.length}`);
 
-      let llmResponse: any;
-      try {
-        llmResponse = await axios.post(
-          'https://api.moonshot.ai/v1/chat/completions',
-          {
-            model: KIMI_MODEL_SUMMARY,
-            messages: [{ role: 'user', content: prompt }],
-            temperature: KIMI_MODEL_SUMMARY.startsWith('kimi-k') ? 0.6 : 0.3,
-            max_tokens: 600,
-            thinking: KIMI_MODEL_SUMMARY.startsWith('kimi-k') ? { type: 'disabled' } : undefined,
-          },
-          {
-            headers: {
-              'Authorization': `Bearer ${KIMI_API_KEY_SUMMARY}`,
-              'Content-Type': 'application/json',
-            },
-            timeout: 30000,
-          }
-        );
-      } catch (err: any) {
-        // ТЗ-50 (п.4): body ответа Moonshot логируем для диагностики; поведение не меняется
-        console.error('[Summary] LLM error:', err.message,
-          'status:', err.response?.status,
-          'body:', JSON.stringify(err.response?.data ?? null).slice(0, 500));
-        throw err;
-      }
-
-      const summaryText = llmResponse.data?.choices?.[0]?.message?.content?.trim()
-        || 'Не удалось сгенерировать саммари. Попробуйте обновить позже.';
+      const llmResult = await callSummaryLLM(prompt);
+      const summaryText = llmResult.text;
 
       // Save to cache
       const now = new Date().toISOString();

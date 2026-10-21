@@ -296,7 +296,7 @@ const SQL_INTERVAL_10MIN = IS_SQLITE
   ? "datetime('now', '+10 minutes')"
   : "NOW() + INTERVAL '10 minutes'";
 
-async function acquireCronLock(jobName: string): Promise<boolean> {
+export async function acquireCronLock(jobName: string): Promise<boolean> {
   try {
     // Try to acquire: either the lock is free OR expired
     const result = await query(`
@@ -323,7 +323,7 @@ async function acquireCronLock(jobName: string): Promise<boolean> {
   }
 }
 
-async function releaseCronLock(jobName: string): Promise<void> {
+export async function releaseCronLock(jobName: string): Promise<void> {
   try {
     await query(`
       DELETE FROM cron_locks

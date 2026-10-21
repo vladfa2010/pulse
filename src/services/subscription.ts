@@ -58,6 +58,7 @@ export interface Plan {
   billing_frequency: BillingCycle;
   yearly_discount: number;
   tag_limit: number;
+  portfolio_limit: number;
   features: Record<string, any>;
   display_order: number;
   is_active: boolean;
@@ -1147,6 +1148,16 @@ export async function applyDowngradeNow(
 
   await freezeExcessTags(userId, targetPlanId);
   console.log(`[DowngradeNow] User ${userId} → ${targetPlanId}, auto_renew=FALSE, tags frozen`);
+
+  // ТЗ-182 Задача 4.4: архивируем клиентские портфели сверх лимита нового тарифа.
+  // Lazy-import модуля — прямой импорт создал бы цикл subscription ↔ advisor.
+  try {
+    const targetPlan = await getPlanById(targetPlanId);
+    const { archiveExcessAdvisorClients } = await import('../advisor/service');
+    await archiveExcessAdvisorClients(userId, targetPlan?.portfolio_limit ?? 0);
+  } catch (e: any) {
+    console.error(`[Advisor] archiveExcessAdvisorClients failed for user ${userId}:`, e.message);
+  }
 
   // DEFSUB-14: уведомляем пользователя о фактическом понижении тарифа
   // ADM-I: разные тексты для free и платной цели.

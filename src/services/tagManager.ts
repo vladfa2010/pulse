@@ -712,10 +712,28 @@ export function getTranslitVariants(name: string): string[] {
   return [...variants];
 }
 
-// Создать пользовательский тег
-// Если tagType = 'auto' или пустой — тип определяется эвристически, обогащение идёт в фоне.
-// При добавлении существующего тега user_defined_tags НЕ модифицируется.
-export async function createUserTag(userId: string, tagId: string, tagName: string, tagType: string): Promise<{ success: boolean; finalTagId?: string; resolvedTagName?: string; detectedType?: TagType; enrichment?: TagEnrichment; enriched?: boolean; backgroundEnrichmentStarted?: boolean; alreadySubscribed?: boolean; limitReached?: boolean; currentCount?: number; maxTags?: number; error?: string }> {
+// Результат резолва тега в глобальном реестре user_defined_tags.
+export interface RegistryTagResolution {
+  success: boolean;
+  finalTagId: string;
+  resolvedTagName: string;
+  finalType: string;
+  detectedType?: TagType;
+  enrichment?: TagEnrichment;
+  enriched: boolean;
+  backgroundEnrichmentStarted: boolean;
+  isNewTag: boolean;
+  error?: string;
+}
+
+// Резолв/создание тега в глобальном реестре user_defined_tags (шаги 1–4 createUserTag).
+// ЧИСТО по реестру: НЕ трогает portfolios и НЕ проверяет лимиты тарифа —
+// модульные потребители (ТЗ-182, advisor-клиенты) считают лимиты по своим
+// таблицам сами. Запись в реестр append-only и инертна при откате модуля
+// (ТЗ-182 Задача 3). Если tagType = 'auto' или пустой — тип определяется
+// эвристически, обогащение идёт в фоне. При добавлении существующего тега
+// user_defined_tags НЕ модифицируется.
+export async function resolveRegistryTag(userId: string, tagId: string, tagName: string, tagType: string): Promise<RegistryTagResolution> {
   try {
     // 1. Точное совпадение по tag_id (например, при клике по конкретной карточке)
     let existingResult = await query(
@@ -845,6 +863,47 @@ export async function createUserTag(userId: string, tagId: string, tagName: stri
       }
     }
 
+    return {
+      success: true,
+      finalTagId,
+      resolvedTagName,
+      finalType,
+      detectedType,
+      enrichment: enrichment || undefined,
+      enriched,
+      backgroundEnrichmentStarted,
+      isNewTag,
+    };
+  } catch (err: any) {
+    console.error('[TagManager] Error resolving registry tag:', err.message);
+    return {
+      success: false,
+      finalTagId: tagId,
+      resolvedTagName: tagName,
+      finalType: tagType || 'company',
+      enriched: false,
+      backgroundEnrichmentStarted: false,
+      isNewTag: false,
+      error: err.message,
+    };
+  }
+}
+
+// Создать пользовательский тег
+// Если tagType = 'auto' или пустой — тип определяется эвристически, обогащение идёт в фоне.
+// При добавлении существующего тега user_defined_tags НЕ модифицируется.
+export async function createUserTag(userId: string, tagId: string, tagName: string, tagType: string): Promise<{ success: boolean; finalTagId?: string; resolvedTagName?: string; detectedType?: TagType; enrichment?: TagEnrichment; enriched?: boolean; backgroundEnrichmentStarted?: boolean; alreadySubscribed?: boolean; limitReached?: boolean; currentCount?: number; maxTags?: number; error?: string }> {
+  // Шаги 1–4 (реестр user_defined_tags) — общая библиотека, см. resolveRegistryTag
+  const r = await resolveRegistryTag(userId, tagId, tagName, tagType);
+  if (!r.success) {
+    return { success: false, error: r.error };
+  }
+
+  const finalTagId = r.finalTagId;
+  const resolvedTagName = r.resolvedTagName;
+  const finalType = r.finalType;
+
+  try {
     // 5. Проверяем, не подписан ли уже пользователь на этот тег
     const alreadySubscribedResult = await query(
       `SELECT tag_name FROM portfolios WHERE user_id = $1 AND tag_id = $2 LIMIT 1`,
@@ -855,9 +914,9 @@ export async function createUserTag(userId: string, tagId: string, tagName: stri
         success: true,
         finalTagId,
         resolvedTagName,
-        detectedType,
-        enrichment: enrichment || undefined,
-        enriched,
+        detectedType: r.detectedType,
+        enrichment: r.enrichment,
+        enriched: r.enriched,
         backgroundEnrichmentStarted: false,
         alreadySubscribed: true,
       };
@@ -897,7 +956,7 @@ export async function createUserTag(userId: string, tagId: string, tagName: stri
     );
 
     // 7. Wake up no-tags articles только если тег был действительно создан сейчас
-    if (isNewTag) {
+    if (r.isNewTag) {
       invalidateUserTagsCache();
       wakeUpNoTagsArticlesCoalesced().catch((err: any) => {
         console.error('[TagManager] wakeUpNoTagsArticlesCoalesced error:', err.message);
@@ -908,10 +967,10 @@ export async function createUserTag(userId: string, tagId: string, tagName: stri
       success: true,
       finalTagId,
       resolvedTagName,
-      detectedType,
-      enrichment: enrichment || undefined,
-      enriched,
-      backgroundEnrichmentStarted,
+      detectedType: r.detectedType,
+      enrichment: r.enrichment,
+      enriched: r.enriched,
+      backgroundEnrichmentStarted: r.backgroundEnrichmentStarted,
       alreadySubscribed: false,
     };
   } catch (err: any) {

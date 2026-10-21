@@ -57,6 +57,8 @@ import tagMarketRoutes from './routes/tagMarket';
 import sentimentRoutes from './routes/sentiment';
 import calendarRoutes from './routes/calendar';
 import reportsRoutes from './routes/reports'; // ТЗ-191: еженедельный отчёт (архив/live/графики/ahead)
+import advisorRoutes from './advisor/routes'; // ТЗ-182 Задача 2: клиентские портфели (модуль-песочница)
+import { startAdvisorSummariesCron, runAdvisorPrecompute } from './advisor/summaries'; // ТЗ-182 Задача 6: precompute саммари клиентов
 import { runCalendarV2Migrations } from './services/calendar';
 import { runRadioMigrations } from './services/radioSettings';
 import { ensureMusicDir } from './services/radioMusic'; // TZ70: папка фоновой музыки
@@ -85,7 +87,7 @@ import portfolioRouter from './routes/portfolio';
 import cron from 'node-cron';
 import { resetDailyWindows, refreshImoexCache } from './services/sentimentIndex';
 import { sendSentimentVotePush } from './services/push';
-import { processScheduledDowngrades, processAutoRenewals, processTrialExpirations, getPlanById, sendExpiryNotifications, expireStalePendingPayments } from './services/subscription';
+import { processScheduledDowngrades, processAutoRenewals, processTrialExpirations, getPlanById, sendExpiryNotifications, expireStalePendingPayments, requireFeature } from './services/subscription';
 import { isUserEventType } from './types/events';
 import { logPageViewPlans, logPageViewPortfolio, logPortfolioAddClicked, logCascadesViewed, logWeeklyReportViewed, logPageViewFeed } from './services/activityLog';
 import { getAdminTgSettings, saveAdminTgSettings, sendTestAlert, ALERT_EVENT_TYPES } from './services/adminAlerts';
@@ -2478,6 +2480,33 @@ app.get('/trigger/wake-no-tags', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// TRIGGER: Advisor summaries precompute (ТЗ-182 Задача 6)
+// Ручная проверка диспетчера слотов: опциональный ?hour= (0–23, МСК) —
+// иначе текущий час МСК. Синхронный ответ с агрегатами прогона.
+// ═══════════════════════════════════════════════════════════════════════════
+app.get('/trigger/advisor-precompute', async (req, res) => {
+  const secret = req.headers['x-trigger-secret'] || req.query.secret;
+  if (secret !== (CRON_SECRET_KEY)) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  try {
+    let hour: number | undefined = undefined;
+    if (req.query.hour !== undefined) {
+      const parsed = parseInt(req.query.hour as string);
+      if (!Number.isInteger(parsed) || parsed < 0 || parsed > 23) {
+        return res.status(400).json({ error: 'invalid_hour', hint: 'hour must be 0..23 (MSK)' });
+      }
+      hour = parsed;
+    }
+    const result = await runAdvisorPrecompute(hour);
+    res.json({ started: true, ...result });
+  } catch (err: any) {
+    console.error('[AdvisorSummaries] trigger error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // TRIGGER: Recalculate keywords for all tags from enriched_data
 // ═══════════════════════════════════════════════════════════════════════════
 app.get('/trigger/recalculate-keywords', async (req, res) => {
@@ -3020,6 +3049,9 @@ app.use('/api/user/mcp-tokens', mcpTokensRoutes); // ТЗ-183 Задача 2: MC
 mountMcp(app); // ТЗ-183 Задача 1: POST/GET/DELETE /mcp — MCP Streamable HTTP (свои лимитеры)
 app.use('/api/user', globalSummaryRoutes); // GET /api/user/summary-global
 app.use('/api/user', notificationsRouter); // Notification matrix (GET/PUT /notification-matrix, quiet-hours)
+// ТЗ-182 Задача 2: клиентские портфели. Гейтинг — auth + энтитлмент multi_portfolio
+// (403 feature_not_available при отсутствии фичи в тарифе, включая админа без неё).
+app.use('/api/advisor', authMiddleware, requireFeature('multi_portfolio'), advisorRoutes);
 app.use('/api/translate', translateRoutes);
 app.use('/api/webhook', webhookLimiter, webhookRoutes); // Высокий лимит для YuKassa
 app.use('/api/admin', adminLimiter, adminRoutes);     // GET /api/admin/users, /stats
@@ -4343,6 +4375,32 @@ END $$`,
     { sql: `CREATE TABLE IF NOT EXISTS mcp_security_daily (day DATE PRIMARY KEY, requests_total INTEGER NOT NULL DEFAULT 0, auth_fail_401 INTEGER NOT NULL DEFAULT 0, auth_limited_429 INTEGER NOT NULL DEFAULT 0, token_limited_429 INTEGER NOT NULL DEFAULT 0, created_at TIMESTAMP DEFAULT ${_SQL_NOW}, updated_at TIMESTAMP DEFAULT ${_SQL_NOW})`, name: 'mcp_security_daily' },
     { sql: `CREATE TABLE IF NOT EXISTS mcp_security_daily_ips (day DATE NOT NULL, ip VARCHAR(45) NOT NULL, PRIMARY KEY (day, ip))`, name: 'mcp_security_daily_ips' },
     { sql: `CREATE TABLE IF NOT EXISTS mcp_security_alerts (id ${USE_SQLITE ? 'TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16))))' : 'UUID PRIMARY KEY DEFAULT uuid_generate_v4()'}, day DATE NOT NULL, metric VARCHAR(40) NOT NULL, value DOUBLE PRECISION NOT NULL, threshold DOUBLE PRECISION, detail TEXT, created_at TIMESTAMP DEFAULT ${_SQL_NOW}, UNIQUE(day, metric))`, name: 'mcp_security_alerts' },
+    // ТЗ-182 v15 — клиентские портфели (модуль-песочница advisor_*). Ноль ALTER'ов
+    // к таблицам ядра; единственное касание ядра — инертный конфиг
+    // subscription_plans.portfolio_limit (каталог тарифов).
+    { sql: `ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS portfolio_limit INTEGER NOT NULL DEFAULT 0`, name: 'subscription_plans_portfolio_limit' },
+    // Энтитлмент multi_portfolio = portfolio_limit ≥ 1: фича автоматически
+    // проставляется в features тарифов с ненулевым лимитом (идемпотентно).
+    { sql: USE_SQLITE
+        ? `UPDATE subscription_plans SET features = json_set(features, '$.multi_portfolio', 1), updated_at = datetime('now') WHERE portfolio_limit > 0 AND json_extract(features, '$.multi_portfolio') IS NULL`
+        : `UPDATE subscription_plans SET features = features || '{"multi_portfolio":true}'::jsonb, updated_at = ${_SQL_NOW} WHERE portfolio_limit > 0 AND features->>'multi_portfolio' IS NULL`,
+      name: 'subscription_plans_multi_portfolio_feature' },
+    { sql: USE_SQLITE
+        ? `INSERT OR IGNORE INTO features_registry (id, label, description) VALUES ('multi_portfolio', 'Клиентские портфели', 'Несколько именованных клиентских портфелей Adviser (ТЗ-182)')`
+        : `INSERT INTO features_registry (id, label, description, integration_status) VALUES ('multi_portfolio', 'Клиентские портфели', 'Несколько именованных клиентских портфелей Adviser (ТЗ-182)', 'pending') ON CONFLICT (id) DO NOTHING`,
+      name: 'features_registry_multi_portfolio' },
+    { sql: `CREATE TABLE IF NOT EXISTS advisor_clients (id ${USE_SQLITE ? 'INTEGER PRIMARY KEY AUTOINCREMENT' : 'SERIAL PRIMARY KEY'}, advisor_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, name TEXT NOT NULL, notes TEXT, is_archived BOOLEAN NOT NULL DEFAULT FALSE, sort_order INTEGER NOT NULL DEFAULT 0, last_alert_neg_at TIMESTAMP, last_alert_pos_at TIMESTAMP, created_at TIMESTAMP DEFAULT ${_SQL_NOW})`, name: 'advisor_clients' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_advisor_clients_user ON advisor_clients(advisor_user_id)`, name: 'idx_advisor_clients_user' },
+    { sql: `CREATE TABLE IF NOT EXISTS advisor_client_tags (id ${USE_SQLITE ? 'INTEGER PRIMARY KEY AUTOINCREMENT' : 'SERIAL PRIMARY KEY'}, client_id INTEGER NOT NULL REFERENCES advisor_clients(id) ON DELETE CASCADE, tag_id VARCHAR(50), tag_name TEXT NOT NULL, tag_type TEXT, created_at TIMESTAMP DEFAULT ${_SQL_NOW})`, name: 'advisor_client_tags' },
+    // Уникальность (client_id, tag_name) — регистрозависимая, как UNIQUE портфелей ядра;
+    // жёсткий UNIQUE по LOWER(name) — backlog ТЗ-182.
+    { sql: `CREATE UNIQUE INDEX IF NOT EXISTS idx_advisor_client_tags_uniq ON advisor_client_tags(client_id, tag_name)`, name: 'idx_advisor_client_tags_uniq' },
+    { sql: `CREATE TABLE IF NOT EXISTS advisor_summaries (client_id INTEGER NOT NULL REFERENCES advisor_clients(id) ON DELETE CASCADE, period_hours INTEGER NOT NULL, summary TEXT NOT NULL, articles_count INTEGER NOT NULL, sentiment_mix ${USE_SQLITE ? 'TEXT' : 'JSONB'}, tags_snapshot ${USE_SQLITE ? 'TEXT' : 'JSONB'}, generated_at TIMESTAMP DEFAULT ${_SQL_NOW}, PRIMARY KEY (client_id, period_hours))`, name: 'advisor_summaries' },
+    { sql: `CREATE TABLE IF NOT EXISTS advisor_tasks (id ${USE_SQLITE ? 'INTEGER PRIMARY KEY AUTOINCREMENT' : 'SERIAL PRIMARY KEY'}, client_id INTEGER NOT NULL REFERENCES advisor_clients(id) ON DELETE CASCADE, advisor_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, title TEXT NOT NULL, due_date DATE, source_event_id UUID, is_done BOOLEAN NOT NULL DEFAULT FALSE, remind_at TIMESTAMP, remind_channels TEXT, reminded_at TIMESTAMP, created_at TIMESTAMP DEFAULT ${_SQL_NOW})`, name: 'advisor_tasks' },
+    { sql: `CREATE UNIQUE INDEX IF NOT EXISTS idx_advisor_tasks_event ON advisor_tasks(client_id, source_event_id) WHERE source_event_id IS NOT NULL`, name: 'idx_advisor_tasks_event' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_advisor_tasks_user ON advisor_tasks(advisor_user_id) WHERE is_done = FALSE`, name: 'idx_advisor_tasks_user' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_advisor_tasks_remind ON advisor_tasks(remind_at) WHERE reminded_at IS NULL AND is_done = FALSE`, name: 'idx_advisor_tasks_remind' },
+    { sql: `CREATE TABLE IF NOT EXISTS advisor_settings (user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, summary_slots TEXT, telegram_chat_id TEXT, notify_prefs TEXT, created_at TIMESTAMP DEFAULT ${_SQL_NOW})`, name: 'advisor_settings' },
   ];
   for (const m of migrations) {
     try {
@@ -4779,6 +4837,7 @@ END $$`,
       startViralityCron({ isShuttingDown: () => shuttingDown }); // ТЗ-185: аналитика виральности ежедневно 05:30 МСК (после topics-нейминга)
       startSourceStatsCron({ isShuttingDown: () => shuttingDown }); // ТЗ-186: срезы эффективности источников ежедневно 05:40 МСК (после виральности)
       startMcpSecurityCron({ isShuttingDown: () => shuttingDown }); // ТЗ-190: оценка безопасности /mcp ежедневно 06:40 МСК (базовая линия, алертинг)
+      startAdvisorSummariesCron({ isShuttingDown: () => shuttingDown }); // ТЗ-182 Задача 6: саммари клиентов ежечасно на 7-й минуте (отбор по слотам МСК внутри)
       startMcpCounterFlush(); // ТЗ-185 Задача 1: flush requests_count раз в минуту
       startMcpSecurityFlush(); // ТЗ-190: flush счётчиков безопасности /mcp раз в минуту
       startRadioCacheMaintenance({ isShuttingDown: () => shuttingDown }); // ТЗ-65: snapshot истории 60с + алерты 5м

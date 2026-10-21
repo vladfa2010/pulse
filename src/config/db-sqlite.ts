@@ -246,6 +246,7 @@ export async function initSQLiteSchema(): Promise<void> {
       billing_frequency TEXT NOT NULL DEFAULT 'monthly',
       yearly_discount INTEGER DEFAULT 0,
       tag_limit INTEGER NOT NULL,
+      portfolio_limit INTEGER NOT NULL DEFAULT 0,
       features TEXT NOT NULL DEFAULT '{}',
       display_order INTEGER NOT NULL DEFAULT 0,
       is_active INTEGER DEFAULT 1,
@@ -1120,13 +1121,13 @@ export async function initSQLiteSchema(): Promise<void> {
   // Seed subscription plans
   try {
     db.run(`INSERT OR IGNORE INTO subscription_plans
-      (id, name, price, billing_frequency, yearly_discount, tag_limit, features, display_order, is_active, is_popular, coming_soon_label, plan_level)
+      (id, name, price, billing_frequency, yearly_discount, tag_limit, portfolio_limit, features, display_order, is_active, is_popular, coming_soon_label, plan_level)
     VALUES
-      ('free', 'Free', 0, 'monthly', 0, 3, '{"telegram":false,"push":false,"ai_summary":false,"alerts":false,"priority":"normal"}', 1, 1, 0, NULL, 0),
-      ('base', 'Base', 100, 'monthly', 20, 10, '{"telegram":true,"push":true,"ai_summary":false,"alerts":false,"priority":"normal"}', 2, 1, 0, NULL, 1),
-      ('premium', 'Premium', 990, 'monthly', 20, 25, '{"telegram":true,"push":true,"ai_summary":true,"alerts":true,"priority":"high"}', 3, 1, 1, NULL, 2),
-      ('club', 'Club', 2500, 'monthly', 20, -1, '{"telegram":true,"push":true,"ai_summary":true,"alerts":true,"priority":"max","early_delivery":true,"custom_thresholds":true,"club_access":true}', 4, 1, 0, 'Скоро', 3),
-      ('pro', 'Pro', 2500, 'monthly', 20, -1, '{"telegram":true,"push":true,"ai_summary":true,"alerts":true,"priority":"max","early_delivery":true,"custom_thresholds":true,"api_access":true}', 5, 1, 0, 'Скоро', 4)`);
+      ('free', 'Free', 0, 'monthly', 0, 3, 0, '{"telegram":false,"push":false,"ai_summary":false,"alerts":false,"priority":"normal"}', 1, 1, 0, NULL, 0),
+      ('base', 'Base', 100, 'monthly', 20, 10, 0, '{"telegram":true,"push":true,"ai_summary":false,"alerts":false,"priority":"normal"}', 2, 1, 0, NULL, 1),
+      ('premium', 'Premium', 990, 'monthly', 20, 25, 3, '{"telegram":true,"push":true,"ai_summary":true,"alerts":true,"priority":"high","multi_portfolio":true}', 3, 1, 1, NULL, 2),
+      ('club', 'Club', 2500, 'monthly', 20, -1, 5, '{"telegram":true,"push":true,"ai_summary":true,"alerts":true,"priority":"max","early_delivery":true,"custom_thresholds":true,"club_access":true,"multi_portfolio":true}', 4, 1, 0, 'Скоро', 3),
+      ('pro', 'Pro', 2500, 'monthly', 20, -1, 20, '{"telegram":true,"push":true,"ai_summary":true,"alerts":true,"priority":"max","early_delivery":true,"custom_thresholds":true,"api_access":true,"multi_portfolio":true}', 5, 1, 0, 'Скоро', 4)`);
     console.log('[SQLite] Migration: subscription_plans seeded');
     // ADM-K: removed boot-time UPDATE that nulled coming_soon_label on every restart.
   } catch {
@@ -1144,7 +1145,8 @@ export async function initSQLiteSchema(): Promise<void> {
       ('early_delivery', 'Ранняя доставка', 'Доступ к новостям на 5 минут раньше'),
       ('custom_thresholds', 'Кастомные пороги', 'Настройка порогов для алертов'),
       ('club_access', 'Club доступ', 'Доступ к закрытому Telegram-чату'),
-      ('api_access', 'API доступ', 'Доступ к REST API с токеном')`);
+      ('api_access', 'API доступ', 'Доступ к REST API с токеном'),
+      ('multi_portfolio', 'Клиентские портфели', 'Несколько именованных клиентских портфелей Adviser (ТЗ-182)')`);
     console.log('[SQLite] Migration: features_registry seeded');
   } catch {
     // ignore

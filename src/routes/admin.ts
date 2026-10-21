@@ -951,9 +951,9 @@ router.post('/plans', adminMiddleware, validate(CreatePlanSchema), async (req: A
 
     await query(
       `INSERT INTO subscription_plans
-         (id, name, price, billing_frequency, yearly_discount, tag_limit, plan_level, features,
+         (id, name, price, billing_frequency, yearly_discount, tag_limit, portfolio_limit, plan_level, features,
           is_active, is_popular, coming_soon_label, display_order)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
       [
         body.id,
         body.name,
@@ -961,8 +961,13 @@ router.post('/plans', adminMiddleware, validate(CreatePlanSchema), async (req: A
         body.billing_frequency,
         body.yearly_discount,
         body.tag_limit,
+        body.portfolio_limit,
         body.plan_level,
-        JSON.stringify(body.features || {}),
+        JSON.stringify({
+          ...(body.features || {}),
+          // ТЗ-182: энтитлмент multi_portfolio следует за portfolio_limit ≥ 1
+          ...(body.portfolio_limit > 0 ? { multi_portfolio: true } : {}),
+        }),
         body.is_active,
         body.is_popular,
         body.coming_soon_label || null,
@@ -1016,7 +1021,13 @@ router.patch('/plans/:planId', adminMiddleware, validate(UpdatePlanSchema), asyn
       await query(`UPDATE subscription_plans SET is_popular = FALSE WHERE id <> $1`, [planId]);
     }
 
-    const allowed = ['name', 'price', 'billing_frequency', 'yearly_discount', 'tag_limit', 'features', 'is_active', 'is_popular', 'coming_soon_label', 'display_order'];
+    const allowed = ['name', 'price', 'billing_frequency', 'yearly_discount', 'tag_limit', 'portfolio_limit', 'features', 'is_active', 'is_popular', 'coming_soon_label', 'display_order'];
+    // ТЗ-182: энтитлмент multi_portfolio следует за portfolio_limit ≥ 1 —
+    // при выставлении лимита фича мерджится в features автоматически.
+    const mergedFeatures: Record<string, any> | null =
+      body.portfolio_limit !== undefined && body.portfolio_limit > 0
+        ? { ...(body.features !== undefined ? body.features : (plan.features || {})), multi_portfolio: true }
+        : null;
     const fields: string[] = [];
     const values: any[] = [];
     let paramIdx = 1;
@@ -1024,9 +1035,15 @@ router.patch('/plans/:planId', adminMiddleware, validate(UpdatePlanSchema), asyn
     for (const key of allowed) {
       if (body[key] !== undefined) {
         fields.push(`${key} = $${paramIdx}`);
-        values.push(key === 'features' ? JSON.stringify(body[key]) : body[key]);
+        values.push(key === 'features' ? JSON.stringify(mergedFeatures ?? body[key]) : body[key]);
         paramIdx++;
       }
+    }
+
+    if (mergedFeatures && body.features === undefined) {
+      fields.push(`features = $${paramIdx}`);
+      values.push(JSON.stringify(mergedFeatures));
+      paramIdx++;
     }
 
     // Insurance: activating a plan must clear the "coming soon" block label

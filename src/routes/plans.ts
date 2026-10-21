@@ -22,6 +22,7 @@ router.get('/', async (_req, res) => {
         billingFrequency: p.billing_frequency,
         yearlyDiscount: p.yearly_discount,
         tagLimit: p.tag_limit,
+        portfolioLimit: p.portfolio_limit,
         planLevel: p.plan_level,
         features: p.features || {},
         isActive: p.is_active,
