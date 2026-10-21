@@ -826,6 +826,169 @@ async function getChurn(_period: number) {
   };
 }
 
+// ТЗ-122: визуализация потока действий пользователей (sankey / bubbles / timeline).
+// Единая лента: user_events (минус admin_*) + прочтения статей user_news_reads.
+// Сессия — разрыв между событиями > 1800 сек. Переходы считаются только внутри сессии,
+// серии одинаковых подряд схлопываются (X→X не пишем). Агрегат (без userId) кэшируется.
+async function getFlowData(period: number, userId: string | null): Promise<any> {
+  if (!userId) {
+    const cached = getCached('flow:all', period);
+    if (cached) {
+      console.log(`[Metrics] cache hit flow:all:${period}`);
+      return cached;
+    }
+  }
+
+  const userFilter = userId ? ` AND user_id = '${userId}'` : '';
+  const eventsCte = `WITH events AS (
+    SELECT user_id, event_type, created_at FROM user_events
+    WHERE created_at > ${agoSql(period)} AND event_type NOT LIKE 'admin_%'${userFilter}
+    UNION ALL
+    SELECT user_id, 'read_article' AS event_type, read_at AS created_at FROM user_news_reads
+    WHERE read_at > ${agoSql(period)}${userFilter}
+  )`;
+  // Разрыв > 1800 сек = новая сессия
+  const gapExpr = USE_SQLITE
+    ? `(julianday(created_at) - julianday(prev_at)) * 86400 > 1800`
+    : `EXTRACT(EPOCH FROM (created_at - prev_at)) > 1800`;
+
+  // Пары prev_type→event_type внутри сессии; X→X отсекаем (схлопывание серий),
+  // переход через границу сессии не считаем (LAG по партиции user_id+session_id).
+  const transitionsRows = await safeQuery(
+    USE_SQLITE
+      ? `${eventsCte},
+        lagged AS (
+          SELECT user_id, event_type, created_at,
+                 LAG(created_at) OVER (PARTITION BY user_id ORDER BY created_at) AS prev_at
+          FROM events
+        ),
+        sessed AS (
+          SELECT user_id, event_type, created_at,
+                 SUM(CASE WHEN prev_at IS NULL OR ${gapExpr} THEN 1 ELSE 0 END)
+                   OVER (PARTITION BY user_id ORDER BY created_at) AS session_id
+          FROM lagged
+        ),
+        pairs AS (
+          SELECT event_type,
+                 LAG(event_type) OVER (PARTITION BY user_id, session_id ORDER BY created_at) AS prev_type
+          FROM sessed
+        )
+        SELECT prev_type AS "from", event_type AS "to", COUNT(*) AS count
+        FROM pairs
+        WHERE prev_type IS NOT NULL AND prev_type <> event_type
+        GROUP BY prev_type, event_type`
+      : `${eventsCte},
+        lagged AS (
+          SELECT user_id, event_type, created_at,
+                 LAG(created_at) OVER (PARTITION BY user_id ORDER BY created_at) AS prev_at
+          FROM events
+        ),
+        sessed AS (
+          SELECT user_id, event_type, created_at,
+                 SUM(CASE WHEN prev_at IS NULL OR ${gapExpr} THEN 1 ELSE 0 END)
+                   OVER (PARTITION BY user_id ORDER BY created_at) AS session_id
+          FROM lagged
+        ),
+        pairs AS (
+          SELECT event_type,
+                 LAG(event_type) OVER (PARTITION BY user_id, session_id ORDER BY created_at) AS prev_type
+          FROM sessed
+        )
+        SELECT prev_type AS "from", event_type AS "to", COUNT(*) AS count
+        FROM pairs
+        WHERE prev_type IS NOT NULL AND prev_type <> event_type
+        GROUP BY prev_type, event_type`,
+    'flowTransitions'
+  );
+
+  const sortedTransitions = transitionsRows
+    .map((r: any) => ({ from: r.from, to: r.to, count: parseInt(r.count) || 0 }))
+    .sort((a: any, b: any) => b.count - a.count);
+  // Топ-30 связок, остаток сворачиваем в other по from
+  const transitions = sortedTransitions.slice(0, 30);
+  const otherByFrom = new Map<string, number>();
+  for (const r of sortedTransitions.slice(30)) {
+    otherByFrom.set(r.from, (otherByFrom.get(r.from) || 0) + r.count);
+  }
+  for (const [from, count] of otherByFrom) {
+    transitions.push({ from, to: 'other', count });
+  }
+
+  const sessionStartsRows = await safeQuery(
+    USE_SQLITE
+      ? `${eventsCte},
+        lagged AS (
+          SELECT user_id, event_type, created_at,
+                 LAG(created_at) OVER (PARTITION BY user_id ORDER BY created_at) AS prev_at
+          FROM events
+        )
+        SELECT event_type, COUNT(*) AS count
+        FROM lagged
+        WHERE prev_at IS NULL OR ${gapExpr}
+        GROUP BY event_type
+        ORDER BY count DESC
+        LIMIT 10`
+      : `${eventsCte},
+        lagged AS (
+          SELECT user_id, event_type, created_at,
+                 LAG(created_at) OVER (PARTITION BY user_id ORDER BY created_at) AS prev_at
+          FROM events
+        )
+        SELECT event_type, COUNT(*) AS count
+        FROM lagged
+        WHERE prev_at IS NULL OR ${gapExpr}
+        GROUP BY event_type
+        ORDER BY count DESC
+        LIMIT 10`,
+    'flowSessionStarts'
+  );
+  const session_starts = sessionStartsRows.map((r: any) => ({
+    event_type: r.event_type,
+    count: parseInt(r.count) || 0,
+  }));
+
+  const bubblesRows = await safeQuery(
+    USE_SQLITE
+      ? `${eventsCte}
+        SELECT CAST(strftime('%H', created_at) AS INT) AS hour, event_type, COUNT(*) AS count
+        FROM events
+        GROUP BY hour, event_type`
+      : `${eventsCte}
+        SELECT EXTRACT(HOUR FROM created_at) AS hour, event_type, COUNT(*) AS count
+        FROM events
+        GROUP BY EXTRACT(HOUR FROM created_at), event_type`,
+    'flowBubbles'
+  );
+  const bubbles = bubblesRows.map((r: any) => ({
+    hour: parseInt(r.hour) || 0,
+    event_type: r.event_type,
+    count: parseInt(r.count) || 0,
+  }));
+
+  // Таймлайн — только per-user: последние 300 событий, отдаём ASC
+  let timeline: any[] = [];
+  if (userId) {
+    const timelineRows = await safeQuery(
+      `${eventsCte}
+      SELECT t, type FROM (
+        SELECT created_at AS t, event_type AS type FROM events
+        ORDER BY created_at DESC
+        LIMIT 300
+      ) sub
+      ORDER BY t ASC`,
+      'flowTimeline'
+    );
+    timeline = timelineRows.map((r: any) => ({
+      t: USE_SQLITE ? `${String(r.t).replace(' ', 'T')}Z` : new Date(r.t).toISOString(),
+      type: r.type,
+    }));
+  }
+
+  const result = { period, user_id: userId, transitions, session_starts, bubbles, timeline };
+  if (!userId) setCached('flow:all', period, result);
+  return result;
+}
+
 // Экспорт для MCP-инструмента admin_metrics (ТЗ-183): тот же набор секций, без HTTP-слоя
 export const handlers: Record<string, (period: number) => Promise<any>> = {
   overview: getOverview,
@@ -844,6 +1007,8 @@ export const handlers: Record<string, (period: number) => Promise<any>> = {
   churn: getChurn,
   // Radio TTS — in-memory с момента старта процесса (period игнорируется)
   radio: async (_period: number) => getRadioTtsMetrics(),
+  // ТЗ-122: визуализация потока действий (агрегат по всем пользователям)
+  flow: (period: number) => getFlowData(period, null),
 };
 
 router.get('/metrics', adminMiddleware, async (req, res) => {
@@ -983,6 +1148,27 @@ router.get('/metrics/at-risk-accounts', adminMiddleware, async (req, res) => {
   } catch (err: any) {
     console.error('[Admin Metrics] At-risk accounts error:', err.message);
     res.status(500).json({ error: 'Failed to load at-risk accounts', details: err.message });
+  }
+});
+
+// ТЗ-122: визуализация потока действий (sankey / bubbles / timeline per-user)
+router.get('/metrics/flow', adminMiddleware, async (req, res) => {
+  try {
+    const period = Number(req.query.period);
+    if (![1, 7, 30, 90].includes(period)) {
+      return res.status(400).json({ error: 'Invalid period', allowed: [1, 7, 30, 90] });
+    }
+
+    const userId = req.query.user_id as string | undefined;
+    if (userId && !/^[0-9a-fA-F-]{36}$/.test(userId)) {
+      return res.status(400).json({ error: 'Invalid user_id' });
+    }
+
+    const data = await getFlowData(period, userId || null);
+    res.json(data);
+  } catch (err: any) {
+    console.error('[Admin Metrics] Flow error:', err.message);
+    res.status(500).json({ error: 'Failed to load flow' });
   }
 });
 

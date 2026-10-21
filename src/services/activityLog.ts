@@ -135,6 +135,13 @@ export async function logPageViewPlans(userId: string): Promise<void> {
 }
 
 /**
+ * Пользователь открыл ленту новостей (ТЗ-122).
+ */
+export async function logPageViewFeed(userId: string): Promise<void> {
+  return logUserEvent(userId, 'page_view_feed', { page: '/feed' });
+}
+
+/**
  * Пользователь открыл страницу /portfolio.
  */
 export async function logPageViewPortfolio(userId: string): Promise<void> {

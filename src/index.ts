@@ -87,7 +87,7 @@ import { resetDailyWindows, refreshImoexCache } from './services/sentimentIndex'
 import { sendSentimentVotePush } from './services/push';
 import { processScheduledDowngrades, processAutoRenewals, processTrialExpirations, getPlanById, sendExpiryNotifications, expireStalePendingPayments } from './services/subscription';
 import { isUserEventType } from './types/events';
-import { logPageViewPlans, logPageViewPortfolio, logPortfolioAddClicked, logCascadesViewed, logWeeklyReportViewed } from './services/activityLog';
+import { logPageViewPlans, logPageViewPortfolio, logPortfolioAddClicked, logCascadesViewed, logWeeklyReportViewed, logPageViewFeed } from './services/activityLog';
 import { getAdminTgSettings, saveAdminTgSettings, sendTestAlert, ALERT_EVENT_TYPES } from './services/adminAlerts';
 import { logNewsDataCheck } from './services/newsDataCheck';
 import { setupYookassaWebhook } from './routes/payment'; // ← Auto-setup YuKassa webhook
@@ -3141,6 +3141,9 @@ app.post('/api/events/page-view', authMiddleware, async (req: AuthRequest, res) 
       logCascadesViewed(req.user!.userId).catch(() => {});
     } else if (page === 'weekly-report') {
       logWeeklyReportViewed(req.user!.userId).catch(() => {});
+    } else if (page === 'feed') {
+      // ТЗ-122: трекинг открытия ленты для визуализации потока действий
+      logPageViewFeed(req.user!.userId).catch(() => {});
     }
     res.json({ success: true });
   } catch (err: any) {
