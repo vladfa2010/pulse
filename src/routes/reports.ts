@@ -204,7 +204,7 @@ async function buildWeekChart(params: WeekChartParams): Promise<{
   chart: any;
   news_markers: any[];
   week_change_pct: number | null;
-  /** ПРАВКА-2 к ТЗ-191: новостной фон (сантимент) по бакетам 4 ч; null — <10 новостей */
+  /** ПРАВКА-2 к ТЗ-191: новостной фон (сантимент) по бакетам 4 ч; null — <2 новостей */
   sentiment: any;
   reason?: string;
 }> {

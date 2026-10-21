@@ -687,8 +687,13 @@ async function main(): Promise<void> {
       c1.data.news_markers?.length === 2
       && c1.data.news_markers.every((m: any) => m.url.startsWith('https://example.com/sber-')), c1.data.news_markers);
     check('week_change_pct посчитан ((110-100)/100 = 10)', c1.data.week_change_pct === 10, c1.data.week_change_pct);
-    check('ПРАВКА-2: 2 события < лимита 10 → sentiment: null (панель скрыта)',
-      c1.data.sentiment === null, c1.data.sentiment);
+    check('ПРАВКА-2: 2 события (≥ лимита 2) → sentiment: серия 42 бакетов',
+      Array.isArray(c1.data.sentiment) && c1.data.sentiment.length === 42, c1.data.sentiment?.length);
+    check('ПРАВКА-2: обе статьи в одном бакете (1 pos + 1 neutral) → 3 ненулевых по 0,5 (окно 12 ч)',
+      Array.isArray(c1.data.sentiment)
+      && c1.data.sentiment.filter((p: any) => p.score !== 0).length === 3
+      && c1.data.sentiment.filter((p: any) => p.score !== 0).every((p: any) => p.score === 0.5),
+      c1.data.sentiment?.filter((p: any) => p.score !== 0));
     const callsAfterChart = marketCalls;
     const c1b = await httpGet(`/weekly/${ownerSnap!.id}/chart?tag_id=tag-sber`, J('owner'));
     check('повторный запрос (report_id, tag_id) — из кэша 24ч, marketRouter не дёргается',
@@ -773,8 +778,11 @@ async function main(): Promise<void> {
       lc.status === 200 && lc.data.news_markers?.length === 2
       && lc.data.news_markers.every((m: any) => m.url.startsWith('https://example.com/live-')),
       lc.data.news_markers?.length);
-    check('ПРАВКА-2: live-chart — sentiment в пейлоаде (2 события → null)',
-      'sentiment' in lc.data && lc.data.sentiment === null, lc.data.sentiment);
+    check('ПРАВКА-2: live-chart — sentiment в пейлоаде (2 события ≥ лимита 2 → серия)',
+      'sentiment' in lc.data && Array.isArray(lc.data.sentiment) && lc.data.sentiment.length > 0
+      && lc.data.sentiment.some((p: any) => p.score !== 0)
+      && lc.data.sentiment.every((p: any) => p.score >= -1 && p.score <= 1),
+      lc.data.sentiment?.length);
     (axios as any).post = origPost;
     // воскресный сценарий: снапшот появился → {snapshot_id}
     const liveSnap = await snap.saveWeeklyReportSnapshot('live-user', ownerContent, null);

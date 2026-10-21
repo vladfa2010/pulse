@@ -36,8 +36,8 @@ export interface SentimentPoint {
 export const SENTIMENT_BUCKET_MS = 4 * 60 * 60 * 1000;
 /** Окно сглаживания 12 ч = 3 бакета по 4 ч */
 export const SENTIMENT_SMOOTH_BUCKETS = 3;
-/** Деградация панели: меньше новостей за окно → sentiment: null */
-export const SENTIMENT_MIN_NEWS = 10;
+/** Деградация панели: меньше новостей за окно → sentiment: null (порог владельца: 2) */
+export const SENTIMENT_MIN_NEWS = 2;
 
 /** 3 знака после точки — больше на графике не читается */
 function round3(x: number): number {
