@@ -54,6 +54,7 @@ import {
   WeeklyReportSnapshot,
   WeeklyTagEvent,
 } from '../services/notifications/weeklyReportSnapshot';
+import { buildSentimentSeries } from '../services/weeklySentiment';
 
 const router = Router();
 
@@ -203,6 +204,8 @@ async function buildWeekChart(params: WeekChartParams): Promise<{
   chart: any;
   news_markers: any[];
   week_change_pct: number | null;
+  /** ПРАВКА-2 к ТЗ-191: новостной фон (сантимент) по бакетам 4 ч; null — <10 новостей */
+  sentiment: any;
   reason?: string;
 }> {
   const { tagId, tagName, events, weekStartUtc, liveEnd } = params;
@@ -211,7 +214,7 @@ async function buildWeekChart(params: WeekChartParams): Promise<{
   if (cached) return cached;
 
   const empty = (extra: any = {}) => {
-    const payload = { chart: null, news_markers: [], week_change_pct: null, ...extra };
+    const payload = { chart: null, news_markers: [], week_change_pct: null, sentiment: null, ...extra };
     cacheSet(params.store, params.cacheKey, payload);
     return payload;
   };
@@ -287,6 +290,9 @@ async function buildWeekChart(params: WeekChartParams): Promise<{
       source: e.source,
     })),
     week_change_pct: weekChangePct,
+    // ПРАВКА-2 к ТЗ-191: фон по тем же видимым событиям; live и архив — одним кодом.
+    // Кэш/ключ не меняются — серия внутри chart-пейлоада (live 5 мин / архив 24 ч)
+    sentiment: buildSentimentSeries(visibleEvents, weekStartUtc, liveEnd),
   };
   cacheSet(params.store, params.cacheKey, payload);
   return payload;

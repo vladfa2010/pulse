@@ -687,6 +687,8 @@ async function main(): Promise<void> {
       c1.data.news_markers?.length === 2
       && c1.data.news_markers.every((m: any) => m.url.startsWith('https://example.com/sber-')), c1.data.news_markers);
     check('week_change_pct посчитан ((110-100)/100 = 10)', c1.data.week_change_pct === 10, c1.data.week_change_pct);
+    check('ПРАВКА-2: 2 события < лимита 10 → sentiment: null (панель скрыта)',
+      c1.data.sentiment === null, c1.data.sentiment);
     const callsAfterChart = marketCalls;
     const c1b = await httpGet(`/weekly/${ownerSnap!.id}/chart?tag_id=tag-sber`, J('owner'));
     check('повторный запрос (report_id, tag_id) — из кэша 24ч, marketRouter не дёргается',
@@ -771,6 +773,8 @@ async function main(): Promise<void> {
       lc.status === 200 && lc.data.news_markers?.length === 2
       && lc.data.news_markers.every((m: any) => m.url.startsWith('https://example.com/live-')),
       lc.data.news_markers?.length);
+    check('ПРАВКА-2: live-chart — sentiment в пейлоаде (2 события → null)',
+      'sentiment' in lc.data && lc.data.sentiment === null, lc.data.sentiment);
     (axios as any).post = origPost;
     // воскресный сценарий: снапшот появился → {snapshot_id}
     const liveSnap = await snap.saveWeeklyReportSnapshot('live-user', ownerContent, null);
