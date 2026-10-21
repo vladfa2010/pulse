@@ -110,8 +110,8 @@ export async function saveWeeklyReportSnapshot(
   );
   if (existing.rows.length > 0) {
     await query(
-      `UPDATE weekly_reports SET payload = $3, updated_at = ${nowSql()} WHERE id = $1`,
-      [existing.rows[0].id, weekStart, payload]
+      `UPDATE weekly_reports SET payload = $2, updated_at = ${nowSql()} WHERE id = $1`,
+      [existing.rows[0].id, payload]
     );
     return { id: existing.rows[0].id, created: false };
   }

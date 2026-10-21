@@ -55,7 +55,8 @@ export interface WeeklyReportContent {
 }
 
 function formatDate(d: Date): string {
-  return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
+  // МСК явно: окно задано в Europe/Moscow, а TZ контейнера UTC «съедала» день
+  return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', timeZone: 'Europe/Moscow' });
 }
 
 /** PG возвращает matched_tags массивом, SQLite — JSON-текстом: приводим к массиву */
