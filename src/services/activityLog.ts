@@ -142,6 +142,20 @@ export async function logPageViewPortfolio(userId: string): Promise<void> {
 }
 
 /**
+ * Пользователь открыл страницу каскадов (ТЗ-123).
+ */
+export async function logCascadesViewed(userId: string): Promise<void> {
+  return logUserEvent(userId, 'cascades_viewed', { page: '/cascades' });
+}
+
+/**
+ * Пользователь открыл еженедельный репорт (ТЗ-123).
+ */
+export async function logWeeklyReportViewed(userId: string): Promise<void> {
+  return logUserEvent(userId, 'weekly_report_viewed', { page: '/reports/weekly' });
+}
+
+/**
  * Пользователь нажал "+ Портфель" (открыл форму добавления).
  */
 export async function logPortfolioAddClicked(userId: string): Promise<void> {

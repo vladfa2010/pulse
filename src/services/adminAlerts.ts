@@ -15,7 +15,7 @@ import { UserEventType } from '../types/events';
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
-export const ALERT_EVENT_TYPES: { value: UserEventType | 'sentiment_vote'; label: string }[] = [
+export const ALERT_EVENT_TYPES: { value: UserEventType | 'sentiment_vote'; label: string; minIntervalMin?: number }[] = [
   { value: 'register', label: 'Регистрация' },
   { value: 'login', label: 'Вход' },
   { value: 'forgot_password', label: 'Забыли пароль' },
@@ -35,6 +35,17 @@ export const ALERT_EVENT_TYPES: { value: UserEventType | 'sentiment_vote'; label
   { value: 'page_view_portfolio', label: 'Просмотр портфеля' },
   { value: 'portfolio_add_clicked', label: 'Нажал + Портфель' },
   { value: 'portfolio_created', label: 'Портфель создан' },
+  // ТЗ-123: новые фичи (порядок — в конец; старые подписки не ломаются —
+  // фильтр saveAdminTgSettings пропускает только известные типы)
+  { value: 'position_added', label: 'Позиция добавлена' },
+  { value: 'position_closed', label: 'Позиция закрыта' },
+  { value: 'course_started', label: 'Начал курс' },
+  { value: 'lesson_completed', label: 'Прошёл урок' },
+  { value: 'course_completed', label: 'Прошёл курс' },
+  { value: 'weekly_report_viewed', label: 'Открыл еженедельный репорт' },
+  { value: 'cascades_viewed', label: 'Открыл каскады' },
+  { value: 'page_view_feed', label: 'Открыл ленту', minIntervalMin: 60 },
+  { value: 'admin_export_users', label: '⚠️ Выгрузка базы пользователей' },
 ];
 
 export interface AdminTgSettings {
@@ -119,6 +130,28 @@ function formatAlert(eventType: UserEventType, user: UserMini | null, data: Reco
       break;
     case 'factcheck_ordered':
       details = `🔍 Запрос: ${escapeHtml(data.query || '')}`;
+      break;
+    // ТЗ-123: образование — названия курса/урока из event_data
+    case 'course_started':
+      details = `📚 Курс: ${escapeHtml(data.course_title || '')}`;
+      break;
+    case 'lesson_completed':
+      details = `📚 Курс: ${escapeHtml(data.course_title || '')}\n📖 Урок: ${escapeHtml(data.lesson_title || '')}`;
+      break;
+    case 'course_completed':
+      details = `🎓 Курс: ${escapeHtml(data.course_title || '')}`;
+      break;
+    case 'weekly_report_viewed':
+      details = `📄 Страница: еженедельный репорт`;
+      break;
+    case 'cascades_viewed':
+      details = `📄 Страница: каскады`;
+      break;
+    case 'page_view_feed':
+      details = `📄 Страница: лента`;
+      break;
+    case 'admin_export_users':
+      details = `⚠️ Инициатор: ${escapeHtml(user?.email || data.admin_email || '')}\n📊 Строк: ${data.rows ?? '?'}`;
       break;
     default:
       details = Object.entries(data)
@@ -219,6 +252,13 @@ export async function sendTestAlert(adminUserId: string, chatId: string): Promis
 }
 
 /**
+ * Антифлуд (ТЗ-123): lastSent по ключу «тип:юзер» для типов с minIntervalMin.
+ * In-memory намеренно: backend — один инстанс (DEPLOYMENT.md, in-process cron);
+ * при горизонтальном масштабировании перенести в Redis (есть в compose).
+ */
+const lastAlertSent = new Map<string, number>();
+
+/**
  * Разослать алерты всем активным админам, подписанным на данный eventType.
  */
 export async function notifyAdmins(
@@ -245,6 +285,19 @@ export async function notifyAdmins(
       console.log(`[AdminAlerts] skip alert for monitoring-probe user ${userId} (type=${eventType})`);
       return;
     }
+
+    // Антифлуд: minIntervalMin с прошлой отправки этого типа этому юзеру
+    const minInterval = ALERT_EVENT_TYPES.find(t => t.value === eventType)?.minIntervalMin;
+    if (minInterval) {
+      const key = `${eventType}:${userId ?? 'system'}`;
+      const last = lastAlertSent.get(key) ?? 0;
+      if (Date.now() - last < minInterval * 60 * 1000) {
+        console.log(`[AdminAlerts] antiflood skip: ${key} (minIntervalMin=${minInterval})`);
+        return;
+      }
+      lastAlertSent.set(key, Date.now());
+    }
+
     const text = formatAlert(eventType, user, { ...eventData, user_id: userId });
 
     for (const row of settingsResult.rows) {

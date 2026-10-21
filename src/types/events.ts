@@ -69,6 +69,15 @@ export const USER_EVENT_TYPES = [
   'education.settings_updated',
   // ТЗ-120: аудит выгрузок базы пользователей (кто, когда, сколько строк)
   'admin_export_users',
+  // ТЗ-123: алерты админам — портфели/образование/витрины + антифлуд-фонды
+  'position_added',
+  'position_closed',
+  'course_started',
+  'lesson_completed',
+  'course_completed',
+  'weekly_report_viewed',
+  'cascades_viewed',
+  'page_view_feed',
 ] as const;
 
 export type UserEventType = typeof USER_EVENT_TYPES[number];

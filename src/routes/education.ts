@@ -817,6 +817,12 @@ router.get('/lessons/:lessonId', optionalAuth, h(async (req, res) => {
           lesson_id: lessonId,
           source: enrollment?.source ?? 'preview',
         });
+        // ТЗ-123: то же событие в общий пайплайн админских алертов
+        logUserEvent(userId, 'course_started', {
+          course_id: lesson.course_id,
+          course_title: lesson.course_title,
+          source: enrollment?.source ?? 'preview',
+        });
       }
     })().catch(() => undefined);
   }
@@ -884,7 +890,7 @@ router.post('/lessons/:lessonId/complete', authMiddleware, h(async (req, res) =>
   if (!isUuid(lessonId)) return fail(res, 404, 'Урок не найден');
 
   const lessonR = await query(
-    `SELECT l.*, c.deleted_at, c.subscription_unlock_mode
+    `SELECT l.*, c.deleted_at, c.subscription_unlock_mode, c.title AS course_title
      FROM course_lessons l JOIN courses c ON c.id = l.course_id
      WHERE l.id = $1`,
     [lessonId],
@@ -954,6 +960,38 @@ router.post('/lessons/:lessonId/complete', authMiddleware, h(async (req, res) =>
     );
   }
   res.json({ ok: true, passed: true });
+
+  // ТЗ-123: алерты админам о прохождении — только при первом завершении
+  // (повторный POST делает UPDATE completed_at, без гарда события бы дублировались).
+  // Fire-and-forget после ответа; курс завершён, если этот урок был последним
+  // непройденным (счёт прогресса — паттерн выше).
+  if (existing.rows.length === 0) {
+    void (async () => {
+      logUserEvent(userId, 'lesson_completed', {
+        course_id: lesson.course_id,
+        course_title: lesson.course_title,
+        lesson_id: lessonId,
+        lesson_title: lesson.title,
+      });
+      const progR = await query(
+        `SELECT COUNT(*) AS cnt FROM lesson_progress lp
+           JOIN course_lessons cl ON cl.id = lp.lesson_id
+          WHERE lp.user_id = $1 AND cl.course_id = $2`,
+        [userId, lesson.course_id],
+      );
+      const totalR = await query(
+        `SELECT COUNT(*) AS cnt FROM course_lessons WHERE course_id = $1`,
+        [lesson.course_id],
+      );
+      const total = Number(totalR.rows[0].cnt);
+      if (total > 0 && Number(progR.rows[0].cnt) === total) {
+        logUserEvent(userId, 'course_completed', {
+          course_id: lesson.course_id,
+          course_title: lesson.course_title,
+        });
+      }
+    })().catch(() => undefined);
+  }
 }));
 
 // ═══════════════════════════════════════════════════════════════════════════
