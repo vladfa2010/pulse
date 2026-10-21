@@ -156,7 +156,8 @@ router.get('/security/alerts', adminMiddleware, async (req: Request, res: Respon
     );
     res.json({
       alerts: result.rows.map((r: any) => ({
-        day: String(r.day).slice(0, 10),
+        // PG DATE приходит Date-объектом (toString() → «Wed Oct 21») — нормализуем
+        day: r.day instanceof Date ? r.day.toISOString().slice(0, 10) : String(r.day).slice(0, 10),
         metric: r.metric,
         label: MCP_SECURITY_METRIC_LABELS[r.metric] || r.metric,
         value: Number(r.value),
@@ -185,7 +186,7 @@ router.get('/security/daily', adminMiddleware, async (req: Request, res: Respons
     );
     res.json({
       days: result.rows.map((r: any) => ({
-        day: String(r.day).slice(0, 10),
+        day: r.day instanceof Date ? r.day.toISOString().slice(0, 10) : String(r.day).slice(0, 10),
         requests_total: Number(r.requests_total),
         auth_fail_401: Number(r.auth_fail_401),
         auth_limited_429: Number(r.auth_limited_429),
