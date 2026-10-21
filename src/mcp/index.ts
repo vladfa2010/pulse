@@ -14,11 +14,13 @@
  *      использовании — email юзеру (ИБ-10).
  *   5. toWebRequest(req, req.body) → handler.fetch(...) → ответ проксируется.
  *
- * Тело уже распарсено глобальным express.json() (src/index.ts) — передаём как
- * parsedBody, адаптер не читает стрим. Общий apiLimiter для /mcp отключён
- * skip-функцией (иначе двойной учёт).
+ * Тело распарсено локальным express.json({ limit: '1mb' }) (ТЗ-189) — первым
+ * в цепочке, до auth: переполненный мусор отсекается дёшево, до проверок
+ * токена. Глобальный 15-МБ парсер для /mcp отключён skip-функцией (иначе
+ * двойной парсинг), общий apiLimiter — тоже skip (иначе двойной учёт).
  */
 
+import express from 'express';
 import type { Express, Request, Response } from 'express';
 import { toWebRequest } from '@modelcontextprotocol/node';
 import { tryAuthenticateMcpToken, MCP_AUTH_ERROR } from './context';
@@ -62,6 +64,11 @@ async function notifyFirstUse(tokenId: string, userId: string): Promise<void> {
 
 export function mountMcp(app: Express): void {
   const handler = createMcpHttpHandler();
+
+  // ТЗ-189: свой парсер с лимитом 1 МБ — первым, до auth (дешёвый 413 на
+  // неаутентифицированный мусор; глобальный 15-МБ парсер для /mcp выключен
+  // skip-функцией в src/index.ts, иначе двойной парсинг).
+  app.use('/mcp', express.json({ limit: '1mb' }));
 
   app.use('/mcp', async (req: Request, res: Response) => {
     try {

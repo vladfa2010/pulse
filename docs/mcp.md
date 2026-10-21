@@ -41,9 +41,12 @@
   (`{ tokenId, userId, isAdmin, scopes, ip, userAgent }`) течёт в фабрику
   через `AsyncLocalStorage` (`mcpContextStorage`) — `McpRequestContext.requestInfo`
   исходный Request не гарантирует.
-- **Цепочка `/mcp`** (`src/mcp/index.ts`): Origin-валидация → аутентификация
-  токена → `mcpLimiter` (120/15 мин на токен) → счётчики → `handler.fetch`.
-  Общий `apiLimiter` для `/mcp` отключён skip-функцией (иначе двойной учёт).
+- **Цепочка `/mcp`** (`src/mcp/index.ts`): парсер тела `express.json({ limit: '1mb' })`
+  (ТЗ-189 — первая ступень, до auth; глобальный 15-МБ парсер исключён из `/mcp`
+  через type-callback, у body-parser нет `skip`) → Origin-валидация →
+  аутентификация токена → `mcpLimiter` (120/15 мин на токен) → счётчики →
+  `handler.fetch`. Общий `apiLimiter` для `/mcp` отключён skip-функцией
+  (иначе двойной учёт).
 - **Аутентификация** (`src/mcp/context.ts`): только заголовок Bearer →
   SHA-256 → `mcp_tokens` (не отозван, не истёк) → свежий
   `SELECT is_admin, is_blocked FROM users` (конвенция ТЗ-120: блок/снятие

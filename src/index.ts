@@ -152,8 +152,19 @@ async function runMigration(sql: string, name: string) {
 app.set('trust proxy', 1);
 app.use(cors());
 // TZ_FACTCHECK_PAGE §15 п.1: 15 МБ глобально (base64 файлов ≈ +33% к размеру);
-// Premium-гейт на POST /api/fact-check смягчает риск
-app.use(express.json({ limit: '15mb' }));
+// Premium-гейт на POST /api/fact-check смягчает риск.
+// type-callback: /mcp исключён из глобального парсера (у MCP-контура свой
+// парсер 1 МБ — ТЗ-189). У body-parser НЕТ опции `skip` — возврат false из
+// type отключает парсинг; двойной парсинг не сработал бы (req._body уже стоит).
+app.use(express.json({
+  limit: '15mb',
+  type: (req) => {
+    const p = (req.url || '').split('?')[0];
+    if (p === '/mcp' || p.startsWith('/mcp/')) return false;
+    const ct = req.headers['content-type'] || '';
+    return typeof ct === 'string' && ct.includes('json');
+  },
+}));
 
 // Health endpoints — before rate limiter, so monitoring can always reach them
 // ═══════════════════════════════════════════════════════════════════════════
