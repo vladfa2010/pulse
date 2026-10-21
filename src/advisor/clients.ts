@@ -84,6 +84,7 @@ router.get('/', async (req: AuthRequest, res) => {
     const userId = req.user!.userId;
     const result = await query(
       `SELECT c.id, c.name, c.notes, c.is_archived, c.sort_order, c.created_at,
+              c.last_alert_neg_at, c.last_alert_pos_at,
               COUNT(t.id) AS active_tags
        FROM advisor_clients c
        LEFT JOIN advisor_client_tags t ON t.client_id = c.id
@@ -92,16 +93,26 @@ router.get('/', async (req: AuthRequest, res) => {
        ORDER BY c.sort_order ASC, c.created_at ASC`,
       [userId]
     );
+    const clients = result.rows.map((r: any) => ({
+      id: Number(r.id),
+      name: r.name,
+      notes: r.notes ?? null,
+      is_archived: r.is_archived === true || r.is_archived === 1,
+      sort_order: Number(r.sort_order),
+      created_at: r.created_at,
+      active_tags: Number(r.active_tags),
+      last_alert_neg_at: r.last_alert_neg_at ? new Date(r.last_alert_neg_at).toISOString() : null,
+      last_alert_pos_at: r.last_alert_pos_at ? new Date(r.last_alert_pos_at).toISOString() : null,
+    }));
+    // ТЗ-191 Задачи 4–5: meta для upsell-блока (лимит тарифа, -1 = безлимит)
+    // и alert-line (последние алерты уже в каждой карточке выше).
+    const plan = await getAdvisorPlan(userId);
     res.json({
-      clients: result.rows.map((r: any) => ({
-        id: Number(r.id),
-        name: r.name,
-        notes: r.notes ?? null,
-        is_archived: r.is_archived === true || r.is_archived === 1,
-        sort_order: Number(r.sort_order),
-        created_at: r.created_at,
-        active_tags: Number(r.active_tags),
-      })),
+      clients,
+      meta: {
+        portfolio_limit: plan?.portfolio_limit ?? 0,
+        active_count: clients.filter((c) => !c.is_archived).length,
+      },
     });
   } catch (err: any) {
     console.error('[Advisor] List clients error:', err.message);
