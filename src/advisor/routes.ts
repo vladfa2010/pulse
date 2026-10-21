@@ -20,12 +20,14 @@ import clientsRouter from './clients';
 import summariesRouter from './summaries';
 import eventsRouter from './events';
 import telegramRouter from './telegramRoutes';
+import tasksRouter from './tasks';
 
 const router = Router();
 
 router.use('/clients', clientsRouter);
 router.use('/summaries', summariesRouter);
 router.use('/events', eventsRouter);
-router.use(telegramRouter); // ТЗ-183: /telegram/link|unlink|status, /prefs
+router.use(telegramRouter); // ТЗ-183: /telegram/link|unlink|status, /prefs, /notify-prefs
+router.use(tasksRouter); // ТЗ-183 Задача 6 (v6): /clients/:id/tasks, /tasks, /tasks/:id/reminder|ics
 
 export default router;

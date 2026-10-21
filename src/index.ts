@@ -59,6 +59,8 @@ import calendarRoutes from './routes/calendar';
 import reportsRoutes from './routes/reports'; // ТЗ-191: еженедельный отчёт (архив/live/графики/ahead)
 import advisorRoutes from './advisor/routes'; // ТЗ-182 Задача 2: клиентские портфели (модуль-песочница)
 import { startAdvisorSummariesCron, runAdvisorPrecompute } from './advisor/summaries'; // ТЗ-182 Задача 6: precompute саммари клиентов
+import { startAdvisorTaskRemindersCron, runAdvisorTaskReminders } from './advisor/tasks'; // ТЗ-183 v6 Задача 6: напоминания по задачам
+import { startAdvisorWeeklyCron, runAdvisorWeekly } from './advisor/weekly'; // ТЗ-183 Задача 9: еженедельный отчёт по клиентам
 import { runCalendarV2Migrations } from './services/calendar';
 import { runRadioMigrations } from './services/radioSettings';
 import { ensureMusicDir } from './services/radioMusic'; // TZ70: папка фоновой музыки
@@ -2507,6 +2509,42 @@ app.get('/trigger/advisor-precompute', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// TRIGGER: Advisor task reminders (ТЗ-183 v6 Задача 6)
+// Ручной прогон крона напоминаний. Синхронный ответ с агрегатами прогона.
+// ═══════════════════════════════════════════════════════════════════════════
+app.get('/trigger/advisor-task-reminders', async (req, res) => {
+  const secret = req.headers['x-trigger-secret'] || req.query.secret;
+  if (secret !== (CRON_SECRET_KEY)) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  try {
+    const result = await runAdvisorTaskReminders();
+    res.json({ started: true, ...result });
+  } catch (err: any) {
+    console.error('[AdvisorReminders] trigger error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TRIGGER: Advisor weekly report (ТЗ-183 Задача 9)
+// Ручной прогон модульного weekly по клиентам. Синхронный ответ с агрегатами.
+// ═══════════════════════════════════════════════════════════════════════════
+app.get('/trigger/advisor-weekly', async (req, res) => {
+  const secret = req.headers['x-trigger-secret'] || req.query.secret;
+  if (secret !== (CRON_SECRET_KEY)) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  try {
+    const result = await runAdvisorWeekly();
+    res.json({ started: true, ...result });
+  } catch (err: any) {
+    console.error('[AdvisorWeekly] trigger error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // TRIGGER: Recalculate keywords for all tags from enriched_data
 // ═══════════════════════════════════════════════════════════════════════════
 app.get('/trigger/recalculate-keywords', async (req, res) => {
@@ -4838,6 +4876,8 @@ END $$`,
       startSourceStatsCron({ isShuttingDown: () => shuttingDown }); // ТЗ-186: срезы эффективности источников ежедневно 05:40 МСК (после виральности)
       startMcpSecurityCron({ isShuttingDown: () => shuttingDown }); // ТЗ-190: оценка безопасности /mcp ежедневно 06:40 МСК (базовая линия, алертинг)
       startAdvisorSummariesCron({ isShuttingDown: () => shuttingDown }); // ТЗ-182 Задача 6: саммари клиентов ежечасно на 7-й минуте (отбор по слотам МСК внутри)
+      startAdvisorTaskRemindersCron({ isShuttingDown: () => shuttingDown }); // ТЗ-183 v6 Задача 6: напоминания по задачам каждые 5 минут
+      startAdvisorWeeklyCron({ isShuttingDown: () => shuttingDown }); // ТЗ-183 Задача 9: weekly по клиентам — вс 13:00 МСК, зеркало ядерного weekly
       startMcpCounterFlush(); // ТЗ-185 Задача 1: flush requests_count раз в минуту
       startMcpSecurityFlush(); // ТЗ-190: flush счётчиков безопасности /mcp раз в минуту
       startRadioCacheMaintenance({ isShuttingDown: () => shuttingDown }); // ТЗ-65: snapshot истории 60с + алерты 5м
