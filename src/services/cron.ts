@@ -40,6 +40,7 @@ import { runSourceStatsDaily } from './sourceStatsDaily'; // ТЗ-186: срез�
 import { matchUnprocessedNews } from './education/match'; // ТЗ-103, задача 3: cron-страховка мэтчинга курсов
 import { rebuildKnowledgeGraph } from './education/knowledgeGraph'; // ТЗ-107 v3: ночной пересчёт графа знаний
 import { sendMcpRotationReminderEmail } from './mcpEmails'; // ТЗ-183 Задача 5: напоминания о ротации токенов
+import { runMcpSecurityDaily } from './mcpSecurity'; // ТЗ-190: оценка безопасности /mcp, алертинг админу
 import { isEducationGraphEnabled } from '../config/knowledgeGraph'; // ТЗ-107 v3: фичефлаг графа
 import { VERIFIER_MODEL_TEMPERATURE } from '../config/clustering'; // ТЗ-115: температура LLM по конвенции §9.1
 
@@ -910,4 +911,22 @@ export function startMcpCron(opts?: { isShuttingDown?: () => boolean }) {
     }
   }, { timezone: 'Europe/Moscow' });
   console.log('[Cron] MCP maintenance scheduled daily at 06:20 Europe/Moscow');
+}
+
+// ТЗ-190: ежедневная оценка безопасности /mcp — базовая линия, алертинг
+export function startMcpSecurityCron(opts?: { isShuttingDown?: () => boolean }) {
+  // 06:40 МСК — после MCP-обслуживания (06:20), до утреннего трафика
+  cron.schedule('40 6 * * *', async () => {
+    if (opts?.isShuttingDown?.()) return;
+    const acquired = await acquireCronLock('mcp-security-daily');
+    if (!acquired) return;
+    try {
+      await runMcpSecurityDaily();
+    } catch (err: any) {
+      console.error('[Cron] MCP security daily failed:', err.message);
+    } finally {
+      await releaseCronLock('mcp-security-daily');
+    }
+  }, { timezone: 'Europe/Moscow' });
+  console.log('[Cron] MCP security daily scheduled at 06:40 Europe/Moscow');
 }

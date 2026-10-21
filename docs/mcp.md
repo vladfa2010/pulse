@@ -106,7 +106,12 @@ IP), первое использование (детектор компроме�
   — реестр (JOIN users; LIMIT 500; `token_hash` не отдаётся никогда).
 - `POST /api/admin/mcp/tokens/:id/revoke` — идемпотентно; `revoked_by` +
   email владельцу + аудит `admin.revoke_token`.
-- Фронт: `pulse-frontend/src/pages/admin/McpTab.tsx`, таба «МСП» в `Admin.tsx`.
+- `GET /api/admin/mcp/security/alerts?days=30` — лента алертов безопасности
+  (ТЗ-190; подписи метрик — `MCP_SECURITY_METRIC_LABELS`).
+- `GET /api/admin/mcp/security/daily?days=14` — ежедневные счётчики
+  + уникальные IP (ТЗ-190).
+- Фронт: `pulse-frontend/src/pages/admin/McpTab.tsx`, таба «МСП» в `Admin.tsx`
+  (блок «Безопасность /mcp» — алерты + таблица счётчиков).
 
 ## Лимиты и обслуживание
 
@@ -116,6 +121,12 @@ IP), первое использование (детектор компроме�
   401-штормы съели бы лимит у честных IP.
 - Крон 06:20 МСК (`startMcpCron`): аудит старше 90 дней; токены
   (отозванные/истёкшие старше 90 дней); напоминания о ротации (окно 7 дней).
+- Крон 06:40 МСК (`startMcpSecurityCron`, ТЗ-190): flush счётчиков → оценка
+  вчерашнего дня против среднего за 7 дней → при превышении порогов запись в
+  `mcp_security_alerts` + Telegram-алерт админу (`TELEGRAM_ADMIN_CHAT_ID`).
+  Счётчики пишет `src/mcp/securityStats.ts` (in-memory, flush раз в минуту);
+  дни < 50 запросов не оцениваются. Решение «C, мониторинг» и критерии
+  пересмотра — `SECURITY.md` → «Edge rate limiting (ТЗ-190)».
 - `GET /debug/mcp` без токена — только `{ status: 'ok' }` (ИБ-9).
 - Миграция: `POST /migrate-mcp?secret=<CRON_SECRET>` → `src/migrations/mcp_v1.sql`
   (SQLite-вариант — в `initSQLiteSchema()`).

@@ -28,6 +28,7 @@ import { createMcpHttpHandler, mcpContextStorage } from './server';
 import { bumpRequestCount, touchTokenUsed, markFirstUseNotified } from './counters';
 import { sendMcpFirstUseEmail } from '../services/mcpEmails';
 import { mcpLimiter, mcpAuthLimiter, checkRateLimit } from '../middleware/rateLimit';
+import { recordMcpRequest, recordMcpAuthFail, recordMcpAuthLimited, recordMcpTokenLimited } from './securityStats'; // ТЗ-190: счётчики для базовой линии и алертинга
 import { query } from '../config/db';
 
 /** Допустимые Origin (браузерные клиенты). Порт не учитывается. */
@@ -72,6 +73,8 @@ export function mountMcp(app: Express): void {
 
   app.use('/mcp', async (req: Request, res: Response) => {
     try {
+      recordMcpRequest(req.ip); // ТЗ-190: общий счётчик + уникальные IP дня
+
       // 1. Origin
       if (!originAllowed(req)) {
         res.status(403).json({ error: 'Origin not allowed' });
@@ -82,10 +85,14 @@ export function mountMcp(app: Express): void {
       const auth = await tryAuthenticateMcpToken(req, res);
       if (!auth.ok) {
         await checkRateLimit(req, res, mcpAuthLimiter); // true = лимит не исчерпан
-        if (res.headersSent) return; // 429 ушёл из лимитера
+        if (res.headersSent) {
+          recordMcpAuthLimited(); // ТЗ-190: 429 анти-перебора
+          return; // 429 ушёл из лимитера
+        }
         if (auth.reason === 'blocked') {
           res.status(403).json({ error: 'Account blocked' });
         } else {
+          recordMcpAuthFail(); // ТЗ-190: мусорный 401
           res.status(401).json(MCP_AUTH_ERROR);
         }
         return;
@@ -94,7 +101,10 @@ export function mountMcp(app: Express): void {
 
       // 3. Лимитер на токен (клю�� — res.locals.mcpTokenId)
       const allowed = await checkRateLimit(req, res, mcpLimiter);
-      if (!allowed) return; // 429 ушёл
+      if (!allowed) {
+        recordMcpTokenLimited(); // ТЗ-190: 429 per-token
+        return; // 429 ушёл
+      }
 
       // 4. Счётчики / last_used_at / first-use email
       bumpRequestCount(ctx.tokenId);

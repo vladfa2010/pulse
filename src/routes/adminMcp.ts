@@ -7,6 +7,8 @@
  *                              token_hash в ответ НЕ попадает никогда, ИБ-5).
  * POST /api/admin/mcp/tokens/:id/revoke — принудительный отзыв (идемпотентно;
  *                              email владельцу + аудит admin.revoke_token).
+ * GET  /api/admin/mcp/security/alerts — лента алертов безопасности /mcp (ТЗ-190).
+ * GET  /api/admin/mcp/security/daily — ежедневные счётчики за N дней (ТЗ-190).
  *
  * Монтирование: app.use('/api/admin/mcp', adminLimiter, adminMcpRoutes) —
  * adminMiddleware внутри каждого роута (свежий is_admin, конвенция ТЗ-120).
@@ -18,6 +20,7 @@ import { adminMiddleware } from '../middleware/admin';
 import { query } from '../config/db';
 import { writeAudit } from '../mcp/audit';
 import { sendMcpRevokedByAdminEmail } from '../services/mcpEmails';
+import { MCP_SECURITY_METRIC_LABELS } from '../services/mcpSecurity'; // ТЗ-190: подписи метрик для ленты
 
 const router = Router();
 
@@ -137,6 +140,62 @@ router.post('/tokens/:id/revoke', adminMiddleware, async (req: Request, res: Res
       userAgent: (typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : null) as string | null,
     });
     res.status(500).json({ error: 'Failed to revoke MCP token' });
+  }
+});
+
+/** GET /api/admin/mcp/security/alerts?days=30 — лента алертов безопасности (ТЗ-190) */
+router.get('/security/alerts', adminMiddleware, async (req: Request, res: Response) => {
+  try {
+    const days = Math.min(90, Math.max(1, parseInt(String(req.query.days ?? '30'), 10) || 30));
+    const cutoff = new Date(Date.now() + 3 * 3600 * 1000 - days * 86400000).toISOString().slice(0, 10);
+    const result = await query(
+      `SELECT day, metric, value, threshold, detail, created_at
+       FROM mcp_security_alerts WHERE day >= $1
+       ORDER BY day DESC, metric ASC LIMIT 100`,
+      [cutoff],
+    );
+    res.json({
+      alerts: result.rows.map((r: any) => ({
+        day: String(r.day).slice(0, 10),
+        metric: r.metric,
+        label: MCP_SECURITY_METRIC_LABELS[r.metric] || r.metric,
+        value: Number(r.value),
+        threshold: r.threshold === null ? null : Number(r.threshold),
+        detail: r.detail,
+        created_at: r.created_at,
+      })),
+    });
+  } catch (err: any) {
+    console.error('[AdminMcp] GET security/alerts error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch MCP security alerts' });
+  }
+});
+
+/** GET /api/admin/mcp/security/daily?days=14 — ежедневные счётчики (ТЗ-190) */
+router.get('/security/daily', adminMiddleware, async (req: Request, res: Response) => {
+  try {
+    const days = Math.min(90, Math.max(1, parseInt(String(req.query.days ?? '14'), 10) || 14));
+    const cutoff = new Date(Date.now() + 3 * 3600 * 1000 - days * 86400000).toISOString().slice(0, 10);
+    const result = await query(
+      `SELECT d.day, d.requests_total, d.auth_fail_401, d.auth_limited_429, d.token_limited_429,
+              (SELECT COUNT(*) FROM mcp_security_daily_ips i WHERE i.day = d.day) AS unique_ips
+       FROM mcp_security_daily d WHERE d.day >= $1
+       ORDER BY d.day DESC LIMIT ${days}`,
+      [cutoff],
+    );
+    res.json({
+      days: result.rows.map((r: any) => ({
+        day: String(r.day).slice(0, 10),
+        requests_total: Number(r.requests_total),
+        auth_fail_401: Number(r.auth_fail_401),
+        auth_limited_429: Number(r.auth_limited_429),
+        token_limited_429: Number(r.token_limited_429),
+        unique_ips: Number(r.unique_ips),
+      })),
+    });
+  } catch (err: any) {
+    console.error('[AdminMcp] GET security/daily error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch MCP security daily stats' });
   }
 });
 

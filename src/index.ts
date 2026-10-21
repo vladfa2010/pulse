@@ -70,9 +70,10 @@ import { startVirusScanSweeper } from './services/education/virusScan'; // ТЗ-
 import { initEducationSeoBootHeal } from './services/education/seoRebuild'; // ТЗ-164: heal пропавших SEO-файлов после ручной заливки dist
 import { mediaGuard } from './services/storage/media';       // ТЗ-100 v15: отдача файлов /media
 import { apiLimiter, authLimiter, webhookLimiter, forgotPasswordLimiter, passwordResetFlowLimiter, promoValidateLimiter, adminLimiter } from './middleware/rateLimit';
-import { startCron, startHeatmapFreezeCron, startClusteringCron, startTopicsNamingCron, startEducationMatchCron, startAnalyzeNewsCron, startKnowledgeGraphCron, startMcpCron, startViralityCron, startSourceStatsCron } from './services/cron';   // startCron (RSS) отключен (TZ_REMOVE_DUPLICATE_RSS_CRON); heatmap freeze — TZ-49; clustering — ТЗ-92 (флаг CLUSTERING_ENABLED); topics naming — ТЗ-115 (флаг TOPICS_ENABLED); education match catch-up — ТЗ-103 (флаг EDUCATION_MATCH_ENABLED); analyze news — ТЗ-150 задача 7 (без флага); knowledge graph — ТЗ-107 v3 (флаг EDUCATION_GRAPH_ENABLED); MCP-обслуживание — ТЗ-183 Задача 5; virality analytics — ТЗ-185; source stats daily — ТЗ-186
+import { startCron, startHeatmapFreezeCron, startClusteringCron, startTopicsNamingCron, startEducationMatchCron, startAnalyzeNewsCron, startKnowledgeGraphCron, startMcpCron, startViralityCron, startSourceStatsCron, startMcpSecurityCron } from './services/cron';   // startCron (RSS) отключен (TZ_REMOVE_DUPLICATE_RSS_CRON); heatmap freeze — TZ-49; clustering — ТЗ-92 (флаг CLUSTERING_ENABLED); topics naming — ТЗ-115 (флаг TOPICS_ENABLED); education match catch-up — ТЗ-103 (флаг EDUCATION_MATCH_ENABLED); analyze news — ТЗ-150 задача 7 (без флага); knowledge graph — ТЗ-107 v3 (флаг EDUCATION_GRAPH_ENABLED); MCP-обслуживание — ТЗ-183 Задача 5; virality analytics — ТЗ-185; source stats daily — ТЗ-186; MCP security daily — ТЗ-190
 import { mountMcp } from './mcp/index'; // ТЗ-183 Задача 1: транспорт /mcp (streamable HTTP, токены)
 import { startMcpCounterFlush } from './mcp/counters'; // ТЗ-185 Задача 1: requests_count, flush раз в минуту
+import { startMcpSecurityFlush } from './mcp/securityStats'; // ТЗ-190: счётчики безопасности /mcp, flush раз в минуту
 import { sendWeeklyReportForUser } from './services/reports'; // ← Еженедельные репорты (manual + API)
 import { startDigestCron, sendAllDigests, setDigestEnabled } from './services/digest'; // ← дайджест (каждый час) — через notification matrix
 import { startRadioCacheMaintenance } from './services/radioMp3CacheMaintenance'; // ТЗ-65: snapshot истории 60с + алерты 5м
@@ -4327,6 +4328,13 @@ END $$`,
     // (webhook, /status, /confirm) ветвится по этой колонке.
     { sql: `ALTER TABLE payments ADD COLUMN IF NOT EXISTS product_type VARCHAR(20) NOT NULL DEFAULT 'subscription'`, name: 'payments_product_type' },
     { sql: `ALTER TABLE payments ADD COLUMN IF NOT EXISTS product_ref VARCHAR(64) DEFAULT NULL`, name: 'payments_product_ref' },
+    // ТЗ-190: статистика безопасности /mcp — ежедневные счётчики (базовая
+    // линия + алертинг) и лента алертов для админ-табы «МСП». Дни —
+    // календарные, Europe/Moscow; строки пишет securityStats.ts, оценку —
+    // startMcpSecurityCron (06:40 МСК).
+    { sql: `CREATE TABLE IF NOT EXISTS mcp_security_daily (day DATE PRIMARY KEY, requests_total INTEGER NOT NULL DEFAULT 0, auth_fail_401 INTEGER NOT NULL DEFAULT 0, auth_limited_429 INTEGER NOT NULL DEFAULT 0, token_limited_429 INTEGER NOT NULL DEFAULT 0, created_at TIMESTAMP DEFAULT ${_SQL_NOW}, updated_at TIMESTAMP DEFAULT ${_SQL_NOW})`, name: 'mcp_security_daily' },
+    { sql: `CREATE TABLE IF NOT EXISTS mcp_security_daily_ips (day DATE NOT NULL, ip VARCHAR(45) NOT NULL, PRIMARY KEY (day, ip))`, name: 'mcp_security_daily_ips' },
+    { sql: `CREATE TABLE IF NOT EXISTS mcp_security_alerts (id ${USE_SQLITE ? 'TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16))))' : 'UUID PRIMARY KEY DEFAULT uuid_generate_v4()'}, day DATE NOT NULL, metric VARCHAR(40) NOT NULL, value DOUBLE PRECISION NOT NULL, threshold DOUBLE PRECISION, detail TEXT, created_at TIMESTAMP DEFAULT ${_SQL_NOW}, UNIQUE(day, metric))`, name: 'mcp_security_alerts' },
   ];
   for (const m of migrations) {
     try {
@@ -4762,7 +4770,9 @@ END $$`,
       startMcpCron({ isShuttingDown: () => shuttingDown }); // ТЗ-183 Задача 5: MCP-обслуживание ежедневно 06:20 МСК (аудит 90д, чистка токенов, ротация)
       startViralityCron({ isShuttingDown: () => shuttingDown }); // ТЗ-185: аналитика виральности ежедневно 05:30 МСК (после topics-нейминга)
       startSourceStatsCron({ isShuttingDown: () => shuttingDown }); // ТЗ-186: срезы эффективности источников ежедневно 05:40 МСК (после виральности)
+      startMcpSecurityCron({ isShuttingDown: () => shuttingDown }); // ТЗ-190: оценка безопасности /mcp ежедневно 06:40 МСК (базовая линия, алертинг)
       startMcpCounterFlush(); // ТЗ-185 Задача 1: flush requests_count раз в минуту
+      startMcpSecurityFlush(); // ТЗ-190: flush счётчиков безопасности /mcp раз в минуту
       startRadioCacheMaintenance({ isShuttingDown: () => shuttingDown }); // ТЗ-65: snapshot истории 60с + алерты 5м
     }
 
