@@ -348,8 +348,19 @@ async function seedAndPhaseA() {
   ).rows[0].id;
   const eventId = uuid();
   await query(`INSERT INTO advisor_tasks (client_id, advisor_user_id, title, source_event_id) VALUES ($1,$2,'e1',$3)`, [idxClient, ids.down, eventId]);
-  // query() логирует ошибку БД и не бросает — проверяем факт отклонения дубля
-  await query(`INSERT INTO advisor_tasks (client_id, advisor_user_id, title, source_event_id) VALUES ($1,$2,'e2',$3)`, [idxClient, ids.down, eventId]);
+  // query() логирует ошибку БД и не бросает — проверяем факт отклонения дубля.
+  // Ошибка ожидаемая: приглушаем вывод, чтобы не маскировать настоящие
+  // падения в будущих прогонах (нит ревью ТЗ-191, закрыт в ТЗ-192).
+  {
+    const origErr = console.error;
+    console.error = () => {};
+    try {
+      await query(`INSERT INTO advisor_tasks (client_id, advisor_user_id, title, source_event_id) VALUES ($1,$2,'e2',$3)`, [idxClient, ids.down, eventId]);
+    } finally {
+      console.error = origErr;
+    }
+  }
+  console.log('  (expected) дубль (client_id, source_event_id) отклонён БД — ошибка выше подавлена намеренно');
   const dupCount = await query(`SELECT COUNT(*) AS cnt FROM advisor_tasks WHERE client_id = $1 AND source_event_id = $2`, [idxClient, eventId]);
   assert(Number(dupCount.rows[0].cnt) === 1, 'повтор (client_id, source_event_id) отклонён partial unique');
   await query(`INSERT INTO advisor_tasks (client_id, advisor_user_id, title, source_event_id) VALUES ($1,$2,'null-1',NULL)`, [idxClient, ids.down]);
@@ -551,8 +562,20 @@ async function phaseB(ids) {
     assert(regRows.length === 1, 'тег резолвится в глобальный реестр user_defined_tags');
     r = await api('GET', '/api/advisor/clients', { token: tokens.main });
     assert(r.json.clients.find((c) => c.id === mc1).active_tags === 1, 'active_tags=1 в списке');
+    // ТЗ-192: список отдаёт живые теги (не tags_snapshot саммари) — чипы карточки
+    // обновляются сразу после POST/DELETE, без регенерации саммари
+    const snapBefore = Number(dbExec('SELECT COUNT(*) AS cnt FROM advisor_summaries')[0][0].cnt);
+    let listClient = r.json.clients.find((c) => c.id === mc1);
+    assert(Array.isArray(listClient.tags) && listClient.tags.length === 1 && listClient.tags[0].name === 'Сбербанк',
+      `GET / отдаёт живые tags: ${JSON.stringify(listClient.tags)}`);
     r = await api('DELETE', `/api/advisor/clients/${mc1}/tags/${tagRowId}`, { token: tokens.main });
     assert(r.status === 200 && r.json.deleted === true, 'DELETE tag → 200');
+    r = await api('GET', '/api/advisor/clients', { token: tokens.main });
+    listClient = r.json.clients.find((c) => c.id === mc1);
+    assert(listClient.active_tags === 0 && Array.isArray(listClient.tags) && listClient.tags.length === 0,
+      `после DELETE теги в списке пустые сразу: ${JSON.stringify(listClient.tags)}`);
+    const snapAfter = Number(dbExec('SELECT COUNT(*) AS cnt FROM advisor_summaries')[0][0].cnt);
+    assert(snapAfter === snapBefore, `advisor_summaries не тронута (${snapBefore} → ${snapAfter})`);
     r = await api('DELETE', `/api/advisor/clients/${mc1}/tags/${tagRowId}`, { token: tokens.main });
     assert(r.status === 404 && r.json.error === 'advisor_tag_not_found', 'повторный DELETE → 404');
     // tag_limit тарифа: временный план с tag_limit=1, other на него, свой клиент
@@ -572,7 +595,7 @@ async function phaseB(ids) {
     assert(r.status === 403 && r.json.error === 'tag_limit_reached', `второй тег сверх tag_limit=1 → 403 tag_limit_reached, got ${r.status} ${r.text.slice(0, 100)}`);
     r = await api('POST', `/api/admin/users/${ids.other}/change-plan`, { token: tokens.admin, body: { planId: 'premium' } });
     assert(r.status === 200, 'возврат other на premium');
-    ok('B8: теги — реестр ядра, идемпотентность UNIQUE(client_id,tag_name), DELETE/404, tag_limit_reached');
+    ok('B8: теги — реестр ядра, идемпотентность UNIQUE(client_id,tag_name), DELETE/404, tag_limit_reached; ТЗ-192: живые tags в списке без регенерации саммари');
 
     // ── B9. Эквивалентность библиотеки через HTTP (9.2) ─────────────────────
     await api('POST', `/api/advisor/clients/${mc1}/tags`, { token: tokens.main, body: { tag_name: 'Сбербанк' } });

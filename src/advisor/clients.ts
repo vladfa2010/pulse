@@ -28,6 +28,7 @@ import { advisorAudit, getOwnedClient, OwnedClient } from './service';
 import { selectNewsByTags } from '../services/userSummary';
 
 const router = Router();
+const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
 const CreateClientSchema = z.object({
   name: z.string().max(100),
@@ -82,10 +83,22 @@ function parseClientId(raw: string, res: Response): number | null {
 router.get('/', async (req: AuthRequest, res) => {
   try {
     const userId = req.user!.userId;
+    // ТЗ-192: живые теги для чипов карточки — текущие advisor_client_tags
+    // (tags_snapshot саммари остаётся аудитом генерации, не источником UI).
+    // Тегов на клиента мало (лимит тарифа) — подзапрос в SELECT списка,
+    // отдельных запросов не нужно.
+    const tagsSubquery = USE_SQLITE
+      ? `(SELECT COALESCE(json_group_array(json_object('name', t2.tag_name, 'type', t2.tag_type)), '[]')
+            FROM (SELECT tag_name, tag_type FROM advisor_client_tags
+                  WHERE client_id = c.id ORDER BY created_at) t2) AS tags`
+      : `(SELECT COALESCE(json_agg(json_build_object('name', t2.tag_name, 'type', t2.tag_type)
+                                    ORDER BY t2.created_at), '[]'::json)
+            FROM advisor_client_tags t2 WHERE t2.client_id = c.id) AS tags`;
     const result = await query(
       `SELECT c.id, c.name, c.notes, c.is_archived, c.sort_order, c.created_at,
               c.last_alert_neg_at, c.last_alert_pos_at,
-              COUNT(t.id) AS active_tags
+              COUNT(t.id) AS active_tags,
+              ${tagsSubquery}
        FROM advisor_clients c
        LEFT JOIN advisor_client_tags t ON t.client_id = c.id
        WHERE c.advisor_user_id = $1
@@ -93,6 +106,14 @@ router.get('/', async (req: AuthRequest, res) => {
        ORDER BY c.sort_order ASC, c.created_at ASC`,
       [userId]
     );
+    const parseTags = (raw: any): { name: string; type: string | null }[] => {
+      if (!raw) return [];
+      const arr = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      return (Array.isArray(arr) ? arr : []).map((t: any) => ({
+        name: String(t?.name ?? ''),
+        type: (t?.type as string | null) ?? null,
+      })).filter((t: { name: string }) => t.name);
+    };
     const clients = result.rows.map((r: any) => ({
       id: Number(r.id),
       name: r.name,
@@ -101,6 +122,7 @@ router.get('/', async (req: AuthRequest, res) => {
       sort_order: Number(r.sort_order),
       created_at: r.created_at,
       active_tags: Number(r.active_tags),
+      tags: parseTags(r.tags),
       last_alert_neg_at: r.last_alert_neg_at ? new Date(r.last_alert_neg_at).toISOString() : null,
       last_alert_pos_at: r.last_alert_pos_at ? new Date(r.last_alert_pos_at).toISOString() : null,
     }));
