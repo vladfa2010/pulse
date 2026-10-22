@@ -80,6 +80,10 @@ Whitelist из **5 страниц** (`src/index.ts:3132-3153`):
 
 Визуализация потока действий. Подробности — [`../../METRICS.md`](../../METRICS.md) §2.1: единая лента `user_events` (без `admin_%`) + `user_news_reads` как `read_article`, сессия = разрыв > 1800 с, 4 блока ответа (`transitions`, `session_starts`, `bubbles`, `timeline`), кэш 60 с для агрегата (`flow:all:<period>`), per-user без кэша.
 
+### `GET /api/admin/metrics/user-paths` (ТЗ-124)
+
+Дашборд «Пути пользователей» поверх той же ленты и сессионизации (общие CTE-кирпичи `buildEventsCte`/`SESSED_CTE`). Подробности — [`../../METRICS.md`](../../METRICS.md) §2.2: 4 блока (`users`, `exit_points`, `conversion_paths`, `branching`), параметр `scope=all|functions` (только functions-ветка branching), кэш `paths:<period>:<scope>` 60 с. Цели конверсии — `payment_completed`, `subscription_activated`, `subscription_cancelled`; история по ним восстановлена бэкфиллом `scripts/backfill-payment-events.js` (метка `tz124_backfill` в `event_data`).
+
 ### Карточка пользователя в админке
 
 `UserDetailModal.tsx` → `UserActivityCharts.tsx`: bubble-график активности по часам + таймлайн событий (per-user `flow`, см. выше).

@@ -36,17 +36,18 @@
 | `section` | string | Название секции (см. список ниже) |
 | `period` | number | Период в днях: `1`, `7`, `30`, `90` |
 
-**Доступные секции (16):**
+**Доступные секции (17):**
 
 ```
 overview, daily, funnel, retention, sentiment, tags, revenue, adoption,
-online, plans, mrr, promos, engagement, churn, radio, flow
+online, plans, mrr, promos, engagement, churn, radio, flow, paths
 ```
 
 | Секция | Пояснение |
 |--------|-----------|
 | `radio` | Radio TTS-метрики (in-memory с момента старта процесса, `period` игнорируется) |
 | `flow` | ТЗ-122: визуализация потока действий (см. `GET /metrics/flow` ниже) |
+| `paths` | ТЗ-124: дашборд «Пути пользователей» (см. `GET /metrics/user-paths` ниже; scope всегда `all`) |
 
 **Ответ:**
 
@@ -105,6 +106,57 @@ online, plans, mrr, promos, engagement, churn, radio, flow
 | `timeline` | Последние 300 событий `[{ t, type }]` — **только при запросе с `user_id`**, порядок ASC. В агрегате пустой массив |
 
 **Кэш:** агрегат (без `user_id`) кэшируется 60 с с ключом `flow:all:<period>`; per-user — без кэша.
+
+---
+
+## 2.2 `GET /metrics/user-paths` (ТЗ-124)
+
+Дашборд «Пути пользователей» — сводка по всем юзерам поверх той же ленты
+событий и сессионизации, что и `flow` (ТЗ-122): общие CTE-кирпичи
+`buildEventsCte` / `SESSED_CTE` (`admin_%` исключены, `read_article` из
+`user_news_reads`, сессия = разрыв > 1800 с, серии повторов схлопнуты).
+Обёртка секции `paths` проксирует сюда же с `scope=all` (через общий
+`/admin/metrics`) — двойной кэш осознанный, как у `flow`.
+
+**Query params:**
+
+| Параметр | Тип | Описание |
+|----------|-----|----------|
+| `period` | number | Период в днях: `1`, `7`, `30`, `90` (иначе 400) |
+| `scope` | string | `all` (default) или `functions` — влияет только на `branching`: контентные события (`read_article`, `page_view_feed`) исключаются **до** подсчёта (иначе 400) |
+
+**Ответ (4 блока):**
+
+```json
+{
+  "period": 30,
+  "scope": "all",
+  "users": [{ "user_id": "…", "email": "…", "username": "…", "plan": "pro",
+              "subscription_active": true, "last_event_at": "ISO", "last_event_type": "login",
+              "events_7d": 12, "events_30d": 40, "top_event_type": "sentiment_vote",
+              "top_transition": { "from": "login", "to": "sentiment_vote", "count": 8 }, "ltv": 990 }],
+  "exit_points": [{ "event_type": "read_article", "count": 439 }],
+  "conversion_paths": [{ "goal": "payment_completed", "path": ["login", "page_view_plans", "payment_completed"], "count": 8 }],
+  "branching": [{ "from": "login", "total_out": 197, "next": [{ "to": "read_article", "count": 115, "share": 58.4 }] }]
+}
+```
+
+| Блок | Описание |
+|------|----------|
+| `users` | Все юзеры, сортировка по `last_event_at` DESC, LIMIT 500. `last_event_at` и окна `events_7d/30d` — по **полной истории** (без period-фильтра, сверка с эталоном probe_tz124 блок 4); `top_event_type` и `top_transition` — за period; `ltv` = `SUM(amount) payments WHERE status='completed'` (дубли платежей ТЗ-119 в scope не входят) |
+| `exit_points` | Последнее событие каждой сессии (LEAD-окно + разрыв 1800 с), топ-10 + `other` |
+| `conversion_paths` | Цели: `payment_completed`, `subscription_activated`, `subscription_cancelled`. До 3 предшествующих событий в той же сессии (схлопывание серий), цель в конце пути; если цель стартует сессию — последние 3 события юзера перед ней. Топ-5 цепочек на цель, всё с `count<3` — в `other` |
+| `branching` | Матрица ветвлений: узлы `from` (топ-20 по `total_out`), у каждого топ-5 `next` + `other`; `share = count/total_out`, округление 0.1; связки `count<3` — в `other`. Правила малой выборки: проценты показываются только с n |
+
+**Кэш:** 60 с по ключу `paths:<period>:<scope>`; сверху кэш диспетчера
+`paths:<period>` при загрузке через `/admin/metrics?section=paths`.
+
+**Бэкфилл событий оплаты:** логирование `payment_completed` /
+`subscription_activated` появилось 10.07.2026 (последний платёж до него —
+08.07), поэтому история восстановлена скриптом
+`scripts/backfill-payment-events.js` из `payments` и
+`subscription_renewals` (идемпотентно, метка `tz124_backfill` в
+`event_data`; откат: `DELETE FROM user_events WHERE event_data->>'tz124_backfill' = 'true'`).
 
 ---
 
@@ -400,7 +452,7 @@ Monthly Recurring Revenue и Annual Recurring Revenue.
 
 ## 5. UI (ProductMetricsTab)
 
-Все 26 блоков отображаются на одной странице админки.
+Все 27 блоков отображаются на одной странице админки.
 
 | # | Блок | Секция | Визуализация |
 |---|------|--------|--------------|
@@ -430,6 +482,7 @@ Monthly Recurring Revenue и Annual Recurring Revenue.
 | 24 | Событий на пользователя | `engagement` | KPI + bar chart |
 | 25 | Churn-когорты | `churn` | Table |
 | 26 | Сценарии (ТЗ-122) | `flow` (агрегат `GET /metrics/flow`) | Sankey переходов + топ-10 стартов сессий (`FlowCharts.tsx`, ленивый `echartsLoader`) |
+| 27 | Пути (ТЗ-124) | `paths` (агрегат `GET /metrics/user-paths`) | Сводная таблица юзеров (клик → UserDetailModal), exit-бары, цепочки к целям, аккордеон ветвлений с переключателем «все/только функции» (`PathsSection.tsx`) |
 
 > **Примечание:** нумерация в UI отличается от нумерации в `TZ_V6_METRICS.md` (где новые метрики названы 27–32), потому что общий список блоков в frontend не разбивался на отдельные карточки Placeholder.
 
