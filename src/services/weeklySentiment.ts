@@ -1,52 +1,51 @@
 /**
  * =============================================================================
- * PULSE — Новостной фон (сантимент) недельного графика (ПРАВКА-2 к ТЗ-191)
+ * PULSE — Накопительное настроение новостей недельного графика (ТЗ-194)
  * =============================================================================
  *
  * Чистая функция агрегации поля sentiment (positive/negative/neutral, уже
- * считается на ingest) в серию для третьего слоя графика «{TICKER} · M5 ·
- * 7 дней». Источник — те же события тега, что news_markers (live и архив
- * считаются одним кодом). Подпись в UI — «новостной фон», не «сигнал».
+ * считается на ingest) в ступенчатую серию для третьего слоя графика
+ * «{TICKER} · M5 · 7 дней». Источник — те же события тега, что news_markers
+ * (live и архив считаются одним кодом). Подпись в UI — «настроение новостей»,
+ * не «сигнал»/«прогноз».
  *
- * Расчёт:
- *   - бакеты 4 ч по окну недели [weekStartUtc, weekEndUtc) (~42 шт.),
- *     якорь — понедельник 00:00 МСК (UTC-инстанс), границы детерминированы;
- *   - score бакета = (pos − neg) / всего → [-1, +1]; знак и шкала — как у
- *     «Индекса настроения» (/sentiment, голоса -1/0/1): один язык сантимента;
- *   - сглаживание скользящим окном 12 ч = 3 бакета, TRAILING (значение в
- *     точке t — среднее за [t−12ч, t]): фон читается трендом, а не спайками.
- *     Пустые бакеты в среднее НЕ входят (иначе ночные провалы размывали бы
- *     реальный фон); у пустого окна фон 0 (нейтрально);
- *   - деградация: < SENTIMENT_MIN_NEWS новостей за окно → null — фронт
- *     скрывает панель целиком (конвенция {chart: null}).
+ * Модель — накопительная дельта, без параметров (решение владельца
+ * 2026-10-22; замещает бакеты 4 ч + окно 12 ч ПРАВКА-2 v1):
+ *   - события сортируются по published_at; позитив +1, негатив −1, нейтрал
+ *     пропускается (ступень без сдвига — в серию точка не пишется);
+ *   - значение точки — баланс ПОСЛЕ этой новости; старт периода = 0
+ *     (кривая по определению ступенчатая: между событиями горизонталь);
+ *   - конец кривой = positive − negative тега за окно — совпадает со
+ *     сводкой отчёта (кросс-проверка зафиксирована тестом);
+ *   - деградация: < SENTIMENT_MIN_NEWS ненейтральных новостей за окно → null —
+ *     фронт скрывает панель целиком (цена и объём работают).
+ *
+ * Форма точки: { t, cum, news_id } — news_id для клика/якоря к ленте тега;
+ * у старых снапшотов id новостей не сохранялся → null (клик фолбечится).
  */
 
 export interface WeeklySentimentEvent {
   published_at: string;
   sentiment: string;
+  /** id новости (строка) — для якоря к ленте; старые снапшоты: null */
+  news_id?: string | null;
 }
 
 export interface SentimentPoint {
-  /** начало бакета, ISO UTC */
+  /** published_at новости, ISO UTC */
   t: string;
-  /** сглаженный баланс [-1, +1], 0 — нейтрально/нет новостей в окне */
-  score: number;
+  /** значение кривой ПОСЛЕ этой новости */
+  cum: number;
+  news_id: string | null;
 }
 
-export const SENTIMENT_BUCKET_MS = 4 * 60 * 60 * 1000;
-/** Окно сглаживания 12 ч = 3 бакета по 4 ч */
-export const SENTIMENT_SMOOTH_BUCKETS = 3;
-/** Деградация панели: меньше новостей за окно → sentiment: null (порог владельца: 2) */
+/** Деградация панели: меньше ненейтральных новостей за окно → sentiment: null */
 export const SENTIMENT_MIN_NEWS = 2;
 
-/** 3 знака после точки — больше на графике не читается */
-function round3(x: number): number {
-  return Math.round(x * 1000) / 1000;
-}
-
 /**
- * Серия бакетов по окну недели. weekEndUtc не передан (архив) — окно ровно
+ * Ступенчатая серия по окну недели. weekEndUtc не передан (архив) — окно ровно
  * 7 дней от weekStartUtc; live передаёт now. События вне окна отбрасываются.
+ * Нейтральные не создают точек; точек при деградации нет (null).
  */
 export function buildSentimentSeries(
   events: WeeklySentimentEvent[],
@@ -55,41 +54,24 @@ export function buildSentimentSeries(
 ): SentimentPoint[] | null {
   const t0 = weekStartUtc.getTime();
   const t1 = weekEndUtc ? weekEndUtc.getTime() : t0 + 7 * 24 * 60 * 60 * 1000;
-  const bucketCount = Math.max(1, Math.ceil((t1 - t0) / SENTIMENT_BUCKET_MS));
 
-  const pos = new Array<number>(bucketCount).fill(0);
-  const neg = new Array<number>(bucketCount).fill(0);
-  const total = new Array<number>(bucketCount).fill(0);
-  let inWindow = 0;
-
-  for (const e of events) {
+  const scored: { ms: number; idx: number; delta: number; news_id: string | null; published_at: string }[] = [];
+  events.forEach((e, idx) => {
     const ms = new Date(e.published_at).getTime();
-    if (Number.isNaN(ms) || ms < t0 || ms >= t1) continue;
-    const b = Math.min(bucketCount - 1, Math.floor((ms - t0) / SENTIMENT_BUCKET_MS));
-    total[b] += 1;
-    inWindow += 1;
-    if (e.sentiment === 'positive') pos[b] += 1;
-    else if (e.sentiment === 'negative') neg[b] += 1;
-  }
+    if (Number.isNaN(ms) || ms < t0 || ms >= t1) return;
+    const delta = e.sentiment === 'positive' ? 1 : e.sentiment === 'negative' ? -1 : 0;
+    if (delta === 0) return;
+    scored.push({ ms, idx, delta, news_id: e.news_id ?? null, published_at: e.published_at });
+  });
 
-  if (inWindow < SENTIMENT_MIN_NEWS) return null;
+  if (scored.length < SENTIMENT_MIN_NEWS) return null;
 
-  // Сырой баланс бакета; пустой бакет — null (не входит в окно сглаживания)
-  const raw: (number | null)[] = total.map((n, b) =>
-    n > 0 ? (pos[b] - neg[b]) / n : null,
-  );
+  // строгий порядок публикации; при равных published_at — исходный порядок
+  scored.sort((a, b) => (a.ms - b.ms) || (a.idx - b.idx));
 
-  // Trailing-окно 12 ч: среднее по НЕПУСТЫМ бакетам [b−2, b]; нет ни одного → 0
-  return raw.map((_, b) => {
-    let sum = 0;
-    let cnt = 0;
-    for (let k = Math.max(0, b - SENTIMENT_SMOOTH_BUCKETS + 1); k <= b; k++) {
-      if (raw[k] !== null) {
-        sum += raw[k] as number;
-        cnt += 1;
-      }
-    }
-    const score = cnt > 0 ? sum / cnt : 0;
-    return { t: new Date(t0 + b * SENTIMENT_BUCKET_MS).toISOString(), score: round3(score) };
+  let cum = 0;
+  return scored.map((s) => {
+    cum += s.delta;
+    return { t: new Date(s.ms).toISOString(), cum, news_id: s.news_id };
   });
 }

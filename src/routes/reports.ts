@@ -204,7 +204,7 @@ async function buildWeekChart(params: WeekChartParams): Promise<{
   chart: any;
   news_markers: any[];
   week_change_pct: number | null;
-  /** ПРАВКА-2 к ТЗ-191: новостной фон (сантимент) по бакетам 4 ч; null — <2 новостей */
+  /** ТЗ-194: накопительная кривая настроения (ступенчатая дельта); null — <2 ненейтральных */
   sentiment: any;
   reason?: string;
 }> {
@@ -290,8 +290,9 @@ async function buildWeekChart(params: WeekChartParams): Promise<{
       source: e.source,
     })),
     week_change_pct: weekChangePct,
-    // ПРАВКА-2 к ТЗ-191: фон по тем же видимым событиям; live и архив — одним кодом.
-    // Кэш/ключ не меняются — серия внутри chart-пейлоада (live 5 мин / архив 24 ч)
+    // ТЗ-194: накопительная кривая по тем же видимым событиям; live и архив —
+    // одним кодом. Кэш/ключ не меняются — серия внутри chart-пейлоада
+    // (live 5 мин / архив 24 ч)
     sentiment: buildSentimentSeries(visibleEvents, weekStartUtc, liveEnd),
   };
   cacheSet(params.store, params.cacheKey, payload);
@@ -425,13 +426,14 @@ router.get('/weekly/current/chart', async (req: AuthRequest, res) => {
       // ПРАВКА-2 к ТЗ-191: маркеры — из chartEvents (все новости окна), фолбэк articles
       events: (tag.chartEvents ?? tag.articles.map((a) => ({
         title: a.title, source: a.source, url: a.url,
-        publishedAt: a.publishedAt, sentiment: a.sentiment,
+        publishedAt: a.publishedAt, sentiment: a.sentiment, newsId: a.newsId ?? null,
       }))).map((a) => ({
         published_at: a.publishedAt instanceof Date ? a.publishedAt.toISOString() : String(a.publishedAt),
         title: a.title,
         sentiment: a.sentiment,
         url: a.url,
         source: a.source,
+        news_id: a.newsId ?? null,
       })),
       weekStartUtc: weekStart,
       liveEnd: now,

@@ -1,30 +1,36 @@
 /**
  * =============================================================================
- * PULSE — ПРАВКА-2 к ТЗ-191: новостной фон (сантимент) недельного графика
+ * PULSE — ТЗ-194: накопительное настроение новостей недельного графика
  * =============================================================================
  *
  * Прогон: USE_SQLITE=true npx ts-node --transpile-only src/tests/weeklySentiment.test.ts
  *
- * Покрытие (тесты 1–3 из ТЗ, чистая функция без БД/HTTP):
- *   1. Бакеты 4 ч покрывают окно недели (~42), знак бакета соответствует
- *      балансу pos/neg внутри него; события вне окна отброшены.
- *   2. Сглаживание trailing-окном 12 ч: одиночная негативная новость при
- *      нейтральном фоне не даёт бакета −1; окно ходит за событиями.
- *   3. Деградация: 9 новостей → null; ровно 10 → серия. Пусто → null.
+ * Покрытие (чистая функция без БД/HTTP):
+ *   1. Накопление: значение после каждой новости = предыдущее ±1; порядок строго
+ *      published_at; нейтральные не создают точек.
+ *   2. Конец = сводке: последний cum равен positive − negative событий источника.
+ *   3. Деградация: <2 ненейтральных → null (по ненейтральным, не по всем);
+ *      ровно 2 → серия; пусто → null.
+ *   4. Live-окно: события вне [start, now) отброшены; кривая — баланс на now.
+ *   5. news_id: проходит в точку; у событий без id — null (старые снапшоты).
  */
 
 import {
   buildSentimentSeries,
-  SENTIMENT_BUCKET_MS,
+  SENTIMENT_MIN_NEWS,
   type WeeklySentimentEvent,
 } from '../services/weeklySentiment';
 
-// Понедельник 13.10.2026 00:00 МСК = 12.10.2026 21:00 UTC
-const WEEK_START = new Date('2026-10-12T21:00:00.000Z');
+// Понедельник 19.10.2026 00:00 МСК = 18.10.2026 21:00 UTC
+const WEEK_START = new Date('2026-10-18T21:00:00.000Z');
 
 /** Событие со сдвигом offsetMs от начала недели */
-function ev(offsetMs: number, sentiment: string): WeeklySentimentEvent {
-  return { published_at: new Date(WEEK_START.getTime() + offsetMs).toISOString(), sentiment };
+function ev(offsetMs: number, sentiment: string, news_id?: string | null): WeeklySentimentEvent {
+  return {
+    published_at: new Date(WEEK_START.getTime() + offsetMs).toISOString(),
+    sentiment,
+    ...(news_id !== undefined ? { news_id } : {}),
+  };
 }
 
 let passed = 0;
@@ -34,83 +40,93 @@ function check(name: string, cond: boolean, detail?: any) {
   else { failed++; console.error(`  FAIL ${name}${detail !== undefined ? ` — ${JSON.stringify(detail)}` : ''}`); }
 }
 
-/** Серия округляет score до 3 знаков — сравниваем с округлённым ожиданием */
-function round3(x: number): number {
-  return Math.round(x * 1000) / 1000;
-}
-
 function main() {
-  // 1. Бакеты покрывают окно, знак = баланс pos/neg, вне окна отброшено
+  // 1. Накопление: порядок published_at, ±1 после каждой новости, нейтральные без точек
   {
     const events: WeeklySentimentEvent[] = [
-      // бакет 0: 1 pos + 3 neg → сырой (1−3)/4 = −0,5
-      ev(1 * 3600e3, 'positive'), ev(2 * 3600e3, 'negative'), ev(3 * 3600e3, 'negative'), ev(3.5 * 3600e3, 'negative'),
-      // бакет 1: 2 pos + 1 neutral → (2−0)/3 ≈ 0,667
-      ev(SENTIMENT_BUCKET_MS + 1 * 3600e3, 'positive'), ev(SENTIMENT_BUCKET_MS + 2 * 3600e3, 'positive'), ev(SENTIMENT_BUCKET_MS + 3 * 3600e3, 'neutral'),
-      // распределяем neutral по бакетам 2 и 3 — проверка окон сглаживания
-      ...[0, 1, 2].map((i) => ev(2 * SENTIMENT_BUCKET_MS + i * 3600e3, 'neutral')),
-      ...[0, 1, 2].map((i) => ev(3 * SENTIMENT_BUCKET_MS + i * 3600e3, 'neutral')),
+      ev(3 * 3600e3, 'positive', 'n3'),   // cum +1
+      ev(1 * 3600e3, 'negative', 'n1'),  // раньше по времени → идёт первой: cum −1
+      ev(2 * 3600e3, 'neutral', 'n2'),   // не создаёт точки
+      ev(4 * 3600e3, 'positive', 'n4'),  // cum 0 → +1
+      ev(5 * 3600e3, 'negative', 'n5'),  // cum 0
       // вне окна: до начала и на границе конца — не считаются
-      ev(-3600e3, 'negative'),
-      ev(7 * 24 * 3600e3, 'positive'),
+      ev(-3600e3, 'positive', 'x1'),
+      ev(7 * 24 * 3600e3, 'negative', 'x2'),
     ];
     const series = buildSentimentSeries(events, WEEK_START);
-    check('13 событий в окне → серия есть', Array.isArray(series));
+    check('4 ненейтральные в окне → серия', Array.isArray(series));
     if (!series) return;
-    check('окно недели = 42 бакета', series.length === 42, series.length);
-    check('якорь бакетов — начало недели', series[0].t === WEEK_START.toISOString(), series[0].t);
-    check('шаг бакетов 4 ч', series[1].t === new Date(WEEK_START.getTime() + SENTIMENT_BUCKET_MS).toISOString());
-    // сглаживание: бакет 0 (окно [0]) = −0,5; бакет 1 (окно [0..1] непустые) = (−0,5+0,667)/2 ≈ 0,083
-    check('знак бакета 0 — по балансу pos/neg (−0,5 в окне [0])', series[0].score === -0.5, series[0].score);
-    check('бакет 1 — среднее непустых окна [0..1]', series[1].score === round3((-0.5 + 2 / 3) / 2), series[1].score);
-    check('бакет 2 — окно [0..2], все непустые', series[2].score === round3((-0.5 + 2 / 3 + 0) / 3), series[2].score);
-    check('бакет 3 — окно [1..3]: (0,667+0+0)/3', series[3].score === round3((2 / 3) / 3), series[3].score);
-    check('после событий фон 0 (нейтрально)', series[41].score === 0, series[41].score);
-    check('граница конца окна: событие ровно на t1 отброшено', !series.some((p) => p.score === 1));
+    check('нейтральные не создают точек (4 ненейтральных → 4 точки)', series.length === 4, series.length);
+    check('порядок строго published_at: первая — самая ранняя (n1)',
+      series[0].t === ev(1 * 3600e3, 'negative').published_at && series[0].news_id === 'n1', series[0]);
+    check('накопление: −1 после негатива', series[0].cum === -1, series[0].cum);
+    check('накопление: 0 после позитива (−1+1)', series[1].cum === 0, series[1].cum);
+    check('накопление: +1 после позитива (0+1)', series[2].cum === 1, series[2].cum);
+    check('t точки = published_at новости', series[2].t === ev(4 * 3600e3, 'positive').published_at, series[2].t);
+    check('news_id проходит в точку', series.every((p) => typeof p.news_id === 'string'), series.map((p) => p.news_id));
   }
 
-  // 2. Сглаживание: одиночная негативная новость при нейтральном фоне не даёт −1
+  // 2. Конец кривой = positive − negative источника (кросс-проверка со сводкой)
   {
     const events: WeeklySentimentEvent[] = [
-      ...Array.from({ length: 9 }, (_, i) => ev(i * 10 * 60e3, 'neutral')), // 9 нейтральных в бакете 0
-      ev(SENTIMENT_BUCKET_MS + 3600e3, 'negative'), // 1 негативная в бакете 1
+      ev(1 * 3600e3, 'positive'), ev(2 * 3600e3, 'positive'), ev(3 * 3600e3, 'negative'),
+      ev(4 * 3600e3, 'neutral'), ev(5 * 3600e3, 'positive'), ev(6 * 3600e3, 'negative'),
+      ev(7 * 3600e3, 'negative'),
     ];
     const series = buildSentimentSeries(events, WEEK_START);
-    check('нейтральный фон + 1 негатив → серия есть', Array.isArray(series));
-    if (!series) return;
-    check('бакет 0 — чистый нейтральный фон (0)', series[0].score === 0, series[0].score);
-    check('бакет 1 окно [0..1]: (0 + (−1))/2 = −0,5 — размазано, не −1', series[1].score === -0.5, series[1].score);
-    check('бакет 3 (окно [1..3]): всё ещё −1 — trailing ходит за событием', series[3].score === -1, series[3].score);
-    check('бакет 4 (окно [2..4]): событие вышло из окна → 0', series[4].score === 0, series[4].score);
+    const pos = events.filter((e) => e.sentiment === 'positive').length;
+    const neg = events.filter((e) => e.sentiment === 'negative').length;
+    check('последний cum = positive − negative (3−3 = 0)',
+      series !== null && series[series.length - 1].cum === pos - neg,
+      series?.[series.length - 1].cum);
+    const oneWay: WeeklySentimentEvent[] = [
+      ev(1 * 3600e3, 'positive'), ev(2 * 3600e3, 'positive'), ev(3 * 3600e3, 'positive'),
+      ev(4 * 3600e3, 'negative'),
+    ];
+    const s2 = buildSentimentSeries(oneWay, WEEK_START);
+    check('итог +2 при 3 pos / 1 neg', s2 !== null && s2[s2.length - 1].cum === 2, s2?.[s2.length - 1].cum);
   }
 
-  // 3. Деградация: < лимита (2) → null
+  // 3. Деградация: < SENTIMENT_MIN_NEWS ненейтральных → null (по НЕНЕЙТРАЛЬНЫМ)
   {
-    check('1 новость → null', buildSentimentSeries(
-      [ev(3600e3, 'positive')], WEEK_START) === null);
+    check('1 ненейтральная + куча нейтральных → null (порог по ненейтральным)',
+      buildSentimentSeries(
+        [ev(3600e3, 'positive'), ...[2, 3, 4, 5, 6].map((h) => ev(h * 3600e3, 'neutral'))],
+        WEEK_START) === null);
     check('пусто → null', buildSentimentSeries([], WEEK_START) === null);
-    const pair = buildSentimentSeries(
-      [ev(3600e3, 'positive'), ev(2 * 3600e3, 'negative')], WEEK_START);
-    check('ровно 2 новости → серия', Array.isArray(pair));
-    // 1 pos + 1 neg в одном бакете: сырой (1−1)/2 = 0 → окно [0] = 0
-    check('пара pos/neg в бакете 0 — фон 0', pair !== null && pair[0].score === 0, pair?.[0].score);
-    const ten = buildSentimentSeries(
-      Array.from({ length: 10 }, (_, i) => ev(i * 3600e3, 'negative')), WEEK_START);
-    // 10 новостей со сдвигом 0–9 ч лежат в бакетах 0–2 (4+4+2), все raw = −1
-    check('10 новостей → серия', Array.isArray(ten));
-    check('бакет 0 (окно [0]) = −1', ten !== null && ten[0].score === -1, ten?.[0].score);
-    check('бакет 2 (окно [0..2], все непустые) = −1', ten !== null && ten[2].score === -1, ten?.[2].score);
-    check('бакет 3 (окно [1..3], непустые 1–2) = −1', ten !== null && ten[3].score === -1, ten?.[3].score);
-    check('бакет 5 (окно [3..5] пусто) = 0', ten !== null && ten[5].score === 0, ten?.[5].score);
+    check('все нейтральные → null',
+      buildSentimentSeries([ev(3600e3, 'neutral'), ev(2 * 3600e3, 'neutral')], WEEK_START) === null);
+    check('ровно 2 ненейтральные → серия', Array.isArray(buildSentimentSeries(
+      [ev(3600e3, 'positive'), ev(2 * 3600e3, 'negative')], WEEK_START)));
+    check('порог = 2 (SENTIMENT_MIN_NEWS)', SENTIMENT_MIN_NEWS === 2, SENTIMENT_MIN_NEWS);
+    const onePos = buildSentimentSeries(
+      [ev(3600e3, 'positive'), ev(2 * 3600e3, 'neutral'), ev(3 * 3600e3, 'neutral')], WEEK_START);
+    check('1 pos + 2 neutral → null (деградация, хотя новостей 3)', onePos === null, onePos);
   }
 
-  // 4. Live-окно: конец = now, бакеты до now
+  // 4. Live-окно: правая граница = now
   {
-    const liveEnd = new Date(WEEK_START.getTime() + 2 * SENTIMENT_BUCKET_MS + 3600e3);
+    const liveEnd = new Date(WEEK_START.getTime() + 3 * 3600e3);
     const series = buildSentimentSeries(
-      Array.from({ length: 10 }, (_, i) => ev(i * 30 * 60e3, 'positive')), WEEK_START, liveEnd);
-    check('live: серия покрывает окно до now (3 бакета)', Array.isArray(series) && series?.length === 3, series?.length);
-    check('live: знак по балансу (+1 при всех positive)', series !== null && series[0].score === 1, series?.[0].score);
+      [ev(1 * 3600e3, 'positive'), ev(2 * 3600e3, 'positive'), ev(4 * 3600e3, 'positive')],
+      WEEK_START, liveEnd);
+    check('событие после now отброшено (2 точки)', series !== null && series.length === 2, series?.length);
+    check('live: баланс на now = +2', series !== null && series[series.length - 1].cum === 2,
+      series?.[series.length - 1].cum);
+    const beforeStart = buildSentimentSeries(
+      [ev(3600e3, 'positive'), ev(2 * 3600e3, 'positive')],
+      new Date(WEEK_START.getTime() + 2 * 3600e3), liveEnd);
+    check('события до weekStart отброшены → null', beforeStart === null, beforeStart);
+  }
+
+  // 5. news_id: null у событий без id (старые снапшоты), tie-break по исходному порядку
+  {
+    const series = buildSentimentSeries(
+      [ev(3600e3, 'positive'), ev(3600e3, 'negative'), ev(2 * 3600e3, 'positive')], WEEK_START);
+    check('события без news_id → null в точках',
+      series !== null && series.every((p) => p.news_id === null), series?.map((p) => p.news_id));
+    check('равные published_at: исходный порядок сохранён (−1 второй, т.к. шёл вторым)',
+      series !== null && series[0].cum === 1 && series[1].cum === 0, series?.map((p) => p.cum));
   }
 }
 

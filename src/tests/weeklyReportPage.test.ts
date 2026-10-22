@@ -562,7 +562,9 @@ async function main(): Promise<void> {
   await seedPortfolio('live-user', 'tag-live', 'Лайв');
   await seedPortfolio('live-user', 'tag-div', 'Дивиденды'); // тег без новостей — для «впереди»
   await seedNews('live-1', 'tag-live', 'positive', new Date(Date.now() - 2 * 3600 * 1000));
-  await seedNews('live-2', 'tag-live', 'neutral', new Date(Date.now() - 6 * 3600 * 1000));
+  // ТЗ-194: negative вместо neutral — иначе ненейтральная одна и live-серия
+  // деградирует в null (порог по ненейтральным, а не по всем новостям)
+  await seedNews('live-2', 'tag-live', 'negative', new Date(Date.now() - 6 * 3600 * 1000));
   await seedNews('live-prev', 'tag-live', 'neutral', new Date(Date.now() - 7 * DAY_MS - 3600 * 1000));
 
   // Снапшот владельца: тег с инструментом + тег без инструмента + AI-саммари
@@ -693,13 +695,8 @@ async function main(): Promise<void> {
       c1.data.news_markers?.length === 2
       && c1.data.news_markers.every((m: any) => m.url.startsWith('https://example.com/sber-')), c1.data.news_markers);
     check('week_change_pct посчитан ((110-100)/100 = 10)', c1.data.week_change_pct === 10, c1.data.week_change_pct);
-    check('ПРАВКА-2: 2 события (≥ лимита 2) → sentiment: серия 42 бакетов',
-      Array.isArray(c1.data.sentiment) && c1.data.sentiment.length === 42, c1.data.sentiment?.length);
-    check('ПРАВКА-2: обе статьи в одном бакете (1 pos + 1 neutral) → 3 ненулевых по 0,5 (окно 12 ч)',
-      Array.isArray(c1.data.sentiment)
-      && c1.data.sentiment.filter((p: any) => p.score !== 0).length === 3
-      && c1.data.sentiment.filter((p: any) => p.score !== 0).every((p: any) => p.score === 0.5),
-      c1.data.sentiment?.filter((p: any) => p.score !== 0));
+    check('ТЗ-194: 1 ненейтральная (1 pos + 1 neutral) → sentiment: null (порог по ненейтральным)',
+      'sentiment' in c1.data && c1.data.sentiment === null, c1.data.sentiment);
     const callsAfterChart = marketCalls;
     const c1b = await httpGet(`/weekly/${ownerSnap!.id}/chart?tag_id=tag-sber`, J('owner'));
     check('повторный запрос (report_id, tag_id) — из кэша 24ч, marketRouter не дёргается',
@@ -773,9 +770,13 @@ async function main(): Promise<void> {
       cCe.status === 200 && cCe.data.news_markers?.length === 4
       && cCe.data.news_markers.every((m: any) => m.url.startsWith('https://example.com/week-ev-')),
       cCe.data.news_markers?.map((m: any) => m.url));
-    check('ПРАВКА-2: сантимент строится из chartEvents (4 события → ненулевые бакеты есть)',
-      Array.isArray(cCe.data.sentiment) && cCe.data.sentiment.some((p: any) => p.score !== 0),
-      cCe.data.sentiment?.filter((p: any) => p.score !== 0).length);
+    check('ТЗ-194: накопительная кривая из chartEvents (pos,neutral,pos,neutral → 2 точки, cum 1→2)',
+      Array.isArray(cCe.data.sentiment) && cCe.data.sentiment.length === 2
+      && cCe.data.sentiment[0].cum === 1 && cCe.data.sentiment[1].cum === 2
+      && cCe.data.sentiment[0].t === '2026-09-28T07:01:00.000Z' // 10:01 МСК
+      // фикстура без newsId — старые снапшоты: null в точках
+      && cCe.data.sentiment.every((p: any) => p.news_id === null),
+      cCe.data.sentiment);
 
     // ── 7. Архив (HTTP) ─────────────────────────────────────────────────────
     const archive = await httpGet(`/weekly`, J('archive-user'));
@@ -815,11 +816,13 @@ async function main(): Promise<void> {
       lc.status === 200 && lc.data.news_markers?.length === 2
       && lc.data.news_markers.every((m: any) => m.url.startsWith('https://example.com/live-')),
       lc.data.news_markers?.length);
-    check('ПРАВКА-2: live-chart — sentiment в пейлоаде (2 события ≥ лимита 2 → серия)',
-      'sentiment' in lc.data && Array.isArray(lc.data.sentiment) && lc.data.sentiment.length > 0
-      && lc.data.sentiment.some((p: any) => p.score !== 0)
-      && lc.data.sentiment.every((p: any) => p.score >= -1 && p.score <= 1),
-      lc.data.sentiment?.length);
+    check('ТЗ-194: live-chart — накопительная кривая (2 ненейтральные → 2 ступени, конец = pos−neg = 0)',
+      'sentiment' in lc.data && Array.isArray(lc.data.sentiment) && lc.data.sentiment.length === 2
+      && lc.data.sentiment[0].cum === -1 && lc.data.sentiment[1].cum === 0
+      // порядок строго published_at: live-2 (6 ч назад) раньше live-1 (2 ч назад);
+      // news_id из БД доехал до точки (CAST(id AS TEXT))
+      && lc.data.sentiment[0].news_id === 'live-2' && lc.data.sentiment[1].news_id === 'live-1',
+      lc.data.sentiment);
     (axios as any).post = origPost;
     // воскресный сценарий: снапшот появился → {snapshot_id}
     const liveSnap = await snap.saveWeeklyReportSnapshot('live-user', ownerContent, null);

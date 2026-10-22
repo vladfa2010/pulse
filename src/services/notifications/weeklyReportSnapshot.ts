@@ -46,6 +46,8 @@ export interface WeeklyTagEvent {
   sentiment: string;
   url: string;
   source: string;
+  /** ТЗ-194: id новости для клика из кривой настроения; старые снапшоты: null */
+  news_id?: string | null;
 }
 
 /** Архивная строка списка (без полного payload) */
@@ -189,12 +191,13 @@ export async function listWeeklyReports(userId: string, limit = 12): Promise<Wee
 export function getTagEventsFromSnapshot(snapshot: WeeklyReportSnapshot, tagId: string): WeeklyTagEvent[] {
   const tag = snapshot.content.tagSummaries.find((t) => t.tagId === tagId);
   if (!tag) return [];
-  const toEvent = (a: { publishedAt: Date | string; title: string; sentiment: string; url: string; source: string }): WeeklyTagEvent => ({
+  const toEvent = (a: { publishedAt: Date | string; title: string; sentiment: string; url: string; source: string; newsId?: string | null }): WeeklyTagEvent => ({
     published_at: a.publishedAt instanceof Date ? a.publishedAt.toISOString() : String(a.publishedAt),
     title: a.title,
     sentiment: a.sentiment,
     url: a.url,
     source: a.source,
+    news_id: a.newsId ?? null,
   });
   if (tag.chartEvents && tag.chartEvents.length > 0) return tag.chartEvents.map(toEvent);
   return tag.articles.map(toEvent);

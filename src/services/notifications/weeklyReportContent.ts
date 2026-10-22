@@ -18,6 +18,8 @@ export interface WeeklyReportArticle {
   url: string;
   publishedAt: Date;
   sentiment: string;
+  /** ТЗ-194: id новости для якоря клика из графика в ленту (старые данные: null) */
+  newsId?: string | null;
 }
 
 /** Лёгкая форма события для графика недели (маркеры + сантимент-фон):
@@ -28,6 +30,8 @@ export interface WeeklyChartEvent {
   url: string;
   publishedAt: Date;
   sentiment: string;
+  /** ТЗ-194: id новости — точка кривой настроения кликабельна в ленту тега */
+  newsId?: string | null;
 }
 
 export interface WeeklyReportTagSummary {
@@ -136,7 +140,8 @@ export async function buildWeeklyReportContent(
     newsResult = await query(
       `SELECT COALESCE(title_ru, title_original) as title,
               COALESCE(summary_ru, summary_original) as summary,
-              source, url, published_at, sentiment, matched_tags
+              source, url, published_at, sentiment, matched_tags,
+              CAST(id AS TEXT) as news_id
        FROM news
        WHERE (${conditions})
          AND (fetched_at > ? OR published_at > ?)${windowClauseSqlite}
@@ -151,7 +156,8 @@ export async function buildWeeklyReportContent(
     newsResult = await query(
       `SELECT COALESCE(title_ru, title_original) as title,
               COALESCE(summary_ru, summary_original) as summary,
-              source, url, published_at, sentiment, matched_tags
+              source, url, published_at, sentiment, matched_tags,
+              id::text as news_id
        FROM news
        WHERE matched_tags && $1::text[]
          AND (fetched_at > $2 OR published_at > $3)${windowClausePg}
@@ -175,7 +181,8 @@ export async function buildWeeklyReportContent(
       const likeParams = tagIds.map(id => `%"${id}"%`);
       evResult = await query(
         `SELECT COALESCE(title_ru, title_original) as title,
-                source, url, published_at, sentiment, matched_tags
+                source, url, published_at, sentiment, matched_tags,
+                CAST(id AS TEXT) as news_id
          FROM news
          WHERE (${conditions})
            AND published_at >= ? AND published_at < ?
@@ -186,7 +193,8 @@ export async function buildWeeklyReportContent(
     } else {
       evResult = await query(
         `SELECT COALESCE(title_ru, title_original) as title,
-                source, url, published_at, sentiment, matched_tags
+                source, url, published_at, sentiment, matched_tags,
+                id::text as news_id
          FROM news
          WHERE matched_tags && $1::text[]
            AND published_at >= $2 AND published_at < $3
@@ -201,6 +209,7 @@ export async function buildWeeklyReportContent(
       url: row.url,
       publishedAt: row.published_at ? new Date(row.published_at) : new Date(),
       sentiment: row.sentiment || 'neutral',
+      newsId: row.news_id ?? null,
       matchedTags: normalizeMatchedTags(row.matched_tags),
     })) as Array<WeeklyChartEvent & { matchedTags: string[] }>;
   }
@@ -235,6 +244,7 @@ export async function buildWeeklyReportContent(
           url: row.url,
           publishedAt: row.published_at ? new Date(row.published_at) : new Date(),
           sentiment,
+          newsId: row.news_id ?? null,
         });
       }
     }
