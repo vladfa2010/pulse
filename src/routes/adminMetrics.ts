@@ -1245,7 +1245,7 @@ async function getUserPathsData(period: number, scope: 'all' | 'functions', dept
   const sankeyBuilt = buildSessionSankey([...sessionPathsMap.values()], depth);
   const sankey = { levels: depth, nodes: sankeyBuilt.nodes, links: sankeyBuilt.links, coverage: sankeyBuilt.coverage };
 
-  const result = { period, scope, users, exit_points, conversion_paths, branching, sankey };
+  const result = { period, scope, depth, users, exit_points, conversion_paths, branching, sankey };
   cache.set(fullKey, { data: result, expiresAt: Date.now() + CACHE_TTL_MS });
   return result;
 }
