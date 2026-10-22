@@ -830,6 +830,55 @@ async function getChurn(_period: number) {
 // Единая лента: user_events (минус admin_*) + прочтения статей user_news_reads.
 // Сессия — разрыв между событиями > 1800 сек. Переходы считаются только внутри сессии,
 // серии одинаковых подряд схлопываются (X→X не пишем). Агрегат (без userId) кэшируется.
+// ТЗ-122/ТЗ-124: общие кирпичи CTE. ОДНО определение событий и сессии для
+// flow (ТЗ-122) и user-paths (ТЗ-124) — два разных определения сессии = бомба.
+const CONTENT_EVENT_TYPES = ['read_article', 'page_view_feed'];
+
+// events CTE: синтетический read_article из user_news_reads + admin_%-фильтр.
+// periodDays = null — полная история (ТЗ-124: окна 7d/30d и last_event без
+// period-фильтра, иначе расходимся с эталоном probe_tz124 блок 4).
+// functionsOnly — исключить контентные события ДО подсчёта (scope=functions).
+function buildEventsCte(periodDays: number | null, opts: { userId?: string | null; functionsOnly?: boolean } = {}): string {
+  const userFilter = opts.userId ? ` AND user_id = '${opts.userId}'` : '';
+  const periodFilter = periodDays ? ` AND created_at > ${agoSql(periodDays)}` : '';
+  const contentFilter = opts.functionsOnly
+    ? ` AND event_type NOT IN ('${CONTENT_EVENT_TYPES.join("','")}')`
+    : '';
+  const readPeriodFilter = periodDays ? ` AND read_at > ${agoSql(periodDays)}` : '';
+  const readBranch = opts.functionsOnly
+    ? ''
+    : `
+    UNION ALL
+    SELECT user_id, 'read_article' AS event_type, read_at AS created_at FROM user_news_reads
+    WHERE 1 = 1${readPeriodFilter}${userFilter}`;
+  return `WITH events AS (
+    SELECT user_id, event_type, created_at FROM user_events
+    WHERE event_type NOT LIKE 'admin_%'${periodFilter}${userFilter}${contentFilter}${readBranch}
+  )`;
+}
+
+// Разрыв > 1800 сек = новая сессия (ТЗ-122)
+const GAP_EXPR = USE_SQLITE
+  ? `(julianday(created_at) - julianday(prev_at)) * 86400 > 1800`
+  : `EXTRACT(EPOCH FROM (created_at - prev_at)) > 1800`;
+const LEAD_GAP_EXPR = USE_SQLITE
+  ? `(julianday(next_at) - julianday(created_at)) * 86400 > 1800`
+  : `EXTRACT(EPOCH FROM (next_at - created_at)) > 1800`;
+
+// lagged + sessed: нумерация сессий окном (одинакова для PG и SQLite)
+const SESSED_CTE = `,
+  lagged AS (
+    SELECT user_id, event_type, created_at,
+           LAG(created_at) OVER (PARTITION BY user_id ORDER BY created_at) AS prev_at
+    FROM events
+  ),
+  sessed AS (
+    SELECT user_id, event_type, created_at,
+           SUM(CASE WHEN prev_at IS NULL OR ${GAP_EXPR} THEN 1 ELSE 0 END)
+             OVER (PARTITION BY user_id ORDER BY created_at) AS session_id
+    FROM lagged
+  )`;
+
 async function getFlowData(period: number, userId: string | null): Promise<any> {
   if (!userId) {
     const cached = getCached('flow:all', period);
@@ -839,56 +888,12 @@ async function getFlowData(period: number, userId: string | null): Promise<any> 
     }
   }
 
-  const userFilter = userId ? ` AND user_id = '${userId}'` : '';
-  const eventsCte = `WITH events AS (
-    SELECT user_id, event_type, created_at FROM user_events
-    WHERE created_at > ${agoSql(period)} AND event_type NOT LIKE 'admin_%'${userFilter}
-    UNION ALL
-    SELECT user_id, 'read_article' AS event_type, read_at AS created_at FROM user_news_reads
-    WHERE read_at > ${agoSql(period)}${userFilter}
-  )`;
-  // Разрыв > 1800 сек = новая сессия
-  const gapExpr = USE_SQLITE
-    ? `(julianday(created_at) - julianday(prev_at)) * 86400 > 1800`
-    : `EXTRACT(EPOCH FROM (created_at - prev_at)) > 1800`;
+  const eventsCte = buildEventsCte(period, { userId });
 
   // Пары prev_type→event_type внутри сессии; X→X отсекаем (схлопывание серий),
   // переход через границу сессии не считаем (LAG по партиции user_id+session_id).
   const transitionsRows = await safeQuery(
-    USE_SQLITE
-      ? `${eventsCte},
-        lagged AS (
-          SELECT user_id, event_type, created_at,
-                 LAG(created_at) OVER (PARTITION BY user_id ORDER BY created_at) AS prev_at
-          FROM events
-        ),
-        sessed AS (
-          SELECT user_id, event_type, created_at,
-                 SUM(CASE WHEN prev_at IS NULL OR ${gapExpr} THEN 1 ELSE 0 END)
-                   OVER (PARTITION BY user_id ORDER BY created_at) AS session_id
-          FROM lagged
-        ),
-        pairs AS (
-          SELECT event_type,
-                 LAG(event_type) OVER (PARTITION BY user_id, session_id ORDER BY created_at) AS prev_type
-          FROM sessed
-        )
-        SELECT prev_type AS "from", event_type AS "to", COUNT(*) AS count
-        FROM pairs
-        WHERE prev_type IS NOT NULL AND prev_type <> event_type
-        GROUP BY prev_type, event_type`
-      : `${eventsCte},
-        lagged AS (
-          SELECT user_id, event_type, created_at,
-                 LAG(created_at) OVER (PARTITION BY user_id ORDER BY created_at) AS prev_at
-          FROM events
-        ),
-        sessed AS (
-          SELECT user_id, event_type, created_at,
-                 SUM(CASE WHEN prev_at IS NULL OR ${gapExpr} THEN 1 ELSE 0 END)
-                   OVER (PARTITION BY user_id ORDER BY created_at) AS session_id
-          FROM lagged
-        ),
+    `${eventsCte}${SESSED_CTE},
         pairs AS (
           SELECT event_type,
                  LAG(event_type) OVER (PARTITION BY user_id, session_id ORDER BY created_at) AS prev_type
@@ -915,8 +920,7 @@ async function getFlowData(period: number, userId: string | null): Promise<any> 
   }
 
   const sessionStartsRows = await safeQuery(
-    USE_SQLITE
-      ? `${eventsCte},
+    `${eventsCte},
         lagged AS (
           SELECT user_id, event_type, created_at,
                  LAG(created_at) OVER (PARTITION BY user_id ORDER BY created_at) AS prev_at
@@ -924,19 +928,7 @@ async function getFlowData(period: number, userId: string | null): Promise<any> 
         )
         SELECT event_type, COUNT(*) AS count
         FROM lagged
-        WHERE prev_at IS NULL OR ${gapExpr}
-        GROUP BY event_type
-        ORDER BY count DESC
-        LIMIT 10`
-      : `${eventsCte},
-        lagged AS (
-          SELECT user_id, event_type, created_at,
-                 LAG(created_at) OVER (PARTITION BY user_id ORDER BY created_at) AS prev_at
-          FROM events
-        )
-        SELECT event_type, COUNT(*) AS count
-        FROM lagged
-        WHERE prev_at IS NULL OR ${gapExpr}
+        WHERE prev_at IS NULL OR ${GAP_EXPR}
         GROUP BY event_type
         ORDER BY count DESC
         LIMIT 10`,
@@ -989,6 +981,240 @@ async function getFlowData(period: number, userId: string | null): Promise<any> 
   return result;
 }
 
+// ТЗ-124: дашборд «Пути пользователей» — сводная таблица юзеров, exit-точки,
+// цепочки к целям и матрица ветвлений. Переиспользует CTE и сессионизацию ТЗ-122.
+// Правила малой выборки: связки count<3 → other, проценты только с n.
+async function getUserPathsData(period: number, scope: 'all' | 'functions'): Promise<any> {
+  const fullKey = `paths:${period}:${scope}`;
+  const cachedEntry = cache.get(fullKey);
+  if (cachedEntry && cachedEntry.expiresAt > Date.now()) return cachedEntry.data;
+  if (cachedEntry) cache.delete(fullKey);
+
+  const functionsOnly = scope === 'functions';
+  const iso = (v: any) =>
+    v ? (USE_SQLITE ? `${String(v).replace(' ', 'T')}Z` : new Date(v).toISOString()) : null;
+
+  // 1. users — сводная таблица. last_event и окна 7d/30d считаем по ПОЛНОЙ
+  //    истории (без period-фильтра — сверка с эталоном probe_tz124 блок 4);
+  //    top_event_type / top_transition — за period.
+  const aggRows = await safeQuery(
+    `${buildEventsCte(null)},
+    agg AS (
+      SELECT user_id,
+             MAX(created_at) AS last_event_at,
+             SUM(CASE WHEN created_at > ${agoSql(7)} THEN 1 ELSE 0 END) AS e7,
+             SUM(CASE WHEN created_at > ${agoSql(30)} THEN 1 ELSE 0 END) AS e30
+      FROM events GROUP BY user_id
+    )
+    SELECT user_id, last_event_at, e7, e30 FROM agg`,
+    'pathsUsersAgg'
+  );
+  const lastTypeRows = await safeQuery(
+    `${buildEventsCte(null)},
+    ranked AS (
+      SELECT user_id, event_type,
+             ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY created_at DESC) AS rn
+      FROM events
+    )
+    SELECT user_id, event_type FROM ranked WHERE rn = 1`,
+    'pathsUsersLastType'
+  );
+  const topEventRows = await safeQuery(
+    `${buildEventsCte(period)},
+    top AS (
+      SELECT user_id, event_type, COUNT(*) AS c,
+             ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY COUNT(*) DESC, event_type) AS rn
+      FROM events GROUP BY user_id, event_type
+    )
+    SELECT user_id, event_type, c FROM top WHERE rn = 1`,
+    'pathsUsersTopEvent'
+  );
+  const topTransitionRows = await safeQuery(
+    `${buildEventsCte(period)}${SESSED_CTE},
+    pairs AS (
+      SELECT user_id, event_type,
+             LAG(event_type) OVER (PARTITION BY user_id, session_id ORDER BY created_at) AS prev_type
+      FROM sessed
+    ),
+    top AS (
+      SELECT user_id, prev_type, event_type, COUNT(*) AS c,
+             ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY COUNT(*) DESC, prev_type, event_type) AS rn
+      FROM pairs
+      WHERE prev_type IS NOT NULL AND prev_type <> event_type
+      GROUP BY user_id, prev_type, event_type
+    )
+    SELECT user_id, prev_type AS "from", event_type AS "to", c FROM top WHERE rn = 1`,
+    'pathsUsersTopTransition'
+  );
+  const ltvRows = await safeQuery(
+    `SELECT user_id, COALESCE(SUM(amount), 0) AS ltv FROM payments WHERE status = 'completed' GROUP BY user_id`,
+    'pathsLtv'
+  );
+  const userRows = await safeQuery(
+    `SELECT id, email, username, subscription_plan, subscription_active FROM users`,
+    'pathsUsersList'
+  );
+
+  const aggMap = new Map(aggRows.map((r: any) => [r.user_id, r]));
+  const lastTypeMap = new Map(lastTypeRows.map((r: any) => [r.user_id, r.event_type]));
+  const topEventMap = new Map(topEventRows.map((r: any) => [r.user_id, r]));
+  const topTransMap = new Map(topTransitionRows.map((r: any) => [r.user_id, r]));
+  const ltvMap = new Map(ltvRows.map((r: any) => [r.user_id, parseFloat(r.ltv) || 0]));
+
+  const users = userRows
+    .map((u: any) => {
+      const a = aggMap.get(u.id);
+      const te = topEventMap.get(u.id);
+      const tt = topTransMap.get(u.id);
+      return {
+        user_id: u.id,
+        email: u.email,
+        username: u.username,
+        plan: u.subscription_plan,
+        subscription_active: !!u.subscription_active,
+        last_event_at: a ? iso(a.last_event_at) : null,
+        last_event_type: a ? lastTypeMap.get(u.id) ?? null : null,
+        events_7d: a ? parseInt(a.e7) || 0 : 0,
+        events_30d: a ? parseInt(a.e30) || 0 : 0,
+        top_event_type: te ? te.event_type : null,
+        top_transition: tt ? { from: tt.from, to: tt.to, count: parseInt(tt.c) || 0 } : null,
+        ltv: ltvMap.get(u.id) || 0,
+      };
+    })
+    .sort((a: any, b: any) => {
+      if (!a.last_event_at && !b.last_event_at) return 0;
+      if (!a.last_event_at) return 1;
+      if (!b.last_event_at) return -1;
+      return a.last_event_at < b.last_event_at ? 1 : -1;
+    })
+    .slice(0, 500);
+
+  // 2. exit_points — последнее событие каждой сессии, топ-10 + other.
+  //    read_article как точка выхода — норма (дочитал и ушёл).
+  const exitRows = await safeQuery(
+    `${buildEventsCte(period)},
+    lagged AS (
+      SELECT user_id, event_type, created_at,
+             LEAD(created_at) OVER (PARTITION BY user_id ORDER BY created_at) AS next_at
+      FROM events
+    )
+    SELECT event_type, COUNT(*) AS count FROM lagged
+    WHERE next_at IS NULL OR ${LEAD_GAP_EXPR}
+    GROUP BY event_type ORDER BY count DESC`,
+    'pathsExit'
+  );
+  const exits = exitRows.map((r: any) => ({ event_type: r.event_type, count: parseInt(r.count) || 0 }));
+  const exitOtherCount = exits.slice(10).reduce((s: number, e: any) => s + e.count, 0);
+  const exit_points = [
+    ...exits.slice(0, 10),
+    ...(exitOtherCount > 0 ? [{ event_type: 'other', count: exitOtherCount }] : []),
+  ];
+
+  // 3. conversion_paths — до 3 предшествующих событий в той же сессии перед
+  //    целью; если цель стартует сессию — последние 3 события юзера перед ней.
+  //    Серии повторов схлопнуты (правило из раздела 1 ТЗ).
+  const GOALS = ['payment_completed', 'subscription_activated', 'subscription_cancelled'];
+  const convRows = await safeQuery(
+    `${buildEventsCte(period)}${SESSED_CTE},
+    goals AS (
+      SELECT ROW_NUMBER() OVER (ORDER BY user_id, created_at) AS goal_id,
+             user_id, event_type AS goal, created_at AS goal_at, session_id
+      FROM sessed
+      WHERE event_type IN ('${GOALS.join("','")}')
+    ),
+    prev_sess AS (
+      SELECT g.goal_id, e.event_type, e.created_at,
+             ROW_NUMBER() OVER (PARTITION BY g.goal_id ORDER BY e.created_at DESC) AS rn
+      FROM goals g
+      JOIN sessed e ON e.user_id = g.user_id AND e.session_id = g.session_id AND e.created_at < g.goal_at
+    ),
+    prev_any AS (
+      SELECT g.goal_id, e.event_type, e.created_at,
+             ROW_NUMBER() OVER (PARTITION BY g.goal_id ORDER BY e.created_at DESC) AS rn
+      FROM goals g
+      JOIN sessed e ON e.user_id = g.user_id AND e.created_at < g.goal_at
+      WHERE NOT EXISTS (SELECT 1 FROM prev_sess p WHERE p.goal_id = g.goal_id)
+    )
+    SELECT gs.goal_id, gs.goal,
+           COALESCE(ps.event_type, pa.event_type) AS event_type,
+           COALESCE(ps.created_at, pa.created_at) AS prev_at,
+           COALESCE(ps.rn, pa.rn) AS rn
+    FROM goals gs
+    LEFT JOIN prev_sess ps ON ps.goal_id = gs.goal_id AND ps.rn <= 5
+    LEFT JOIN prev_any pa ON pa.goal_id = gs.goal_id AND pa.rn <= 5
+    ORDER BY gs.goal_id, rn`,
+    'pathsConversion'
+  );
+  const byGoalId = new Map<number, { goal: string; prev: { event_type: string; created_at: string }[] }>();
+  for (const r of convRows) {
+    if (!byGoalId.has(r.goal_id)) byGoalId.set(r.goal_id, { goal: r.goal, prev: [] });
+    if (r.event_type) byGoalId.get(r.goal_id)!.prev.push({ event_type: r.event_type, created_at: r.prev_at });
+  }
+  const pathCountsByGoal = new Map<string, Map<string, number>>();
+  for (const { goal, prev } of byGoalId.values()) {
+    const asc = [...prev].sort((a, b) => (a.created_at < b.created_at ? -1 : 1));
+    const collapsed: string[] = [];
+    for (const p of asc) {
+      if (collapsed.length === 0 || collapsed[collapsed.length - 1] !== p.event_type) collapsed.push(p.event_type);
+    }
+    const path = [...collapsed.slice(-3), goal];
+    const key = path.join('→');
+    if (!pathCountsByGoal.has(goal)) pathCountsByGoal.set(goal, new Map());
+    const counts = pathCountsByGoal.get(goal)!;
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  const conversion_paths: any[] = [];
+  for (const [goal, counts] of pathCountsByGoal) {
+    const entries = [...counts.entries()]
+      .map(([key, count]) => ({ goal, path: key.split('→'), count }))
+      .sort((a, b) => b.count - a.count);
+    const shown = entries.filter((e) => e.count >= 3).slice(0, 5);
+    const shownKeys = new Set(shown.map((e) => e.path.join('→')));
+    const otherCount = entries.filter((e) => !shownKeys.has(e.path.join('→'))).reduce((s, e) => s + e.count, 0);
+    conversion_paths.push(...shown);
+    if (otherCount > 0) conversion_paths.push({ goal, path: ['other'], count: otherCount });
+  }
+
+  // 4. branching — матрица ветвлений по сессионным переходам за period.
+  //    scope=functions: контентные события исключены ДО подсчёта (buildEventsCte).
+  const branchRows = await safeQuery(
+    `${buildEventsCte(period, { functionsOnly })}${SESSED_CTE},
+    pairs AS (
+      SELECT event_type,
+             LAG(event_type) OVER (PARTITION BY user_id, session_id ORDER BY created_at) AS prev_type
+      FROM sessed
+    )
+    SELECT prev_type AS "from", event_type AS "to", COUNT(*) AS count
+    FROM pairs
+    WHERE prev_type IS NOT NULL AND prev_type <> event_type
+    GROUP BY prev_type, event_type`,
+    'pathsBranching'
+  );
+  const byFrom = new Map<string, { to: string; count: number }[]>();
+  for (const r of branchRows) {
+    const from = r.from as string;
+    if (!byFrom.has(from)) byFrom.set(from, []);
+    byFrom.get(from)!.push({ to: r.to, count: parseInt(r.count) || 0 });
+  }
+  const branching = [...byFrom.entries()]
+    .map(([from, list]) => {
+      const total_out = list.reduce((s, x) => s + x.count, 0);
+      const sorted = [...list].sort((a, b) => b.count - a.count || (a.to < b.to ? -1 : 1));
+      const shown = sorted.filter((x) => x.count >= 3).slice(0, 5);
+      const shownTos = new Set(shown.map((x) => x.to));
+      const otherCount = sorted.filter((x) => !shownTos.has(x.to)).reduce((s, x) => s + x.count, 0);
+      const next = shown.map((x) => ({ to: x.to, count: x.count, share: pct(x.count, total_out) }));
+      if (otherCount > 0) next.push({ to: 'other', count: otherCount, share: pct(otherCount, total_out) });
+      return { from, total_out, next };
+    })
+    .sort((a, b) => b.total_out - a.total_out)
+    .slice(0, 20);
+
+  const result = { period, scope, users, exit_points, conversion_paths, branching };
+  cache.set(fullKey, { data: result, expiresAt: Date.now() + CACHE_TTL_MS });
+  return result;
+}
+
 // Экспорт для MCP-инструмента admin_metrics (ТЗ-183): тот же набор секций, без HTTP-слоя
 export const handlers: Record<string, (period: number) => Promise<any>> = {
   overview: getOverview,
@@ -1009,6 +1235,9 @@ export const handlers: Record<string, (period: number) => Promise<any>> = {
   radio: async (_period: number) => getRadioTtsMetrics(),
   // ТЗ-122: визуализация потока действий (агрегат по всем пользователям)
   flow: (period: number) => getFlowData(period, null),
+  // ТЗ-124: дашборд «Пути пользователей» (scope=all; переключатель scope —
+  // вторым запросом к /metrics/user-paths, кэш paths:<period>:<scope>)
+  paths: (period: number) => getUserPathsData(period, 'all'),
 };
 
 router.get('/metrics', adminMiddleware, async (req, res) => {
@@ -1169,6 +1398,27 @@ router.get('/metrics/flow', adminMiddleware, async (req, res) => {
   } catch (err: any) {
     console.error('[Admin Metrics] Flow error:', err.message);
     res.status(500).json({ error: 'Failed to load flow' });
+  }
+});
+
+// ТЗ-124: дашборд «Пути пользователей» — сводка по всем юзерам + scope для
+// матрицы ветвлений (all | functions)
+router.get('/metrics/user-paths', adminMiddleware, async (req, res) => {
+  try {
+    const period = Number(req.query.period);
+    if (![1, 7, 30, 90].includes(period)) {
+      return res.status(400).json({ error: 'Invalid period', allowed: [1, 7, 30, 90] });
+    }
+    const scope = (req.query.scope as string) || 'all';
+    if (!['all', 'functions'].includes(scope)) {
+      return res.status(400).json({ error: 'Invalid scope', allowed: ['all', 'functions'] });
+    }
+
+    const data = await getUserPathsData(period, scope as 'all' | 'functions');
+    res.json(data);
+  } catch (err: any) {
+    console.error('[Admin Metrics] User paths error:', err.message);
+    res.status(500).json({ error: 'Failed to load user paths' });
   }
 });
 
