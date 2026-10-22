@@ -3,6 +3,7 @@ import { adminMiddleware } from './admin';
 import { query } from '../config/db';
 import { nowSql } from '../utils/nowSql';
 import { getRadioTtsMetrics } from '../services/radioMetrics';
+import { buildSessionSankey } from '../services/adminSessionSankey';
 
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
@@ -1210,7 +1211,35 @@ async function getUserPathsData(period: number, scope: 'all' | 'functions'): Pro
     .sort((a, b) => b.total_out - a.total_out)
     .slice(0, 20);
 
-  const result = { period, scope, users, exit_points, conversion_paths, branching };
+  // 5. sankey — типичные пути сессий (3 уровня). Серии одинаковых подряд
+  //    схлопнуты (LAG), уровни — ROW_NUMBER; схлопы малых потоков и потолок
+  //    лент — в чистой функции buildSessionSankey (ТЗ-124 v2).
+  const sankeyRows = await safeQuery(
+    `${buildEventsCte(period, { functionsOnly })}${SESSED_CTE},
+    collapsed AS (
+      SELECT user_id, session_id, event_type, created_at,
+             LAG(event_type) OVER (PARTITION BY user_id, session_id ORDER BY created_at) AS prev_type
+      FROM sessed
+    ),
+    lvled AS (
+      SELECT user_id, session_id, event_type,
+             ROW_NUMBER() OVER (PARTITION BY user_id, session_id ORDER BY created_at) AS lvl
+      FROM collapsed
+      WHERE prev_type IS NULL OR prev_type <> event_type
+    )
+    SELECT user_id, session_id, event_type, lvl FROM lvled WHERE lvl <= 3
+    ORDER BY user_id, session_id, lvl`,
+    'pathsSankey'
+  );
+  const sessionPathsMap = new Map<string, string[]>();
+  for (const r of sankeyRows) {
+    const key = `${r.user_id}#${r.session_id}`;
+    if (!sessionPathsMap.has(key)) sessionPathsMap.set(key, []);
+    sessionPathsMap.get(key)!.push(r.event_type);
+  }
+  const sankey = buildSessionSankey([...sessionPathsMap.values()]);
+
+  const result = { period, scope, users, exit_points, conversion_paths, branching, sankey };
   cache.set(fullKey, { data: result, expiresAt: Date.now() + CACHE_TTL_MS });
   return result;
 }
