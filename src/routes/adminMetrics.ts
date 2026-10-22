@@ -3,7 +3,11 @@ import { adminMiddleware } from './admin';
 import { query } from '../config/db';
 import { nowSql } from '../utils/nowSql';
 import { getRadioTtsMetrics } from '../services/radioMetrics';
-import { buildSessionSankey } from '../services/adminSessionSankey';
+import {
+  buildSessionSankey,
+  SANKEY_DEFAULT_DEPTH,
+  SANKEY_DEPTH_OPTIONS,
+} from '../services/adminSessionSankey';
 
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
@@ -985,8 +989,8 @@ async function getFlowData(period: number, userId: string | null): Promise<any> 
 // ТЗ-124: дашборд «Пути пользователей» — сводная таблица юзеров, exit-точки,
 // цепочки к целям и матрица ветвлений. Переиспользует CTE и сессионизацию ТЗ-122.
 // Правила малой выборки: связки count<3 → other, проценты только с n.
-async function getUserPathsData(period: number, scope: 'all' | 'functions'): Promise<any> {
-  const fullKey = `paths:${period}:${scope}`;
+async function getUserPathsData(period: number, scope: 'all' | 'functions', depth: number = SANKEY_DEFAULT_DEPTH): Promise<any> {
+  const fullKey = `paths:${period}:${scope}:${depth}`;
   const cachedEntry = cache.get(fullKey);
   if (cachedEntry && cachedEntry.expiresAt > Date.now()) return cachedEntry.data;
   if (cachedEntry) cache.delete(fullKey);
@@ -1211,9 +1215,10 @@ async function getUserPathsData(period: number, scope: 'all' | 'functions'): Pro
     .sort((a, b) => b.total_out - a.total_out)
     .slice(0, 20);
 
-  // 5. sankey — типичные пути сессий (3 уровня). Серии одинаковых подряд
-  //    схлопнуты (LAG), уровни — ROW_NUMBER; схлопы малых потоков и потолок
-  //    лент — в чистой функции buildSessionSankey (ТЗ-124 v2).
+  // 5. sankey — типичные пути сессий, глубина depth (ТЗ-124 v3, 3/5/10).
+  //    Серии одинаковых подряд схлопнуты (LAG), уровни — ROW_NUMBER; ограничения
+  //    lvl в SQL НЕТ — coverage считается по полным длинам, обрезка до depth
+  //    и схлопы малых потоков — в чистой функции buildSessionSankey.
   const sankeyRows = await safeQuery(
     `${buildEventsCte(period, { functionsOnly })}${SESSED_CTE},
     collapsed AS (
@@ -1227,7 +1232,7 @@ async function getUserPathsData(period: number, scope: 'all' | 'functions'): Pro
       FROM collapsed
       WHERE prev_type IS NULL OR prev_type <> event_type
     )
-    SELECT user_id, session_id, event_type, lvl FROM lvled WHERE lvl <= 3
+    SELECT user_id, session_id, event_type, lvl FROM lvled
     ORDER BY user_id, session_id, lvl`,
     'pathsSankey'
   );
@@ -1237,7 +1242,8 @@ async function getUserPathsData(period: number, scope: 'all' | 'functions'): Pro
     if (!sessionPathsMap.has(key)) sessionPathsMap.set(key, []);
     sessionPathsMap.get(key)!.push(r.event_type);
   }
-  const sankey = buildSessionSankey([...sessionPathsMap.values()]);
+  const sankeyBuilt = buildSessionSankey([...sessionPathsMap.values()], depth);
+  const sankey = { levels: depth, nodes: sankeyBuilt.nodes, links: sankeyBuilt.links, coverage: sankeyBuilt.coverage };
 
   const result = { period, scope, users, exit_points, conversion_paths, branching, sankey };
   cache.set(fullKey, { data: result, expiresAt: Date.now() + CACHE_TTL_MS });
@@ -1264,9 +1270,10 @@ export const handlers: Record<string, (period: number) => Promise<any>> = {
   radio: async (_period: number) => getRadioTtsMetrics(),
   // ТЗ-122: визуализация потока действий (агрегат по всем пользователям)
   flow: (period: number) => getFlowData(period, null),
-  // ТЗ-124: дашборд «Пути пользователей» (scope=all; переключатель scope —
-  // вторым запросом к /metrics/user-paths, кэш paths:<period>:<scope>)
-  paths: (period: number) => getUserPathsData(period, 'all'),
+  // ТЗ-124: дашборд «Пути пользователей» (scope=all, depth=3; переключатели
+  // scope/depth — вторым запросом к /metrics/user-paths,
+  // кэш paths:<period>:<scope>:<depth>)
+  paths: (period: number) => getUserPathsData(period, 'all', SANKEY_DEFAULT_DEPTH),
 };
 
 router.get('/metrics', adminMiddleware, async (req, res) => {
@@ -1442,8 +1449,11 @@ router.get('/metrics/user-paths', adminMiddleware, async (req, res) => {
     if (!['all', 'functions'].includes(scope)) {
       return res.status(400).json({ error: 'Invalid scope', allowed: ['all', 'functions'] });
     }
+    // ТЗ-124 v3: глубина Санки 3/5/10 (дефолт 3); невалидное значение — дефолт
+    const depthRaw = parseInt(String(req.query.depth ?? '3'), 10);
+    const depth = SANKEY_DEPTH_OPTIONS.includes(depthRaw as any) ? depthRaw : SANKEY_DEFAULT_DEPTH;
 
-    const data = await getUserPathsData(period, scope as 'all' | 'functions');
+    const data = await getUserPathsData(period, scope as 'all' | 'functions', depth);
     res.json(data);
   } catch (err: any) {
     console.error('[Admin Metrics] User paths error:', err.message);

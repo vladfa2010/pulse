@@ -1,12 +1,12 @@
 /**
  * =============================================================================
- * PULSE — ТЗ-124 v2: unit-тест сборки Санки «Типичные пути»
+ * PULSE — ТЗ-124 v2/v3: unit-тест сборки Санки «Типичные пути»
  * =============================================================================
  *
  * Прогон: USE_SQLITE=true npx ts-node --transpile-only src/tests/adminSessionSankey.test.ts
  *
  * Покрытие (чистая функция без БД/HTTP):
- *   1. Базовая сборка: узлы «тип#уровень», уровни 1..3, ленты соседних уровней.
+ *   1. Базовая сборка: узлы «тип#уровень», уровни 1..depth, ленты соседних уровней.
  *   2. Счётчик путей: одинаковые сессии суммируются в вес лент.
  *   3. Схлоп узлов (а): исходящий поток < 3 → other#<уровень>, узел исчезает.
  *   4. Схлоп лент (б): value < 3 → target other#<уровень>, value сохраняется.
@@ -14,10 +14,14 @@
  *      с >N событиями — до и после всех схлопов.
  *   6. Сессии из 1 события дают узел уровня 1 без исходящих (источник).
  *   7. Потолок SANKEY_MAX_LINKS: лент не больше потолка.
+ *   8. Глубина (ТЗ-124 v3): depth=5/10 — узлы и ленты только до уровня depth.
+ *   9. Coverage: длина depth, монотонно не возрастает, level 1 = 100%, pct
+ *      считается по полным длинам путей (обрезка до depth не искажает).
  */
 
 import {
   buildSessionSankey,
+  SANKEY_DEFAULT_DEPTH,
   SANKEY_MAX_LINKS,
   SANKEY_MIN_FLOW,
 } from '../services/adminSessionSankey';
@@ -136,6 +140,51 @@ function main() {
     check('other-узлы образованы при обрезке потолка',
       sankey.nodes.some((n) => n.id.startsWith('other#')),
       sankey.nodes.map((n) => n.id));
+  }
+
+  // 8. Глубина (ТЗ-124 v3): depth=5 и 10 ограничивают уровни узлов/лент
+  {
+    const longPath = ['s1', 's2', 's3', 's4', 's5', 's6', 's7', 's8', 's9', 's10', 's11'];
+    const paths = [...Array(10).fill(longPath)];
+    const depth5 = buildSessionSankey(paths, 5);
+    check('depth=5: coverage длиной 5', depth5.coverage.length === 5, depth5.coverage.length);
+    check('depth=5: максимальный уровень узла = 5',
+      depth5.nodes.every((n) => levelOf(n.id) <= 5) &&
+      Math.max(...depth5.nodes.map((n) => levelOf(n.id))) === 5,
+      depth5.nodes.map((n) => n.id));
+    check('depth=5: последняя лента 4→5, лент 5→6 нет',
+      depth5.links.some((l) => levelOf(l.source) === 4 && levelOf(l.target) === 5) &&
+      !depth5.links.some((l) => levelOf(l.source) === 5 && levelOf(l.target) === 6),
+      depth5.links);
+    const depth10 = buildSessionSankey(paths, 10);
+    check('depth=10: узлы доходят до уровня 10 (путь 11 шагов → обрезка до 10)',
+      Math.max(...depth10.nodes.map((n) => levelOf(n.id))) === 10,
+      depth10.nodes.map((n) => n.id));
+    check('дефолтная глубина = 3',
+      SANKEY_DEFAULT_DEPTH === 3 && buildSessionSankey(paths).coverage.length === 3);
+  }
+
+  // 9. Coverage: монотонность, 100% на 1-м уровне, полные длины (обрезка не искажает)
+  {
+    // 5 сессий по 1 событию, 3 по 2, 2 по 3 → всего 10
+    const paths: string[][] = [
+      ...Array(5).fill(['solo']),
+      ...Array(3).fill(['a', 'b']),
+      ...Array(2).fill(['a', 'b', 'c']),
+    ];
+    const sankey = buildSessionSankey(paths, 3);
+    const cov = sankey.coverage;
+    check('coverage: 3 уровня', cov.length === 3, cov);
+    check('coverage[0]: все 10 сессий, 100%',
+      cov[0].sessions === 10 && cov[0].pct === 100, cov[0]);
+    check('coverage[1]: 5 сессий (50%)', cov[1].sessions === 5 && cov[1].pct === 50, cov[1]);
+    check('coverage[2]: 2 сессии (20%)', cov[2].sessions === 2 && cov[2].pct === 20, cov[2]);
+    check('coverage монотонно не возрастает',
+      cov.every((c, i) => i === 0 || c.sessions <= cov[i - 1].sessions), cov);
+    // depth=2: pct уровня 2 всё равно 50% — считается по ПОЛНЫМ длинам
+    const cov2 = buildSessionSankey(paths, 2).coverage;
+    check('depth=2: pct уровня 2 = 50% (полные длины, не обрезанные)',
+      cov2[1].sessions === 5 && cov2[1].pct === 50, cov2);
   }
 }
 

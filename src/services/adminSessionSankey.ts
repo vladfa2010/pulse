@@ -1,10 +1,12 @@
 /**
  * =============================================================================
- * PULSE — ТЗ-124 v2: Санки «Типичные пути» (чистая функция сборки)
+ * PULSE — ТЗ-124 v2/v3: Санки «Типичные пути» (чистая функция сборки)
  * =============================================================================
  *
  * Вход: сессионные пути — по одному массиву event_type на сессию
- * (серии одинаковых подряд уже схлопнуты на уровне SQL, уровней ≤ 3).
+ * (серии одинаковых подряд уже схлопнуты на уровне SQL). Глубина — параметр
+ * (ТЗ-124 v3): схлопывание серий и coverage считаются по ПОЛНОЙ длине пути,
+ * узлы/ленты строятся по первым `depth` шагам.
  *
  * Правила малой выборки (едины с остальным дашбордом «Пути»):
  *   а) узел с суммарным исходящим потоком < SANKEY_MIN_FLOW схлопывается в
@@ -15,8 +17,12 @@
  *   в) потолок SANKEY_MAX_LINKS лент: топ по value остаётся, хвост — той же
  *      схемой в other; если после слияния всё ещё больше — жёсткий slice.
  *
- * Узел: id «тип#уровень» (уровень 1..3), label — сырой event_type
+ * Узел: id «тип#уровень» (уровень 1..depth), label — сырой event_type
  * (RU-лейблы — на фронте, eventLabel из PathsSection).
+ *
+ * Coverage (ТЗ-124 v3): для каждого уровня 1..depth — сколько сессий до него
+ * дошли (длина пути ≥ уровень); pct от общего числа сессий. Монотонно
+ * не возрастает; coverage[0] = 100%.
  *
  * Консервация: сумма лент через границу уровня N→N+1 не меняется ни одной
  * операцией — схлопывание переносит веса, не удаляет.
@@ -33,14 +39,22 @@ export interface SankeyLink {
   value: number;
 }
 
+export interface SankeyCoverageLevel {
+  level: number;
+  sessions: number;
+  pct: number;
+}
+
 export interface SessionSankey {
   nodes: SankeyNode[];
   links: SankeyLink[];
+  coverage: SankeyCoverageLevel[];
 }
 
-export const SANKEY_MAX_LINKS = 60;
+export const SANKEY_MAX_LINKS = 200;
 export const SANKEY_MIN_FLOW = 3;
-export const SANKEY_MAX_LEVELS = 3;
+export const SANKEY_DEPTH_OPTIONS = [3, 5, 10] as const;
+export const SANKEY_DEFAULT_DEPTH = 3;
 
 const OTHER_PREFIX = 'other#';
 
@@ -54,20 +68,24 @@ function addLinkInto(map: Map<string, SankeyLink>, source: string, target: strin
   else map.set(key, { source, target, value });
 }
 
-export function buildSessionSankey(sessionPaths: string[][]): SessionSankey {
+export function buildSessionSankey(
+  sessionPaths: string[][],
+  depth: number = SANKEY_DEFAULT_DEPTH,
+): SessionSankey {
   // 1. Считаем одинаковые пути (элемент входа — одна сессия)
   const pathCounts = new Map<string, number>();
   for (const path of sessionPaths) {
     if (path.length === 0) continue;
-    const key = path.join('');
+    const key = path.join(' ');
     pathCounts.set(key, (pathCounts.get(key) || 0) + 1);
   }
 
-  // 2. Ленты между соседними уровнями
+  // 2. Ленты между соседними уровнями — по первым `depth` шагам
   let links = new Map<string, SankeyLink>();
   for (const [key, count] of pathCounts) {
-    const path = key.split('');
-    for (let i = 0; i + 1 < path.length; i++) {
+    const path = key.split(' ');
+    const steps = Math.min(path.length, depth);
+    for (let i = 0; i + 1 < steps; i++) {
       addLinkInto(links, `${path[i]}#${i + 1}`, `${path[i + 1]}#${i + 2}`, count);
     }
   }
@@ -114,19 +132,31 @@ export function buildSessionSankey(sessionPaths: string[][]): SessionSankey {
   }
 
   // 3. Узлы — из оставшихся лент + узлы-источники уровня 1 без исходящих
-  //    (сессии из 1 события, поток ≥ MIN — иначе это шум без роли в диаграмме).
+  //    (сессии из 1 события, поток ≥ MIN — иначе это шум без роли в диаграмме)
   const nodeIds = new Set<string>();
   for (const l of links.values()) {
     nodeIds.add(l.source);
     nodeIds.add(l.target);
   }
   for (const [key, count] of pathCounts) {
-    if (count >= SANKEY_MIN_FLOW) nodeIds.add(`${key.split('')[0]}#1`);
+    if (count >= SANKEY_MIN_FLOW) nodeIds.add(`${key.split(' ')[0]}#1`);
   }
   const nodes = [...nodeIds].sort().map((id) => ({
     id,
     label: id.startsWith(OTHER_PREFIX) ? 'other' : id.slice(0, id.indexOf('#')),
   }));
 
-  return { nodes, links: [...links.values()].sort((a, b) => b.value - a.value) };
+  // 4. Coverage (ТЗ-124 v3): по ПОЛНЫМ длинам путей, монотонно не возрастает
+  const totalSessions = sessionPaths.filter((p) => p.length > 0).length;
+  const coverage: SankeyCoverageLevel[] = [];
+  for (let level = 1; level <= depth; level++) {
+    const sessions = sessionPaths.filter((p) => p.length >= level).length;
+    coverage.push({
+      level,
+      sessions,
+      pct: totalSessions ? Math.round((sessions * 1000) / totalSessions) / 10 : 0,
+    });
+  }
+
+  return { nodes, links: [...links.values()].sort((a, b) => b.value - a.value), coverage };
 }
