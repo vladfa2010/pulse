@@ -36,7 +36,7 @@ import {
 } from '../services/education/calendarMatch'; // ТЗ-103 v2 Задача 7
 import { getMskDateString, addDays } from '../services/calendar'; // бизнес-дата МСК, как у календаря
 import { subscriptionTenureDays } from '../services/education/subscriptionTenure';
-import { logIdorBlocked } from '../services/education/access';
+import { logIdorBlocked, ensureEnrollment } from '../services/education/access';
 import { logUserEvent } from '../services/activityLog';
 import { enqueueScan } from '../services/education/virusScan';
 import { putBufferQuarantine, signedUrl, StorageError } from '../services/storage/driver';
@@ -890,7 +890,7 @@ router.post('/lessons/:lessonId/complete', authMiddleware, h(async (req, res) =>
   if (!isUuid(lessonId)) return fail(res, 404, 'Урок не найден');
 
   const lessonR = await query(
-    `SELECT l.*, c.deleted_at, c.subscription_unlock_mode, c.title AS course_title
+    `SELECT l.*, c.deleted_at, c.subscription_unlock_mode, c.price AS course_price, c.title AS course_title
      FROM course_lessons l JOIN courses c ON c.id = l.course_id
      WHERE l.id = $1`,
     [lessonId],
@@ -900,17 +900,27 @@ router.post('/lessons/:lessonId/complete', authMiddleware, h(async (req, res) =>
   }
   const lesson = lessonR.rows[0];
 
-  // Enrollment обязателен — даже для открытого урока (v4: прогресс без аккаунта
-  // не сохраняем; аноним сюда не доходит — authMiddleware даёт 401 раньше)
-  const enrollR = await query(
+  // ТЗ-184: записи нет — пробуем автозапись (бесплатный курс / подписка).
+  // Платный без подписки → прежний 403-пейвол (logIdorBlocked остаётся
+  // только на этой ветке — легальный сценарий автозаписи не логируем).
+  let autoEnrolled = false;
+  const existingEnrollR = await query(
     `SELECT source FROM course_enrollments WHERE user_id = $1 AND course_id = $2`,
     [userId, lesson.course_id],
   );
-  if (enrollR.rows.length === 0) {
-    logIdorBlocked(userId, 'lesson_complete', lessonId);
-    return fail(res, 403, 'Запишитесь на курс, чтобы отмечать прогресс');
+  let enrollSource: string | null = existingEnrollR.rows[0]?.source ?? null;
+  if (!enrollSource) {
+    const ensured = await ensureEnrollment(
+      userId, { id: lesson.course_id, price: lesson.course_price }, 'complete',
+    );
+    if (!ensured.enrolled) {
+      logIdorBlocked(userId, 'lesson_complete', lessonId);
+      return fail(res, 403, 'Запишитесь на курс, чтобы отмечать прогресс');
+    }
+    autoEnrolled = ensured.created;
+    enrollSource = ensured.source;
   }
-  if (enrollR.rows[0].source === 'subscription') {
+  if (enrollSource === 'subscription') {
     const subscription = await getUserSubscription(userId);
     if (!subscription.active) {
       return fail(res, 403, 'subscription_expired');
@@ -959,7 +969,7 @@ router.post('/lessons/:lessonId/complete', authMiddleware, h(async (req, res) =>
       [userId, lessonId, testScore],
     );
   }
-  res.json({ ok: true, passed: true });
+  res.json({ ok: true, passed: true, ...(autoEnrolled ? { auto_enrolled: true } : {}) });
 
   // ТЗ-123: алерты админам о прохождении — только при первом завершении
   // (повторный POST делает UPDATE completed_at, без гарда события бы дублировались).
@@ -1006,7 +1016,7 @@ router.post('/lessons/:lessonId/test', authMiddleware, h(async (req, res) => {
   if (!isUuid(lessonId)) return fail(res, 404, 'Урок не найден');
 
   const lessonR = await query(
-    `SELECT l.*, c.deleted_at, c.subscription_unlock_mode
+    `SELECT l.*, c.deleted_at, c.subscription_unlock_mode, c.price AS course_price
      FROM course_lessons l JOIN courses c ON c.id = l.course_id
      WHERE l.id = $1`,
     [lessonId],
@@ -1016,15 +1026,26 @@ router.post('/lessons/:lessonId/test', authMiddleware, h(async (req, res) => {
   }
   const lesson = lessonR.rows[0];
 
-  const enrollR = await query(
+  // ТЗ-184: записи нет — пробуем автозапись (бесплатный курс / подписка);
+  // платный без подписки → прежний 403-пейвол (см. /complete выше)
+  let autoEnrolled = false;
+  const existingEnrollR = await query(
     `SELECT source FROM course_enrollments WHERE user_id = $1 AND course_id = $2`,
     [userId, lesson.course_id],
   );
-  if (enrollR.rows.length === 0) {
-    logIdorBlocked(userId, 'lesson_test', lessonId);
-    return fail(res, 403, 'Запишитесь на курс, чтобы проходить тест');
+  let enrollSource: string | null = existingEnrollR.rows[0]?.source ?? null;
+  if (!enrollSource) {
+    const ensured = await ensureEnrollment(
+      userId, { id: lesson.course_id, price: lesson.course_price }, 'test',
+    );
+    if (!ensured.enrolled) {
+      logIdorBlocked(userId, 'lesson_test', lessonId);
+      return fail(res, 403, 'Запишитесь на курс, чтобы проходить тест');
+    }
+    autoEnrolled = ensured.created;
+    enrollSource = ensured.source;
   }
-  if (enrollR.rows[0].source === 'subscription') {
+  if (enrollSource === 'subscription') {
     const subscription = await getUserSubscription(userId);
     if (!subscription.active) {
       return fail(res, 403, 'subscription_expired');
@@ -1073,7 +1094,12 @@ router.post('/lessons/:lessonId/test', authMiddleware, h(async (req, res) => {
     answers: answers.map((a: unknown) => Number(a)),
   });
 
-  res.json({ test_score: testScore, pass_score: passScore, passed: testScore >= passScore });
+  res.json({
+    test_score: testScore,
+    pass_score: passScore,
+    passed: testScore >= passScore,
+    ...(autoEnrolled ? { auto_enrolled: true } : {}),
+  });
 }));
 
 function nowSqlInline(): string {
@@ -1861,35 +1887,13 @@ router.post('/courses/:slug/enroll', authMiddleware, h(async (req, res) => {
   if (c.status !== 'published') return fail(res, 404, 'Курс не найден');
   if (c.visibility === 'hidden') return fail(res, 404, 'Курс не найден');
 
-  let source = 'free';
-  if (Number(c.price) > 0) {
-    // Та же логика, что access_via_subscription в карточке курса:
-    // активная подписка (grace — флаг subscription_active) и план в course_tariffs.
-    const subscription = await getUserSubscription(userId);
-    const tariffR = await query(
-      `SELECT plan_id FROM course_tariffs WHERE course_id = $1`, [c.id],
-    );
-    const tariffIds = new Set(tariffR.rows.map((r: any) => r.plan_id));
-    const viaSubscription = !!(
-      subscription.active &&
-      subscription.plan !== 'free' &&
-      tariffIds.has(subscription.plan)
-    );
-    if (!viaSubscription) {
-      return fail(res, 409, 'Платный курс: запись открывается после покупки');
-    }
-    source = 'subscription';
+  // ТЗ-184: правила записи — общий код с автозаписью из test/complete
+  // (access.ts ensureEnrollment). Ручной триггер не логирует education.enroll_auto.
+  const ensured = await ensureEnrollment(userId, { id: c.id, price: c.price }, 'manual');
+  if (!ensured.enrolled) {
+    return fail(res, 409, 'Платный курс: запись открывается после покупки');
   }
-  await query(
-    `INSERT INTO course_enrollments (user_id, course_id, source)
-     VALUES ($1, $2, $3)
-     ON CONFLICT (user_id, course_id) DO NOTHING`,
-    [userId, c.id, source],
-  );
-  if (source === 'subscription') {
-    logUserEvent(userId, 'education.enroll_subscribed', { course_id: c.id });
-  }
-  res.json({ enrolled: true, course_id: c.id, source });
+  res.json({ enrolled: true, course_id: c.id, source: ensured.source });
 }));
 
 // ═══════════════════════════════════════════════════════════════════════════

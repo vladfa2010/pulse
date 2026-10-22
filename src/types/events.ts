@@ -44,6 +44,10 @@ export const USER_EVENT_TYPES = [
   'education.unenroll_admin',
   // ТЗ-106: самозапись по подписке (source='subscription')
   'education.enroll_subscribed',
+  // ТЗ-184: автозапись в момент интерактива (сдача теста/завершение урока).
+  // В TG-алерты админам не добавляется (не входит в ALERT_EVENT_TYPES) —
+  // событие аналитическое (воронка ТЗ-179), а не повод для уведомления.
+  'education.enroll_auto',
   // ТЗ-179: студенческие события обучения (аналитика воронки; админы не логируются)
   'education.course_started',
   'education.lesson_started',

@@ -501,6 +501,20 @@ RECALL остаётся, LLM-батч пропускается, пишутся �
   `POST /complete` (там же валидация `test_score >= pass_score` → 422).
   Доступ: запись обязательна (403), для source='subscription' — живость
   подписки и drip-проверка.
+  **ТЗ-184 (автозапись):** при отсутствии записи оба эндпоинта (`/test` и
+  `/complete`) пробуют автозапись через общий хелпер
+  `ensureEnrollment` (`services/education/access.ts`) — бесплатный курс →
+  `source='free'`, платный + активная подписка с планом из `course_tariffs` →
+  `source='subscription'` (drip-гейты после записи исполняются как обычно),
+  платный без подписки → прежний 403-пейвол (без автозаписи). Ручной
+  `POST /courses/:slug/enroll` делегирует тому же хелперу (без события
+  enroll_auto). Успешная автозапись помечается в ответе полем
+  `auto_enrolled: true` (фронт показывает тост). Идемпотентно
+  (`ON CONFLICT DO NOTHING`, гонка безопасна). События:
+  `education.enroll_auto {course_id, source, trigger: 'test'|'complete'}`
+  (в USER_EVENT_TYPES, НЕ в ALERT_EVENT_TYPES — в TG-алерты не входит) и
+  для subscription-ветки — `education.enroll_subscribed`.
+  Смоук: `scripts/smoke-lms-auto-enroll.js` (7 проверок).
 - GET `/lessons/:id` без изменений (весь контент, тест без correct, prev/next).
 
 **Фронт** (pulse-frontend):
