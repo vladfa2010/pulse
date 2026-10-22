@@ -21,6 +21,7 @@ import summariesRouter from './summaries';
 import eventsRouter from './events';
 import telegramRouter from './telegramRoutes';
 import tasksRouter from './tasks';
+import notesRouter from './notes';
 
 const router = Router();
 
@@ -29,5 +30,6 @@ router.use('/summaries', summariesRouter);
 router.use('/events', eventsRouter);
 router.use(telegramRouter); // ТЗ-183: /telegram/link|unlink|status, /prefs, /notify-prefs
 router.use(tasksRouter); // ТЗ-183 Задача 6 (v6): /clients/:id/tasks, /tasks, /tasks/:id/reminder|ics
+router.use(notesRouter); // ТЗ-193: /clients/:id/notes, /notes/:noteId
 
 export default router;

@@ -37,7 +37,6 @@ const CreateClientSchema = z.object({
 const PatchClientSchema = z.object({
   name: z.string().min(1).max(100).optional(),
   is_archived: z.boolean().optional(),
-  notes: z.string().max(2000).optional(),
 });
 
 const AddClientTagSchema = z.object({
@@ -95,9 +94,10 @@ router.get('/', async (req: AuthRequest, res) => {
                                     ORDER BY t2.created_at), '[]'::json)
             FROM advisor_client_tags t2 WHERE t2.client_id = c.id) AS tags`;
     const result = await query(
-      `SELECT c.id, c.name, c.notes, c.is_archived, c.sort_order, c.created_at,
+      `SELECT c.id, c.name, c.is_archived, c.sort_order, c.created_at,
               c.last_alert_neg_at, c.last_alert_pos_at,
               COUNT(t.id) AS active_tags,
+              (SELECT COUNT(*) FROM advisor_notes n WHERE n.client_id = c.id) AS notes_count,
               ${tagsSubquery}
        FROM advisor_clients c
        LEFT JOIN advisor_client_tags t ON t.client_id = c.id
@@ -117,11 +117,11 @@ router.get('/', async (req: AuthRequest, res) => {
     const clients = result.rows.map((r: any) => ({
       id: Number(r.id),
       name: r.name,
-      notes: r.notes ?? null,
       is_archived: r.is_archived === true || r.is_archived === 1,
       sort_order: Number(r.sort_order),
       created_at: r.created_at,
       active_tags: Number(r.active_tags),
+      notes_count: Number(r.notes_count),
       tags: parseTags(r.tags),
       last_alert_neg_at: r.last_alert_neg_at ? new Date(r.last_alert_neg_at).toISOString() : null,
       last_alert_pos_at: r.last_alert_pos_at ? new Date(r.last_alert_pos_at).toISOString() : null,
@@ -172,7 +172,7 @@ router.post('/', validate(CreateClientSchema), async (req: AuthRequest, res) => 
     const insertResult = await query(
       `INSERT INTO advisor_clients (advisor_user_id, name, sort_order)
        VALUES ($1, $2, COALESCE((SELECT MAX(sort_order) FROM advisor_clients WHERE advisor_user_id = $1), 0) + 1)
-       RETURNING id, name, notes, is_archived, sort_order, created_at`,
+       RETURNING id, name, is_archived, sort_order, created_at`,
       [userId, name]
     );
     const row = insertResult.rows[0];
@@ -181,11 +181,11 @@ router.post('/', validate(CreateClientSchema), async (req: AuthRequest, res) => 
       client: {
         id: Number(row.id),
         name: row.name,
-        notes: row.notes ?? null,
         is_archived: row.is_archived === true || row.is_archived === 1,
         sort_order: Number(row.sort_order),
         created_at: row.created_at,
         active_tags: 0,
+        notes_count: 0,
       },
     });
   } catch (err: any) {
@@ -218,6 +218,18 @@ router.get('/:id', async (req: AuthRequest, res) => {
       tag_type: t.tag_type,
       created_at: t.created_at,
     }));
+    // ТЗ-193: лента заметок (DESC); скалярной колонки notes здесь никогда не было
+    const notesResult = await query(
+      `SELECT id, text, created_at, updated_at FROM advisor_notes
+       WHERE client_id = $1 ORDER BY created_at DESC, id DESC`,
+      [clientId]
+    );
+    const notes = notesResult.rows.map((n: any) => ({
+      id: Number(n.id),
+      text: n.text,
+      created_at: n.created_at ? new Date(n.created_at).toISOString() : null,
+      updated_at: n.updated_at ? new Date(n.updated_at).toISOString() : null,
+    }));
     res.json({
       client: {
         id: client.id,
@@ -226,7 +238,8 @@ router.get('/:id', async (req: AuthRequest, res) => {
         sort_order: client.sort_order,
       },
       tags,
-      counts: { tags: tags.length },
+      notes,
+      counts: { tags: tags.length, notes: notes.length },
     });
   } catch (err: any) {
     console.error('[Advisor] Get client error:', err.message);
@@ -241,7 +254,7 @@ router.patch('/:id', validate(PatchClientSchema), async (req: AuthRequest, res) 
     const clientId = parseClientId(req.params.id, res);
     if (clientId === null) return;
 
-    const { name, is_archived, notes } = req.body as { name?: string; is_archived?: boolean; notes?: string };
+    const { name, is_archived } = req.body as { name?: string; is_archived?: boolean };
 
     // Восстановление (is_archived: false) — единственная write-операция над
     // архивным клиентом; rename/archive на архивном → 403.
@@ -274,12 +287,6 @@ router.patch('/:id', validate(PatchClientSchema), async (req: AuthRequest, res) 
       }
       await query(`UPDATE advisor_clients SET name = $1 WHERE id = $2`, [trimmed, clientId]);
       advisorAudit(userId, 'rename', clientId);
-    }
-    if (notes !== undefined) {
-      // ТЗ-183 Задача 7: заметки приватны — в «Копировать» и TG не попадают
-      const trimmed = notes.trim();
-      await query(`UPDATE advisor_clients SET notes = $1 WHERE id = $2`, [trimmed === '' ? null : trimmed, clientId]);
-      advisorAudit(userId, 'note_update', clientId);
     }
     if (is_archived === true && !client.is_archived) {
       await query(`UPDATE advisor_clients SET is_archived = TRUE WHERE id = $1`, [clientId]);

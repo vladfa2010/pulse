@@ -446,7 +446,7 @@ async function phaseB(ids) {
     const plCol = snap[CORE_DIFF_TABLES.length];
     assert(plCol.length === 1, 'subscription_plans.portfolio_limit добавлена');
     const advisorTables = snap[CORE_DIFF_TABLES.length + 1].map((r) => r.name);
-    assert.deepStrictEqual(advisorTables, ['advisor_client_tags', 'advisor_clients', 'advisor_settings', 'advisor_summaries', 'advisor_tasks'], 'ровно 5 таблиц advisor_*');
+    assert.deepStrictEqual(advisorTables, ['advisor_client_tags', 'advisor_clients', 'advisor_notes', 'advisor_settings', 'advisor_summaries', 'advisor_tasks'], 'ровно 6 таблиц advisor_*');
     const advisorIndexes = snap[CORE_DIFF_TABLES.length + 2];
     for (const idx of ['idx_advisor_clients_user', 'idx_advisor_client_tags_uniq', 'idx_advisor_tasks_event', 'idx_advisor_tasks_user', 'idx_advisor_tasks_remind']) {
       assert(advisorIndexes.some((r) => r.name === idx), `индекс ${idx} создан`);
@@ -501,14 +501,18 @@ async function phaseB(ids) {
     const meta = r.json.meta;
     assert(meta && meta.portfolio_limit === 20 && meta.active_count === 2, `meta {portfolio_limit:20, active_count:2}, got ${JSON.stringify(meta)}`);
     const c1 = r.json.clients.find((c) => c.id === mc1);
-    for (const k of ['id', 'name', 'notes', 'is_archived', 'sort_order', 'created_at', 'active_tags', 'last_alert_neg_at', 'last_alert_pos_at']) {
+    // ТЗ-193: скалярный notes убран из списка — вместо него notes_count;
+    // правка заметки через PATCH clients убрана (лента /clients/:id/notes)
+    for (const k of ['id', 'name', 'notes_count', 'is_archived', 'sort_order', 'created_at', 'active_tags', 'last_alert_neg_at', 'last_alert_pos_at']) {
       assert(k in c1, `клиент без поля ${k}`);
     }
+    assert(!('notes' in c1), 'скалярного notes в списке нет (ТЗ-193)');
+    assert(c1.notes_count === 0, 'notes_count свежего клиента = 0');
     assert(c1.last_alert_neg_at === null && c1.last_alert_pos_at === null, 'alert-line поля null у свежего клиента');
-    r = await api('PATCH', `/api/advisor/clients/${mc1}`, { token: tokens.main, body: { name: 'Ольга П.', notes: 'VIP, осторожно с риском' } });
-    assert(r.status === 200 && r.json.client.name === 'Ольга П.', 'patch rename + notes → 200');
+    r = await api('PATCH', `/api/advisor/clients/${mc1}`, { token: tokens.main, body: { name: 'Ольга П.', notes: 'игнорируемое legacy-поле' } });
+    assert(r.status === 200 && r.json.client.name === 'Ольга П.', 'patch rename → 200 (поле notes из схемы удалено)');
     r = await api('GET', '/api/advisor/clients', { token: tokens.main });
-    assert(r.json.clients.find((c) => c.id === mc1).notes === 'VIP, осторожно с риском', 'notes в списке');
+    assert(r.json.clients.find((c) => c.id === mc1).notes_count === 0, 'PATCH с notes ничего не создаёт (ТЗ-193)');
     ok('B4: CRUD create/list/patch + meta {portfolio_limit, active_count} + alert-line поля в каждом клиенте');
 
     // ── B5. Владение (9.3) ──────────────────────────────────────────────────
@@ -754,7 +758,7 @@ async function phaseC() {
     const tables = await client.query(
       `SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name LIKE 'advisor_%'`);
     const names = tables.rows.map((r) => r.table_name).sort();
-    assert.deepStrictEqual(names, ['advisor_client_tags', 'advisor_clients', 'advisor_settings', 'advisor_summaries', 'advisor_tasks'], '5 таблиц advisor_*');
+    assert.deepStrictEqual(names, ['advisor_client_tags', 'advisor_clients', 'advisor_notes', 'advisor_settings', 'advisor_summaries', 'advisor_tasks'], '6 таблиц advisor_*');
     ok('C1: PG — таблицы advisor_* на месте');
 
     const cols = await client.query(
@@ -772,7 +776,7 @@ async function phaseC() {
        JOIN information_schema.constraint_column_usage ccu ON tc.constraint_name = ccu.constraint_name
        JOIN information_schema.referential_constraints rc ON tc.constraint_name = rc.constraint_name
        WHERE tc.table_schema='public' AND tc.constraint_type='FOREIGN KEY' AND tc.table_name LIKE 'advisor_%'`);
-    for (const pair of [['advisor_client_tags', 'advisor_clients'], ['advisor_summaries', 'advisor_clients'], ['advisor_tasks', 'advisor_clients'], ['advisor_clients', 'users'], ['advisor_tasks', 'users'], ['advisor_settings', 'users']]) {
+    for (const pair of [['advisor_client_tags', 'advisor_clients'], ['advisor_notes', 'advisor_clients'], ['advisor_summaries', 'advisor_clients'], ['advisor_tasks', 'advisor_clients'], ['advisor_clients', 'users'], ['advisor_tasks', 'users'], ['advisor_settings', 'users']]) {
       const fk = fks.rows.find((r) => r.table_name === pair[0] && r.ref_table === pair[1]);
       assert(fk && fk.delete_rule === 'CASCADE', `FK ${pair[0]}→${pair[1]} ON DELETE CASCADE`);
     }

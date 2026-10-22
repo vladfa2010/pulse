@@ -4439,6 +4439,13 @@ END $$`,
     { sql: `CREATE INDEX IF NOT EXISTS idx_advisor_tasks_user ON advisor_tasks(advisor_user_id) WHERE is_done = FALSE`, name: 'idx_advisor_tasks_user' },
     { sql: `CREATE INDEX IF NOT EXISTS idx_advisor_tasks_remind ON advisor_tasks(remind_at) WHERE reminded_at IS NULL AND is_done = FALSE`, name: 'idx_advisor_tasks_remind' },
     { sql: `CREATE TABLE IF NOT EXISTS advisor_settings (user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, summary_slots TEXT, telegram_chat_id TEXT, notify_prefs TEXT, created_at TIMESTAMP DEFAULT ${_SQL_NOW})`, name: 'advisor_settings' },
+    // ТЗ-193: заметки клиента — до 5 штук (лента вместо одиночной колонки notes)
+    { sql: `CREATE TABLE IF NOT EXISTS advisor_notes (id ${USE_SQLITE ? 'INTEGER PRIMARY KEY AUTOINCREMENT' : 'SERIAL PRIMARY KEY'}, client_id INTEGER NOT NULL REFERENCES advisor_clients(id) ON DELETE CASCADE, text TEXT NOT NULL, created_at TIMESTAMP DEFAULT ${_SQL_NOW}, updated_at TIMESTAMP)`, name: 'advisor_notes' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_advisor_notes_client ON advisor_notes(client_id, created_at DESC)`, name: 'idx_advisor_notes_client' },
+    // ТЗ-193: миграция существующей одиночной заметки в первую запись ленты
+    // (идемпотентна по NOT EXISTS; колонка advisor_clients.notes остаётся
+    // нетронутой — песочница, откат кода без потерь данных).
+    { sql: `INSERT INTO advisor_notes (client_id, text, created_at) SELECT id, trim(notes), created_at FROM advisor_clients WHERE notes IS NOT NULL AND trim(notes) <> '' AND NOT EXISTS (SELECT 1 FROM advisor_notes n WHERE n.client_id = advisor_clients.id)`, name: 'advisor_notes_migrate' },
   ];
   for (const m of migrations) {
     try {
