@@ -515,6 +515,21 @@ RECALL остаётся, LLM-батч пропускается, пишутся �
   (в USER_EVENT_TYPES, НЕ в ALERT_EVENT_TYPES — в TG-алерты не входит) и
   для subscription-ветки — `education.enroll_subscribed`.
   Смоук: `scripts/smoke-lms-auto-enroll.js` (7 проверок).
+- **ТЗ-185 (самоотписка):** `DELETE /courses/:slug/enroll` (auth) — удаляет
+  enrollment студента. Курс: 404 только при отсутствии/`deleted_at` (статус
+  публикации и visibility не проверяются — от архивного курса тоже можно
+  отписаться). Записи нет → 204 (идемпотентно, без утечки факта чужой
+  записи). `source='purchase'` → 409 «Курс куплен: отписка невозможна».
+  Прогресс (`lesson_progress`) не трогаем — при повторной записи
+  восстанавливается (у subscription-источника запись вернётся и автозаписью
+  ТЗ-184 при следующем интерактиве; `enrolled_at`/`created_at` при этом
+  пересоздаётся). Событие `education.unenroll {course_id, source}` (в
+  USER_EVENT_TYPES, НЕ в ALERT_EVENT_TYPES). Смоук: `scripts/smoke-unenroll.js`
+  (8 проверок: free/purchase/subscription/гость/чужой/архивный/404/идемпотентность).
+  Фронт: кнопка «Отписаться от курса» в карточке курса (`CoursePage`) и на
+  карточках витрины (`Education`, только у записанных) — confirm с
+  пояснением про subscription и сохранение прогресса, 409 → тост с текстом
+  бэкенда.
 - GET `/lessons/:id` без изменений (весь контент, тест без correct, prev/next).
 
 **Фронт** (pulse-frontend):

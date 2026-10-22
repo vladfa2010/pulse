@@ -1897,6 +1897,52 @@ router.post('/courses/:slug/enroll', authMiddleware, h(async (req, res) => {
 }));
 
 // ═══════════════════════════════════════════════════════════════════════════
+// DELETE /api/education/courses/:slug/enroll — самоотписка студента (ТЗ-185).
+// Курс: 404 только при отсутствии/удалении (статус/видимость не проверяем —
+// от архивного курса тоже можно отписаться). Записи нет → 204 (идемпотентно,
+// без утечки информации о чужих записях). purchase → 409 (доступ привязан
+// к оплате). Прогресс (lesson_progress) не трогаем — при повторной записи
+// вернётся. Событие education.unenroll (аналитика, в TG-алерты не добавляем).
+// ═══════════════════════════════════════════════════════════════════════════
+router.delete('/courses/:slug/enroll', authMiddleware, h(async (req, res) => {
+  const userId = req.user!.userId;
+  const courseR = await query(
+    `SELECT id, deleted_at FROM courses WHERE slug = $1`,
+    [req.params.slug],
+  );
+  if (courseR.rows.length === 0 || courseR.rows[0].deleted_at) {
+    return fail(res, 404, 'Курс не найден');
+  }
+  const courseId = courseR.rows[0].id;
+
+  const enrR = await query(
+    `DELETE FROM course_enrollments
+     WHERE user_id = $1 AND course_id = $2
+       AND source <> 'purchase'
+     RETURNING source`,
+    [userId, courseId],
+  );
+  if (enrR.rows.length === 0) {
+    // Нет записи ИЛИ курс куплен — не различаем ответом (анти-перебор).
+    const ownR = await query(
+      `SELECT source FROM course_enrollments
+       WHERE user_id = $1 AND course_id = $2`,
+      [userId, courseId],
+    );
+    if (ownR.rows.length > 0) {
+      return fail(res, 409, 'Курс куплен: отписка невозможна, доступ привязан к оплате');
+    }
+    return res.status(204).end();
+  }
+
+  logUserEvent(userId, 'education.unenroll', {
+    course_id: courseId,
+    source: enrR.rows[0].source,
+  }).catch(() => { /* fire-and-forget, как соседние вызовы */ });
+  return res.status(204).end();
+}));
+
+// ═══════════════════════════════════════════════════════════════════════════
 // GET /api/education/courses/:slug/news — «Курс в новостях» (свежие 5)
 // ═══════════════════════════════════════════════════════════════════════════
 router.get('/courses/:slug/news', h(async (req, res) => {

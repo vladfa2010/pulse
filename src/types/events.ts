@@ -42,6 +42,8 @@ export const USER_EVENT_TYPES = [
   'education.course_restored',
   'education.enroll_admin',
   'education.unenroll_admin',
+  // ТЗ-185: самоотписка студента (purchase отказ, прогресс сохраняется)
+  'education.unenroll',
   // ТЗ-106: самозапись по подписке (source='subscription')
   'education.enroll_subscribed',
   // ТЗ-184: автозапись в момент интерактива (сдача теста/завершение урока).
