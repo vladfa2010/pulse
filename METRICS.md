@@ -1,6 +1,6 @@
 # PULSE — Product Metrics (Admin Analytics)
 
-> Дата актуализации: 2026-07-23 | Актуализировано: 2026-10-21 (ТЗ-119, ТЗ-122: секции radio/flow, правки источников метрик)
+> Дата актуализации: 2026-07-23 | Актуализировано: 2026-10-21 (ТЗ-119, ТЗ-122: секции radio/flow, правки источников метрик); 2026-10-22 (ТЗ-124 v2: блок `sankey` в `user-paths`, общий scope для Санки и ветвлений)
 > Файл backend: `pulse-backend/src/routes/adminMetrics.ts`  
 > Файл frontend: `pulse-frontend/src/pages/admin/ProductMetricsTab.tsx`  
 > Endpoint: `GET /admin/metrics?section=<section>&period=<period>`
@@ -47,7 +47,7 @@ online, plans, mrr, promos, engagement, churn, radio, flow, paths
 |--------|-----------|
 | `radio` | Radio TTS-метрики (in-memory с момента старта процесса, `period` игнорируется) |
 | `flow` | ТЗ-122: визуализация потока действий (см. `GET /metrics/flow` ниже) |
-| `paths` | ТЗ-124: дашборд «Пути пользователей» (см. `GET /metrics/user-paths` ниже; scope всегда `all`) |
+| `paths` | ТЗ-124 (+v2 Санки): дашборд «Пути пользователей» (см. `GET /metrics/user-paths` ниже; scope всегда `all`) |
 
 **Ответ:**
 
@@ -109,7 +109,7 @@ online, plans, mrr, promos, engagement, churn, radio, flow, paths
 
 ---
 
-## 2.2 `GET /metrics/user-paths` (ТЗ-124)
+## 2.2 `GET /metrics/user-paths` (ТЗ-124, v2 — Санки типичных путей)
 
 Дашборд «Пути пользователей» — сводка по всем юзерам поверх той же ленты
 событий и сессионизации, что и `flow` (ТЗ-122): общие CTE-кирпичи
@@ -123,9 +123,9 @@ online, plans, mrr, promos, engagement, churn, radio, flow, paths
 | Параметр | Тип | Описание |
 |----------|-----|----------|
 | `period` | number | Период в днях: `1`, `7`, `30`, `90` (иначе 400) |
-| `scope` | string | `all` (default) или `functions` — влияет только на `branching`: контентные события (`read_article`, `page_view_feed`) исключаются **до** подсчёта (иначе 400) |
+| `scope` | string | `all` (default) или `functions` — влияет на `branching` и `sankey`: контентные события (`read_article`, `page_view_feed`) исключаются **до** подсчёта (иначе 400) |
 
-**Ответ (4 блока):**
+**Ответ (5 блоков):**
 
 ```json
 {
@@ -137,7 +137,11 @@ online, plans, mrr, promos, engagement, churn, radio, flow, paths
               "top_transition": { "from": "login", "to": "sentiment_vote", "count": 8 }, "ltv": 990 }],
   "exit_points": [{ "event_type": "read_article", "count": 439 }],
   "conversion_paths": [{ "goal": "payment_completed", "path": ["login", "page_view_plans", "payment_completed"], "count": 8 }],
-  "branching": [{ "from": "login", "total_out": 197, "next": [{ "to": "read_article", "count": 115, "share": 58.4 }] }]
+  "branching": [{ "from": "login", "total_out": 197, "next": [{ "to": "read_article", "count": 115, "share": 58.4 }] }],
+  "sankey": {
+    "nodes": [{ "id": "login#1", "label": "login" }],
+    "links": [{ "source": "login#1", "target": "read_article#2", "value": 82 }]
+  }
 }
 ```
 
@@ -147,6 +151,7 @@ online, plans, mrr, promos, engagement, churn, radio, flow, paths
 | `exit_points` | Последнее событие каждой сессии (LEAD-окно + разрыв 1800 с), топ-10 + `other` |
 | `conversion_paths` | Цели: `payment_completed`, `subscription_activated`, `subscription_cancelled`. До 3 предшествующих событий в той же сессии (схлопывание серий), цель в конце пути; если цель стартует сессию — последние 3 события юзера перед ней. Топ-5 цепочек на цель, всё с `count<3` — в `other` |
 | `branching` | Матрица ветвлений: узлы `from` (топ-20 по `total_out`), у каждого топ-5 `next` + `other`; `share = count/total_out`, округление 0.1; связки `count<3` — в `other`. Правила малой выборки: проценты показываются только с n |
+| `sankey` | Диаграмма Санки «Типичные пути» (ТЗ-124 v2): первые 3 действия каждой сессии (серии схлопнуты LAG, уровни ROW_NUMBER ≤ 3). Узлы `id = "тип#уровень"` (1..3), `label` — сырой `event_type` (RU-лейблы накладывает фронт). Сборка — чистая функция `src/services/adminSessionSankey.ts`: узел с исходящим потоком < 3 схлопывается в `other#<уровень>`, лента с `value<3` — target в `other#<уровень>` (value сохраняется), потолок 60 лент (хвост в `other`, жёсткий slice). Консервация: сумма лент через границу уровней N→N+1 не меняется схлопами. Узлы уровня 1 без исходящих (сессии из 1 события, поток ≥ 3) включаются как источники |
 
 **Кэш:** 60 с по ключу `paths:<period>:<scope>`; сверху кэш диспетчера
 `paths:<period>` при загрузке через `/admin/metrics?section=paths`.
@@ -482,7 +487,7 @@ Monthly Recurring Revenue и Annual Recurring Revenue.
 | 24 | Событий на пользователя | `engagement` | KPI + bar chart |
 | 25 | Churn-когорты | `churn` | Table |
 | 26 | Сценарии (ТЗ-122) | `flow` (агрегат `GET /metrics/flow`) | Sankey переходов + топ-10 стартов сессий (`FlowCharts.tsx`, ленивый `echartsLoader`) |
-| 27 | Пути (ТЗ-124) | `paths` (агрегат `GET /metrics/user-paths`) | Сводная таблица юзеров (клик → UserDetailModal), exit-бары, цепочки к целям, аккордеон ветвлений с переключателем «все/только функции» (`PathsSection.tsx`) |
+| 27 | Пути (ТЗ-124, v2 — Санки) | `paths` (агрегат `GET /metrics/user-paths`) | Диаграмма Санки «Типичные пути» (первые 3 действия сессии, ленивый `echarts`), сводная таблица юзеров (клик → UserDetailModal), exit-бары, цепочки к целям, аккордеон ветвлений. Общий переключатель «все/только функции» для Санки и ветвлений: scope=functions догружается ленивым прямым fetch (`PathsSection.tsx` + `ProductMetricsTab.tsx`) |
 
 > **Примечание:** нумерация в UI отличается от нумерации в `TZ_V6_METRICS.md` (где новые метрики названы 27–32), потому что общий список блоков в frontend не разбивался на отдельные карточки Placeholder.
 

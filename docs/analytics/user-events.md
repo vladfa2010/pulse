@@ -1,6 +1,6 @@
 # PULSE — Трекинг действий пользователя (user_events)
 
-> Дата актуализации: 2026-10-21
+> Дата актуализации: 2026-10-22
 > Backend: `pulse-backend/src/services/activityLog.ts`, `pulse-backend/src/types/events.ts`, `pulse-backend/src/index.ts` (эндпоинты трекинга)
 > Frontend: `pulse-frontend/src/pages/*` (вызовы `api.post('/events/...')`)
 > Админский доступ: `pulse-backend/src/routes/admin.ts` (`/api/admin/activity-log`), `pulse-backend/src/routes/adminMetrics.ts` (`/api/admin/metrics/flow`)
@@ -80,9 +80,9 @@ Whitelist из **5 страниц** (`src/index.ts:3132-3153`):
 
 Визуализация потока действий. Подробности — [`../../METRICS.md`](../../METRICS.md) §2.1: единая лента `user_events` (без `admin_%`) + `user_news_reads` как `read_article`, сессия = разрыв > 1800 с, 4 блока ответа (`transitions`, `session_starts`, `bubbles`, `timeline`), кэш 60 с для агрегата (`flow:all:<period>`), per-user без кэша.
 
-### `GET /api/admin/metrics/user-paths` (ТЗ-124)
+### `GET /api/admin/metrics/user-paths` (ТЗ-124, v2 — Санки)
 
-Дашборд «Пути пользователей» поверх той же ленты и сессионизации (общие CTE-кирпичи `buildEventsCte`/`SESSED_CTE`). Подробности — [`../../METRICS.md`](../../METRICS.md) §2.2: 4 блока (`users`, `exit_points`, `conversion_paths`, `branching`), параметр `scope=all|functions` (только functions-ветка branching), кэш `paths:<period>:<scope>` 60 с. Цели конверсии — `payment_completed`, `subscription_activated`, `subscription_cancelled`; история по ним восстановлена бэкфиллом `scripts/backfill-payment-events.js` (метка `tz124_backfill` в `event_data`).
+Дашборд «Пути пользователей» поверх той же ленты и сессионизации (общие CTE-кирпичи `buildEventsCte`/`SESSED_CTE`). Подробности — [`../../METRICS.md`](../../METRICS.md) §2.2: 5 блоков (`users`, `exit_points`, `conversion_paths`, `branching`, `sankey`), параметр `scope=all|functions` (контентные события исключены до подсчёта branching и sankey), кэш `paths:<period>:<scope>` 60 с. Санки «Типичные пути» — первые 3 действия сессии, сборка в чистой функции `src/services/adminSessionSankey.ts` (схлопы малых потоков <3 в `other`, потолок 60 лент). Цели конверсии — `payment_completed`, `subscription_activated`, `subscription_cancelled`; история по ним восстановлена бэкфиллом `scripts/backfill-payment-events.js` (метка `tz124_backfill` в `event_data`).
 
 ### Карточка пользователя в админке
 
