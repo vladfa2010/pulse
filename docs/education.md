@@ -85,6 +85,25 @@ soft-delete с 409 при покупках, restore), уроки (создани
 /topics → 409 «раздел появится позже», чужое → 400), публикация с проверками
 422, управление слушателями (admin_grant идемпотентно, is_blocked → 422,
 отписка 204 без удаления прогресса), users-search/news-search.
+**ТЗ-186 (уведомление при записи админом):** успешный ответ записи (201 и
+200 already_enrolled) содержит `notify_channels {email, push, telegram}` —
+доступность каналов юзера через `getDeliveryTarget` (email неявный, push
+FCM→VAPID, telegram активный user_channels). Отдельный эндпоинт
+`POST /courses/:id/enrollments/:userId/notify` (тело `{channels: [1..3]}`,
+иначе 400; enrollment обязателен — иначе 404) шлёт «Вам предоставлен доступ
+к курсу «<title>»» + кнопку «Изучить» (`/education/<slug>`) по выбранным
+каналам: email — HTML-шаблон `templates/course-access-granted.html`
+(дизайн-система писем ТЗ-142), Telegram — inline url-кнопка, push — FCM +
+VAPID (billing-паттерн, доставка по любому транспорту). Ответ
+`{sent, skipped, failed}` по каналам (канал отвалился — `skipped.
+channel_not_connected`). Тихие часы и частотные лимиты диспетчера НЕ
+применяются — транзакционное уведомление по явному действию админа.
+Событие `education.enroll_notified {course_id, target_user_id, channels}`
+(фактические отправленные каналы; в ALERT_EVENT_TYPES не входит). Логика —
+`services/education/enrollNotify.ts`, смоук `scripts/smoke-enroll-notify.js`
+(8 проверок). Фронт: модалка «Пользователь записан. Уведомить?» в
+StudentsPanel (доступные каналы предвыбраны, недоступные disabled «не
+подключён»; already_enrolled — прежний тост без модалки).
 Санитизация `text_content` на записи (sanitize-html: whitelist тегов,
 https-only ссылки, img только /media/*, SVG/script вырезаются). Каждая мутация
 инвалидирует кэш витрины (`services/education/cache.ts`, in-memory, TTL 5 мин).

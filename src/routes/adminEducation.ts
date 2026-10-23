@@ -30,6 +30,7 @@ import { AuthRequest } from '../middleware/auth';
 import { adminMiddleware } from '../middleware/admin';
 import { checkRateLimit, lmsUploadLimiter } from '../middleware/rateLimit';
 import { logUserEvent } from '../services/activityLog';
+import { getEnrollNotifyChannels, notifyEnrolledUser, ENROLL_NOTIFY_CHANNELS } from '../services/education/enrollNotify'; // ТЗ-186: уведомление записанного пользователя
 import { getActivePlans, parseDbJson } from '../services/subscription';
 import { invalidateEducationCache } from '../services/education/cache';
 import { scheduleEducationSeoRebuild, rebuildEducationSeoNow, fetchSeoRebuildLog, isEducationSeoRebuildPending } from '../services/education/seoRebuild'; // ТЗ-164: SEO-пересборка при сохранении + статус (Задачи 4-5)
@@ -2569,8 +2570,11 @@ router.post('/courses/:id/enrollments', h(async (req, res) => {
     `SELECT id FROM course_enrollments WHERE user_id = $1 AND course_id = $2`,
     [userId, courseId],
   );
+  // ТЗ-186: доступные каналы уведомления — флаги чекбоксов модалки админа
+  // (дешёвые индексные SELECT'ы; отправка здесь не происходит).
+  const notify_channels = await getEnrollNotifyChannels(userId);
   if (existing.rows.length > 0) {
-    return res.status(200).json({ ok: true, already_enrolled: true });
+    return res.status(200).json({ ok: true, already_enrolled: true, notify_channels });
   }
 
   await query(
@@ -2581,7 +2585,46 @@ router.post('/courses/:id/enrollments', h(async (req, res) => {
   // Инвалидация кэша витрины НЕ нужна (счётчик записанных не входит в каталог,
   // ТЗ-101 Задача 4) — но аналитика обязательна: кто кому раздал доступ
   logUserEvent(adminId, 'education.enroll_admin', { course_id: courseId, target_user_id: userId });
-  res.status(201).json({ ok: true, source: 'admin_grant' });
+  res.status(201).json({ ok: true, source: 'admin_grant', notify_channels });
+}));
+
+// POST /courses/:id/enrollments/:userId/notify — ТЗ-186: отправить записанному
+// пользователю «Вам предоставлен доступ к курсу …» по выбранным каналам.
+// Только реально записанному (enrollment обязателен, иначе 404). Тихие часы и
+// частота диспетчера НЕ применяются — транзакционное уведомление по действию
+// админа. Событие education.enroll_notified — фактические каналы.
+router.post('/courses/:id/enrollments/:userId/notify', h(async (req, res) => {
+  const adminId = req.user!.userId;
+  const { id: courseId, userId } = req.params;
+
+  const channels = req.body?.channels;
+  if (!Array.isArray(channels) || channels.length < 1 || channels.length > 3
+      || !channels.every((c: unknown) => ENROLL_NOTIFY_CHANNELS.includes(c as any))) {
+    return fail(res, 400, 'channels: массив из 1..3 значений email|push|telegram');
+  }
+  const dedup = [...new Set(channels)] as Array<'email' | 'push' | 'telegram'>;
+
+  const courseR = await query(
+    `SELECT id, title, slug FROM courses WHERE id = $1`, [courseId],
+  );
+  const course = courseR.rows[0];
+  if (!course) return fail(res, 404, 'Курс не найден');
+
+  const enrR = await query(
+    `SELECT id FROM course_enrollments WHERE user_id = $1 AND course_id = $2`,
+    [userId, courseId],
+  );
+  if (enrR.rows.length === 0) return fail(res, 404, 'Пользователь не записан на курс');
+
+  const result = await notifyEnrolledUser({ userId, course, channels: dedup });
+
+  logUserEvent(adminId, 'education.enroll_notified', {
+    course_id: courseId,
+    target_user_id: userId,
+    channels: dedup.filter((c) => result.sent[c]),
+  }).catch(() => { /* fire-and-forget, как соседние вызовы */ });
+
+  res.json(result);
 }));
 
 // DELETE /courses/:id/enrollments/:userId — выписать; прогресс НЕ удалять
