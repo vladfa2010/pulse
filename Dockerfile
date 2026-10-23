@@ -34,6 +34,8 @@ RUN cp src/migrations/mcp_v1.sql dist/migrations/mcp_v1.sql
 RUN cp src/migrations/lms_v9_course_threshold.sql dist/migrations/lms_v9_course_threshold.sql
 # ТЗ-191: снапшоты weekly_reports + magic-токены для POST /migrate-weekly-reports
 RUN cp src/migrations/weekly_reports_v1.sql dist/migrations/weekly_reports_v1.sql
+# ТЗ-187: разовый шеринг урока для POST /migrate-lms-lesson-shares
+RUN cp src/migrations/lms_v10_lesson_shares.sql dist/migrations/lms_v10_lesson_shares.sql
 EXPOSE 3001
 ENV BUILD_TIMESTAMP=1779922500
 CMD ["node", "dist/index.js"]

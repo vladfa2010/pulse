@@ -191,14 +191,46 @@ router.post('/register', validate(RegisterSchema), async (req, res) => {
     const platform = detectPlatform(req.headers['user-agent'] as string);
     const cohortDate = new Date().toISOString().split('T')[0];
 
+    // ТЗ-187: атрибуция регистрации по меджик-линку урока. Валиден только
+    // реально использованный (used) токен; битый/отсутствующий молча игнорим —
+    // регистрация не ломается.
+    let shareAttribution: {
+      token: string;
+      owner_user_id: string;
+      lesson_id: string;
+    } | null = null;
+    const shareToken = typeof req.body.share_token === 'string' ? req.body.share_token : '';
+    if (shareToken && /^[0-9a-f]{48}$/.test(shareToken)) {
+      const shareR = await query(
+        `SELECT owner_user_id, lesson_id FROM lesson_shares
+         WHERE token = $1 AND used_at IS NOT NULL`,
+        [shareToken],
+      );
+      if (shareR.rows.length > 0) {
+        shareAttribution = {
+          token: shareToken,
+          owner_user_id: shareR.rows[0].owner_user_id,
+          lesson_id: shareR.rows[0].lesson_id,
+        };
+      }
+    }
+
     // ─── Создаём пользователя ───────────────────────────────────────────
     await query(
       `INSERT INTO users (id, email, username, password_hash, news_count,
          registration_source, registration_ip, timezone, locale, cohort_date, last_login_at, login_count)
        VALUES ($1, $2, $3, $4, 0, $5, $6, $7, $8, $9, $10, 1)`,
-      [userId, email, username, passwordHash, source, clientIp,
+      [userId, email, username, passwordHash, shareAttribution ? 'lesson_share' : source, clientIp,
        req.body.timezone || null, req.body.locale || null, cohortDate, new Date().toISOString()]
     );
+
+    // ТЗ-187: фиксируем конверсию шеринга → регистрацию
+    if (shareAttribution) {
+      await query(
+        `UPDATE lesson_shares SET converted_user_id = $1 WHERE token = $2`,
+        [userId, shareAttribution.token],
+      ).catch(() => { /* атрибуция — best effort, регистрацию не ломаем */ });
+    }
 
     // ─── Создаём настройки уведомлений по умолчанию ─────────────────────
     await query(
@@ -220,7 +252,13 @@ router.post('/register', validate(RegisterSchema), async (req, res) => {
     // ─── Генерируем JWT токен ───────────────────────────────────────────
     const token = jwt.sign({ userId, email, is_admin: false }, JWT_SECRET, { expiresIn: '7d' });
 
-    logRegister(userId, email, username).catch(() => {});
+    logRegister(userId, email, username, shareAttribution
+      ? {
+          share_token: shareAttribution.token,
+          shared_by_user_id: shareAttribution.owner_user_id,
+          lesson_id: shareAttribution.lesson_id,
+        }
+      : undefined).catch(() => {});
     logEmailConnected(userId, email).catch(() => {});
 
     res.status(201).json({

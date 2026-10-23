@@ -1372,6 +1372,60 @@ app.post('/migrate-lms-lesson-materials', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// POST /migrate-lms-lesson-shares?secret=KEY — разовый шеринг урока (ТЗ-187)
+// Применяет src/migrations/lms_v10_lesson_shares.sql (PostgreSQL-диалект).
+// Идемпотентна. В SQLite-режиме таблицу создаёт initSQLiteSchema() → пропускаем.
+// ═══════════════════════════════════════════════════════════════════════════
+app.post('/migrate-lms-lesson-shares', async (req, res) => {
+  const secret = req.headers['x-trigger-secret'] || req.query.secret;
+  if (secret !== CRON_SECRET_KEY) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  if (USE_SQLITE) {
+    return res.json({ skipped: true, message: 'SQLite mode: lesson_shares table is created by initSQLiteSchema()' });
+  }
+
+  try {
+    const fs = await import('fs');
+    const path = await import('path');
+    // __dirname = /app/dist; lms_v10_lesson_shares.sql копируется в dist/migrations через Dockerfile
+    const sqlPath = path.join(__dirname, 'migrations', 'lms_v10_lesson_shares.sql');
+    if (!fs.existsSync(sqlPath)) {
+      return res.status(500).json({ error: `lms_v10_lesson_shares.sql not found at ${sqlPath}` });
+    }
+
+    const sql = fs.readFileSync(sqlPath, 'utf-8');
+    // Вырезаем SQL-комментарии ДО split(';') — см. аналогичный блок /migrate-lms
+    const cleaned = sql
+      .split('\n')
+      .map((l: string) => {
+        const i = l.indexOf('--');
+        return i >= 0 ? l.slice(0, i) : l;
+      })
+      .join('\n');
+    const statements = cleaned.split(';').filter((s: string) => s.trim());
+    const results: string[] = [];
+
+    for (const stmt of statements) {
+      try {
+        await query(stmt + ';');
+        results.push(`OK: ${stmt.trim().substring(0, 60)}`);
+      } catch (e: any) {
+        // Игнорируем «already exists» — объект создан ранее (идемпотентность)
+        if (!e.message?.includes('already exists')) {
+          results.push(`WARN: ${e.message?.substring(0, 100)}`);
+        }
+      }
+    }
+
+    res.json({ success: true, applied: results.length, details: results });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // POST /migrate-lms-lesson-buttons?secret=KEY — CTA-кнопки урока (ТЗ-124, Задача 1)
 // Применяет src/migrations/lms_v5_lesson_buttons.sql (PostgreSQL-диалект).
 // Идемпотентна. В SQLite-режиме колонку добавляет initSQLiteSchema() → пропускаем.

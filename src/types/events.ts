@@ -46,6 +46,8 @@ export const USER_EVENT_TYPES = [
   'education.unenroll',
   // ТЗ-186: админ уведомил записанного пользователя (почта/push/Telegram)
   'education.enroll_notified',
+  // ТЗ-187: меджик-линк — разовый шеринг урока (квота 2/12ч, ссылка 1 час)
+  'education.lesson_shared',
   // ТЗ-106: самозапись по подписке (source='subscription')
   'education.enroll_subscribed',
   // ТЗ-184: автозапись в момент интерактива (сдача теста/завершение урока).

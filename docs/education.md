@@ -118,6 +118,32 @@ locked_by_drip по tenure; 401/403 + `IDOR blocked` в логе), complete,
 лимитом 30/час по IP; ТЗ-173: fallback `?token=` для скачивания по
 авторизационной ссылке), «Курс в новостях». `GET /api/news/:slug` отдаёт
 `attached_courses` (≤3, published+public).
+**ТЗ-187 («Меджик-линк», разовый шеринг урока):** все гейты просмотра урока
+вынесены в `checkLessonAccess(userId, lesson)` (hidden-антислив 404, статус
+курса, enrollment/is_free_preview, живая подписка, drip, блокирующий тест
+предыдущего урока; админ — всегда доступ) — используются и GET урока, и
+шеринг. `POST /lessons/:lessonId/share` (auth): гейты через checkLessonAccess
+(403 без доступа), квота 2 ссылки за скользящие 12 часов на юзера (429
+`{error, retry_after_hours}`), ссылка живёт 1 час. `GET /shared-lessons/:token`
+(публичный, без auth): атомарное сгорание при первом открытии
+(`UPDATE ... SET used_at ... WHERE used_at IS NULL AND expires_at > $now
+RETURNING` — гонка двух открытий невозможна), 410 used (+`course_slug` для
+CTA на курс) / 410 expired / 404. Payload гостю — только
+`{lesson:{title, content_html (sanitizeLessonHtml), position}, course:{title,
+slug}}`: аудио/видео/материалы/тест не выбираются из БД по построению.
+Таблица `lesson_shares` (миграция `src/migrations/lms_v10_lesson_shares.sql`,
+эндпоинт `POST /migrate-lms-lesson-shares?secret=CRON_SECRET`; SQLite-зеркало
+в `db-sqlite.ts`). Атрибуция регистрации: фронт после открытия ссылки кладёт
+токен в localStorage (`lesson_share_token`), `useAuth.register` шлёт его как
+`share_token`; бэк по использованному токену ставит `registration_source=
+'lesson_share'`, пишет `converted_user_id` и логирует `register` с
+`{shared_by_user_id, lesson_id}`. Регистрация без токена / с битым — штатная.
+Все даты в share-запросах считаются на JS и передаются параметрами: SQLite-шим
+криво транслирует `NOW() ± INTERVAL`. Смоук `scripts/smoke-lesson-share.js`
+(12 проверок). Событие `education.lesson_shared {lesson_id, course_id,
+share_id}` (в ALERT_EVENT_TYPES не входит). Фронт: кнопка Share2 в ридер-баре
+урока (только при наличии конспекта) → GlassModal со ссылкой и «Копировать»;
+страница `/share/lesson/:token` (noindex, SafeHtmlContent, CTA на курс).
 
 **Фронтенд** (таб «Образование» в `/admin`): таблица курсов (обложки, ярлыки
 размера/типа, чип категории, фильтр «Потеряли источник», удалённые),

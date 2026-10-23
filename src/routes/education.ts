@@ -588,28 +588,18 @@ router.get('/courses/:slug', optionalAuth, h(async (req, res) => {
 
 
 // ═══════════════════════════════════════════════════════════════════════════
-// GET /api/education/lessons/:lessonId — контент урока (ТЗ-100 v4/v5/v13;
-// критерии 4, 10, 13, 20)
+// ТЗ-187: гейты доступа к уроку — общие для GET /lessons/:lessonId и шеринга
+// (POST /lessons/:lessonId/share). Те же проверки, что у просмотра: hidden-
+// антислив, статус курса, enrollment/free_preview/admin, живая подписка,
+// drip, блокирующий тест предыдущего урока. blocked — готовый ответ ошибки.
 // ═══════════════════════════════════════════════════════════════════════════
-router.get('/lessons/:lessonId', optionalAuth, h(async (req, res) => {
-  const lessonId = req.params.lessonId;
-  const userId = req.user?.userId;
-  if (!isUuid(lessonId)) return fail(res, 404, 'Урок не найден');
+interface LessonAccess {
+  admin: boolean;
+  enrollment: { source: string } | null;
+  blocked: { status: number; body: Record<string, unknown> } | null;
+}
 
-  const lessonR = await query(
-    `SELECT l.*, c.status AS course_status, c.visibility, c.deleted_at,
-            c.subscription_unlock_mode, c.type AS course_type, c.slug AS course_slug,
-            c.title AS course_title
-     FROM course_lessons l JOIN courses c ON c.id = l.course_id
-     WHERE l.id = $1`,
-    [lessonId],
-  );
-  if (lessonR.rows.length === 0) return fail(res, 404, 'Урок не найден');
-  const lesson = lessonR.rows[0];
-
-  // Soft-deleted курс невидим нигде (включая учеников с enrollment)
-  if (lesson.deleted_at) return fail(res, 404, 'Урок не найден');
-
+async function checkLessonAccess(userId: string | undefined, lesson: any): Promise<LessonAccess> {
   const admin = await isAdminUser(userId);
   const enrollR = userId
     ? await query(
@@ -622,25 +612,27 @@ router.get('/lessons/:lessonId', optionalAuth, h(async (req, res) => {
   // Hidden-курс (v9 п.5): открытые уроки для анонимов НЕ работают → 404.
   // Секретность перекрывает превью; для записанных/админа — обычные правила.
   if (lesson.visibility === 'hidden' && !enrollment && !admin) {
-    logIdorBlocked(userId, 'lesson', lessonId);
-    return fail(res, 404, 'Урок не найден');
+    logIdorBlocked(userId, 'lesson', lesson.id);
+    return { admin, enrollment, blocked: { status: 404, body: { error: 'Урок не найден' } } };
   }
 
   if (lesson.course_status !== 'published' && !admin) {
     // draft/archived: записанные ученики archived доступ сохраняют (v9/архив),
     // draft — нет. Не-опубликованное для не-админа и не-enrollment → 404.
     if (!(lesson.course_status === 'archived' && enrollment)) {
-      logIdorBlocked(userId, 'lesson', lessonId);
-      return fail(res, 404, 'Урок не найден');
+      logIdorBlocked(userId, 'lesson', lesson.id);
+      return { admin, enrollment, blocked: { status: 404, body: { error: 'Урок не найден' } } };
     }
   }
 
   // Доступ: enrollment ИЛИ is_free_preview (v4; критерий 10)
   const hasAccess = !!enrollment || admin || boolDb(lesson.is_free_preview);
   if (!hasAccess) {
-    if (!userId) return fail(res, 401, 'Authentication required');
-    logIdorBlocked(userId, 'lesson', lessonId);
-    return fail(res, 403, 'Доступ к уроку закрыт');
+    if (!userId) {
+      return { admin, enrollment, blocked: { status: 401, body: { error: 'Authentication required' } } };
+    }
+    logIdorBlocked(userId, 'lesson', lesson.id);
+    return { admin, enrollment, blocked: { status: 403, body: { error: 'Доступ к уроку закрыт' } } };
   }
 
   // Подписка: живость для source='subscription' (v5; критерий 13)
@@ -648,17 +640,24 @@ router.get('/lessons/:lessonId', optionalAuth, h(async (req, res) => {
     if (enrollment.source === 'subscription') {
       const subscription = await getUserSubscription(userId!);
       if (!subscription.active) {
-        return fail(res, 403, 'subscription_expired');
+        return { admin, enrollment, blocked: { status: 403, body: { error: 'subscription_expired' } } };
       }
       // Дрип (v13; критерий 20): урок открыт при tenure ≥ unlock_after_days
       if (lesson.subscription_unlock_mode === 'drip' && Number(lesson.unlock_after_days) > 0) {
         const tenure = await subscriptionTenureDays(userId!);
         if (tenure < Number(lesson.unlock_after_days)) {
-          return res.status(403).json({
-            error: 'locked_by_drip',
-            reason: 'locked_by_drip',
-            unlock_in_days: Number(lesson.unlock_after_days) - tenure,
-          });
+          return {
+            admin,
+            enrollment,
+            blocked: {
+              status: 403,
+              body: {
+                error: 'locked_by_drip',
+                reason: 'locked_by_drip',
+                unlock_in_days: Number(lesson.unlock_after_days) - tenure,
+              },
+            },
+          };
         }
       }
     }
@@ -685,14 +684,49 @@ router.get('/lessons/:lessonId', optionalAuth, h(async (req, res) => {
       const score = progR.rows.length > 0 ? progR.rows[0].test_score : null;
       const passed = score !== null && Number(score) >= passScore;
       if (!passed) {
-        return res.status(403).json({
-          error: 'test_blocked',
-          reason: 'test_blocked',
-          blocked_by_lesson_id: prevLessonId,
-        });
+        return {
+          admin,
+          enrollment,
+          blocked: {
+            status: 403,
+            body: { error: 'test_blocked', reason: 'test_blocked', blocked_by_lesson_id: prevLessonId },
+          },
+        };
       }
     }
   }
+
+  return { admin, enrollment, blocked: null };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GET /api/education/lessons/:lessonId — контент урока (ТЗ-100 v4/v5/v13;
+// критерии 4, 10, 13, 20)
+// ═══════════════════════════════════════════════════════════════════════════
+router.get('/lessons/:lessonId', optionalAuth, h(async (req, res) => {
+  const lessonId = req.params.lessonId;
+  const userId = req.user?.userId;
+  if (!isUuid(lessonId)) return fail(res, 404, 'Урок не найден');
+
+  const lessonR = await query(
+    `SELECT l.*, c.status AS course_status, c.visibility, c.deleted_at,
+            c.subscription_unlock_mode, c.type AS course_type, c.slug AS course_slug,
+            c.title AS course_title
+     FROM course_lessons l JOIN courses c ON c.id = l.course_id
+     WHERE l.id = $1`,
+    [lessonId],
+  );
+  if (lessonR.rows.length === 0) return fail(res, 404, 'Урок не найден');
+  const lesson = lessonR.rows[0];
+
+  // Soft-deleted курс невидим нигде (включая учеников с enrollment)
+  if (lesson.deleted_at) return fail(res, 404, 'Урок не найден');
+
+  // ТЗ-187: гейты доступа вынесены в checkLessonAccess (общие с шерингом)
+  const access = await checkLessonAccess(userId, lesson);
+  if (access.blocked) return res.status(access.blocked.status).json(access.blocked.body);
+  const admin = access.admin;
+  const enrollment = access.enrollment;
 
   // Тест БЕЗ correct (критерий 4: вырезаем индексы правильных ответов на бэке)
   const testR = await query(`SELECT * FROM lesson_tests WHERE lesson_id = $1`, [lessonId]);
@@ -878,6 +912,136 @@ router.get('/lessons/:lessonId', optionalAuth, h(async (req, res) => {
       : null,
     prev_lesson_id: prevLesson?.id ?? null,
     next_lesson_id: nextLesson?.id ?? null,
+  });
+}));
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ТЗ-187 «Меджик-линк»: разовый шеринг урока гостю без регистрации.
+// POST /lessons/:lessonId/share — создание ссылки (только у кого есть доступ
+// к уроку; квота 2 ссылки за скользящие 12 часов на пользователя, глобально).
+// GET /shared-lessons/:token — публичное чтение БЕЗ auth: атомарное сгорание
+// ссылки (UPDATE ... RETURNING): первый запрос получает контент, повторный —
+// 410. Гость видит только текст урока (content_html), без аудио/видео/
+// материалов/теста — их нет в SELECT в принципе.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Парсинг БД-времени в epoch ms (SQLite 'YYYY-MM-DD HH:MM:SS' — UTC).
+function shareDbMs(value: any): number {
+  if (!value) return 0;
+  const s = String(value);
+  const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(s) ? s.replace(' ', 'T') + 'Z' : s;
+  const t = new Date(normalized).getTime();
+  return Number.isFinite(t) ? t : 0;
+}
+
+router.post('/lessons/:lessonId/share', authMiddleware, h(async (req, res) => {
+  const userId = req.user!.userId;
+  const lessonId = req.params.lessonId;
+  if (!isUuid(lessonId)) return fail(res, 404, 'Урок не найден');
+
+  const lessonR = await query(
+    `SELECT l.*, c.status AS course_status, c.visibility, c.deleted_at,
+            c.subscription_unlock_mode
+     FROM course_lessons l JOIN courses c ON c.id = l.course_id
+     WHERE l.id = $1`,
+    [lessonId],
+  );
+  if (lessonR.rows.length === 0 || lessonR.rows[0].deleted_at) {
+    return fail(res, 404, 'Урок не найден');
+  }
+  // Гейты — те же, что у просмотра (checkLessonAccess, ТЗ-187): hidden,
+  // статус курса, enrollment/free_preview, живая подписка, drip,
+  // блокирующий тест предыдущего урока. Админ может шерить любой урок.
+  const access = await checkLessonAccess(userId, lessonR.rows[0]);
+  if (access.blocked) return res.status(access.blocked.status).json(access.blocked.body);
+
+  // Квота: 2 ссылки за скользящие 12 часов (глобально, не per-курс).
+  // Порог считаем на JS: шим SQLite криво транслирует NOW() - INTERVAL.
+  const quotaCutoff = new Date(Date.now() - 12 * 3600 * 1000).toISOString();
+  const quotaR = await query(
+    `SELECT count(*) AS cnt, min(created_at) AS oldest
+     FROM lesson_shares
+     WHERE owner_user_id = $1 AND created_at > $2`,
+    [userId, quotaCutoff],
+  );
+  if (Number(quotaR.rows[0]?.cnt ?? 0) >= 2) {
+    const ageHours = (Date.now() - shareDbMs(quotaR.rows[0].oldest)) / 3600000;
+    const retry_after_hours = Math.max(1, Math.ceil(12 - ageHours));
+    return res.status(429).json({
+      error: 'Лимит шеринга: 2 ссылки за 12 часов',
+      retry_after_hours,
+    });
+  }
+
+  const shareId = crypto.randomUUID();
+  const token = crypto.randomBytes(24).toString('hex'); // 48 символов ≤ VARCHAR(64)
+  // expires_at параметром: шим SQLite ломает трансляцию NOW() + INTERVAL '1 hour'.
+  const expiresAt = new Date(Date.now() + 3600 * 1000).toISOString();
+  await query(
+    `INSERT INTO lesson_shares (id, token, lesson_id, course_id, owner_user_id, expires_at)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [shareId, token, lessonId, lessonR.rows[0].course_id, userId, expiresAt],
+  );
+  logUserEvent(userId, 'education.lesson_shared', {
+    lesson_id: lessonId,
+    course_id: lessonR.rows[0].course_id,
+    share_id: shareId,
+  }).catch(() => { /* fire-and-forget, как соседние вызовы */ });
+
+  const base = (process.env.FRONTEND_URL || 'https://pulse.inside-trade.ru').replace(/\/+$/, '');
+  res.status(201).json({ url: `${base}/share/lesson/${token}` });
+}));
+
+// Публичное чтение по токену — без auth. Атомарное сгорание: гонка двух
+// одновременных открытий невозможна, второй UPDATE не вернёт строку.
+router.get('/shared-lessons/:token', h(async (req, res) => {
+  const token = String(req.params.token || '');
+  if (!/^[0-9a-f]{48}$/.test(token)) return fail(res, 404, 'Ссылка не найдена');
+  const clientIp = (String(req.headers['x-forwarded-for'] || '').split(',')[0] || '').trim()
+    || req.socket.remoteAddress || '';
+
+  const burnNow = new Date().toISOString();
+  const burnR = await query(
+    `UPDATE lesson_shares
+     SET used_at = $2, used_ip = $3
+     WHERE token = $1 AND used_at IS NULL AND expires_at > $4
+     RETURNING lesson_id, course_id`,
+    [token, burnNow, clientIp, burnNow],
+  );
+
+  if (burnR.rows.length === 0) {
+    // Разбор причины: использована / истекла / не существует.
+    const rowR = await query(
+      `SELECT s.used_at, s.expires_at, c.slug AS course_slug
+       FROM lesson_shares s JOIN courses c ON c.id = s.course_id
+       WHERE s.token = $1`,
+      [token],
+    );
+    const row = rowR.rows[0];
+    if (!row) return fail(res, 404, 'Ссылка не найдена');
+    if (row.used_at) {
+      return res.status(410).json({ error: 'Ссылка уже использована', course_slug: row.course_slug });
+    }
+    return res.status(410).json({ error: 'Срок действия ссылки истёк' });
+  }
+
+  const lessonR = await query(
+    `SELECT l.title, l.text_content, l.position,
+            c.title AS course_title, c.slug AS course_slug
+     FROM course_lessons l JOIN courses c ON c.id = l.course_id
+     WHERE l.id = $1 AND c.deleted_at IS NULL`,
+    [burnR.rows[0].lesson_id],
+  );
+  // Курс удалили после создания ссылки — честный 404 (токен уже сгорел).
+  if (lessonR.rows.length === 0) return fail(res, 404, 'Ссылка не найдена');
+  const l = lessonR.rows[0];
+  res.json({
+    lesson: {
+      title: l.title,
+      content_html: sanitizeLessonHtml(String(l.text_content || '')),
+      position: l.position,
+    },
+    course: { title: l.course_title, slug: l.course_slug },
   });
 }));
 

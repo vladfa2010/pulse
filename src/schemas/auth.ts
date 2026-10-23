@@ -23,6 +23,8 @@ export const RegisterSchema = z.object({
   source: z.string().max(50).optional(),
   timezone: z.string().max(100).optional(),
   locale: z.string().max(10).optional(),
+  // ТЗ-187: атрибуция регистрации после открытия меджик-линка урока
+  share_token: z.string().max(64).optional(),
 });
 
 // ─── Логин ────────────────────────────────────────────────────────────────

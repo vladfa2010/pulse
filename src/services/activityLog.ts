@@ -42,8 +42,13 @@ export async function logUserEvent(
 
 // ─── Типизированные хелперы ───────────────────────────────────────────────
 
-export async function logRegister(userId: string, email: string, username: string): Promise<void> {
-  return logUserEvent(userId, 'register', { email, username });
+export async function logRegister(
+  userId: string,
+  email: string,
+  username: string,
+  extra?: Record<string, unknown>,
+): Promise<void> {
+  return logUserEvent(userId, 'register', { email, username, ...(extra || {}) });
 }
 
 export async function logLogin(userId: string, email: string): Promise<void> {

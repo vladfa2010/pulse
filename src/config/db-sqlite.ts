@@ -871,6 +871,22 @@ export async function initSQLiteSchema(): Promise<void> {
       PRIMARY KEY (course_id, plan_id)
     );
 
+    -- ТЗ-187 «Меджик-линк»: разовый шеринг урока (PG-зеркало: lms_v10_lesson_shares.sql)
+    CREATE TABLE IF NOT EXISTS lesson_shares (
+      id TEXT PRIMARY KEY,
+      token TEXT NOT NULL UNIQUE,
+      lesson_id TEXT NOT NULL REFERENCES course_lessons(id) ON DELETE CASCADE,
+      course_id TEXT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+      owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at TEXT DEFAULT (datetime('now')),
+      expires_at TEXT NOT NULL,
+      used_at TEXT,
+      used_ip TEXT,
+      converted_user_id TEXT REFERENCES users(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_lesson_shares_owner_created
+      ON lesson_shares(owner_user_id, created_at DESC);
+
     -- (v8) Шеринг пути: один активный шеринг на юзера, users НЕ трогаем
     CREATE TABLE IF NOT EXISTS user_path_shares (
       user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
