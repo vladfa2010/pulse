@@ -42,9 +42,13 @@ if [ "$(date +%u)" = "1" ] && [ -f "$DAILY_DB" ]; then
 fi
 
 # ── 4. Ротация: daily 3 шт, weekly 2 шт ────────────────────────────────────
+# .sha256 удаляем вместе с архивом — иначе остаются сироты (правка 2026-10-23).
 ls -1t "$BACKUP_DIR"/nightly-*.sql.gz 2>/dev/null | tail -n +4 | xargs -r rm -f
+ls -1t "$BACKUP_DIR"/nightly-*.sql.gz.sha256 2>/dev/null | tail -n +4 | xargs -r rm -f
 ls -1t "$BACKUP_DIR"/files-*.tar.gz   2>/dev/null | tail -n +4 | xargs -r rm -f
+ls -1t "$BACKUP_DIR"/files-*.tar.gz.sha256 2>/dev/null | tail -n +4 | xargs -r rm -f
 ls -1t "$BACKUP_DIR"/weekly-*.sql.gz  2>/dev/null | tail -n +3 | xargs -r rm -f
+ls -1t "$BACKUP_DIR"/weekly-*.sql.gz.sha256 2>/dev/null | tail -n +3 | xargs -r rm -f
 
 # ── 5. Контрольные суммы (ТЗ-152): для выгрузки в S3 и restore-проверок ──────
 [ -f "$DAILY_DB" ] && sha256sum "$DAILY_DB" > "$DAILY_DB.sha256"
