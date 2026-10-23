@@ -13,9 +13,15 @@ CREATE TABLE IF NOT EXISTS lesson_shares (
   expires_at        TIMESTAMPTZ NOT NULL,
   used_at           TIMESTAMPTZ,
   used_ip           VARCHAR(45),
-  converted_user_id UUID REFERENCES users(id) ON DELETE SET NULL
+  converted_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  -- Бесплатные ссылки (is_free_preview-урок / бесплатный курс) лимитом не
+  -- ограничиваются и квоту платных не расходуют (правка к ТЗ-187).
+  is_free           BOOLEAN NOT NULL DEFAULT FALSE
 );
 
--- Квота шеринга: 2 ссылки за скользящие 12 часов на пользователя (глобально)
+-- Квота шеринга: 2 ПЛАТНЫЕ ссылки за скользящие 12 часов на пользователя
 CREATE INDEX IF NOT EXISTS idx_lesson_shares_owner_created
   ON lesson_shares(owner_user_id, created_at DESC);
+
+-- Для существующих таблиц (прод до правки): добавить колонку без пересоздания
+ALTER TABLE lesson_shares ADD COLUMN IF NOT EXISTS is_free BOOLEAN NOT NULL DEFAULT FALSE;

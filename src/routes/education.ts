@@ -941,7 +941,8 @@ router.post('/lessons/:lessonId/share', authMiddleware, h(async (req, res) => {
 
   const lessonR = await query(
     `SELECT l.*, c.status AS course_status, c.visibility, c.deleted_at,
-            c.subscription_unlock_mode
+            c.subscription_unlock_mode, c.price,
+            EXISTS(SELECT 1 FROM course_tariffs t WHERE t.course_id = c.id) AS has_tariff
      FROM course_lessons l JOIN courses c ON c.id = l.course_id
      WHERE l.id = $1`,
     [lessonId],
@@ -955,22 +956,30 @@ router.post('/lessons/:lessonId/share', authMiddleware, h(async (req, res) => {
   const access = await checkLessonAccess(userId, lessonR.rows[0]);
   if (access.blocked) return res.status(access.blocked.status).json(access.blocked.body);
 
-  // Квота: 2 ссылки за скользящие 12 часов (глобально, не per-курс).
+  // Бесплатный контент лимитом не ограничивается и его не расходует:
+  // is_free_preview-урок или урок бесплатного курса (price = 0 и нет тарифов).
+  const row = lessonR.rows[0];
+  const isFreeShare = !!row.is_free_preview
+    || (Number(row.price) === 0 && !row.has_tariff);
+
+  // Квота: 2 ПЛАТНЫЕ ссылки за скользящие 12 часов (глобально, не per-курс).
   // Порог считаем на JS: шим SQLite криво транслирует NOW() - INTERVAL.
-  const quotaCutoff = new Date(Date.now() - 12 * 3600 * 1000).toISOString();
-  const quotaR = await query(
-    `SELECT count(*) AS cnt, min(created_at) AS oldest
-     FROM lesson_shares
-     WHERE owner_user_id = $1 AND created_at > $2`,
-    [userId, quotaCutoff],
-  );
-  if (Number(quotaR.rows[0]?.cnt ?? 0) >= 2) {
-    const ageHours = (Date.now() - shareDbMs(quotaR.rows[0].oldest)) / 3600000;
-    const retry_after_hours = Math.max(1, Math.ceil(12 - ageHours));
-    return res.status(429).json({
-      error: 'Лимит шеринга: 2 ссылки за 12 часов',
-      retry_after_hours,
-    });
+  if (!isFreeShare) {
+    const quotaCutoff = new Date(Date.now() - 12 * 3600 * 1000).toISOString();
+    const quotaR = await query(
+      `SELECT count(*) AS cnt, min(created_at) AS oldest
+       FROM lesson_shares
+       WHERE owner_user_id = $1 AND created_at > $2 AND NOT is_free`,
+      [userId, quotaCutoff],
+    );
+    if (Number(quotaR.rows[0]?.cnt ?? 0) >= 2) {
+      const ageHours = (Date.now() - shareDbMs(quotaR.rows[0].oldest)) / 3600000;
+      const retry_after_hours = Math.max(1, Math.ceil(12 - ageHours));
+      return res.status(429).json({
+        error: 'Лимит шеринга: 2 ссылки за 12 часов',
+        retry_after_hours,
+      });
+    }
   }
 
   const shareId = crypto.randomUUID();
@@ -978,14 +987,15 @@ router.post('/lessons/:lessonId/share', authMiddleware, h(async (req, res) => {
   // expires_at параметром: шим SQLite ломает трансляцию NOW() + INTERVAL '1 hour'.
   const expiresAt = new Date(Date.now() + 3600 * 1000).toISOString();
   await query(
-    `INSERT INTO lesson_shares (id, token, lesson_id, course_id, owner_user_id, expires_at)
-     VALUES ($1, $2, $3, $4, $5, $6)`,
-    [shareId, token, lessonId, lessonR.rows[0].course_id, userId, expiresAt],
+    `INSERT INTO lesson_shares (id, token, lesson_id, course_id, owner_user_id, expires_at, is_free)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [shareId, token, lessonId, row.course_id, userId, expiresAt, isFreeShare],
   );
   logUserEvent(userId, 'education.lesson_shared', {
     lesson_id: lessonId,
-    course_id: lessonR.rows[0].course_id,
+    course_id: row.course_id,
     share_id: shareId,
+    is_free: isFreeShare,
   }).catch(() => { /* fire-and-forget, как соседние вызовы */ });
 
   const base = (process.env.FRONTEND_URL || 'https://pulse.inside-trade.ru').replace(/\/+$/, '');

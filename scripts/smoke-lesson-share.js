@@ -87,18 +87,24 @@ async function seedDatabase() {
     [ids.admin, ids.sharer, ids.stranger, ids.sub],
   );
 
-  const C = { free: uuid(), drip: uuid(), race: uuid() };
+  const C = { free: uuid(), drip: uuid(), race: uuid(), paid: uuid() };
   await q(
     `INSERT INTO courses (id, title, slug, price, status, visibility) VALUES
      ($1,'Free курс','free-ls',0,'published','public'),
      ($2,'Drip курс','drip-ls',4900,'published','public'),
-     ($3,'Race курс','race-ls',0,'published','public')`,
-    [C.free, C.drip, C.race],
+     ($3,'Race курс','race-ls',0,'published','public'),
+     ($4,'Paid курс','paid-ls',4900,'published','public')`,
+    [C.free, C.drip, C.race, C.paid],
   );
   await q(
     `INSERT INTO course_enrollments (id, user_id, course_id, source, created_at) VALUES
      ($1,$2,$3,'free',datetime('now'))`,
     [uuid(), ids.sharer, C.free],
+  );
+  await q(
+    `INSERT INTO course_enrollments (id, user_id, course_id, source, created_at) VALUES
+     ($1,$2,$3,'purchase',datetime('now'))`,
+    [uuid(), ids.sharer, C.paid],
   );
   await q(
     `INSERT INTO course_enrollments (id, user_id, course_id, source, created_at) VALUES
@@ -115,11 +121,16 @@ async function seedDatabase() {
   await q(`INSERT INTO course_tariffs (course_id, plan_id) VALUES ($1,'premium')`, [C.drip]);
   await q(`UPDATE courses SET subscription_unlock_mode = 'drip' WHERE id = $1`, [C.drip]);
 
-  const L = { plain: uuid(), preview: uuid(), dripLocked: uuid(), race: uuid() };
+  const L = { plain: uuid(), preview: uuid(), dripLocked: uuid(), race: uuid(), paid: uuid() };
   await q(
     `INSERT INTO course_lessons (id, course_id, position, title, text_content, is_free_preview)
      VALUES ($1,$2,1,'Платный урок','<p>Секретный контент урока</p>',0)`,
     [L.plain, C.free],
+  );
+  await q(
+    `INSERT INTO course_lessons (id, course_id, position, title, text_content, is_free_preview)
+     VALUES ($1,$2,1,'Платный контент','<p>Секретный контент урока</p>',0)`,
+    [L.paid, C.paid],
   );
   await q(
     `INSERT INTO course_lessons (id, course_id, position, title, text_content, is_free_preview)
@@ -205,8 +216,8 @@ async function scenario() {
   const logBuf = [];
   const server = await startServer(logBuf);
   try {
-    // ── 1. Шеринг платного урока записанным → 201, url, событие
-    let r = await api('POST', `/api/education/lessons/${L.plain}/share`, { token: sharerJwt });
+    // ── 1. Шеринг урока платного курса записанным → 201, url, событие
+    let r = await api('POST', `/api/education/lessons/${L.paid}/share`, { token: sharerJwt });
     assert(r.status === 201 && r.json.url, `share → 201 + url, got ${r.status} ${r.text.slice(0, 200)}`);
     const t1 = tokenOf(r.json.url);
     assert(t1, `токен в url: ${r.json.url}`);
@@ -214,7 +225,7 @@ async function scenario() {
     const ev = await rowsOf(
       `SELECT event_data FROM user_events WHERE user_id = ? AND event_type = 'education.lesson_shared'`,
       ids.sharer);
-    assert(ev.length === 1 && JSON.parse(ev[0].event_data).lesson_id === L.plain,
+    assert(ev.length === 1 && JSON.parse(ev[0].event_data).lesson_id === L.paid,
       `событие lesson_shared: ${JSON.stringify(ev)}`);
     ok('1: запись может шерить платный урок → 201, url, событие education.lesson_shared');
 
@@ -236,13 +247,17 @@ async function scenario() {
       `drip-урок → 403 locked_by_drip, got ${r.status} ${r.text.slice(0, 200)}`);
     ok('4: урок, закрытый drip для шерера → 403 locked_by_drip');
 
-    // ── 5. Квота: третья ссылка за 12 часов → 429 (критерий 3)
-    r = await api('POST', `/api/education/lessons/${L.preview}/share`, { token: sharerJwt });
-    assert(r.status === 201, `вторая ссылка sharer → 201, got ${r.status}`);
-    r = await api('POST', `/api/education/lessons/${L.preview}/share`, { token: sharerJwt });
+    // ── 5. Квота: только ПЛАТНЫЕ ссылки; 3-я платная за 12 ч → 429 (критерий 3).
+    //    Бесплатные уроки/курсы лимит не расходуют и им не ограничиваются.
+    r = await api('POST', `/api/education/lessons/${L.paid}/share`, { token: sharerJwt });
+    assert(r.status === 201, `вторая платная ссылка sharer → 201, got ${r.status}`);
+    r = await api('POST', `/api/education/lessons/${L.paid}/share`, { token: sharerJwt });
     assert(r.status === 429 && /Лимит шеринга/.test(r.json.error || '') && r.json.retry_after_hours >= 1,
-      `третья ссылка → 429 с retry_after_hours, got ${r.status} ${r.text.slice(0, 200)}`);
-    ok('5: 3-я ссылка за 12ч → 429 + retry_after_hours');
+      `третья платная ссылка → 429 с retry_after_hours, got ${r.status} ${r.text.slice(0, 200)}`);
+    ok('5a: 3-я платная ссылка за 12ч → 429 + retry_after_hours');
+    r = await api('POST', `/api/education/lessons/${L.preview}/share`, { token: sharerJwt });
+    assert(r.status === 201, `бесплатная ссылка после 429 → 201, got ${r.status} ${r.text.slice(0, 200)}`);
+    ok('5b: бесплатная ссылка лимитом не ограничивается (после 429 → 201)');
 
     // ── 6. Гость открывает ссылку → 200, только текст; повторно → 410 used (критерий 1, 4)
     r = await api('GET', `/api/education/shared-lessons/${t1}`);
@@ -252,11 +267,11 @@ async function scenario() {
     const payloadKeys = JSON.stringify(Object.keys(r.json.lesson));
     assert(!/audio|video|materials|test/.test(payloadKeys),
       `payload НЕ содержит audio/video/materials/test: ${payloadKeys}`);
-    assert(r.json.course.slug === 'free-ls', `slug курса: ${r.text.slice(0, 200)}`);
+    assert(r.json.course.slug === 'paid-ls', `slug курса: ${r.text.slice(0, 200)}`);
     ok('6a: гость видит текст урока; payload без аудио/видео/материалов/теста');
 
     r = await api('GET', `/api/education/shared-lessons/${t1}`);
-    assert(r.status === 410 && /использована/.test(r.json.error || '') && r.json.course_slug === 'free-ls',
+    assert(r.status === 410 && /использована/.test(r.json.error || '') && r.json.course_slug === 'paid-ls',
       `повторное открытие → 410 used + course_slug, got ${r.status} ${r.text.slice(0, 200)}`);
     ok('6b: повторное открытие → 410 «уже использована» + course_slug для CTA');
 

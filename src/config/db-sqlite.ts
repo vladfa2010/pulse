@@ -882,7 +882,8 @@ export async function initSQLiteSchema(): Promise<void> {
       expires_at TEXT NOT NULL,
       used_at TEXT,
       used_ip TEXT,
-      converted_user_id TEXT REFERENCES users(id) ON DELETE SET NULL
+      converted_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      is_free INTEGER NOT NULL DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS idx_lesson_shares_owner_created
       ON lesson_shares(owner_user_id, created_at DESC);

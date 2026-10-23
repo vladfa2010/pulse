@@ -123,8 +123,10 @@ locked_by_drip по tenure; 401/403 + `IDOR blocked` в логе), complete,
 курса, enrollment/is_free_preview, живая подписка, drip, блокирующий тест
 предыдущего урока; админ — всегда доступ) — используются и GET урока, и
 шеринг. `POST /lessons/:lessonId/share` (auth): гейты через checkLessonAccess
-(403 без доступа), квота 2 ссылки за скользящие 12 часов на юзера (429
-`{error, retry_after_hours}`), ссылка живёт 1 час. `GET /shared-lessons/:token`
+(403 без доступа), квота 2 ПЛАТНЫЕ ссылки за скользящие 12 часов на юзера (429
+`{error, retry_after_hours}`); бесплатные ссылки — `is_free_preview`-уроки и
+уроки бесплатных курсов (price = 0 и нет тарифов) — лимитом не ограничиваются
+и его не расходуют (колонка `lesson_shares.is_free`), ссылка живёт 1 час. `GET /shared-lessons/:token`
 (публичный, без auth): атомарное сгорание при первом открытии
 (`UPDATE ... SET used_at ... WHERE used_at IS NULL AND expires_at > $now
 RETURNING` — гонка двух открытий невозможна), 410 used (+`course_slug` для
