@@ -117,35 +117,81 @@ locked_by_drip по tenure; 401/403 + `IDOR blocked` в логе), complete,
 «Мои курсы», материалы-download (302 на signedUrl; is_free анониму с
 лимитом 30/час по IP; ТЗ-173: fallback `?token=` для скачивания по
 авторизационной ссылке), «Курс в новостях». `GET /api/news/:slug` отдаёт
-`attached_courses` (≤3, published+public).
-**ТЗ-187 («Меджик-линк», разовый шеринг урока):** все гейты просмотра урока
-вынесены в `checkLessonAccess(userId, lesson)` (hidden-антислив 404, статус
-курса, enrollment/is_free_preview, живая подписка, drip, блокирующий тест
-предыдущего урока; админ — всегда доступ) — используются и GET урока, и
-шеринг. `POST /lessons/:lessonId/share` (auth): гейты через checkLessonAccess
-(403 без доступа), квота 2 ПЛАТНЫЕ ссылки за скользящие 12 часов на юзера (429
-`{error, retry_after_hours}`); бесплатные ссылки — `is_free_preview`-уроки и
-уроки бесплатных курсов (price = 0 и нет тарифов) — лимитом не ограничиваются
-и его не расходуют (колонка `lesson_shares.is_free`), ссылка живёт 1 час. `GET /shared-lessons/:token`
-(публичный, без auth): атомарное сгорание при первом открытии
-(`UPDATE ... SET used_at ... WHERE used_at IS NULL AND expires_at > $now
-RETURNING` — гонка двух открытий невозможна), 410 used (+`course_slug` для
-CTA на курс) / 410 expired / 404. Payload гостю — только
-`{lesson:{title, content_html (sanitizeLessonHtml), position}, course:{title,
-slug}}`: аудио/видео/материалы/тест не выбираются из БД по построению.
-Таблица `lesson_shares` (миграция `src/migrations/lms_v10_lesson_shares.sql`,
-эндпоинт `POST /migrate-lms-lesson-shares?secret=CRON_SECRET`; SQLite-зеркало
-в `db-sqlite.ts`). Атрибуция регистрации: фронт после открытия ссылки кладёт
-токен в localStorage (`lesson_share_token`), `useAuth.register` шлёт его как
-`share_token`; бэк по использованному токену ставит `registration_source=
-'lesson_share'`, пишет `converted_user_id` и логирует `register` с
-`{shared_by_user_id, lesson_id}`. Регистрация без токена / с битым — штатная.
-Все даты в share-запросах считаются на JS и передаются параметрами: SQLite-шим
-криво транслирует `NOW() ± INTERVAL`. Смоук `scripts/smoke-lesson-share.js`
-(12 проверок). Событие `education.lesson_shared {lesson_id, course_id,
-share_id}` (в ALERT_EVENT_TYPES не входит). Фронт: кнопка Share2 в ридер-баре
-урока (только при наличии конспекта) → GlassModal со ссылкой и «Копировать»;
-страница `/share/lesson/:token` (noindex, SafeHtmlContent, CTA на курс).
+`attached_courses` (≤3, published+public). Разовый шеринг урока гостю —
+отдельный раздел ниже («Меджик-линк», ТЗ-187).
+
+### Разовый шеринг урока гостю — «Меджик-линк» (ТЗ-187)
+
+Пользователь с доступом к уроку создаёт одноразовую ссылку, по которой гость
+без аккаунта видит **только текст урока** (конспект). Цель — виральность:
+гость читает урок, видит CTA на курс, при регистрации его визит атрибутируется
+шереру. Источник истины — `ТЗ-187-меджик-линк-шеринг-урока.md` (+ Правка 1
+от 2026-10-23: квота только на платные ссылки).
+
+**Эндпоинты** (`src/routes/education.ts`, маршруты рядом с роутами урока):
+
+| Метод и путь | Auth | Что делает |
+|---|---|---|
+| `POST /api/education/lessons/:lessonId/share` | Bearer | Создать ссылку. Гейты доступа те же, что у просмотра урока (см. `checkLessonAccess`): hidden-антислив 404, статус курса, enrollment/`is_free_preview` (гость → 401, чужой → 403 + `IDOR blocked` в логе), живая подписка (`subscription_expired`), drip (`locked_by_drip`), блокирующий тест предыдущего урока (`test_blocked`); админ может шерить любой урок. Квота — ниже. Ответ 201 `{url: <FRONTEND_URL>/share/lesson/<token>}`. |
+| `GET /api/education/shared-lessons/:token` | нет | Публичное чтение. Токен — 48 hex; не подходит → 404. **Атомарное сгорание**: `UPDATE lesson_shares SET used_at=..., used_ip=... WHERE token=$1 AND used_at IS NULL AND expires_at > $now RETURNING ...` — при гонке двух открытий ровно один получит 200, второй упадёт в разбор причины. 200 — текст урока; 410 «Ссылка уже использована» (+`course_slug` для CTA на курс); 410 «Срок действия ссылки истёк»; 404 — токена нет или курс удалили после сгорания. |
+
+**Квота (Правка 1):** 2 **платные** ссылки за скользящие 12 часов на
+пользователя (глобально, не per-курс) — 429 `{error: 'Лимит шеринга: 2
+ссылки за 12 часов', retry_after_hours}`. Бесплатные ссылки — `is_free_preview`-
+уроки и уроки бесплатных курсов (price = 0 и нет записей в `course_tariffs`) —
+лимитом **не ограничиваются и его не расходуют**. Признак хранится в колонке
+`lesson_shares.is_free` и попадает в событие `education.lesson_shared`.
+
+**Право на шеринг** определяется тем же `checkLessonAccess`, что и просмотр:
+нельзя расшарить урок, который сам не можешь открыть (включая drip-замок и
+непройденный блокирующий тест). Это закрывает обход оплаты через гостевые
+ссылки.
+
+**Жизнь ссылки:** 1 час с момента создания, строго одно открытие. Даты во
+всех share-запросах считаются на JS и передаются параметрами — SQLite-шим
+(`db-sqlite.ts`) криво транслирует `NOW() ± INTERVAL`, поэтому диалект-нейтральный
+вариант обязателен.
+
+**Payload гостю** — только `{lesson: {title, content_html, position}, course:
+{title, slug}}`. `content_html` проходит `sanitizeLessonHtml` (whitelist тегов,
+https-only, img только /media/*). Аудио, видео, материалы и тест в SELECT не
+попадают по построению запроса — расширить выдачу нельзя, не меняв код.
+
+**База:** таблица `lesson_shares` (id, token VARCHAR(64) UNIQUE, lesson_id,
+course_id, owner_user_id, created_at, expires_at, used_at, used_ip,
+converted_user_id, is_free). Миграция `src/migrations/lms_v10_lesson_shares.sql`
+(идемпотентна, включая `ALTER TABLE ... ADD COLUMN IF NOT EXISTS is_free` для
+уже созданных таблиц), применение: `POST /migrate-lms-lesson-shares?secret=
+CRON_SECRET`. SQLite-зеркало — `initSQLiteSchema()` в `db-sqlite.ts` (смоуки).
+
+**Атрибуция регистрации:** фронт после успешного открытия кладёт токен в
+localStorage (`lesson_share_token`); `useAuth.register` шлёт его полем
+`share_token`. Бэк ищет **использованный** токен (`used_at IS NOT NULL`,
+формат 48 hex) и ставит `registration_source = 'lesson_share'`, пишет
+`converted_user_id` и логирует `register` с `shared_by_user_id`/`lesson_id`.
+Регистрация без токена или с битым/неиспользованным — штатная, источник не
+перезаписывается.
+
+**Фронтенд** (`pulse-frontend`): кнопка Share2 в ридер-баре урока
+(`LessonPage.tsx`, рендерится только при наличии конспекта — гость видит
+только текст) → `POST share` → GlassModal со ссылкой, «Копировать»
+(clipboard + тост), подсказкой про квоту; 429 — тостом с текстом бэка.
+Модалка открывается через `createPortal(..., document.body)` — у предков
+`LessonView` есть CSS-transform (framer-motion), из-за него `fixed` внутри
+дерева центрируется по документу, а не по вьюпорту. Публичная страница
+`/share/lesson/:token` (`SharedLessonPage.tsx`, noindex, SafeHtmlContent):
+состояния loading / текст урока + CTA «Открыть курс» / 410 used (CTA на курс
+по `course_slug`) / 410 expired (CTA в каталог) / 404. Роут в `App.tsx`
+рядом с SharedPathPage.
+
+**События** (в ALERT_EVENT_TYPES не входят): `education.lesson_shared
+{lesson_id, course_id, share_id, is_free}` — факт создания ссылки;
+`register` с `{share_token, shared_by_user_id, lesson_id}` — конверсия гостя.
+
+**Смоук:** `scripts/smoke-lesson-share.js` — 13 проверок: гейты (403/401/
+drip), квота на платные (429) и обход бесплатными, сгорание и гонка (200+410),
+used/expired/404, payload без аудио/материалов/теста, атрибуция регистрации,
+регрессия register без токена.
 
 **Фронтенд** (таб «Образование» в `/admin`): таблица курсов (обложки, ярлыки
 размера/типа, чип категории, фильтр «Потеряли источник», удалённые),
