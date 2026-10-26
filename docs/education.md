@@ -67,6 +67,25 @@
   кнопок/теста). Тесты: `src/tests/mdCourseImport.test.ts` (парсер, 78 проверок),
   `src/tests/mdCourseImportEndpoint.test.ts` (живой API, после деплоя),
   фронт `importmd.smoke.test.tsx`.
+- ✅ **ТЗ-191** (экспорт курса/урока в MD, backend + frontend): конвертер
+  `services/education/mdCourseExport.ts` (turndown + turndown-plugin-gfm,
+  HTML→MD): преамбула-текст, `# ` заголовки, frontmatter `---`, `:::chart`,
+  `:::button` (0–3), `:::test … :::` (до 20 вопросов), вставки `div.callout`/
+  `div.html-block` — сырым HTML (TurndownService не обрабатывает их, оставляем
+  как есть), GFM-таблицы. `#` в названиях заменяются на ＃
+  (`sanitizeMdTitle`), чтобы не ломать разрез по `# `. Эндпоинт
+  `GET /courses/:id/export-md` (+ `?lesson_id=`, только админ): Content-Type
+  `text/markdown; charset=utf-8`, `Content-Disposition: attachment;
+  filename*=UTF-8''<urlencoded>`, Cache-Control no-store; 404 удалённый/чужой
+  курс, 400 чужой урок/нет уроков. Аудит: `education.course_exported`
+  (метка «⚠️ Выгрузка курса в MD» в админ-алертах). Материалы в файл не
+  входят. Round-trip с ТЗ-159: экспорт→импорт восстанавливает описание,
+  уроки, блоки/кнопки/тест/фронтматтер (не байт-в-байт — форматирование
+  списков/таблиц нормализуется валидным markdown). Фронт: кнопка «Экспорт MD»
+  во вкладке «Уроки» (весь курс) + иконка скачивания у каждого урока,
+  скачивание через blob (`adminApi.getBlob`). Тесты: `src/tests/
+  mdCourseExport.test.ts` (35 проверок), смоук `scripts/smoke-md-export.js`
+  (5 проверок, включая round-trip), фронт `lessonlist.tz191.test.tsx`.
 - ⏭ Дальше: ТЗ-100 Задача 4 («Мои курсы» в ЛК), затем ТЗ-105, ТЗ-104 по
   команде, ТЗ-107 последним.
 

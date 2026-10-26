@@ -39,6 +39,7 @@ import { enqueueScan } from '../services/education/virusScan'; // ТЗ-102: retr
 import { getMatchDailyCount, getMatchLlmDailyLimit, isEducationMatchEnabled, onCoursePublished, retroscanCourse, scheduleCourseReembedding } from '../services/education/match'; // ТЗ-103 Задачи 1,3: эмбеддинги + ретроскан; ТЗ-172: счётчик/лимит LLM; ТЗ-177: повторный ретроскан при смене порога
 import { isMatchLlmEnabled, setMatchLlmEnabled } from '../services/education/settings'; // ТЗ-172: выключатель LLM-ранкера
 import { parseCourseMd } from '../services/education/mdCourseImport'; // ТЗ-159: импорт уроков из Markdown
+import { courseToMd, lessonToMd, contentDisposition } from '../services/education/mdCourseExport'; // ТЗ-191: экспорт в Markdown (round-trip)
 import { courseTagIds, matchEventsToCourse } from '../services/education/calendarMatch'; // ТЗ-103 Задача 7: events-preview
 import { putBuffer, removeFile, StorageError } from '../services/storage/driver';
 
@@ -1525,6 +1526,88 @@ router.post('/courses/:id/import-md', uploadMw(mdImportUpload, 'file'), h(async 
   }
   // Все уроки уже созданы ранее и описание не менялось — 200 вместо 201
   res.json(body);
+}));
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ТЗ-191 — Экспорт курса/урока в Markdown (round-trip с import-md ТЗ-159)
+// ═══════════════════════════════════════════════════════════════════════════
+
+router.get('/courses/:id/export-md', h(async (req, res) => {
+  const courseId = req.params.id;
+  const lessonId = req.query.lesson_id ? String(req.query.lesson_id) : null;
+
+  const courseR = await query(
+    `SELECT id, title, description, deleted_at FROM courses WHERE id = $1`,
+    [courseId],
+  );
+  if (courseR.rows.length === 0 || courseR.rows[0].deleted_at) return fail(res, 404, 'Курс не найден');
+  const course = courseR.rows[0];
+
+  const lessonsR = await query(
+    `SELECT id, position, title, text_content, video_embed_url, duration_min,
+            is_free_preview, unlock_after_days, buttons
+     FROM course_lessons WHERE course_id = $1 ${lessonId ? 'AND id = $2 ' : ''}ORDER BY position ASC`,
+    lessonId ? [courseId, lessonId] : [courseId],
+  );
+  if (lessonsR.rows.length === 0) {
+    return fail(res, 400, lessonId ? 'Урок не из этого курса' : 'В курсе нет уроков для экспорта');
+  }
+
+  const lessonIds = lessonsR.rows.map((l: any) => String(l.id));
+  // IN с плейсхолдерами — оба диалекта (PG и SQLite) одинаково; инъекций нет.
+  const ph = lessonIds.map((_, i) => `$${i + 1}`).join(',');
+  const testsR = await query(
+    `SELECT lesson_id, pass_score, is_blocking, questions FROM lesson_tests WHERE lesson_id IN (${ph})`,
+    lessonIds,
+  );
+  const testByLesson = new Map(testsR.rows.map((t: any) => [String(t.lesson_id), t]));
+
+  const lessons = lessonsR.rows.map((l: any) => {
+    const t = testByLesson.get(String(l.id));
+    return {
+      lesson: {
+        position: Number(l.position),
+        title: String(l.title),
+        text_content: l.text_content ? String(l.text_content) : null,
+        video_embed_url: l.video_embed_url ? String(l.video_embed_url) : null,
+        duration_min: l.duration_min != null ? Number(l.duration_min) : null,
+        is_free_preview: boolDb(l.is_free_preview),
+        unlock_after_days: Number(l.unlock_after_days) || 0,
+        buttons: (parseDbJson(l.buttons) as LessonButton[]) || [],
+      },
+      test: t
+        ? {
+            pass_score: Number(t.pass_score),
+            is_blocking: boolDb(t.is_blocking),
+            questions: parseDbJson(t.questions) as { q: string; options: string[]; correct: number }[],
+          }
+        : null,
+    };
+  });
+
+  const md = lessonId
+    ? lessonToMd(lessons[0].lesson, lessons[0].test)
+    : courseToMd(
+        { title: String(course.title), description: course.description ? String(course.description) : null },
+        lessons,
+      );
+
+  const exportTitle = lessonId
+    ? `Урок ${lessons[0].lesson.position} — ${lessons[0].lesson.title}`
+    : `Курс — ${course.title}`;
+  res.set({
+    'Content-Type': 'text/markdown; charset=utf-8',
+    'Content-Disposition': contentDisposition(`${exportTitle}.md`),
+    'Cache-Control': 'no-store',
+  });
+  res.send(md);
+
+  // Аудит выгрузки контента (по аналогии с admin_export_users). Не блокируем ответ.
+  logUserEvent(req.user!.userId, 'education.course_exported', {
+    course_id: courseId,
+    course_title: String(course.title),
+    ...(lessonId ? { lesson_title: lessons[0].lesson.title } : {}),
+  }).catch(() => {});
 }));
 
 router.post('/courses/:id/lessons/reorder', h(async (req, res) => {

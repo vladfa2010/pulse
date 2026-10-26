@@ -46,6 +46,7 @@ export const ALERT_EVENT_TYPES: { value: UserEventType | 'sentiment_vote'; label
   { value: 'cascades_viewed', label: 'Открыл каскады' },
   { value: 'page_view_feed', label: 'Открыл ленту', minIntervalMin: 60 },
   { value: 'admin_export_users', label: '⚠️ Выгрузка базы пользователей' },
+  { value: 'education.course_exported', label: '⚠️ Выгрузка курса в MD' },
 ];
 
 export interface AdminTgSettings {
@@ -152,6 +153,9 @@ function formatAlert(eventType: UserEventType, user: UserMini | null, data: Reco
       break;
     case 'admin_export_users':
       details = `⚠️ Инициатор: ${escapeHtml(user?.email || data.admin_email || '')}\n📊 Строк: ${data.rows ?? '?'}`;
+      break;
+    case 'education.course_exported':
+      details = `⚠️ Инициатор: ${escapeHtml(user?.email || '')}\n📚 Курс: ${escapeHtml(data.course_title || '')}${data.lesson_title ? `\n📄 Урок: ${escapeHtml(data.lesson_title)}` : ''}`;
       break;
     default:
       details = Object.entries(data)
