@@ -24,7 +24,7 @@
 | Компонент | Где | Что делает |
 |---|---|---|
 | `topics-worker` | `topics_worker/main.py`, контейнер `pulse-topics-worker` (Python-sidecar, one-shot, `--profile worker`) | Кластеризация окна новостей → `topics` / `topic_items` / `topic_runs`. LLM не знает |
-| `topics-naming` | `src/services/cron.ts` (`startTopicsNamingCron`, крон 04:10 МСК в процессе backend) | LLM-имена для безымянных тем последнего прогона (≤30 за запуск) |
+| `topics-naming` | `src/services/cron.ts` (`startTopicsNamingCron`, крон 04:10 МСК в процессе backend) | LLM-имена для безымянных тем последнего прогона (≤100 за запуск) |
 | API | `src/routes/marketPublic.ts` | `GET /api/market/topics`, `GET /api/market/topic?id=` |
 
 ## Пайплайн прогона (03:40 МСК, хостовый cron VPS)
@@ -57,8 +57,11 @@
    Неполный текущий день в тренд не включается.
 7. **Jaccard-склейка с прошлым прогоном**: overlap = |пересечение news_id| /
    |объединение|, порог 0.3. Сматченная тема наследует `prev_topic_id` +
-   `name`/`summary` (`named=true` сразу, LLM не дёргается). Один старый
-   кластер наследует только один новый (максимальный overlap).
+   `name`/`summary` (`named=true` сразу, LLM не дёргается — но ТОЛЬКО если
+   унаследованное имя непустое: `bool(inherited and inherited["name"])`,
+   иначе тема остаётся `named=false` и её назовёт крон — стоп распространения
+   `name=NULL`, баг ТЗ-196). Один старый кластер наследует только один новый
+   (максимальный overlap).
 8. **is_core**: `membership_probabilities_ >= 0.5` (soft-матрица в hdbscan ≥
    0.8.34 убрана из атрибутов fit; `probabilities_` — вероятность принадлежности
    назначенному кластеру, для диагонали эквивалентна).
@@ -74,9 +77,14 @@
 ## Нейминг (04:10 МСК, Node-cron в backend)
 
 - Защита: `acquireCronLock('topics-naming')` + флаг шатдауна.
-- Выборка: безымянные темы последнего done-прогона, `ORDER BY news_count DESC
-  LIMIT 30` (`TOPICS_NAMING_LIMIT`) — разгребает накопленное после сбоев
-  за несколько ночей.
+- Выборка: темы последнего done-прогона с `named = false ИЛИ name IS NULL`
+  (второе — загрязнённые наследованием темы с пустым именем, ТЗ-196),
+  `ORDER BY news_count DESC LIMIT 100` (`TOPICS_NAMING_LIMIT`) — разгребает
+  накопленное после сбоев за несколько ночей.
+- Заголовки для промпта: `title_ru || title_original` (ТЗ-196) — свежие
+  новости часто ещё без перевода (`title_ru NULL`, см. ТЗ-183), без fallback
+  headlines пустой и нейминг молча фейлится. top-8, максимум 2 на источник,
+  свежие первыми.
 - LLM: конвенции §9.1 методологии (как storyGrouper): `kimi-k2.6`, temperature
   из `VERIFIER_MODEL_TEMPERATURE`, thinking disabled для kimi-k*,
   `response_format: json_object`, таймаут 60 с, max_tokens 500.
@@ -85,12 +93,14 @@
   generic-имена («Новости», «Экономика») — требуется конкретный предмет.
 - **Fail-closed**: невалидный JSON / пустое name → тема остаётся unnamed.
 - Запись: `UPDATE topics SET name, summary, named=true WHERE id=$1 AND
-  named=false` — условие `named=false` страхует от гонки двух запусков.
+  (named=false OR name IS NULL)` — не затирает чужое имя, чинит пустые.
 - Стоимость: ≤1 вызов на НОВУЮ тему в сутки; сматченные через Jaccard темы
   наследуют имя бесплатно.
 - `nameTopicWithLlm` экспортирован из `src/services/cron.ts` — можно дёрнуть
-  разовой джобой внутри контейнера (`docker cp` скрипт + `docker exec … node`),
-  если нейминг нужен не дожидаясь крона.
+  разовой джобой `scripts/nameUnnamedTopics.js` (`docker exec pulse-backend
+  node scripts/nameUnnamedTopics.js`) — берёт ВСЕ темы `named=false OR
+  name IS NULL` последнего прогона, пауза 200–500 мс между вызовами,
+  идемпотентна. Использована для разгреба 26.10 (53 + 167 тем).
 
 ## Таблицы (`src/migrations/topics_v1.sql`, ТОЛЬКО VPS)
 
