@@ -81,12 +81,12 @@ export function formatDigestPush(content: DigestContent): { title: string; body:
     };
   }
 
-  const title = truncateTextSmart(first.title, PUSH_TITLE_MAX);
+  const title = truncateTextSmart(stripPushMarkup(first.title), PUSH_TITLE_MAX);
 
   let body: string;
   if (n === 1) {
     // summary в DigestArticle отсутствует — показываем контекст: источник и тег.
-    const ctx = [first.source, first.tag].filter(Boolean).join(' · ');
+    const ctx = stripPushMarkup([first.source, first.tag].filter(Boolean).join(' · '));
     body = truncateTextSmart(ctx, PUSH_BODY_MAX) || '1 новая статья';
   } else {
     body = `+ ещё ${n - 1} ${declineWord(n - 1, 'статья', 'статьи', 'статей')}`;
@@ -187,6 +187,33 @@ export function truncateTextSmart(text: string, maxLength: number): string {
     return text.slice(0, cutAt) + '…';
   }
   return text.slice(0, maxLength - 1) + '…';
+}
+
+/**
+ * Очистка текста пуша от HTML/markdown-разметки (ТЗ_195).
+ * Применять ДО truncateTextSmart — мусор не должен съедать лимит символов.
+ * Порядок замен значим: ссылки → теги → именованные сущности →
+ * остаточные сущности → markdown-маркеры → схлопывание пробелов.
+ */
+export function stripPushMarkup(text: string): string {
+  return text
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')   // [текст](url) → текст
+    .replace(/<[^>]*>/g, ' ')                   // HTML-теги
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&mdash;/g, '—')
+    .replace(/&ndash;/g, '–')
+    .replace(/&hellip;/g, '…')
+    .replace(/&laquo;/g, '«')
+    .replace(/&raquo;/g, '»')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#0?39;/g, "'")
+    .replace(/&[#a-zA-Z0-9]+;/g, ' ')           // все остальные сущности
+    .replace(/[*_~`#]+/g, '')                   // markdown-маркеры
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 // Единый источник лимитов push-уведомлений (ТЗ push v3.0):
@@ -379,14 +406,17 @@ export function formatWeeklyReportPush(
   const n = content.totalArticles;
   const topTag = content.tagSummaries[0]?.tagName || '';
 
-  const title = truncateTextSmart(`📊 Еженедельный отчёт: ${content.period}`, PUSH_TITLE_MAX);
+  const title = truncateTextSmart(
+    `📊 Еженедельный отчёт: ${stripPushMarkup(content.period)}`,
+    PUSH_TITLE_MAX
+  );
 
   let body: string;
   if (n === 1) {
     body = '1 новость за неделю';
   } else {
     const base = `${n} ${declineWord(n, 'новость', 'новости', 'новостей')} за неделю`;
-    body = topTag ? truncateTextSmart(`${base} · ${topTag}`, PUSH_BODY_MAX) : base;
+    body = topTag ? truncateTextSmart(`${base} · ${stripPushMarkup(topTag)}`, PUSH_BODY_MAX) : base;
   }
 
   const data: Record<string, string> = { type: 'weekly_report', count: String(n), period: content.period };

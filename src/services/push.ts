@@ -14,7 +14,7 @@ import { sendWebPushToUser } from './webPush';
 import { isQuietHoursMsk } from './notifications/quietHours';
 import { getEnabledSubscriptions } from './notifications/subscriptions';
 import { getQuietHours } from './notifications/subscriptions';
-import { truncateTextSmart, PUSH_TITLE_MAX, PUSH_BODY_MAX } from './notifications/formatters';
+import { truncateTextSmart, stripPushMarkup, PUSH_TITLE_MAX, PUSH_BODY_MAX } from './notifications/formatters';
 
 let messaging: Messaging | null = null;
 
@@ -263,9 +263,11 @@ export async function sendNewArticlePush(
     console.log(`[Push] Article ${newsId}: ${userIds.length} candidate users`);
     if (userIds.length === 0) return;
 
-    const pushTitle = truncateTextSmart(title, PUSH_TITLE_MAX);
+    const pushTitle = truncateTextSmart(stripPushMarkup(title), PUSH_TITLE_MAX);
 
-    const rawBody = (summary || '').trim();
+    // source в fallback не оборачиваем — внутреннее поле («РБК», «ТАСС»),
+    // разметки там нет; trim уже сделан внутри stripPushMarkup (ТЗ_195)
+    const rawBody = stripPushMarkup(summary || '');
     const body = truncateTextSmart(
       rawBody || source || 'Новая новость',
       PUSH_BODY_MAX
