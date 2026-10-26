@@ -546,6 +546,10 @@ router.get('/search', authMiddleware, async (req: AuthRequest, res) => {
 
     // ТЗ-161: точные совпадения всегда первыми и всегда помечены.
     for (const a of articles) a.match_type = 'exact';
+    // Лексический счётчик до семантических докидов: hasMore — только по
+    // лексическим совпадениям, иначе докиды завышают articles.length над total
+    // и пагинация молча обрывается (REVIEW-TZ-161_163, нит hasMore).
+    const lexicalCount = articles.length;
 
     // ─── ТЗ-161: семантическая часть гибридного поиска (PG-only) ────────
     // SQLite-режим (демо/CI): семантика недоступна — векторы живут только
@@ -568,7 +572,7 @@ router.get('/search', authMiddleware, async (req: AuthRequest, res) => {
       articles,
       total,
       page,
-      hasMore: offset + articles.length < total,
+      hasMore: offset + lexicalCount < total,
     });
   } catch (err: any) {
     console.error('[News] Search error:', err.message, err.stack?.substring(0, 200));

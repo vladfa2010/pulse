@@ -12,4 +12,4 @@
 --
 -- docker exec -i pulse-postgres psql -U pulse_user -d pulse -f - < src/migrations/news_embedding_hnsw.sql
 -- =============================================================================
-CREATE INDEX IF NOT EXISTS news_embedding_hnsw ON news USING hnsw (embedding vector_cosine_ops);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS news_embedding_hnsw ON news USING hnsw (embedding vector_cosine_ops);

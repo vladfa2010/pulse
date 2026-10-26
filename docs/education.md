@@ -829,9 +829,10 @@ position 1..N), `course_path_enrollments`. Курсы удаляются мяг�
 слот 04:30 занят ANALYZE news) пересчитывает эмбеддинги изменившихся уроков
 (SHA-256 text_hash, без instruction-префикса) и атомарно заменяет снапшот
 `lesson_embeddings` / `lesson_similarity` / `course_similarity`
-(PG-транзакция через pool.connect). Пороги через env
-`KG_LESSON_THRESHOLD` (0.55), `KG_COURSE_THRESHOLD` (0.60),
-`KG_RECOMMEND_THRESHOLD` (0.45), топ-N: 5 / 3 / 10.
+(PG-транзакция через pool.connect). Пороги через env (`src/config/knowledgeGraph.ts`):
+`KG_LESSON_CROSS_MIN_SIM` (0.55, топ-`KG_LESSON_CROSS_TOP`=5 cross-course),
+`KG_LESSON_INTRA_MIN_SIM` (0.60, топ-`KG_LESSON_INTRA_TOP`=3 внутрикурсовых),
+`KG_COURSE_MIN_SIM` (0.45, среднее по топ-`KG_COURSE_TOP_PAIRS`=10 cross-пар).
 
 **API (фичефлаг `EDUCATION_GRAPH_ENABLED`, без флага — 404):**
 - `GET /api/education/graph` — глобальная «Карта знаний»: узлы курсов
@@ -867,8 +868,9 @@ FNV-1a(id), без библиотек. `graph: null` → секция не ре�
 уроков + **11 рёбер курсов** за 0,35 с. E2E: `/api/education/graph` → 200,
 граф курса — 13 уроков со состояниями, 12+4 рёбер, 5 рекомендаций.
 Транспорт TEI переведён на `node:http` (undici headersTimeout 300 с,
-см. docs/embeddings.md), TEI на 2 ядрах (RAYON=2, cpus 2, mem 5000m —
-на 4500m cgroup-OOM при warmup).
+см. docs/embeddings.md), TEI: **RAYON=1, cpus 1.5, mem 4500m** (актуальные
+значения `docker-compose.yml` `d245639` == VPS, сверено 27.10; промежуточные
+RAYON=2 / cpus 2 / mem 5000m из ранних заметок устарели).
 
 **Мэтчинг курсов↔новости (ТЗ-103) включён тем же рестартом:** первичный
 прогон — `retroscanCourse` по каждому published-курсу (ретеншн-окно,
