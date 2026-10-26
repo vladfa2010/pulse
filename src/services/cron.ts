@@ -575,7 +575,7 @@ const TOPICS_ENABLED = process.env.TOPICS_ENABLED === 'true';
 const KIMI_API_KEY = process.env.KIMI_API_KEY;
 const KIMI_MODEL = process.env.KIMI_MODEL || 'kimi-k2.6';
 
-const TOPICS_NAMING_LIMIT = 30;        // тем за запуск — разгребает накопленное после сбоев
+const TOPICS_NAMING_LIMIT = 100;       // тем за запуск — разгребает накопленное после сбоев
 const TOPICS_NAMING_TIMEOUT_MS = 60_000;
 const TOPICS_NAMING_MAX_TOKENS = 500;  // {"name": "2–5 слов", "summary": "1 предложение"}
 
@@ -603,9 +603,11 @@ interface TopicToName {
 export async function nameTopicWithLlm(topic: TopicToName): Promise<boolean> {
   if (!KIMI_API_KEY) return false;
 
-  // top-8 заголовков, максимум 2 на источник — берём свежие, дальше режем в JS
+  // top-8 заголовков, максимум 2 на источник — берём свежие, дальше режем в JS.
+  // Fallback на title_original: свежие новости часто ещё без перевода (title_ru
+  // NULL) — иначе headlines пуст и нейминг молча не срабатывает (ТЗ-196).
   const headRes = await query(
-    `SELECT n.title_ru, n.source
+    `SELECT n.title_ru, n.title_original, n.source
      FROM topic_items ti
      JOIN news n ON n.id = ti.news_id
      WHERE ti.topic_id = $1
@@ -619,7 +621,7 @@ export async function nameTopicWithLlm(topic: TopicToName): Promise<boolean> {
     const src = r.source || '';
     perSource[src] = (perSource[src] || 0) + 1;
     if (perSource[src] > 2) continue;
-    const title = String(r.title_ru || '').slice(0, 160);
+    const title = String(r.title_ru || r.title_original || '').slice(0, 160);
     if (title) headlines.push(title);
     if (headlines.length >= 8) break;
   }
