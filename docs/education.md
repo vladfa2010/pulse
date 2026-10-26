@@ -111,7 +111,10 @@ scripts/recompress-covers.ts [--dry-run]`),
 (50/стр) + usage-привязки (обложки курсов/программ, материалы incl. UGC,
 картинки конспектов по text_content LIKE) + summary (unused/bytes/trash);
 `DELETE /files?path=&force=` (используется и не force → 409 `{usages}`,
-иначе → trash), `GET /files/trash`, `POST /files/trash/restore`
+иначе → trash), `GET /files/download?path=` — скачивание через админ-контур
+(фронт: fetch+Blob с Bearer; materials/ugc публично не отдаются — mediaGuard
+требует signed URL, поэтому прямая ссылка давала 403), `GET /files/trash`,
+`POST /files/trash/restore`
 (манифест `<trashName>.path` в trash с ТЗ-199; записи без манифеста —
 legacy, без restore), `DELETE /files/trash?path=` (purge навсегда);
 path-guard `normalizeMediaPath` (префикс /media/, без `..`, kind из набора);
@@ -981,3 +984,50 @@ live-API `src/tests/educationStatsOverview.test.ts` (паттерн ТЗ-174, п
 **Тесты:** фронт — vitest `coursestats.tz181.test.tsx` + дрилл-даун в
 `statspanel.tz180.test.tsx`; бэкенд — live-API `courseStatsDetail.test.ts`
 (прогон на проде после деплоя).
+
+## ТЗ-199 — галерея файлов и корзина (2026-10-26)
+
+Четвёртая под-вкладка «Файлы» в табе «Образование» админки: медиатека всего
+storage LMS — превью, привязки «где используется», копирование пути, удаление
+с защитой, корзина tmp/trash с восстановлением и purge.
+
+**Драйвер** (`services/storage/driver.ts`): `listFiles(kind?)` — рекурсивный
+обход `UPLOADS_DIR/<kind>` (4 kind'а; S3-ветка — StorageError 501, как у
+putBuffer); `listTrash()` — записи `tmp/trash`, исходный relPath читается из
+манифеста `<trashName>.path` (removeFile пишет его с ТЗ-199, best-effort);
+записи до ТЗ-199 без манифеста — legacy, показываются без restore.
+`restoreFile(trashName)` — 400 без манифеста, 409 «путь занят»;
+`purgeTrashFile` — unlink файла + манифеста. `readFileBuffer(relPath)` —
+чтение по relPath через `normalizeMediaPath` (префикс `/media/`, без `..`,
+kind из разрешённого набора — тот же guard во всех `/files/*` эндпоинтах).
+`normalizeMediaPath`/`sanitizeTrashName` — guard'ы API (path traversal → 400).
+
+**Usage-скан** (`services/education/fileUsage.ts`): чистая
+`scanFileUsages(queryFn, paths)` — courses/course_paths по cover_url
+(live-only, `deleted_at IS NULL`), материалы `kind='file'` (с origin/status
+UGC и флагом `course_deleted`), картинки конспектов по
+`text_content LIKE '%'||path||'%'`. PG/SQLite кросс-диалект.
+
+**Эндпоинты** (`adminEducation.ts`, все за adminMiddleware): листинг
+50/стр + summary; `DELETE /files` (занят и не force → 409 `{usages}`);
+`GET /files/download` — скачивание через Bearer вместо signed URL
+(materials/ugc mediaGuard'ом публично не отдаются); trash list / restore
+(в ответе `usages_count` — подсказка «вернулся сиротой») / purge.
+Аудит: `education.file_deleted|file_restored|file_purged`.
+
+**Фронт:** `FilesPanel.tsx` (keep-mounted в `EducationTab.tsx`, как StatsPanel)
+— сегменты «Все/Обложки/Контент/Материалы/Корзина» (amber-активная), сетка
+карточек с вертикальным hover/focus-within оверлеем, бейджи-пилюли привязок
+с переходом в курс, три модалки (409 со списком / «В корзину?» / «навсегда»),
+корзина строками. Скачивание — `downloadFile()`: fetch+Blob с Bearer через
+`/files/download` (прямая ссылка на materials/ugc давала 403).
+
+**Оговорки:** restore возвращает файл, но НЕ запись БД (удалённый материал
+вернётся «сиротой» — предупреждение в UI после restore при `usages_count=0`);
+usage-скан по `text_content LIKE` ок на текущих объёмах, при росте —
+индекс/таблица ссылок (TODO).
+
+**Тесты:** бэкенд — `src/tests/filesPanel.tz199.test.ts` (40 проверок: драйвер
+на temp UPLOADS_DIR + usage-скан на сидированном SQLite; запуск
+`TS_NODE_TRANSPILE_ONLY=true npx ts-node src/tests/filesPanel.tz199.test.ts`);
+фронт — vitest `filespanel.tz199.test.tsx` (10 проверок).
