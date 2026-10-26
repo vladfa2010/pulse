@@ -454,7 +454,7 @@ router.get('/search', authMiddleware, async (req: AuthRequest, res) => {
     // в любом из 4 полей; при отсутствии таких — фолбэк на подстроку целиком.
     const searchWords = q
       .split(/\s+/)
-      .map((t) => t.replace(/^\W+|\W+$/gu, ''))
+      .map((t) => t.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ''))
       .filter((t) => t.length >= 2);
 
     let articles: any[];
