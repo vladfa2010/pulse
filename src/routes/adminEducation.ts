@@ -26,6 +26,7 @@ import { query, pool } from '../config/db';
 import { nowSql } from '../utils/nowSql';
 import { slugify } from '../utils/slugify';
 import { decodeUploadName } from '../utils/filename';
+import { compressCoverImage, CoverImageError } from '../utils/coverImage';
 import { AuthRequest } from '../middleware/auth';
 import { adminMiddleware } from '../middleware/admin';
 import { checkRateLimit, lmsUploadLimiter } from '../middleware/rateLimit';
@@ -273,7 +274,8 @@ const materialUpload = multer({
 });
 
 // ТЗ-136: картинки для вставки в текст урока/описание курса. Лимит больше
-// обложки (10 МБ): скриншоты и схемы весят больше; sharp всё равно сожмёт.
+// обложки (10 МБ): скриншоты и схемы весят больше; при сохранении всё равно
+// жмутся до ≤1600px q82.
 const contentImageUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 },
@@ -1163,21 +1165,17 @@ router.post('/courses/:id/cover', uploadMw(coverUpload, 'file'), h(async (req, r
 
   // EXIF strip (S3): rotate() применяет orientation, withMetadata НЕ вызываем —
   // метаданные камеры/GPS не копируются в выходной файл.
+  // ТЗ-198: обложки жмутся до WebP ≤1920px q82 (вес в 3–6 раз ниже оригинала).
   let normalized: Buffer;
   try {
-    const img = sharp(file.buffer).rotate();
-    const meta = await img.metadata();
-    const megapixels = (meta.width || 0) * (meta.height || 0) / 1e6;
-    if (megapixels > 50) {
-      return fail(res, 413, 'Изображение больше 50 Мпикс (decompression bomb)');
-    }
-    normalized = await img.toBuffer();
-  } catch {
-    return fail(res, 415, 'Файл не является корректным изображением');
+    normalized = await compressCoverImage(file.buffer);
+  } catch (err: any) {
+    if (err instanceof CoverImageError) return fail(res, err.status, err.message);
+    throw err;
   }
 
   try {
-    const put = await putBuffer(normalized, 'courses', `cover.${ft.ext}`);
+    const put = await putBuffer(normalized, 'courses', 'cover.webp');
     const oldCover = courseR.rows[0].cover_url;
     await query(
       `UPDATE courses SET cover_url = $1, updated_at = ${nowSql()} WHERE id = $2`,
@@ -3609,7 +3607,7 @@ router.post('/paths/:id/enroll-user', h(async (req, res) => {
 }));
 
 // POST /paths/:id/cover — обложка программы: тот же контур, что у курсов
-// (magic bytes + EXIF strip, 5 МБ, putBuffer 'courses' + cover.*).
+// (magic bytes + EXIF strip, 5 МБ, putBuffer 'courses' + WebP q82, ТЗ-198).
 router.post('/paths/:id/cover', uploadMw(coverUpload, 'file'), h(async (req, res) => {
   const adminId = req.user!.userId;
   const pathId = req.params.id;
@@ -3626,20 +3624,16 @@ router.post('/paths/:id/cover', uploadMw(coverUpload, 'file'), h(async (req, res
   if (!ft || !COVER_MIMES.has(ft.mime)) {
     return fail(res, 415, 'Допустимы только jpg/png/webp');
   }
+  // ТЗ-198: тот же пайплайн, что у обложек курсов — WebP ≤1920px q82.
   let normalized: Buffer;
   try {
-    const img = sharp(file.buffer).rotate();
-    const meta = await img.metadata();
-    const megapixels = (meta.width || 0) * (meta.height || 0) / 1e6;
-    if (megapixels > 50) {
-      return fail(res, 413, 'Изображение больше 50 Мпикс (decompression bomb)');
-    }
-    normalized = await img.toBuffer();
-  } catch {
-    return fail(res, 415, 'Файл не является корректным изображением');
+    normalized = await compressCoverImage(file.buffer);
+  } catch (err: any) {
+    if (err instanceof CoverImageError) return fail(res, err.status, err.message);
+    throw err;
   }
   try {
-    const put = await putBuffer(normalized, 'courses', `cover.${ft.ext}`);
+    const put = await putBuffer(normalized, 'courses', 'cover.webp');
     const oldCover = pathR.rows[0].cover_url;
     await query(
       `UPDATE course_paths SET cover_url = $1, updated_at = ${nowSql()} WHERE id = $2`,
