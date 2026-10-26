@@ -1,7 +1,8 @@
 # Админ-контроль закрытого Telegram-канала «Клуб»
 
 > ТЗ-197-club · коммит бэкенда `781e82f`, фронтенда `c105b25` (8.6.54).
-> Актуальность: 2026-10-26. Код: `pulse-backend/src/services/club.ts`,
+> Актуальность: 2026-10-27. Продуктовая механика и пользовательский флоу: [docs/club.md](../club.md).
+> Код: `pulse-backend/src/services/club.ts`,
 > `src/routes/club.ts`, `src/routes/admin.ts` (раздел TZ-197-club),
 > `src/services/telegram.ts` (Bot API-обёртки), фронт — `pulse-frontend/src/pages/admin/ClubTab.tsx`.
 
