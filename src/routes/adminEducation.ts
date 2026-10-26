@@ -43,6 +43,10 @@ import { parseCourseMd } from '../services/education/mdCourseImport'; // ТЗ-15
 import { courseToMd, lessonToMd, contentDisposition } from '../services/education/mdCourseExport'; // ТЗ-191: экспорт в Markdown (round-trip)
 import { courseTagIds, matchEventsToCourse } from '../services/education/calendarMatch'; // ТЗ-103 Задача 7: events-preview
 import { putBuffer, removeFile, StorageError } from '../services/storage/driver';
+import {
+  listFiles, listTrash, restoreFile, purgeTrashFile, normalizeMediaPath, UploadKind,
+} from '../services/storage/driver'; // ТЗ-199: галерея файлов
+import { scanFileUsages } from '../services/education/fileUsage'; // ТЗ-199: usage-скан привязок
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 const router = Router();
@@ -3650,6 +3654,142 @@ router.post('/paths/:id/cover', uploadMw(coverUpload, 'file'), h(async (req, res
     if (err instanceof StorageError) return fail(res, err.status, err.message);
     throw err;
   }
+}));
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ТЗ-199 — галерея файлов: листинг + привязки, удаление с защитой, корзина.
+// Хранилище — driver.ts (listFiles/listTrash/restoreFile/purgeTrashFile);
+// usage-скан — services/education/fileUsage.ts (чистая функция, тесты на SQLite).
+// ═══════════════════════════════════════════════════════════════════════════
+
+const FILES_PAGE_SIZE = 50;
+
+router.get('/files', h(async (req, res) => {
+  const kindParam = req.query.kind ? String(req.query.kind) : '';
+  if (kindParam && !['courses', 'materials', 'ugc', 'content'].includes(kindParam)) {
+    return fail(res, 400, "kind — только 'courses' | 'materials' | 'ugc' | 'content'");
+  }
+  const kindFilter: UploadKind | undefined = (kindParam || undefined) as UploadKind | undefined;
+  const q = String(req.query.q || '').trim().toLowerCase();
+  const page = Math.max(1, parseInt(String(req.query.page || '1'), 10) || 1);
+
+  const all = await listFiles(kindFilter);
+  const filtered = q
+    ? all.filter((f) => f.relPath.split('/').pop()!.toLowerCase().includes(q))
+    : all;
+
+  // usage-скан по всем отфильтрованным (сводная строка «не используются»),
+  // на страницу отдаём usages только её файлов.
+  const usageMap = await scanFileUsages(query, filtered.map((f) => f.relPath));
+  const unused = filtered.filter((f) => !(usageMap.get(f.relPath)?.length)).length;
+  const trash = await listTrash();
+
+  const pages = Math.max(1, Math.ceil(filtered.length / FILES_PAGE_SIZE));
+  const slice = filtered.slice((page - 1) * FILES_PAGE_SIZE, page * FILES_PAGE_SIZE);
+  res.json({
+    files: slice.map((f) => ({
+      path: f.relPath,
+      size: f.size,
+      mtime: f.mtime.toISOString(),
+      usages: usageMap.get(f.relPath) || [],
+    })),
+    total: filtered.length,
+    page,
+    pages,
+    summary: {
+      total: filtered.length,
+      unused,
+      bytes: filtered.reduce((s, f) => s + f.size, 0),
+      trash: trash.length,
+      by_kind: {
+        courses: all.filter((f) => f.relPath.startsWith('/media/courses/')).length,
+        content: all.filter((f) => f.relPath.startsWith('/media/content/')).length,
+        materials: all.filter((f) => f.relPath.startsWith('/media/materials/')).length,
+        ugc: all.filter((f) => f.relPath.startsWith('/media/ugc/')).length,
+      },
+    },
+  });
+}));
+
+// DELETE /files?path=…&force=0|1 — используется и force≠1 → 409 {usages}.
+router.delete('/files', h(async (req, res) => {
+  const adminId = req.user!.userId;
+  let relPath: string;
+  try {
+    relPath = normalizeMediaPath(req.query.path);
+  } catch (err: any) {
+    if (err instanceof StorageError) return fail(res, err.status, err.message);
+    throw err;
+  }
+  const force = String(req.query.force || '0') === '1';
+
+  const all = await listFiles();
+  const file = all.find((f) => f.relPath === relPath);
+  if (!file) return fail(res, 404, 'Файл не найден в хранилище');
+
+  const usageMap = await scanFileUsages(query, [relPath]);
+  const usages = usageMap.get(relPath) || [];
+  if (usages.length > 0 && !force) {
+    return res.status(409).json({
+      error: `Файл используется в ${usages.length} местах`,
+      usages,
+    });
+  }
+
+  await removeFile(relPath);
+  logUserEvent(adminId, 'education.file_deleted', {
+    path: relPath, size: file.size, usages_count: usages.length,
+  });
+  res.json({ ok: true });
+}));
+
+router.get('/files/trash', h(async (_req, res) => {
+  const items = await listTrash();
+  res.json({
+    items: items.map((t) => ({
+      trashName: t.trashName,
+      originalRelPath: t.originalRelPath,
+      size: t.size,
+      mtime: t.mtime.toISOString(),
+      deletedAt: t.deletedAt ? t.deletedAt.toISOString() : null,
+      expiresAt: t.expiresAt ? t.expiresAt.toISOString() : null,
+      daysLeft: t.expiresAt
+        ? Math.max(0, Math.ceil((t.expiresAt.getTime() - Date.now()) / 86400000))
+        : null,
+    })),
+  });
+}));
+
+// POST /files/trash/restore { path: <trashName> } — файл обратно на исходный
+// relPath; запись в БД НЕ восстанавливается (предупреждение — на фронте,
+// usages_count в ответе говорит, есть ли привязки после restore).
+router.post('/files/trash/restore', h(async (req, res) => {
+  const adminId = req.user!.userId;
+  const trashName = String(req.body?.path || '');
+  try {
+    const { relPath } = await restoreFile(trashName);
+    const usageMap = await scanFileUsages(query, [relPath]);
+    const usages = usageMap.get(relPath) || [];
+    logUserEvent(adminId, 'education.file_restored', { path: relPath, trash_name: trashName });
+    res.json({ ok: true, path: relPath, usages_count: usages.length });
+  } catch (err: any) {
+    if (err instanceof StorageError) return fail(res, err.status, err.message);
+    throw err;
+  }
+}));
+
+// DELETE /files/trash?path=<trashName> — удалить навсегда (confirm-only на фронте).
+router.delete('/files/trash', h(async (req, res) => {
+  const adminId = req.user!.userId;
+  const trashName = String(req.query.path || '');
+  try {
+    await purgeTrashFile(trashName);
+  } catch (err: any) {
+    if (err instanceof StorageError) return fail(res, err.status, err.message);
+    throw err;
+  }
+  logUserEvent(adminId, 'education.file_purged', { trash_name: trashName });
+  res.json({ ok: true });
 }));
 
 export default router;

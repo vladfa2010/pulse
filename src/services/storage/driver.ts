@@ -69,6 +69,8 @@ export class StorageError extends Error {
 
 export type UploadKind = 'courses' | 'materials' | 'ugc' | 'content';
 
+const UPLOAD_KINDS: UploadKind[] = ['courses', 'materials', 'ugc', 'content'];
+
 // Публичные (без подписи) подкаталоги. Всё остальное — только по signed URL.
 // 'content' (ТЗ-136): картинки конспекта/описания — путь зашит в text_content
 // навсегда, подписать URL per-request невозможно → публичная отдача, как у
@@ -288,12 +290,175 @@ export async function putFile(
  * Soft-delete (S7): файл переносится в tmp/trash/<ts>-<name>.
  * Подписанные URL на удалённый файл не выдаются/не работают (файла нет → 404).
  * Физическое удаление — purgeExpiredTrash() по retention.
+ *
+ * ТЗ-199: рядом с файлом в trash пишется манифест `<trashName>.path` с
+ * исходным relPath — без него restore невозможен (плоское имя теряет
+ * каталог). Запись манифеста best-effort: ошибка манифеста не ломает
+ * удаление (старые записи без манифеста показываем в корзине без restore).
  */
 export async function removeFile(relPath: string): Promise<void> {
   const abs = absFromRel(relPath);
   const trashName = path.join(UPLOADS_DIR, 'tmp', 'trash', `${Date.now()}-${path.basename(abs)}`);
   await fs.promises.mkdir(path.dirname(trashName), { recursive: true });
   await fs.promises.rename(abs, trashName).catch(() => {}); // уже отсутствует — ок
+  await fs.promises.writeFile(`${trashName}.path`, relPath).catch(() => {});
+}
+
+// ─── ТЗ-199: галерея файлов админки (листинг, корзина, restore/purge) ───────
+
+export interface ListedFile {
+  relPath: string; // /media/<kind>/<…>
+  size: number;
+  mtime: Date;
+}
+
+export interface TrashEntry {
+  trashName: string;            // имя файла в tmp/trash (стабильный идентификатор)
+  originalRelPath: string | null; // из манифеста <trashName>.path; null у записей до ТЗ-199
+  size: number;
+  mtime: Date;
+  deletedAt: Date | null;       // префикс <ts>- в имени trash-файла
+  expiresAt: Date | null;       // deletedAt + TRASH_RETENTION_DAYS
+}
+
+/**
+ * Нормализовать и проверить пользовательский путь из API (ТЗ-199, критерий 7):
+ * обязателен префикс /media/, запрет '..', kind — из разрешённого набора
+ * (patтерн absFromRel выше). Возвращает канонический relPath или StorageError 400.
+ */
+export function normalizeMediaPath(input: unknown): string {
+  const raw = String(input ?? '').trim();
+  if (!raw || raw.includes('\0')) throw new StorageError(400, 'invalid path');
+  const norm = path.posix.normalize(raw);
+  if (!norm.startsWith('/media/')) throw new StorageError(400, 'invalid path');
+  const segments = norm.split('/').filter(Boolean);
+  if (segments.some((s) => s === '..')) throw new StorageError(400, 'invalid path');
+  if (!UPLOAD_KINDS.includes(segments[1] as UploadKind)) {
+    throw new StorageError(400, 'invalid path');
+  }
+  return norm;
+}
+
+/**
+ * Проверить имя trash-записи (restore/purge из API): только плоское имя
+ * файла из tmp/trash — без разделителей и '..'.
+ */
+export function sanitizeTrashName(input: unknown): string {
+  const raw = String(input ?? '').trim();
+  if (!raw || raw.includes('/') || raw.includes('\\') || raw.includes('..') || raw.endsWith('.path')) {
+    throw new StorageError(400, 'invalid trash name');
+  }
+  return raw;
+}
+
+/** Рекурсивный обход каталога kind: /media/<kind>/<sub…> → relPath. */
+async function walkKind(kind: UploadKind, dir: string, prefix: string, out: ListedFile[]): Promise<void> {
+  let entries: fs.Dirent[];
+  try {
+    entries = await fs.promises.readdir(dir, { withFileTypes: true });
+  } catch {
+    return; // каталога нет — ок
+  }
+  for (const e of entries) {
+    const abs = path.join(dir, e.name);
+    if (e.isDirectory()) {
+      await walkKind(kind, abs, `${prefix}${e.name}/`, out);
+      continue;
+    }
+    if (!e.isFile()) continue;
+    const st = await fs.promises.stat(abs).catch(() => null);
+    if (!st) continue;
+    out.push({ relPath: `/media/${kind}/${prefix}${e.name}`, size: st.size, mtime: st.mtime });
+  }
+}
+
+/**
+ * ТЗ-199 Задача 1: листинг файлов хранилища. kind отсутствует → все четыре
+ * каталога. Сортировка по relPath — детерминированная пагинация в API.
+ */
+export async function listFiles(kind?: UploadKind): Promise<ListedFile[]> {
+  if (STORAGE_DRIVER !== 'local') throw new StorageError(501, 'storage driver not implemented');
+  const kinds = kind ? [kind] : UPLOAD_KINDS;
+  const out: ListedFile[] = [];
+  for (const k of kinds) {
+    await walkKind(k, path.join(UPLOADS_DIR, k), '', out);
+  }
+  out.sort((a, b) => (a.relPath < b.relPath ? -1 : a.relPath > b.relPath ? 1 : 0));
+  return out;
+}
+
+/**
+ * ТЗ-199 Задача 1/3: содержимое tmp/trash. Для каждого файла читается
+ * манифест `<trashName>.path` (исходный relPath). Сами манифесты в выдачу
+ * не попадают; записи без манифеста (до ТЗ-199) — с originalRelPath=null.
+ */
+export async function listTrash(): Promise<TrashEntry[]> {
+  if (STORAGE_DRIVER !== 'local') throw new StorageError(501, 'storage driver not implemented');
+  const trashDir = path.join(UPLOADS_DIR, 'tmp', 'trash');
+  let names: string[] = [];
+  try {
+    names = await fs.promises.readdir(trashDir);
+  } catch {
+    return [];
+  }
+  const out: TrashEntry[] = [];
+  for (const name of names) {
+    if (name.endsWith('.path')) continue; // манифесты — служебные
+    const abs = path.join(trashDir, name);
+    const st = await fs.promises.stat(abs).catch(() => null);
+    if (!st || !st.isFile()) continue;
+    const manifest = await fs.promises.readFile(`${abs}.path`, 'utf8').catch(() => null);
+    const tsPrefix = /^(\d{10,})-/.exec(name);
+    const deletedAt = tsPrefix ? new Date(Number(tsPrefix[1])) : null;
+    out.push({
+      trashName: name,
+      originalRelPath: manifest !== null ? manifest.trim() : null,
+      size: st.size,
+      mtime: st.mtime,
+      deletedAt,
+      expiresAt: deletedAt
+        ? new Date(deletedAt.getTime() + TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000)
+        : null,
+    });
+  }
+  out.sort((a, b) => (a.trashName < b.trashName ? -1 : a.trashName > b.trashName ? 1 : 0));
+  return out;
+}
+
+/**
+ * ТЗ-199: вернуть файл из trash на исходный relPath (из манифеста).
+ * Нет манифеста → 400 (запись до ТЗ-199, путь не восстановим);
+ * по исходному пути уже есть файл → 409. Восстанавливает файл, НЕ запись БД.
+ */
+export async function restoreFile(trashName: string): Promise<{ relPath: string }> {
+  if (STORAGE_DRIVER !== 'local') throw new StorageError(501, 'storage driver not implemented');
+  const name = sanitizeTrashName(trashName);
+  const trashAbs = path.join(UPLOADS_DIR, 'tmp', 'trash', name);
+  const manifest = await fs.promises.readFile(`${trashAbs}.path`, 'utf8').catch(() => null);
+  if (manifest === null) {
+    throw new StorageError(400, 'У записи нет манифеста исходного пути (trash до ТЗ-199) — восстановление невозможно');
+  }
+  const relPath = normalizeMediaPath(manifest.trim());
+  const targetAbs = absFromRel(relPath);
+  if (fs.existsSync(targetAbs)) {
+    throw new StorageError(409, `Путь занят: по адресу ${relPath} уже есть файл`);
+  }
+  await fs.promises.mkdir(path.dirname(targetAbs), { recursive: true });
+  await fs.promises.rename(trashAbs, targetAbs);
+  await fs.promises.unlink(`${trashAbs}.path`).catch(() => {});
+  return { relPath };
+}
+
+/**
+ * ТЗ-199: удалить trash-запись навсегда (файл + его манифест). Confirm-only
+ * на фронте; здесь — чистая fs-операция, отсутствующие файлы не ошибка.
+ */
+export async function purgeTrashFile(trashName: string): Promise<void> {
+  if (STORAGE_DRIVER !== 'local') throw new StorageError(501, 'storage driver not implemented');
+  const name = sanitizeTrashName(trashName);
+  const trashAbs = path.join(UPLOADS_DIR, 'tmp', 'trash', name);
+  await fs.promises.unlink(trashAbs).catch(() => {});
+  await fs.promises.unlink(`${trashAbs}.path`).catch(() => {});
 }
 
 // ─── Bootstrap и очистка ────────────────────────────────────────────────────
@@ -367,6 +532,12 @@ export default {
   putBufferQuarantine,
   moveToKind,
   removeFile,
+  listFiles,
+  listTrash,
+  restoreFile,
+  purgeTrashFile,
+  normalizeMediaPath,
+  sanitizeTrashName,
   signedUrl,
   verifySignedUrl,
   isPublicKind,

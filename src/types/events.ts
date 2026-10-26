@@ -79,6 +79,10 @@ export const USER_EVENT_TYPES = [
   'education.path_enroll_admin',
   // ТЗ-172: переключение рантайм-настроек мэтчинга (выключатель LLM-ранкера)
   'education.settings_updated',
+  // ТЗ-199: галерея файлов админки — аудит удаления/восстановления/purge
+  'education.file_deleted',
+  'education.file_restored',
+  'education.file_purged',
   // ТЗ-120: аудит выгрузок базы пользователей (кто, когда, сколько строк)
   'admin_export_users',
   // ТЗ-123: алерты админам — портфели/образование/витрины + антифлуд-фонды
