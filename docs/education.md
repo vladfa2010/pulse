@@ -107,6 +107,15 @@ scripts/recompress-covers.ts [--dry-run]`),
 /topics → 409 «раздел появится позже», чужое → 400), публикация с проверками
 422, управление слушателями (admin_grant идемпотентно, is_blocked → 422,
 отписка 204 без удаления прогресса), users-search/news-search.
+**ТЗ-199 (галерея файлов):** `GET /files?kind=&q=&page=` — листинг storage
+(50/стр) + usage-привязки (обложки курсов/программ, материалы incl. UGC,
+картинки конспектов по text_content LIKE) + summary (unused/bytes/trash);
+`DELETE /files?path=&force=` (используется и не force → 409 `{usages}`,
+иначе → trash), `GET /files/trash`, `POST /files/trash/restore`
+(манифест `<trashName>.path` в trash с ТЗ-199; записи без манифеста —
+legacy, без restore), `DELETE /files/trash?path=` (purge навсегда);
+path-guard `normalizeMediaPath` (префикс /media/, без `..`, kind из набора);
+аудит `education.file_deleted|file_restored|file_purged`.
 **ТЗ-186 (уведомление при записи админом):** успешный ответ записи (201 и
 200 already_enrolled) содержит `notify_channels {email, push, telegram}` —
 доступность каналов юзера через `getDeliveryTarget` (email неявный, push
