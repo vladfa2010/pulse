@@ -15,6 +15,8 @@
 
 Единый источник — константы в `src/services/notifications/formatters.ts`. Обрезка — только через `truncateTextSmart()`: по границе последнего пробела перед лимитом (если пробел не раньше половины лимита), иначе жёсткая обрезка + `…` (защита от длинного первого слова/URL).
 
+Перед обрезкой текст проходит `stripPushMarkup()` (ТЗ_195, 26.10): снятие HTML-тегов, markdown-маркеров (`* _ ~ \` #`), markdown-ссылок, HTML-сущностей (с маппингом на типографику: `&mdash;` → `—`, `&laquo;` → `«` и т.д.), схлопывание пробелов. Чистка на отправке (не на инжесте и не в БД) — одна точка покрывает все источники мусора (RSS, Finnhub, Telegram-писатель, LLM-перевод). Применяется в `sendNewArticlePush` (title+summary), `formatDigestPush` (title+источник·тег), `formatWeeklyReportPush` (period+topTag). Email/Telegram-форматтеры HTML сознательно не чистят. Тест: `src/tests/stripPushMarkup.test.ts`.
+
 ## Содержимое по типам
 
 | Тип | Title | Body | Data |
