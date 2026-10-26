@@ -883,6 +883,8 @@ export async function initSQLiteSchema(): Promise<void> {
       used_at TEXT,
       used_ip TEXT,
       converted_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      -- ТЗ-195: момент конверсии — ISO-параметром, как в share-роутах (NOW() не кросс-диалектен)
+      converted_at TEXT,
       is_free INTEGER NOT NULL DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS idx_lesson_shares_owner_created

@@ -224,11 +224,12 @@ router.post('/register', validate(RegisterSchema), async (req, res) => {
        req.body.timezone || null, req.body.locale || null, cohortDate, new Date().toISOString()]
     );
 
-    // ТЗ-187: фиксируем конверсию шеринга → регистрацию
+    // ТЗ-187: фиксируем конверсию шеринга → регистрацию; ТЗ-195: + момент
+    // конверсии (ISO-параметр — конвенция share-роутов, NOW() не кросс-диалектен)
     if (shareAttribution) {
       await query(
-        `UPDATE lesson_shares SET converted_user_id = $1 WHERE token = $2`,
-        [userId, shareAttribution.token],
+        `UPDATE lesson_shares SET converted_user_id = $1, converted_at = $2 WHERE token = $3`,
+        [userId, new Date().toISOString(), shareAttribution.token],
       ).catch(() => { /* атрибуция — best effort, регистрацию не ломаем */ });
     }
 

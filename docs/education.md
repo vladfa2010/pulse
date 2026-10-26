@@ -159,18 +159,35 @@ https-only, img только /media/*). Аудио, видео, материал
 
 **База:** таблица `lesson_shares` (id, token VARCHAR(64) UNIQUE, lesson_id,
 course_id, owner_user_id, created_at, expires_at, used_at, used_ip,
-converted_user_id, is_free). Миграция `src/migrations/lms_v10_lesson_shares.sql`
-(идемпотентна, включая `ALTER TABLE ... ADD COLUMN IF NOT EXISTS is_free` для
-уже созданных таблиц), применение: `POST /migrate-lms-lesson-shares?secret=
+converted_user_id, converted_at, is_free). Миграция `src/migrations/lms_v10_lesson_shares.sql`
+(идемпотентна, включая `ALTER TABLE ... ADD COLUMN IF NOT EXISTS is_free` и
+`... converted_at` для уже созданных таблиц — ТЗ-195), применение: `POST /migrate-lms-lesson-shares?secret=
 CRON_SECRET`. SQLite-зеркало — `initSQLiteSchema()` в `db-sqlite.ts` (смоуки).
 
 **Атрибуция регистрации:** фронт после успешного открытия кладёт токен в
 localStorage (`lesson_share_token`); `useAuth.register` шлёт его полем
 `share_token`. Бэк ищет **использованный** токен (`used_at IS NOT NULL`,
 формат 48 hex) и ставит `registration_source = 'lesson_share'`, пишет
-`converted_user_id` и логирует `register` с `shared_by_user_id`/`lesson_id`.
+`converted_user_id` **и `converted_at`** (момент регистрации — для периодной
+статистики конверсий, ТЗ-195) и логирует `register` с `shared_by_user_id`/`lesson_id`.
 Регистрация без токена или с битым/неиспользованным — штатная, источник не
 перезаписывается.
+
+**Статистика шеринга (ТЗ-195):** блок `sharing` в двух эндпоинтах админ-статистики
+(`src/routes/adminEducation.ts`): сводный `GET /api/admin/education/stats/overview`
+(+ `top_courses` — топ-5 курсов по созданным ссылкам, только живые курсы) и
+детальный `GET /api/admin/education/courses/:id/stats` (+ `top_lessons` — топ-5
+уроков курса). Формулы: `links_created` — по `created_at` в периоде;
+`links_created_paid/free` — то же с разрезом `is_free`; `links_opened` — по
+`used_at`; `links_expired` — `used_at IS NULL` и момент истечения внутри периода
+(`since <= expires_at <= now` — ссылки с будущим `expires_at` ещё живы и не
+считаются); `conversions` — по `converted_at`; `conversion_rate = conversions /
+links_opened` (доля 0..1, округление до сотых на бэке, до целых % на фронте;
+`null` при нуле открытий — конвенция ТЗ-180). Период — `days ∈ {7,30,90}`,
+default 30, граница ISO-строкой в JS (кросс-диалектно PG/SQLite). Отображение:
+карточка «Шеринг уроков» в сводной табе «Статистика» (`StatsPanel.tsx`) и
+секция «Шеринг» в детальном виде курса (`CourseStatsView.tsx`) — обе по ТЗ-180/181,
+отдельных вкладок нет. Смоук: `scripts/smoke-share-stats.js`.
 
 **Фронтенд** (`pulse-frontend`): кнопка Share2 в ридер-баре урока
 (`LessonPage.tsx`, рендерится только при наличии конспекта — гость видит

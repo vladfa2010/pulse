@@ -1754,7 +1754,7 @@ router.get('/stats/overview', h(async (req, res) => {
   const since = new Date(Date.now() - days * 86400000).toISOString();
   const since7d = new Date(Date.now() - 7 * 86400000).toISOString();
 
-  const [coursesR, lessonsR, enrollR, startedR, progressR, testsR, matsR, activeR] =
+  const [coursesR, lessonsR, enrollR, startedR, progressR, testsR, matsR, activeR, sharesR, sharesTopR] =
     await Promise.all([
       query(
         `SELECT id, title, status, type FROM courses
@@ -1802,6 +1802,30 @@ router.get('/stats/overview', h(async (req, res) => {
            AND created_at >= $1
          GROUP BY 1`,
         [since7d],
+      ),
+      // ТЗ-195: сводка шеринга уроков (lesson_shares — единственный источник;
+      // период применяется к дате события: создание/открытие/просрочка/конверсия;
+      // просрочка — момент истечения внутри периода: от since до now)
+      query(
+        `SELECT sum(CASE WHEN created_at >= $1 THEN 1 ELSE 0 END) AS created,
+                sum(CASE WHEN created_at >= $1 AND is_free THEN 1 ELSE 0 END) AS created_free,
+                sum(CASE WHEN used_at >= $1 THEN 1 ELSE 0 END) AS opened,
+                sum(CASE WHEN expires_at >= $1 AND expires_at <= $2 AND used_at IS NULL THEN 1 ELSE 0 END) AS expired,
+                sum(CASE WHEN converted_at >= $1 THEN 1 ELSE 0 END) AS conversions
+         FROM lesson_shares`,
+        [since, new Date().toISOString()],
+      ),
+      // Топ-5 курсов за период по созданным ссылкам (живые курсы — клик ведёт
+      // в детальную статистику, 404 недопустим)
+      query(
+        `SELECT ls.course_id, c.title, count(*) AS links_created
+         FROM lesson_shares ls
+         JOIN courses c ON c.id = ls.course_id AND c.deleted_at IS NULL
+         WHERE ls.created_at >= $1
+         GROUP BY ls.course_id, c.title
+         ORDER BY links_created DESC
+         LIMIT 5`,
+        [since],
       ),
     ]);
 
@@ -1859,7 +1883,29 @@ router.get('/stats/overview', h(async (req, res) => {
   // Сортировка по умолчанию: записи за период, потом всего (ТЗ-180 Задача 1).
   courses.sort((a, b) => b.enrolled_period - a.enrolled_period || b.enrolled_total - a.enrolled_total);
 
-  res.json({ period_days: days, generated_at: new Date().toISOString(), courses });
+  // ТЗ-195: конверсия «открытие → регистрация» — доля 0..1 (2 знака), null при
+  // нуле открытий (конвенция ТЗ-180); округление до целых процентов — на фронте
+  const sh = sharesR.rows[0] || {};
+  const linksCreated = Number(sh.created || 0);
+  const linksCreatedFree = Number(sh.created_free || 0);
+  const linksOpened = Number(sh.opened || 0);
+  const linksConversions = Number(sh.conversions || 0);
+  const sharing = {
+    links_created: linksCreated,
+    links_created_paid: linksCreated - linksCreatedFree,
+    links_created_free: linksCreatedFree,
+    links_opened: linksOpened,
+    links_expired: Number(sh.expired || 0),
+    conversions: linksConversions,
+    conversion_rate: linksOpened > 0 ? Math.round((linksConversions / linksOpened) * 100) / 100 : null,
+    top_courses: (sharesTopR.rows as any[]).map((r) => ({
+      course_id: String(r.course_id),
+      title: r.title,
+      links_created: Number(r.links_created),
+    })),
+  };
+
+  res.json({ period_days: days, generated_at: new Date().toISOString(), courses, sharing });
 }));
 
 // ТЗ-181: детальная статистика курса — дрилл-даун из сводной табы (ТЗ-180).
@@ -1891,7 +1937,7 @@ router.get('/courses/:id/stats', h(async (req, res) => {
   const [
     enrollR, startedR, progressR, eventsR, completedR,
     activeR, lessonsR, lessonDoneR, medianR, testEventsR,
-    testsMetaR, materialsR, downloadsR,
+    testsMetaR, materialsR, downloadsR, sharesR, sharesTopLessonsR,
   ] = await Promise.all([
     query(`SELECT user_id, source FROM course_enrollments WHERE course_id = $1`, [courseId]),
     query(
@@ -1971,6 +2017,29 @@ router.get('/courses/:id/stats', h(async (req, res) => {
        FROM user_events
        WHERE event_type = 'education.material_downloaded' AND created_at >= $2 AND event_data->>'course_id' = $1
        GROUP BY 1`,
+      [courseId, since],
+    ),
+    // ТЗ-195: шеринг уроков курса (lesson_shares; период — по дате события)
+    query(
+      `SELECT sum(CASE WHEN created_at >= $2 THEN 1 ELSE 0 END) AS created,
+              sum(CASE WHEN created_at >= $2 AND is_free THEN 1 ELSE 0 END) AS created_free,
+              sum(CASE WHEN used_at >= $2 THEN 1 ELSE 0 END) AS opened,
+              sum(CASE WHEN converted_at >= $2 THEN 1 ELSE 0 END) AS conversions
+       FROM lesson_shares WHERE course_id = $1`,
+      [courseId, since],
+    ),
+    // Топ-5 уроков курса по созданным ссылкам (soft-delete уроков нет —
+    // удалённые исчезают каскадом)
+    query(
+      `SELECT ls.lesson_id, cl.title, cl.position, count(*) AS links_created,
+              sum(CASE WHEN ls.used_at IS NOT NULL THEN 1 ELSE 0 END) AS links_opened,
+              sum(CASE WHEN ls.converted_at IS NOT NULL THEN 1 ELSE 0 END) AS conversions
+       FROM lesson_shares ls
+       JOIN course_lessons cl ON cl.id = ls.lesson_id
+       WHERE ls.course_id = $1 AND ls.created_at >= $2
+       GROUP BY ls.lesson_id, cl.title, cl.position
+       ORDER BY links_created DESC
+       LIMIT 5`,
       [courseId, since],
     ),
   ]);
@@ -2097,6 +2166,30 @@ router.get('/courses/:id/stats', h(async (req, res) => {
     downloads: downloadsByMaterial.get(String(m.id)) ?? 0,
   })).sort((a, b) => b.downloads - a.downloads || a.title.localeCompare(b.title));
 
+  // ТЗ-195: сводка шеринга курса; conversion_rate — доля 0..1, null при нуле
+  // открытий (конвенция ТЗ-180)
+  const sh = sharesR.rows[0] || {};
+  const linksCreated = Number(sh.created || 0);
+  const linksCreatedFree = Number(sh.created_free || 0);
+  const linksOpened = Number(sh.opened || 0);
+  const linksConversions = Number(sh.conversions || 0);
+  const sharing = {
+    links_created: linksCreated,
+    links_created_paid: linksCreated - linksCreatedFree,
+    links_created_free: linksCreatedFree,
+    links_opened: linksOpened,
+    conversions: linksConversions,
+    conversion_rate: linksOpened > 0 ? Math.round((linksConversions / linksOpened) * 100) / 100 : null,
+    top_lessons: (sharesTopLessonsR.rows as any[]).map((r) => ({
+      lesson_id: String(r.lesson_id),
+      title: r.title,
+      position: Number(r.position),
+      links_created: Number(r.links_created),
+      links_opened: Number(r.links_opened || 0),
+      conversions: Number(r.conversions || 0),
+    })),
+  };
+
   res.json({
     course: {
       id: String(course.id), title: course.title, status: course.status, type: course.type,
@@ -2113,6 +2206,7 @@ router.get('/courses/:id/stats', h(async (req, res) => {
     })),
     lessons,
     materials,
+    sharing,
   });
 }));
 

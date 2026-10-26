@@ -25,3 +25,7 @@ CREATE INDEX IF NOT EXISTS idx_lesson_shares_owner_created
 
 -- Для существующих таблиц (прод до правки): добавить колонку без пересоздания
 ALTER TABLE lesson_shares ADD COLUMN IF NOT EXISTS is_free BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- ТЗ-195: момент конверсии (атрибуция регистрации по меджик-линку) —
+-- для периодной статистики конверсий по дате регистрации
+ALTER TABLE lesson_shares ADD COLUMN IF NOT EXISTS converted_at TIMESTAMPTZ;
