@@ -222,6 +222,7 @@ npm run build   # выход в dist/
 | `EMAIL_FROM` | `(скрыт)` | Адрес отправителя (`noreply@pulse.inside-trade.ru`) |
 | `RESEND_API_KEY` | `(скрыт)` | Resend API ключ |
 | `TELEGRAM_BOT_TOKEN` | `(скрыт)` | Telegram Bot токен |
+| `TELEGRAM_CLUB_CHAT_ID` | — (пока не задан) | ID закрытого канала «Клуб» (`-100xxxxxxxxxx`). TZ-197-club: без него контур деградирует мягко — `/api/club/status` работает, invite/leave и admin-kick → 503 `club_not_configured`, webhook `chat_member` — no-op, крон-аудит — пропуск с логом. Бот должен быть админом канала с правами «Приглашать пользователей» и «Блокировать пользователей». |
 | `ENCRYPTION_KEY` | `(скрыт)` | 64 hex-символов (32 байта) для AES-256-GCM шифрования API-токенов брокеров. Обязателен для фичи портфелей. |
 | `MINIMAX_API_KEY` | `(скрыт)` | Minimax TTS для радио (`POST /api/radio/tts`, ТЗ-42). Установлен 2026-09-21 (в `.env` И в `environment:` backend-сервиса; бэкап `.env.bak-minimax`). Boot-лог: `[Radio] MINIMAX ready` / `...not set, /api/radio/tts returns 503`. Метрики: `GET /api/admin/metrics?section=radio`. ⚠️ Ключ передавался в чате — сгенерировать новый и ротировать до публичного релиза радио. |
 | `TRUSTED_PROXY` | — (не задан) | Доверять клиентским IP-заголовкам `cf-connecting-ip`/`true-client-ip` только при значении `cloudflare`. На VPS с Caddy НЕ задавать — иначе webhook-фильтр ЮKassa обходится поддельным заголовком (SECURITY_AUDIT_PAYMENTS_2026-10-13, S1a; коммит `71a5601`). |

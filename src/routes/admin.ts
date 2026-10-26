@@ -27,7 +27,9 @@ import {
 } from '../services/subscription';
 import { listAllFeatures, createFeature, updateFeature } from './features';
 import { getPromoByCode } from '../services/promo';
-import { logAdminChangedPlan, logAdminExtendedSubscription, logUserEvent } from '../services/activityLog';
+import { logAdminChangedPlan, logAdminExtendedSubscription, logUserEvent, logClubManualGrant, logClubManualRevoke, logClubKicked } from '../services/activityLog';
+import { isClubConfigured } from '../services/club'; // TZ-197-club
+import { kickClubMember } from '../services/telegram'; // TZ-197-club: ручной кик (ban+unban)
 import {
   getRadioFlags,
   setRadioFlag,
@@ -2199,6 +2201,182 @@ router.post('/calendar/:source', adminMiddleware, async (req: AuthRequest, res) 
     console.error('[Admin] Calendar provider upload error:', err.message);
     const status = calendarErrorStatus(err);
     res.status(status).json({ error: status === 500 ? 'Internal error' : err.message || 'Failed to upload provider slice' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TZ-197-club Задача 6 (v2): таба «Клуб» — список членов + ручные действия.
+// Всё под adminMiddleware (per-request is_admin + is_blocked) + adminLimiter
+// (монтирование /api/admin в index.ts). Деградация без TELEGRAM_CLUB_CHAT_ID:
+// kick → 503 club_not_configured (grant/revoke-manual — только БД, работают).
+// ═══════════════════════════════════════════════════════════════════════════
+
+// GET /api/admin/club/members — список членов клуба + счётчики в шапке ответа
+router.get('/club/members', adminMiddleware, async (_req, res) => {
+  try {
+    const result = await query(
+      `SELECT m.user_id, u.email, u.username, u.subscription_plan, u.subscription_expires_at,
+              m.status, m.is_manual, m.manual_revoked_at, m.tg_user_id,
+              m.invite_link, m.invited_at, m.joined_at, m.kicked_at, m.kick_reason, m.updated_at
+       FROM telegram_club_members m
+       JOIN users u ON u.id = m.user_id
+       ORDER BY m.updated_at DESC`
+    );
+
+    const rows = result.rows.map((row: any) => ({
+      ...row,
+      is_manual: row.is_manual === true || row.is_manual === 1,
+    }));
+
+    const counters = {
+      members: rows.filter((r: any) => r.status === 'member').length,
+      invited: rows.filter((r: any) => r.status === 'invited').length,
+      kicked: rows.filter((r: any) => r.status === 'kicked').length,
+      manual: rows.filter((r: any) => r.is_manual && !r.manual_revoked_at).length,
+    };
+
+    res.json({ members: rows, counters });
+  } catch (err: any) {
+    console.error('[Admin] Club members list failed:', err.message);
+    res.status(500).json({ error: 'Failed to fetch club members' });
+  }
+});
+
+// POST /api/admin/club/grant — ручная выдача доступа без тарифа (email)
+router.post('/club/grant', adminMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const email = String(req.body?.email || '').trim();
+    if (!email) {
+      return res.status(400).json({ error: 'email required' });
+    }
+
+    const userResult = await query(
+      `SELECT id FROM users WHERE LOWER(email) = LOWER($1)`,
+      [email]
+    );
+    const targetUserId: string | undefined = userResult.rows[0]?.id;
+    if (!targetUserId) {
+      return res.status(404).json({ error: 'user_not_found' });
+    }
+
+    const existing = await query(
+      `SELECT status FROM telegram_club_members WHERE user_id = $1`,
+      [targetUserId]
+    );
+    const alreadyMember = existing.rows[0]?.status === 'member';
+
+    // v2: is_manual=TRUE + manual_revoked_at=NULL — доступ есть, аудит не сносит.
+    // Статус 'member' не трогаем, остальные → 'invited' (обычный путь через ЛК).
+    await query(
+      `INSERT INTO telegram_club_members (user_id, is_manual, manual_revoked_at, status, kick_reason, invited_at, updated_at)
+       VALUES ($1, TRUE, NULL, 'invited', NULL, ${nowSql()}, ${nowSql()})
+       ON CONFLICT (user_id) DO UPDATE SET
+         is_manual = TRUE,
+         manual_revoked_at = NULL,
+         kick_reason = NULL,
+         status = CASE WHEN telegram_club_members.status = 'member' THEN 'member' ELSE 'invited' END,
+         updated_at = ${nowSql()}`,
+      [targetUserId]
+    );
+
+    logClubManualGrant(req.user!.userId, targetUserId).catch(() => {});
+    console.log(`[Club] Manual grant admin=${req.user!.userId} target=${targetUserId}`);
+
+    res.json({ ok: true, userId: targetUserId, alreadyMember });
+  } catch (err: any) {
+    console.error('[Admin] Club grant failed:', err.message);
+    res.status(500).json({ error: 'Failed to grant club access' });
+  }
+});
+
+// POST /api/admin/club/members/:userId/kick — ручной кик (ban+unban).
+// Ручная выдача, если была, отзывается тем же действием. Идемпотентен.
+router.post('/club/members/:userId/kick', adminMiddleware, async (req: AuthRequest, res) => {
+  try {
+    if (!isClubConfigured()) {
+      return res.status(503).json({ error: 'club_not_configured' });
+    }
+
+    const targetUserId = String(req.params.userId);
+    const userResult = await query(`SELECT id FROM users WHERE id = $1`, [targetUserId]);
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: 'user_not_found' });
+    }
+
+    const existing = await query(
+      `SELECT status, tg_user_id FROM telegram_club_members WHERE user_id = $1`,
+      [targetUserId]
+    );
+    if (existing.rows[0]?.status === 'kicked') {
+      return res.json({ ok: true, already: true });
+    }
+
+    // tg id — из строки клуба, fallback — из привязки user_channels
+    let tgUserId: string | null = existing.rows[0]?.tg_user_id || null;
+    if (!tgUserId) {
+      const channelResult = await query(
+        `SELECT target FROM user_channels WHERE user_id = $1 AND channel = 'telegram' AND is_active = TRUE`,
+        [targetUserId]
+      );
+      tgUserId = channelResult.rows[0]?.target || null;
+    }
+
+    if (tgUserId) {
+      await kickClubMember(tgUserId); // best-effort внутри
+    }
+
+    await query(
+      `INSERT INTO telegram_club_members (user_id, tg_user_id, status, kicked_at, kick_reason, is_manual, manual_revoked_at, updated_at)
+       VALUES ($1, $2, 'kicked', ${nowSql()}, 'admin', FALSE, ${nowSql()}, ${nowSql()})
+       ON CONFLICT (user_id) DO UPDATE SET
+         tg_user_id = COALESCE(telegram_club_members.tg_user_id, EXCLUDED.tg_user_id),
+         status = 'kicked',
+         kicked_at = ${nowSql()},
+         kick_reason = 'admin',
+         is_manual = FALSE,
+         manual_revoked_at = ${nowSql()},
+         updated_at = ${nowSql()}`,
+      [targetUserId, tgUserId]
+    );
+
+    logClubKicked(targetUserId, 'admin').catch(() => {});
+    logClubManualRevoke(req.user!.userId, targetUserId).catch(() => {});
+    console.log(`[Club] Admin kick admin=${req.user!.userId} target=${targetUserId}`);
+
+    res.json({ ok: true, already: false });
+  } catch (err: any) {
+    console.error('[Admin] Club kick failed:', err.message);
+    res.status(500).json({ error: 'Failed to kick club member' });
+  }
+});
+
+// POST /api/admin/club/members/:userId/revoke-manual — отзыв ручной выдачи
+// без кика. Если юзер member без тарифа — его снимет следующий аудит.
+router.post('/club/members/:userId/revoke-manual', adminMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const targetUserId = String(req.params.userId);
+    const existing = await query(
+      `SELECT status FROM telegram_club_members WHERE user_id = $1`,
+      [targetUserId]
+    );
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ error: 'not_found' });
+    }
+
+    await query(
+      `UPDATE telegram_club_members
+       SET is_manual = FALSE, manual_revoked_at = ${nowSql()}, updated_at = ${nowSql()}
+       WHERE user_id = $1`,
+      [targetUserId]
+    );
+
+    logClubManualRevoke(req.user!.userId, targetUserId).catch(() => {});
+    console.log(`[Club] Manual revoke admin=${req.user!.userId} target=${targetUserId}`);
+
+    res.json({ ok: true });
+  } catch (err: any) {
+    console.error('[Admin] Club revoke-manual failed:', err.message);
+    res.status(500).json({ error: 'Failed to revoke manual grant' });
   }
 });
 

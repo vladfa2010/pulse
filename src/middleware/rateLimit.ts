@@ -313,6 +313,20 @@ export const lmsCalendarMatchLimiter = rateLimit({
   validate: { trustProxy: false },
 });
 
+// ─── Club invite — 10 ссылок/час на юзера (TZ-197-club, защита от фарма ссылок) ──
+export const clubInviteLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 час
+  max: 10,
+  message: {
+    error: 'Слишком много ссылок. Лимит 10 в час — попробуйте позже.',
+    retryAfter: '1 hour',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => (req as any).user?.userId || req.ip || 'unknown',
+  validate: { trustProxy: false },
+});
+
 /**
  * ТЗ-63: ручная проверка лимитера. Возвращает Promise<boolean>:
  *  - true — лимитер разрешил (next() вызван), продолжаем.

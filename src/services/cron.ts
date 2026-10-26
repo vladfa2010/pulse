@@ -41,6 +41,7 @@ import { matchUnprocessedNews } from './education/match'; // ТЗ-103, зада�
 import { rebuildKnowledgeGraph } from './education/knowledgeGraph'; // ТЗ-107 v3: ночной пересчёт графа знаний
 import { sendMcpRotationReminderEmail } from './mcpEmails'; // ТЗ-183 Задача 5: напоминания о ротации токенов
 import { runMcpSecurityDaily } from './mcpSecurity'; // ТЗ-190: оценка безопасности /mcp, алертинг админу
+import { auditClubAccess, isClubConfigured } from './club'; // TZ-197-club: ежедневный аудит доступа в канал «Клуб»
 import { isEducationGraphEnabled } from '../config/knowledgeGraph'; // ТЗ-107 v3: фичефлаг графа
 import { VERIFIER_MODEL_TEMPERATURE } from '../config/clustering'; // ТЗ-115: температура LLM по конвенции §9.1
 
@@ -933,4 +934,36 @@ export function startMcpSecurityCron(opts?: { isShuttingDown?: () => boolean }) 
     }
   }, { timezone: 'Europe/Moscow' });
   console.log('[Cron] MCP security daily scheduled at 06:40 Europe/Moscow');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TZ-197-club Задача 4 (+v2/v3) — ежедневный аудит доступа в канал «Клуб»
+// ═══════════════════════════════════════════════════════════════════════════
+// '7 10 * * *' — 10:07 UTC сразу после жизненного цикла подписок (10:00 UTC):
+// grace/даунгрейды уже применены. Без env TELEGRAM_CLUB_CHAT_ID — пропуск с
+// логом (мягкая деградация). Статистика { checked, kicked, invitesRevoked,
+// errors } уходит в cron_log через logCronStart/logCronFinish.
+
+export function startClubAuditCron(opts?: { isShuttingDown?: () => boolean }) {
+  cron.schedule('7 10 * * *', async () => {
+    if (opts?.isShuttingDown?.()) return;
+    if (!isClubConfigured()) {
+      console.log('[Club] TELEGRAM_CLUB_CHAT_ID not set — access audit skipped');
+      return;
+    }
+    const acquired = await acquireCronLock('club_access_audit');
+    if (!acquired) return;
+    const logId = await logCronStart('club_access_audit');
+    try {
+      const stats = await auditClubAccess();
+      console.log('[Club] Access audit done:', JSON.stringify(stats));
+      await logCronFinish(logId, stats.checked, stats.kicked, stats.invitesRevoked, stats.errors);
+    } catch (err: any) {
+      console.error('[Cron] Club access audit failed:', err.message);
+      await logCronFinish(logId, 0, 0, 0, [err.message]);
+    } finally {
+      await releaseCronLock('club_access_audit');
+    }
+  });
+  console.log('[Cron] Club access audit scheduled daily at 10:07 UTC');
 }

@@ -10,6 +10,7 @@ import {
   logTelegramDisconnected,
 } from '../services/activityLog';
 import { nowSql } from '../utils/nowSql';
+import { handleClubChatMemberUpdate } from '../services/club'; // TZ-197-club: chat_member события канала «Клуб»
 
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
@@ -302,6 +303,14 @@ router.post('/yookassa', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 router.post('/telegram', async (req, res) => {
   try {
+    // TZ-197-club Задача 3 (v3): события членства в закрытом канале «Клуб».
+    // ДО обработки message; фильтр по TELEGRAM_CLUB_CHAT_ID — внутри хендлера.
+    // Мягкая деградация: env не задан → no-op.
+    if (req.body.chat_member) {
+      await handleClubChatMemberUpdate(req.body.chat_member);
+      return res.sendStatus(200);
+    }
+
     // Handle chat member status changes (block / unblock / delete chat)
     if (req.body.my_chat_member) {
       const { chat, new_chat_member } = req.body.my_chat_member;

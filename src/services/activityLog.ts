@@ -115,6 +115,28 @@ export async function logTelegramDisconnected(userId: string, chatId: string): P
   return logUserEvent(userId, 'telegram_disconnected', { chat_id: chatId });
 }
 
+// TZ-197-club: закрытый Telegram-канал «Клуб». Вызывающий код —
+// с .catch(() => {}) (best-effort, как у соседей).
+export async function logClubInviteIssued(userId: string): Promise<void> {
+  return logUserEvent(userId, 'club.invite_issued', {});
+}
+
+export async function logClubJoined(userId: string, tgUserId: string): Promise<void> {
+  return logUserEvent(userId, 'club.joined', { tg_user_id: tgUserId });
+}
+
+export async function logClubKicked(userId: string, reason: string): Promise<void> {
+  return logUserEvent(userId, 'club.kicked', { reason });
+}
+
+export async function logClubManualGrant(adminUserId: string, targetUserId: string): Promise<void> {
+  return logUserEvent(adminUserId, 'club.manual_grant', { target_user_id: targetUserId });
+}
+
+export async function logClubManualRevoke(adminUserId: string, targetUserId: string): Promise<void> {
+  return logUserEvent(adminUserId, 'club.manual_revoke', { target_user_id: targetUserId });
+}
+
 export async function logEmailConnected(userId: string, email: string): Promise<void> {
   return logUserEvent(userId, 'email_connected', { email });
 }

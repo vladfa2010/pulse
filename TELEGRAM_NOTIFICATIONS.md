@@ -2368,5 +2368,60 @@ ORDER BY unread_count DESC;
 
 ---
 
+## Клуб: контроль доступа в закрытый канал (TZ-197-club)
+
+Закрытый Telegram-канал тарифа `club` (фича `club_access`). Доступ: активный
+тариф с фичей (grace 3 дня включён) **или** ручная выдача админа. Гибридный
+контроль: персональные одноразовые ссылки + webhook `chat_member` + ежедневный
+крон-аудит.
+
+**Модель данных:** таблица `telegram_club_members` (миграция
+`src/migrations/telegram_club_v1.sql`, зеркала в `src/models/schema.sql` и
+`initSQLiteSchema`). Статусы: `invited | member | kicked | left`;
+`kick_reason`: `subscription_expired | feature_disabled | manual_leave | admin |
+no_access_at_join (v3) | invite_expired (v3)`; v2: `is_manual` /
+`manual_revoked_at` — активная ручная выдача, аудит её ПРОПУСКАЕТ.
+
+**Флоу:**
+1. ЛК → вкладка «Клуб» → `GET /api/club/status` (eligible/eligibleReason,
+   telegramConnected, membership + ленивая сверка getChatMember для member).
+2. `POST /api/club/invite` (10/час на юзера) → revoke старой ссылки →
+   `createChatInviteLink(member_limit=1, name=pulse_club_<id8>)` → upsert
+   `invited`. Ссылка одноразовая, без expire_date (решение §7 — проверка в
+   момент вступления надёжнее срока жизни).
+3. Вступление → webhook `chat_member` (фильтр по `TELEGRAM_CLUB_CHAT_ID`):
+   матчинг `user_channels.target` → `hasClubAccess()`; v3 — нет доступа →
+   мгновенный kick, `kick_reason='no_access_at_join'`; непривязанный аккаунт →
+   автокик (§7 п.5). `left`/`kicked` фиксируются идемпотентным upsert.
+4. Крон `club_access_audit` — ежедневно `7 10 * * *` (10:07 UTC, сразу после
+   subscription-крона), `acquireCronLock`, статистика в `cron_log`: member без
+   доступа → kick (ban+unban — повторная оплата = повторное вступление без
+   ручных действий, §7 п.3), TG-уведомление, `kick_reason` по причине;
+   v3 — второй проход: `invited` без доступа → revoke ссылки,
+   `kick_reason='invite_expired'`. Троттлинг 50 мс между вызовами Bot API.
+5. `POST /api/club/leave` — kick + revoke + `status='left'` (обратный путь
+   обязателен: каждый join имеет видимый leave).
+6. Админка (v2): `GET /api/admin/club/members` (+счётчики),
+   `POST /api/admin/club/grant` (по email; аудит не сносит),
+   `POST /api/admin/club/members/:userId/kick` (идемпотентен, отзывает ручную
+   выдачу), `POST /api/admin/club/members/:userId/revoke-manual`.
+   Аудит действий — `user_events`: `club.invite_issued / club.joined /
+   club.kicked / club.manual_grant / club.manual_revoke`.
+
+**Env:** `TELEGRAM_CLUB_CHAT_ID=-100xxxxxxxxxx` (бот — админ канала с правами
+«Приглашать пользователей» и «Блокировать пользователей»). Пока env пуст —
+мягкая деградация: `GET /api/club/status` работает как обычно, invite/leave и
+admin-kick → 503 `club_not_configured`, ветка `chat_member` — no-op,
+крон-аудит — пропуск с логом. Webhook перерегистрируется при деплое
+(`allowed_updates` включает `chat_member`).
+
+**Код:** `src/services/club.ts` (доступ, аудит, webhook-хендлер),
+`src/services/telegram.ts` (Bot API канала), `src/routes/club.ts`,
+ветка `chat_member` в `src/routes/webhook.ts`, админ-эндпоинты в
+`src/routes/admin.ts`, крон `startClubAuditCron` в `src/services/cron.ts`.
+Юнит-тесты: `src/tests/clubAccess.tz197.test.ts`.
+
+---
+
 *Документ обновлен на основе фактического состояния системы.*
 *Бот: @Insidepulse_bot | Версия документа: 2.0 | Все системы активны.*

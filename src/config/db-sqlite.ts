@@ -724,6 +724,24 @@ export async function initSQLiteSchema(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_mcp_audit_created ON mcp_audit_log (created_at);
     CREATE INDEX IF NOT EXISTS idx_mcp_audit_token ON mcp_audit_log (token_id);
 
+    -- TZ-197-club: закрытый Telegram-канал «Клуб» (SQLite-вариант telegram_club_v1.sql)
+    CREATE TABLE IF NOT EXISTS telegram_club_members (
+      user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      tg_user_id TEXT,
+      invite_link TEXT,
+      status TEXT NOT NULL DEFAULT 'invited',
+      invited_at TEXT DEFAULT (datetime('now')),
+      joined_at TEXT,
+      kicked_at TEXT,
+      kick_reason TEXT,
+      is_manual INTEGER NOT NULL DEFAULT 0,
+      manual_revoked_at TEXT,
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_tg_club_members_status ON telegram_club_members(status);
+    CREATE INDEX IF NOT EXISTS idx_tg_club_members_tg_user ON telegram_club_members(tg_user_id);
+
     -- TZ_FACTCHECK_PAGE v1.3 §8.3: ad-hoc фактчекинг (ручной дубль схемы).
     -- is_public INTEGER 0/1 — все проверки частные (v1), result TEXT (JSON).
     CREATE TABLE IF NOT EXISTS fact_check_requests (

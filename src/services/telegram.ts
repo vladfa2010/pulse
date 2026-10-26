@@ -210,3 +210,110 @@ function escapeHtml(text: string): string {
 function sleep(ms: number): Promise<void> {
   return new Promise(r => setTimeout(r, ms));
 }
+
+// ============================================================
+// TZ-197-club: закрытый Telegram-канал «Клуб» — Bot API-вызовы
+// канала. Все функции best-effort: ошибки логируем, не бросаем.
+// ============================================================
+
+const CLUB_CHAT_ID = process.env.TELEGRAM_CLUB_CHAT_ID || ''; // -100xxxxxxxxxx
+
+// Персональная ссылка-приглашение (member_limit=1, без expire_date — см. ТЗ-197 §2).
+// TZ-197-club Задача 1
+export async function createClubInviteLink(userIdShort: string): Promise<string | null> {
+  if (!isConfigured()) {
+    console.warn('[Telegram] Bot token not configured');
+    return null;
+  }
+  try {
+    const resp = await axios.post(`${TELEGRAM_API}/createChatInviteLink`, {
+      chat_id: CLUB_CHAT_ID,
+      member_limit: 1,
+      name: `pulse_club_${userIdShort}`,
+    });
+    return resp.data?.result?.invite_link || null;
+  } catch (err: any) {
+    console.error('[Telegram] createClubInviteLink failed:',
+      err.response?.status, err.response?.data?.error_code, err.response?.data?.description || (err as Error).message);
+    return null;
+  }
+}
+
+// Отзыв ссылки при перевыпуске. Ошибку «link not found» глотаем — ссылка могла
+// сама протухнуть/использоваться, это не сбой.
+export async function revokeClubInviteLink(link: string): Promise<void> {
+  if (!isConfigured() || !link) return;
+  try {
+    await axios.post(`${TELEGRAM_API}/revokeChatInviteLink`, {
+      chat_id: CLUB_CHAT_ID,
+      invite_link: link,
+    });
+  } catch (err: any) {
+    const description = err.response?.data?.description || '';
+    if (/invite link not found|MESSAGE_NOT_MODIFIED/i.test(description)) {
+      console.log(`[Telegram] revokeClubInviteLink: link already gone (${description})`);
+      return;
+    }
+    console.error('[Telegram] revokeClubInviteLink failed:',
+      err.response?.status, err.response?.data?.error_code, description || (err as Error).message);
+  }
+}
+
+// Выгнать из канала: ban сразу + unban (only_if_banned) — «выгнать сейчас,
+// пустить потом по новой ссылке» (ТЗ-197 §2). «user not found / participant»
+// — не ошибка (уже не член канала). Возвращает true, если ban прошёл.
+export async function kickClubMember(tgUserId: string): Promise<boolean> {
+  if (!isConfigured()) {
+    console.warn('[Telegram] Bot token not configured');
+    return false;
+  }
+  try {
+    await axios.post(`${TELEGRAM_API}/banChatMember`, {
+      chat_id: CLUB_CHAT_ID,
+      user_id: Number(tgUserId),
+    });
+  } catch (err: any) {
+    const description = err.response?.data?.description || '';
+    if (/user not found|participant/i.test(description)) {
+      return false; // уже не член канала — не ошибка
+    }
+    console.error('[Telegram] banChatMember failed:',
+      err.response?.status, err.response?.data?.error_code, description || (err as Error).message);
+    return false;
+  }
+  try {
+    await axios.post(`${TELEGRAM_API}/unbanChatMember`, {
+      chat_id: CLUB_CHAT_ID,
+      user_id: Number(tgUserId),
+      only_if_banned: true,
+    });
+  } catch (err: any) {
+    console.error('[Telegram] unbanChatMember failed:',
+      err.response?.status, err.response?.data?.error_code, err.response?.data?.description || (err as Error).message);
+  }
+  return true;
+}
+
+// Статус участника канала. 400 «user not found» → 'unknown' (не логируем как error).
+export async function getClubMemberStatus(tgUserId: string): Promise<'member' | 'left' | 'kicked' | 'unknown'> {
+  if (!isConfigured()) return 'unknown';
+  try {
+    const resp = await axios.post(`${TELEGRAM_API}/getChatMember`, {
+      chat_id: CLUB_CHAT_ID,
+      user_id: Number(tgUserId),
+    }, { timeout: 5000 }); // ленивая сверка в GET /api/club/status — timeout 5 c
+    const status = resp.data?.result?.status;
+    if (status === 'member' || status === 'administrator' || status === 'creator') return 'member';
+    if (status === 'left') return 'left';
+    if (status === 'kicked') return 'kicked';
+    return 'unknown';
+  } catch (err: any) {
+    const description = err.response?.data?.description || '';
+    if (err.response?.data?.error_code === 400 && /user not found/i.test(description)) {
+      return 'unknown';
+    }
+    console.error('[Telegram] getChatMember failed:',
+      err.response?.status, err.response?.data?.error_code, description || (err as Error).message);
+    return 'unknown';
+  }
+}

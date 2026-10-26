@@ -85,6 +85,12 @@ export const USER_EVENT_TYPES = [
   'education.file_purged',
   // ТЗ-120: аудит выгрузок базы пользователей (кто, когда, сколько строк)
   'admin_export_users',
+  // TZ-197-club: закрытый Telegram-канал «Клуб» — выдача/вступление/кик/ручные действия
+  'club.invite_issued',
+  'club.joined',
+  'club.kicked',
+  'club.manual_grant',
+  'club.manual_revoke',
   // ТЗ-123: алерты админам — портфели/образование/витрины + антифлуд-фонды
   'position_added',
   'position_closed',

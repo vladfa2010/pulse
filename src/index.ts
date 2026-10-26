@@ -58,6 +58,7 @@ import sentimentRoutes from './routes/sentiment';
 import calendarRoutes from './routes/calendar';
 import reportsRoutes from './routes/reports'; // ТЗ-191: еженедельный отчёт (архив/live/графики/ahead)
 import advisorRoutes from './advisor/routes'; // ТЗ-182 Задача 2: клиентские портфели (модуль-песочница)
+import clubRoutes from './routes/club'; // TZ-197-club: закрытый TG-канал «Клуб» (ЛК: статус/invite/leave)
 import { startAdvisorSummariesCron, runAdvisorPrecompute } from './advisor/summaries'; // ТЗ-182 Задача 6: precompute саммари клиентов
 import { startAdvisorTaskRemindersCron, runAdvisorTaskReminders } from './advisor/tasks'; // ТЗ-183 v6 Задача 6: напоминания по задачам
 import { startAdvisorWeeklyCron, runAdvisorWeekly } from './advisor/weekly'; // ТЗ-183 Задача 9: еженедельный отчёт по клиентам
@@ -74,7 +75,7 @@ import { startVirusScanSweeper } from './services/education/virusScan'; // ТЗ-
 import { initEducationSeoBootHeal } from './services/education/seoRebuild'; // ТЗ-164: heal пропавших SEO-файлов после ручной заливки dist
 import { mediaGuard } from './services/storage/media';       // ТЗ-100 v15: отдача файлов /media
 import { apiLimiter, authLimiter, webhookLimiter, forgotPasswordLimiter, passwordResetFlowLimiter, promoValidateLimiter, adminLimiter } from './middleware/rateLimit';
-import { startCron, startHeatmapFreezeCron, startClusteringCron, startTopicsNamingCron, startEducationMatchCron, startAnalyzeNewsCron, startKnowledgeGraphCron, startMcpCron, startViralityCron, startSourceStatsCron, startMcpSecurityCron } from './services/cron';   // startCron (RSS) отключен (TZ_REMOVE_DUPLICATE_RSS_CRON); heatmap freeze — TZ-49; clustering — ТЗ-92 (флаг CLUSTERING_ENABLED); topics naming — ТЗ-115 (флаг TOPICS_ENABLED); education match catch-up — ТЗ-103 (флаг EDUCATION_MATCH_ENABLED); analyze news — ТЗ-150 задача 7 (без флага); knowledge graph — ТЗ-107 v3 (флаг EDUCATION_GRAPH_ENABLED); MCP-обслуживание — ТЗ-183 Задача 5; virality analytics — ТЗ-185; source stats daily — ТЗ-186; MCP security daily — ТЗ-190
+import { startCron, startHeatmapFreezeCron, startClusteringCron, startTopicsNamingCron, startEducationMatchCron, startAnalyzeNewsCron, startKnowledgeGraphCron, startMcpCron, startViralityCron, startSourceStatsCron, startMcpSecurityCron, startClubAuditCron } from './services/cron';   // startCron (RSS) отключен (TZ_REMOVE_DUPLICATE_RSS_CRON); heatmap freeze — TZ-49; clustering — ТЗ-92 (флаг CLUSTERING_ENABLED); topics naming — ТЗ-115 (флаг TOPICS_ENABLED); education match catch-up — ТЗ-103 (флаг EDUCATION_MATCH_ENABLED); analyze news — ТЗ-150 задача 7 (без флага); knowledge graph — ТЗ-107 v3 (флаг EDUCATION_GRAPH_ENABLED); MCP-обслуживание — ТЗ-183 Задача 5; virality analytics — ТЗ-185; source stats daily — ТЗ-186; MCP security daily — ТЗ-190; club access audit — TZ-197-club
 import { mountMcp } from './mcp/index'; // ТЗ-183 Задача 1: транспорт /mcp (streamable HTTP, токены)
 import { startMcpCounterFlush } from './mcp/counters'; // ТЗ-185 Задача 1: requests_count, flush раз в минуту
 import { startMcpSecurityFlush } from './mcp/securityStats'; // ТЗ-190: счётчики безопасности /mcp, flush раз в минуту
@@ -3144,6 +3145,7 @@ app.use('/api/user', notificationsRouter); // Notification matrix (GET/PUT /noti
 // ТЗ-182 Задача 2: клиентские портфели. Гейтинг — auth + энтитлмент multi_portfolio
 // (403 feature_not_available при отсутствии фичи в тарифе, включая админа без неё).
 app.use('/api/advisor', authMiddleware, requireFeature('multi_portfolio'), advisorRoutes);
+app.use('/api/club', authMiddleware, clubRoutes); // TZ-197-club: закрытый TG-канал «Клуб» (статус/invite/leave)
 app.use('/api/translate', translateRoutes);
 app.use('/api/webhook', webhookLimiter, webhookRoutes); // Высокий лимит для YuKassa
 app.use('/api/admin', adminLimiter, adminRoutes);     // GET /api/admin/users, /stats
@@ -4500,6 +4502,24 @@ END $$`,
     // (идемпотентна по NOT EXISTS; колонка advisor_clients.notes остаётся
     // нетронутой — песочница, откат кода без потерь данных).
     { sql: `INSERT INTO advisor_notes (client_id, text, created_at) SELECT id, trim(notes), created_at FROM advisor_clients WHERE notes IS NOT NULL AND trim(notes) <> '' AND NOT EXISTS (SELECT 1 FROM advisor_notes n WHERE n.client_id = advisor_clients.id)`, name: 'advisor_notes_migrate' },
+    // TZ-197-club: закрытый Telegram-канал «Клуб» — членство и контроль доступа
+    // по тарифу (PG: src/migrations/telegram_club_v1.sql; SQLite-зеркало —
+    // initSQLiteSchema, дублёр ниже нужен для старых SQLite-файлов).
+    { sql: `CREATE TABLE IF NOT EXISTS telegram_club_members (
+      user_id ${USE_SQLITE ? 'TEXT' : 'UUID'} PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      tg_user_id VARCHAR(32),
+      invite_link TEXT,
+      status VARCHAR(16) NOT NULL DEFAULT 'invited',
+      invited_at TIMESTAMP DEFAULT ${_SQL_NOW},
+      joined_at TIMESTAMP,
+      kicked_at TIMESTAMP,
+      kick_reason VARCHAR(32),
+      is_manual ${USE_SQLITE ? 'INTEGER' : 'BOOLEAN'} NOT NULL DEFAULT FALSE,
+      manual_revoked_at TIMESTAMP DEFAULT NULL,
+      updated_at TIMESTAMP DEFAULT ${_SQL_NOW}
+    )`, name: 'telegram_club_v1' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_tg_club_members_status ON telegram_club_members(status)`, name: 'idx_tg_club_members_status' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_tg_club_members_tg_user ON telegram_club_members(tg_user_id)`, name: 'idx_tg_club_members_tg_user' },
   ];
   for (const m of migrations) {
     try {
@@ -4900,12 +4920,13 @@ END $$`,
         const axios = await import('axios');
         // Delete old webhook first
         await axios.default.post(`https://api.telegram.org/bot${TG_TOKEN}/deleteWebhook`, {}, { timeout: 15000 });
-        // Set new webhook (explicit allowed_updates to receive my_chat_member)
+        // Set new webhook (explicit allowed_updates: my_chat_member — привязка/блок,
+        // chat_member — TZ-197-club: события членства в закрытом канале «Клуб»)
         const resp = await axios.default.post(
           `https://api.telegram.org/bot${TG_TOKEN}/setWebhook`,
           {
             url: WEBHOOK_URL,
-            allowed_updates: ['message', 'my_chat_member', 'callback_query'],
+            allowed_updates: ['message', 'my_chat_member', 'callback_query', 'chat_member'],
           },
           { timeout: 15000 }
         );
@@ -4936,6 +4957,7 @@ END $$`,
       startViralityCron({ isShuttingDown: () => shuttingDown }); // ТЗ-185: аналитика виральности ежедневно 05:30 МСК (после topics-нейминга)
       startSourceStatsCron({ isShuttingDown: () => shuttingDown }); // ТЗ-186: срезы эффективности источников ежедневно 05:40 МСК (после виральности)
       startMcpSecurityCron({ isShuttingDown: () => shuttingDown }); // ТЗ-190: оценка безопасности /mcp ежедневно 06:40 МСК (базовая линия, алертинг)
+      startClubAuditCron({ isShuttingDown: () => shuttingDown }); // TZ-197-club: аудит доступа в канал «Клуб» ежедневно 10:07 UTC (после subscription-крона)
       startAdvisorSummariesCron({ isShuttingDown: () => shuttingDown }); // ТЗ-182 Задача 6: саммари клиентов ежечасно на 7-й минуте (отбор по слотам МСК внутри)
       startAdvisorTaskRemindersCron({ isShuttingDown: () => shuttingDown }); // ТЗ-183 v6 Задача 6: напоминания по задачам каждые 5 минут
       startAdvisorWeeklyCron({ isShuttingDown: () => shuttingDown }); // ТЗ-183 Задача 9: weekly по клиентам — вс 13:00 МСК, зеркало ядерного weekly

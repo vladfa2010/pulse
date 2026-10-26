@@ -1023,3 +1023,21 @@ CREATE TABLE IF NOT EXISTS mcp_audit_log (
 
 CREATE INDEX IF NOT EXISTS idx_mcp_audit_created ON mcp_audit_log (created_at);
 CREATE INDEX IF NOT EXISTS idx_mcp_audit_token ON mcp_audit_log (token_id);
+
+-- TZ-197-club: закрытый Telegram-канал «Клуб» (дублирует src/migrations/telegram_club_v1.sql)
+CREATE TABLE IF NOT EXISTS telegram_club_members (
+  user_id      UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  tg_user_id   VARCHAR(32),
+  invite_link  TEXT,
+  status       VARCHAR(16) NOT NULL DEFAULT 'invited',  -- invited | member | kicked | left
+  invited_at   TIMESTAMP DEFAULT NOW(),
+  joined_at    TIMESTAMP,
+  kicked_at    TIMESTAMP,
+  kick_reason  VARCHAR(32),
+  is_manual         BOOLEAN NOT NULL DEFAULT FALSE,
+  manual_revoked_at TIMESTAMP DEFAULT NULL,
+  updated_at   TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_tg_club_members_status ON telegram_club_members(status);
+CREATE INDEX IF NOT EXISTS idx_tg_club_members_tg_user ON telegram_club_members(tg_user_id);
