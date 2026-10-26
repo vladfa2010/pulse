@@ -342,6 +342,10 @@ PG-миграция: `src/migrations/lms_v1.sql`, применяется иде�
 `signedUrl`, `verifySignedUrl`, `assertDiskSpace`, `bootstrapStorage`,
 `purgeExpiredTrash`. S3 — интерфейс-заглушка (`throw 501`), переезд на
 объектное хранилище без миграции данных (в БД только относительные пути).
+ТЗ-199: `removeFile` пишет манифест `<trashName>.path` (исходный relPath);
+листинг/корзина — `listFiles`/`listTrash`/`restoreFile`/`purgeTrashFile`,
+чтение — `readFileBuffer`, guard'ы API — `normalizeMediaPath`/
+`sanitizeTrashName` (подробности — в секции «ТЗ-199» ниже).
 
 **Конвенция путей:** в БД — ТОЛЬКО `/media/<kind>/<uuid>.<ext>`. Имя файла на
 диске генерируется драйвером (`uuid + расширение`), оригинальное имя в путь
