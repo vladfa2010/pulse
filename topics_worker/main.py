@@ -290,7 +290,10 @@ def save_result(
                         int(label),
                         inherited["name"] if inherited else None,
                         inherited["summary"] if inherited else None,
-                        prev_id is not None,  # сматченные темы сразу named — LLM не дёргаем
+                        # named=true только при наследуемом НЕПУСТОМ имени.
+                        # Иначе (prev-загрязнён: named=true, name=None) тема
+                        # унаследует пустое имя навсегда — баг ТЗ-196.
+                        bool(inherited and inherited["name"]),
                         json.dumps(stats["keywords"], ensure_ascii=False),
                         stats["news_count"],
                         stats["span_days"],
