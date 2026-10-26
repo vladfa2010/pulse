@@ -44,7 +44,7 @@ import { courseToMd, lessonToMd, contentDisposition } from '../services/educatio
 import { courseTagIds, matchEventsToCourse } from '../services/education/calendarMatch'; // ТЗ-103 Задача 7: events-preview
 import { putBuffer, removeFile, StorageError } from '../services/storage/driver';
 import {
-  listFiles, listTrash, restoreFile, purgeTrashFile, normalizeMediaPath, UploadKind,
+  listFiles, listTrash, restoreFile, purgeTrashFile, readFileBuffer, normalizeMediaPath, UploadKind,
 } from '../services/storage/driver'; // ТЗ-199: галерея файлов
 import { scanFileUsages } from '../services/education/fileUsage'; // ТЗ-199: usage-скан привязок
 
@@ -3741,6 +3741,30 @@ router.delete('/files', h(async (req, res) => {
     path: relPath, size: file.size, usages_count: usages.length,
   });
   res.json({ ok: true });
+}));
+
+// ТЗ-199: скачивание любого файла админом через авторизацию вместо signed URL.
+// Публичные kind (courses/content) доступны и напрямую, а materials/ugg
+// mediaGuard отдаёт только по подписи — здесь вместо подписи Bearer-токен.
+router.get('/files/download', h(async (req, res) => {
+  let relPath: string;
+  try {
+    relPath = normalizeMediaPath(req.query.path);
+  } catch (err: any) {
+    if (err instanceof StorageError) return fail(res, err.status, err.message);
+    throw err;
+  }
+  try {
+    const buf = await readFileBuffer(relPath);
+    const name = relPath.split('/').pop()!;
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
+    res.setHeader('Content-Length', String(buf.length));
+    res.end(buf);
+  } catch (err: any) {
+    if (err instanceof StorageError) return fail(res, err.status, err.message);
+    throw err;
+  }
 }));
 
 router.get('/files/trash', h(async (_req, res) => {

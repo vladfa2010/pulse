@@ -461,6 +461,22 @@ export async function purgeTrashFile(trashName: string): Promise<void> {
   await fs.promises.unlink(`${trashAbs}.path`).catch(() => {});
 }
 
+/**
+ * ТЗ-199: прочитать файл хранилища по relPath — для админского скачивания
+ * приватных kind (materials/ugc отдаёт mediaGuard только по signed URL).
+ * Путь проходит normalizeMediaPath (префикс /media/, без '..'). 404, если
+ * файла нет.
+ */
+export async function readFileBuffer(relPath: string): Promise<Buffer> {
+  if (STORAGE_DRIVER !== 'local') throw new StorageError(501, 'storage driver not implemented');
+  const abs = absFromRel(normalizeMediaPath(relPath));
+  try {
+    return await fs.promises.readFile(abs);
+  } catch {
+    throw new StorageError(404, 'Файл не найден в хранилище');
+  }
+}
+
 // ─── Bootstrap и очистка ────────────────────────────────────────────────────
 
 /**
@@ -536,6 +552,7 @@ export default {
   listTrash,
   restoreFile,
   purgeTrashFile,
+  readFileBuffer,
   normalizeMediaPath,
   sanitizeTrashName,
   signedUrl,

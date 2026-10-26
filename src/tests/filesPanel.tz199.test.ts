@@ -168,6 +168,28 @@ async function runDriverTests(): Promise<void> {
       threw instanceof driver.StorageError && threw.status === 400, bad);
   }
 
+  // 10. readFileBuffer (ТЗ-199: скачивание приватных kind через админ-контур)
+  const putDl = await driver.putBuffer(Buffer.from('DL-CONTENT'), 'courses', 'dl-test.png');
+  const dlBuf = await driver.readFileBuffer(putDl.relPath);
+  check('readFileBuffer: содержимое совпадает',
+    dlBuf.equals(Buffer.from('DL-CONTENT')), dlBuf.toString());
+  let dl404: any = null;
+  try {
+    await driver.readFileBuffer('/media/courses/never-existed.png');
+  } catch (err: any) {
+    dl404 = err;
+  }
+  check('readFileBuffer: отсутствующий файл → StorageError 404',
+    dl404 instanceof driver.StorageError && dl404.status === 404, dl404?.status);
+  let dl400: any = null;
+  try {
+    await driver.readFileBuffer('../../etc/passwd');
+  } catch (err: any) {
+    dl400 = err;
+  }
+  check('readFileBuffer: traversal → StorageError 400',
+    dl400 instanceof driver.StorageError && dl400.status === 400, dl400?.status);
+
   fs.rmSync(uploadsDir, { recursive: true, force: true });
 }
 
