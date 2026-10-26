@@ -667,9 +667,11 @@ export async function nameTopicWithLlm(topic: TopicToName): Promise<boolean> {
   const name = typeof parsed?.name === 'string' ? parsed.name.trim() : '';
   if (!name) return false;
   const summary = typeof parsed?.summary === 'string' ? parsed.summary.trim().slice(0, 2000) : '';
-  // named=false — страховка от гонки с другим запуском: не затираем чужое имя
+  // named=false — страховка от гонки с другим запуском: не затираем чужое имя.
+  // OR name IS NULL — topics-worker иногда наследует named=true без имени
+  // (Jaccard-матчинг с загрязнённой темой) — такие темы тоже чиним (ТЗ-196).
   await query(
-    'UPDATE topics SET name = $1, summary = $2, named = true WHERE id = $3 AND named = false',
+    'UPDATE topics SET name = $1, summary = $2, named = true WHERE id = $3 AND (named = false OR name IS NULL)',
     [name.slice(0, 300), summary, topic.id]
   );
   return true;
@@ -695,7 +697,7 @@ export function startTopicsNamingCron(opts?: { isShuttingDown?: () => boolean })
            ORDER BY finished_at DESC NULLS LAST
            LIMIT 1
          )
-           AND t.named = false
+           AND (t.named = false OR t.name IS NULL)
          ORDER BY t.news_count DESC
          LIMIT $1`,
         [TOPICS_NAMING_LIMIT]

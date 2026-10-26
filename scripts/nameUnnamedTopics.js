@@ -11,8 +11,8 @@
  *   2. Последовательно вызывает nameTopicWithLlm с паузой 200–500 мс между вызовами.
  *   3. Логирует прогресс «названо X из Y».
  *
- * Идемпотентно: UPDATE в nameTopicWithLlm имеет условие named = false, повторный
- * запуск не затирает уже названные темы.
+ * Идемпотентно: UPDATE в nameTopicWithLlm имеет условие «named=false ИЛИ
+ * name IS NULL» — повторный запуск не затирает уже названные темы.
  *
  * Запуск (на VDS, после npm run build и деплоя):
  *   docker exec pulse-backend node scripts/nameUnnamedTopics.js
@@ -32,7 +32,7 @@ const UNNAMED_SQL = `SELECT t.id, t.keywords
     ORDER BY finished_at DESC NULLS LAST
     LIMIT 1
   )
-    AND t.named = false
+    AND (t.named = false OR t.name IS NULL)
   ORDER BY t.news_count DESC`;
 
 // пауза 200–500 мс между LLM-вызовами — не ддошим Moonshot
