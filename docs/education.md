@@ -96,7 +96,10 @@
 soft-delete с 409 при покупках, restore), уроки (создание/редактирование/
 удаление с пересчётом position, reorder), тесты (1..20 вопросов, 2..6 вариантов),
 материалы (файл через multipart+magic bytes / ссылка / новость, is_free),
-обложки (multer memory → file-type jpg/png/webp → sharp EXIF-strip ≤50 Мпикс),
+обложки (multer memory → file-type jpg/png/webp → sharp EXIF-strip ≤50 Мпикс
+→ сжатие ≤1920px WebP q82, всегда `cover.webp`, ТЗ-198;
+разовый пережатие существующих: `npx ts-node --transpile-only
+scripts/recompress-covers.ts [--dry-run]`),
 теги из единой базы (`GET /tags?q=` автодополнение, `PUT /tags` полная замена),
 категории (CRUD + reorder, удаление запрещено при живых курсах — 409),
 тарифы курса (`tariff_ids` полная замена), привязки к новостям (≤10),
