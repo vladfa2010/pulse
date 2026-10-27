@@ -36,8 +36,11 @@ const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
 // ТЗ-161: интерактивный семантический поиск не ждёт батч-крон TEI
-// (внутренний таймаут embedBatch — 600 с). 5 с — фолбэк на exact-only.
-const SEMANTIC_SEARCH_TIMEOUT_MS = 5000;
+// (внутренний таймаут embedBatch — 600 с). 27.10: 5 → 15 с — при RAYON=1
+// одиночный embed в TEI занимает 4–6 с + очередь (см. docs/embeddings.md,
+// трейд-off 14.10); 5 с гасили семантическую ветку в пике (5 фолбэков/24ч).
+// Переопределяется env SEMANTIC_SEARCH_TIMEOUT_MS.
+const SEMANTIC_SEARCH_TIMEOUT_MS = parseInt(process.env.SEMANTIC_SEARCH_TIMEOUT_MS || '15000', 10);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // GET /api/news/global — ПУБЛИЧНАЯ общая лента (все новости, без auth)
