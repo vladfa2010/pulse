@@ -119,12 +119,14 @@ export function sanitizeLessonHtml(html: string): string {
     // ТЗ-143: div.chart-block — атом графика, атрибуты data-* валидируются
     // трансформером div ниже (содержимого у блока нет — озвучке/рендеру
     // текста нечего сломать).
+    // ТЗ-201: div.tag-select-block — атом выбора тегов портфеля; контент
+    // живёт вне HTML (API по юзеру), атом пустой — только class.
     allowedAttributes: {
       a: ['href'],
       img: ['src', 'width'],
       div: ['class', 'data-ticker', 'data-exchange', 'data-name', 'data-tf', 'data-range', 'data-width'],
     },
-    allowedClasses: { div: ['callout', 'html-block', 'chart-block'] },
+    allowedClasses: { div: ['callout', 'html-block', 'chart-block', 'tag-select-block'] },
     // ТЗ-155: пустые абзацы/пункты списка — мусор от выделения «с запасом»
     // в редакторе; у студента рисуют одинокие маркеры/пустые строки.
     // frame.mediaChildren — защита: <p><img></p> и <li><img></li> не считаем

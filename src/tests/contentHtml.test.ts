@@ -80,6 +80,15 @@ function check(name: string, cond: boolean, detail?: any) {
   const callout = sanitizeLessonHtml('<div class="callout"></div>');
   check('пустой callout div не тронут (фильтр — только li/p)', callout.includes('callout'), callout);
 
+  // ТЗ-201: атом выбора тегов — пустой div с классом проходит санитайзер
+  const tagBlock = sanitizeLessonHtml('<p>Текст</p><div class="tag-select-block"></div><p>Хвост</p>');
+  check('tag-select-block переживает санитайзер (ТЗ-201), соседний контент цел',
+    tagBlock.includes('tag-select-block') && tagBlock.includes('<p>Текст</p>') && tagBlock.includes('<p>Хвост</p>'), tagBlock);
+
+  const evilTagBlock = sanitizeLessonHtml('<div class="tag-select-block" onclick="x()"><script>alert(1)</script></div>');
+  check('tag-select-block: чужие атрибуты и содержимое вырезаются',
+    evilTagBlock.includes('class="tag-select-block"') && !evilTagBlock.includes('onclick') && !evilTagBlock.includes('<script'), evilTagBlock);
+
   const imgExternal = sanitizeLessonHtml('<p><img src="https://evil.example/x.png"></p>');
   check('внешняя картинка по-прежнему без src (ТЗ-108 контракт не сломан)',
     !/<img[^>]*\ssrc=/.test(imgExternal), imgExternal);
