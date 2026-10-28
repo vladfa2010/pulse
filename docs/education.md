@@ -1153,3 +1153,78 @@ playwright: юзер — блок с данными 24ч/7д (переключе
 главная — секция «Популярные теги» без изменений (скриншот). Тесты:
 `populartagsslider.tz202.test.tsx` (7), `communitytags.tz202.test.tsx` (2);
 vitest 543 зелёных, tsc чисто.
+
+## Редактор конспекта (RichTextField) — актуальное устройство (2026-10-28)
+
+**Файл:** `pulse-frontend/src/components/admin/education/RichTextField.tsx`
+(TipTap v3, `shouldRerenderOnTransaction: true`). Используется в форме урока
+админки для поля `text_content`. Контракт хранения: value = HTML-строка
+`text_content`, та же что у TextFormatField (ТЗ-108/136); схема документа
+зеркалит серверный whitelist `services/education/contentHtml.ts`, round-trip
+«визуально → HTML → визуально» данные не теряет.
+
+**Режимы:**
+- «Визуально» — TipTap; холст инлайн-стилями повторяет `.edu-content` студента
+  1в1 (та же типографика, что на LessonPage и в предпросмотре).
+- «HTML» — textarea с моноширинным шрифтом + плашка-предупреждение о тегах,
+  которые вырежет санитайзер (автор видит ДО сохранения).
+
+**Тулбар (в порядке следования):**
+undo/redo · H2/H3 (h1 нет — серверный whitelist его не держит) · жирный/курсив/
+подчёркнутый (ТЗ-176 добавил `u` и в схему, и в санитайзер) · код · ссылка
+(только https://…) · маркированный/нумерованный список · цитата · картинка
+(кнопка/drag&drop/Ctrl+V → `POST /content-image`, в хранении `width` %) ·
+callout (акцентный блок) · HTML-блок (своя вёрстка островком) · график
+инструмента (живые свечи Финама, ТЗ-143) · теги портфеля (ТЗ-201, иконка Tags) ·
+теги сообщества (ТЗ-202, иконка TrendingUp) · таблица 3×3 с шапкой (ТЗ-176).
+Кнопки теговых блоков disabled при существующей ноде (проверка `getJSON`,
+обход JSON-документа `hasNodeType`) — один `tag-select-block` и один
+`community-tags-block` на урок.
+
+**Баблы выделения:** картинка/chart — ширина (25/33/50/100% или «во всю
+ширину» — `width: null`), заменить картинку/инструмент, удалить; таблица —
+строка выше/ниже, колонка левее/правее, удалить строку/колонку/таблицу.
+
+**Кастомные atom-ноды (пустые div с классом, данные живут вне HTML):**
+- `div.chart-block` — data-атрибуты `ticker/exchange/name/tf/range/width`,
+  валидируются трансформером санитайзера (ТЗ-143).
+- `div.html-block` — вёрстка хранится внутри div как raw-HTML; в документе
+  TipTap — в attr `data-html` (URL-encoded) через трансформы `inHtml/outHtml`
+  (TipTap не рендерит raw-HTML из attr; NodeView показывает вёрстку через
+  dangerouslySetInnerHTML). При вставке — модалка-подтверждение «блок
+  выполняется как есть».
+- `div.tag-select-block` — только class, контент по API юзера (ТЗ-201).
+- `div.community-tags-block` — только class, данные публичного
+  `/news/tags/popular` (ТЗ-202).
+- `callout` — акцентный блок.
+- Таблицы TipTap `Table 3×3` (header row), `resizable: false`, сериализационный
+  мусор (colgroup/style) и colspan/rowspan вырезает санитайзер.
+
+**Рендер на публичных страницах — порталами, не html-react-parser:**
+`LessonPage.tsx` монтирует `chartMounts` / `tagSelectMounts` /
+`communityTagsMounts` (`querySelectorAll` по div-классам, пересборка при
+`segMode` озвучки); `SharedLessonPage.tsx` (шеринг урока, ТЗ-187) — те же
+теговые порталы через `SafeHtmlContent innerRef` (до ТЗ-202 shared показывал
+пустые div).
+
+**Санитайзер-контракт** (`services/education/contentHtml.ts`, общий для
+админского/публичного/shared-контуров; `routes/adminEducation.ts` —
+re-export, «второго санитайзера» нет):
+- `allowedClasses.div = ['callout', 'html-block', 'chart-block',
+  'tag-select-block', 'community-tags-block']`;
+- `allowedAttributes`: `a[href]`, `img[src,width]`, `div[class,
+  data-ticker, data-exchange, data-name, data-tf, data-range, data-width]`
+  (data-* — только для chart-block);
+- таблицы принимаются, colspan/rowspan и мусор TipTap вырезаются;
+- `normalizePlainText()` (ТЗ-108 v3) — plain-text без блочных тегов на записи
+  и на отдаче → абзацы `<p>`, `\n` → `<br>`.
+
+**Поля-родственники формы урока:** видео (embed-домены и нормализация rutube —
+ТЗ-164), превью видео (ТЗ-188), вложения/галерея (ТЗ-199). Они НЕ часть
+RichTextField, но живут в той же форме.
+
+**Тесты:** бэкенд `src/tests/contentHtml.test.ts` (22 кейса: блоки переживают
+санитайзер, чужие атрибуты/содержимое вырезаются); фронт — `lessonpage.chart
+.test.tsx`, `tagpicker.tz201.test.tsx` (5), `tagselectblock.tz201.test.tsx`
+(3), `populartagsslider.tz202.test.tsx` (7), `communitytags.tz202.test.tsx`
+(2).
