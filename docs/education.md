@@ -1074,3 +1074,41 @@ admin без записи — тонкая muted-плашка «Вы смотр�
 новичка?» (published, admin_preview=true) — баннера нет, плашка + «Записаться»
 на месте (скриншот в сессии). Тесты: `coursepage.tz200.test.tsx` (5 сценариев),
 регрессия `coursepage.tz189.test.tsx` зелёная.
+
+## ТЗ-201 — интерактивный блок выбора тегов портфеля в уроке (2026-10-28)
+
+**Что:** ученик выбирает теги портфеля прямо в конспекте урока (не уходя на
+главную). Атом `div.tag-select-block` по образцу chart-block (ТЗ-143): контент
+блока живёт вне HTML (API по юзеру), в text_content — пустой div с классом.
+
+**Бэкенд (`86a563b`):** единственная правка — `services/education/contentHtml.ts`:
+`allowedClasses.div += 'tag-select-block'` (`sanitizeLessonHtml` общая для
+админского/публичного/shared-контуров; `routes/adminEducation.ts` — re-export,
+отдельного «второго санитайзера» нет). Тест: `src/tests/contentHtml.test.ts`
+(+2 кейса: блок переживает санитайзер, чужие атрибуты/содержимое вырезаются;
+20/20).
+
+**Фронт (`e471220`, версия 8.6.56 / code 78):**
+- `src/components/tags/TagPicker.tsx` — компактный пикер: поиск `/tags/search`
+  (дебаунс 200 мс, как на главной), счётчик лимита `/plans` +
+  `getEffectiveTagLimit`, заморозка per-tag `is_frozen` (пилюля с замком без
+  удаления, добавление заблокировано до разруливания лимита). Home.tsx НЕ
+  рефакторится — его пикер переплетён с хиро-секцией, вынос — риск вне скоупа.
+- `src/components/education/TagSelectBlockView.tsx` — карточка «Теги портфеля»:
+  юзер → TagPicker; гость → демо-пилюли (без API), любой клик → модалка логина
+  (`useAuthModal`); событие `education.tag_block_interaction` (role, action).
+- `RichTextField.tsx`: нода `tagSelectBlock` (atom, по образцу ChartBlock) +
+  NodeView с живым блоком; кнопка «Теги» (lucide `Tags`) в тулбаре — disabled
+  при существующей ноде (проверка `getJSON`, один блок на урок).
+- `LessonPage.tsx`: `querySelectorAll('div.tag-select-block')` + порталы
+  `TagSelectBlockView` рядом с chartMounts (та же пересборка при `segMode`).
+
+**Проверено на проде:** PUT `/api/admin/education/lessons/98bc9e23…` с блоком в
+text_content → санитайзер пропустил (1578→1682 симв., класс на месте); публичный
+`GET /api/education/lessons/:id` отдаёт блок. Тесты: `tagpicker.tz201.test.tsx`
+(5), `tagselectblock.tz201.test.tsx` (3); vitest 534 зелёных, tsc обоих репо —
+чисто. UI-проверка в браузере (гость→модалка, юзер→пикер) — отложена: сеть с
+рабочей машины до прод-сервера временно недоступна; покрыто юнит-тестами.
+
+**ТЗ:** `ТЗ-201-интерактивный-блок-тегов-в-уроке.md` (актуализировано по коду:
+заморозка per-tag, один санитайзер, порталы вместо html-react-parser).
