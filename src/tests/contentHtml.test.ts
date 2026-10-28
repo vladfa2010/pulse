@@ -89,6 +89,15 @@ function check(name: string, cond: boolean, detail?: any) {
   check('tag-select-block: чужие атрибуты и содержимое вырезаются',
     evilTagBlock.includes('class="tag-select-block"') && !evilTagBlock.includes('onclick') && !evilTagBlock.includes('<script'), evilTagBlock);
 
+  // ТЗ-202: атом популярных тегов сообщества — тот же контракт, что у ТЗ-201
+  const community = sanitizeLessonHtml('<p>Текст</p><div class="community-tags-block"></div><p>Хвост</p>');
+  check('community-tags-block переживает санитайзер (ТЗ-202), соседний контент цел',
+    community.includes('community-tags-block') && community.includes('<p>Текст</p>') && community.includes('<p>Хвост</p>'), community);
+
+  const evilCommunity = sanitizeLessonHtml('<div class="community-tags-block" data-x="1"><b>левый контент</b></div>');
+  check('community-tags-block: чужие атрибуты и содержимое вырезаются',
+    evilCommunity.includes('class="community-tags-block"') && !evilCommunity.includes('data-x') && !evilCommunity.includes('<b'), evilCommunity);
+
   const imgExternal = sanitizeLessonHtml('<p><img src="https://evil.example/x.png"></p>');
   check('внешняя картинка по-прежнему без src (ТЗ-108 контракт не сломан)',
     !/<img[^>]*\ssrc=/.test(imgExternal), imgExternal);

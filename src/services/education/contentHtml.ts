@@ -121,12 +121,14 @@ export function sanitizeLessonHtml(html: string): string {
     // текста нечего сломать).
     // ТЗ-201: div.tag-select-block — атом выбора тегов портфеля; контент
     // живёт вне HTML (API по юзеру), атом пустой — только class.
+    // ТЗ-202: div.community-tags-block — атом популярных тегов сообщества;
+    // данные публичного /news/tags/popular, атом пустой — только class.
     allowedAttributes: {
       a: ['href'],
       img: ['src', 'width'],
       div: ['class', 'data-ticker', 'data-exchange', 'data-name', 'data-tf', 'data-range', 'data-width'],
     },
-    allowedClasses: { div: ['callout', 'html-block', 'chart-block', 'tag-select-block'] },
+    allowedClasses: { div: ['callout', 'html-block', 'chart-block', 'tag-select-block', 'community-tags-block'] },
     // ТЗ-155: пустые абзацы/пункты списка — мусор от выделения «с запасом»
     // в редакторе; у студента рисуют одинокие маркеры/пустые строки.
     // frame.mediaChildren — защита: <p><img></p> и <li><img></li> не считаем
