@@ -1098,8 +1098,8 @@ admin без записи — тонкая muted-плашка «Вы смотр�
   юзер → TagPicker; гость → демо-пилюли (без API), любой клик → модалка логина
   (`useAuthModal`); событие `education.tag_block_interaction` (role, action).
 - `RichTextField.tsx`: нода `tagSelectBlock` (atom, по образцу ChartBlock) +
-  NodeView с живым блоком; кнопка «Теги» (lucide `Tags`) в тулбаре — disabled
-  при существующей ноде (проверка `getJSON`, один блок на урок).
+  NodeView с живым блоком; кнопка «Теги» (lucide `Tags`) в тулбаре. Лимит
+  «один блок на урок» снят в ТЗ-203 — блоков может быть несколько.
 - `LessonPage.tsx`: `querySelectorAll('div.tag-select-block')` + порталы
   `TagSelectBlockView` рядом с chartMounts (та же пересборка при `segMode`).
 
@@ -1141,8 +1141,8 @@ contentHtml +2 кейса (22/22). Публичность `GET /news/tags/popula
   403 на главной при заморозке).
 - `CommunityTagsBlockView` — карточка + embedded-слайдер; `isError` → null-рендер
   (нет пустой рамки посреди урока).
-- `RichTextField`: нода `communityTagsBlock` + кнопка тулбара (TrendingUp),
-  один блок на урок (getJSON-проверка).
+- `RichTextField`: нода `communityTagsBlock` + кнопка тулбара (TrendingUp).
+  Лимит «один блок на урок» снят в ТЗ-203.
 - `LessonPage`: порталы `div.community-tags-block`; `SharedLessonPage`: порталы
   обоих теговых блоков (до этого shared показывал пустые div).
 
@@ -1177,9 +1177,8 @@ undo/redo · H2/H3 (h1 нет — серверный whitelist его не де�
 callout (акцентный блок) · HTML-блок (своя вёрстка островком) · график
 инструмента (живые свечи Финама, ТЗ-143) · теги портфеля (ТЗ-201, иконка Tags) ·
 теги сообщества (ТЗ-202, иконка TrendingUp) · таблица 3×3 с шапкой (ТЗ-176).
-Кнопки теговых блоков disabled при существующей ноде (проверка `getJSON`,
-обход JSON-документа `hasNodeType`) — один `tag-select-block` и один
-`community-tags-block` на урок.
+Блоков тегов каждого типа может быть несколько (лимит «один на урок» снят
+в ТЗ-203); в каждом NodeView — тумблер «Подсветка» (ТЗ-203).
 
 **Баблы выделения:** картинка/chart — ширина (25/33/50/100% или «во всю
 ширину» — `width: null`), заменить картинку/инструмент, удалить; таблица —
@@ -1193,9 +1192,10 @@ callout (акцентный блок) · HTML-блок (своя вёрстка 
   (TipTap не рендерит raw-HTML из attr; NodeView показывает вёрстку через
   dangerouslySetInnerHTML). При вставке — модалка-подтверждение «блок
   выполняется как есть».
-- `div.tag-select-block` — только class, контент по API юзера (ТЗ-201).
-- `div.community-tags-block` — только class, данные публичного
-  `/news/tags/popular` (ТЗ-202).
+- `div.tag-select-block` — только class (+ опциональный `data-glow="1"`
+  подсветки, ТЗ-203), контент по API юзера (ТЗ-201).
+- `div.community-tags-block` — только class (+ опциональный `data-glow="1"`),
+  данные публичного `/news/tags/popular` (ТЗ-202).
 - `callout` — акцентный блок.
 - Таблицы TipTap `Table 3×3` (header row), `resizable: false`, сериализационный
   мусор (colgroup/style) и colspan/rowspan вырезает санитайзер.
@@ -1228,3 +1228,45 @@ RichTextField, но живут в той же форме.
 .test.tsx`, `tagpicker.tz201.test.tsx` (5), `tagselectblock.tz201.test.tsx`
 (3), `populartagsslider.tz202.test.tsx` (7), `communitytags.tz202.test.tsx`
 (2).
+
+## ТЗ-203 — подсветка интерактивных блоков урока (BorderGlow), опция per-block (2026-10-30)
+
+**Что:** автор урока может включить «Подсветку» у каждого тегового блока
+(теги портфеля ТЗ-201, теги сообщества ТЗ-202). Включённая = блок обёрнут в
+BorderGlow (ТЗ-145) с автопробегом по появлению во вьюпорте — 1:1 с кнопкой
+«Бесплатная регистрация» на главной. Chart-block в v1 не подсвечивается
+(решенение владельца). Лимит «один блок типа на урок» снят: блоков может
+быть несколько, у каждого своя подсветка.
+
+**Бэкенд (`8c00aed`):** единственная правка — единый санитайзер
+`services/education/contentHtml.ts`: `div` + `data-glow` в allowedAttributes;
+трансформер div валидирует значение — атрибут живёт только у
+`tag-select-block`/`community-tags-block` и только со значением `"1"`
+(иначе вырезается). Тесты `contentHtml.test.ts` +5 кейсов (27 зелёных):
+`"1"` переживает у обоих блоков, `"0"`/мусор/чужие div вырезаются.
+
+**Фронт (`f5cfb61`, версия 8.6.60 / code 82):**
+- `GlowBlock.tsx` — обёртка: enabled=false → children как есть; enabled=true →
+  BorderGlow(borderRadius 12, фон карточки #101010); при glow карточка блока
+  уходит во frameless (свои border/background/margin отключаются — нет двойной
+  рамки); `prefers-reduced-motion` → `animated=false` (автопробег не стартует,
+  свечение по ховеру остаётся); guard на отсутствие matchMedia.
+- Ноды `tagSelectBlock`/`communityTagsBlock`: атрибут `glow` (parse/render
+  `data-glow="1"`; false → атрибут не пишется, обратная совместимость).
+- Тумблер «Подсветка» (Sparkles) — в шапке NodeView каждого блока:
+  `updateAttributes({ glow: !glow })`, undoable через TipTap history; живое
+  превью с пробегом — админ видит то, что ученик.
+- Тулбар: кнопки вставки блоков больше не disabled (лимит снят), `hasNodeType`
+  удалён.
+- Рендер порталами: `LessonPage` и `SharedLessonPage` читают
+  `el.dataset.glow === '1'` у div-атома и передают проп `glow` в
+  TagSelectBlockView/CommunityTagsBlockView (html-react-parser не используется).
+- Shared-урок: подсветка видна гостю (главный конверсионный сценарий).
+
+**Тесты:** `glowblock.tz203.test.tsx` (3: без обёртки / BorderGlow с
+radius 12 + фон / reduced-motion → animated=false); tagselectblock.tz201
++2 (frameless при glow / рамка без glow). vitest 548 зелёных, tsc чисто.
+
+**ТЗ:** `ТЗ-203-подсветка-интерактивных-блоков-borderglow.md` (пути
+санитайзера и html-react-parser в исходном ТЗ устарели — реализация по
+коду: один санитайзер + порталы).
