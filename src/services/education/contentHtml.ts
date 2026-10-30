@@ -123,10 +123,12 @@ export function sanitizeLessonHtml(html: string): string {
     // живёт вне HTML (API по юзеру), атом пустой — только class.
     // ТЗ-202: div.community-tags-block — атом популярных тегов сообщества;
     // данные публичного /news/tags/popular, атом пустой — только class.
+    // ТЗ-203: data-glow — флаг подсветки блока (BorderGlow); значение
+    // валидируется трансформером div ниже (только «1»).
     allowedAttributes: {
       a: ['href'],
       img: ['src', 'width'],
-      div: ['class', 'data-ticker', 'data-exchange', 'data-name', 'data-tf', 'data-range', 'data-width'],
+      div: ['class', 'data-ticker', 'data-exchange', 'data-name', 'data-tf', 'data-range', 'data-width', 'data-glow'],
     },
     allowedClasses: { div: ['callout', 'html-block', 'chart-block', 'tag-select-block', 'community-tags-block'] },
     // ТЗ-155: пустые абзацы/пункты списка — мусор от выделения «с запасом»
@@ -189,6 +191,14 @@ export function sanitizeLessonHtml(html: string): string {
           if (name) out['data-name'] = name;
           if (width) out['data-width'] = width;
           return { tagName: 'div', attribs: out };
+        }
+        // ТЗ-203: data-glow — только у теговых блоков и только значение «1»
+        // (чарт в v1 не подсвечивается). Иначе атрибут вырезаем, чтобы мусор
+        // не уезжал в HTML урока.
+        if ('data-glow' in attribs) {
+          const cls = (attribs.class || '').split(/\s+/);
+          const glowAllowed = cls.includes('tag-select-block') || cls.includes('community-tags-block');
+          if (!glowAllowed || attribs['data-glow'] !== '1') delete attribs['data-glow'];
         }
         return { tagName, attribs };
       },

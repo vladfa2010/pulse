@@ -98,6 +98,23 @@ function check(name: string, cond: boolean, detail?: any) {
   check('community-tags-block: чужие атрибуты и содержимое вырезаются',
     evilCommunity.includes('class="community-tags-block"') && !evilCommunity.includes('data-x') && !evilCommunity.includes('<b'), evilCommunity);
 
+  // ТЗ-203: флаг подсветки data-glow — только «1» у теговых блоков
+  const glowTag = sanitizeLessonHtml('<div class="tag-select-block" data-glow="1"></div>');
+  check('tag-select-block: data-glow="1" переживает санитайзер (ТЗ-203)',
+    glowTag.includes('data-glow="1"'), glowTag);
+  const glowCommunity = sanitizeLessonHtml('<div class="community-tags-block" data-glow="1"></div>');
+  check('community-tags-block: data-glow="1" переживает санитайзер (ТЗ-203)',
+    glowCommunity.includes('data-glow="1"'), glowCommunity);
+  const glowZero = sanitizeLessonHtml('<div class="tag-select-block" data-glow="0"></div>');
+  check('data-glow="0" вырезается (только «1» валидно)',
+    !glowZero.includes('data-glow'), glowZero);
+  const glowJunk = sanitizeLessonHtml('<div class="tag-select-block" data-glow="хаха&quot;"></div>');
+  check('data-glow с мусорным значением вырезается',
+    !glowJunk.includes('data-glow'), glowJunk);
+  const glowCallout = sanitizeLessonHtml('<div class="callout" data-glow="1"></div>');
+  check('data-glow у сторонних div (callout) вырезается',
+    !glowCallout.includes('data-glow'), glowCallout);
+
   const imgExternal = sanitizeLessonHtml('<p><img src="https://evil.example/x.png"></p>');
   check('внешняя картинка по-прежнему без src (ТЗ-108 контракт не сломан)',
     !/<img[^>]*\ssrc=/.test(imgExternal), imgExternal);
