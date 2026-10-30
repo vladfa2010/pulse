@@ -1283,3 +1283,15 @@ radius 12 + фон / reduced-motion → animated=false); tagselectblock.tz201
 **ТЗ:** `ТЗ-203-подсветка-интерактивных-блоков-borderglow.md` (пути
 санитайзера и html-react-parser в исходном ТЗ устарели — реализация по
 коду: один санитайзер + порталы).
+
+**v2 — фокус после пробега (`06d916c`, версия 8.6.63 / code 85):** после
+завершения автопробега свечения (~4 с) фокус переходит в поле поиска тега
+(мигающий курсор приглашает ввод). Цепочка: BorderGlow новый опциональный
+проп `onSweepEnd` (вызывается в onEnd последней анимации пробега) →
+GlowBlock прокидывает → TagSelectBlockView (проп `sweepFocus`) ищет
+`input[aria-label="Поиск тега"]` внутри блока и фокусирует с
+`preventScroll`. `sweepFocus` включают только LessonPage/SharedLessonPage;
+в NodeView редактора выключен (не крадём фокус у автора). У гостя инпута
+нет — колбэк бездействует; при `prefers-reduced-motion` пробега нет → фокуса
+нет. Тесты: glowblock +1 (прокидывание onSweepEnd), tagselectblock +2
+(фокус при sweepFocus / не фокусирует без). vitest 555 зелёных.
