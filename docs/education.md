@@ -1263,9 +1263,22 @@ BorderGlow (ТЗ-145) с автопробегом по появлению во �
   TagSelectBlockView/CommunityTagsBlockView (html-react-parser не используется).
 - Shared-урок: подсветка видна гостю (главный конверсионный сценарий).
 
+**Фикс сериализации (`057678b`, версия 8.6.62 / code 84):** первый релиз
+потерял атрибут при сохранении — `renderHTML` нод возвращал статический
+`{ class }` без `mergeAttributes(HTMLAttributes, …)` (attribute-level
+renderHTML отбрасывался; превью работало, т.к. NodeView читает attrs
+напрямую). Исправлено по образцу chartBlock: обе ноды разворачивают
+HTMLAttributes. Регрессионный тест `richtextfield.glow.tz203.test.tsx` (4
+кейса: glow=true → `data-glow="1"`, glow=false → чистый HTML, round-trip
+парсинга обратно — на старом коде тест падает). Живой прогон на проде:
+PUT урока с `data-glow="1"` → GET, атрибут на месте (round-trip
+санитайзера); UI-проверка владельцем после фикса — состояние
+запоминается.
+
 **Тесты:** `glowblock.tz203.test.tsx` (3: без обёртки / BorderGlow с
 radius 12 + фон / reduced-motion → animated=false); tagselectblock.tz201
-+2 (frameless при glow / рамка без glow). vitest 548 зелёных, tsc чисто.
++2 (frameless при glow / рамка без glow); richtextfield.glow.tz203 (4,
+сериализация). vitest 552 зелёных, tsc чисто.
 
 **ТЗ:** `ТЗ-203-подсветка-интерактивных-блоков-borderglow.md` (пути
 санитайзера и html-react-parser в исходном ТЗ устарели — реализация по
