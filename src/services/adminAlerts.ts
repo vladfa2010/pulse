@@ -32,6 +32,7 @@ export const ALERT_EVENT_TYPES: { value: UserEventType | 'sentiment_vote'; label
   { value: 'sentiment_vote', label: 'Прогноз индекса (голос)' },
   { value: 'page_view_plans', label: 'Просмотр тарифов' },
   { value: 'factcheck_ordered', label: 'Заказан фактчек' },
+  { value: 'factcheck_budget', label: 'Бюджет фактчека' },
   { value: 'page_view_portfolio', label: 'Просмотр портфеля' },
   { value: 'portfolio_add_clicked', label: 'Нажал + Портфель' },
   { value: 'portfolio_created', label: 'Портфель создан' },
@@ -89,9 +90,12 @@ function escapeHtml(text: string): string {
 }
 
 function formatAlert(eventType: UserEventType, user: UserMini | null, data: Record<string, any>): string {
+  // Системные события без user/user_id (например, factcheck_budget) — без блока пользователя
   const userLine = user
     ? `👤 <b>Пользователь:</b> ${escapeHtml(user.username || user.email || user.id)}\n   📧 ${escapeHtml(user.email)}\n   🆔 <code>${user.id}</code>`
-    : `👤 <b>Пользователь:</b> <code>${data.user_id || 'unknown'}</code>`;
+    : data.user_id
+      ? `👤 <b>Пользователь:</b> <code>${data.user_id}</code>`
+      : '';
 
   const typeLabel = ALERT_EVENT_TYPES.find(t => t.value === eventType)?.label || eventType;
   let details = '';
@@ -132,6 +136,10 @@ function formatAlert(eventType: UserEventType, user: UserMini | null, data: Reco
     case 'factcheck_ordered':
       details = `🔍 Запрос: ${escapeHtml(data.query || '')}`;
       break;
+    // ТЗ-207: системное событие (user = null) — превышение дневного бюджета
+    case 'factcheck_budget':
+      details = `💰 Потрачено: $${Number(data.spent_usd || 0).toFixed(2)} из $${Number(data.budget_usd || 0).toFixed(2)}\nПроверок: ${data.checks_count ?? '?'}\n🔤 Токенов: in ${data.tokens_input ?? '?'} / out ${data.tokens_output ?? '?'}`;
+      break;
     // ТЗ-123: образование — названия курса/урока из event_data
     case 'course_started':
       details = `📚 Курс: ${escapeHtml(data.course_title || '')}`;
@@ -164,7 +172,7 @@ function formatAlert(eventType: UserEventType, user: UserMini | null, data: Reco
         .join('\n');
   }
 
-  return `🔔 <b>${escapeHtml(typeLabel)}</b>\n\n${userLine}\n\n${details}`;
+  return `🔔 <b>${escapeHtml(typeLabel)}</b>\n\n${[userLine, details].filter(Boolean).join('\n\n')}`;
 }
 
 /**

@@ -39,6 +39,7 @@ import radioRoutes from './routes/radio';
 import userRoutes from './routes/user';
 import mcpTokensRoutes from './routes/mcpTokens'; // ТЗ-183: MCP-токены личного кабинета
 import adminMcpRoutes from './routes/adminMcp'; // ТЗ-185: админ-таба «МСП» (реестр токенов, отзыв)
+import adminFactCheckingRoutes from './routes/adminFactChecking'; // ТЗ-207: админ-таба «Фактчекинг» (учёт токенов)
 import globalSummaryRoutes from './routes/globalSummary';
 import { startGlobalSummaryCron } from './services/globalSummary';
 import translateRoutes from './routes/translate';
@@ -3153,6 +3154,7 @@ app.use('/api/admin', adminLimiter, adminMetricsRoutes); // GET /api/admin/metri
 app.use('/api/admin/radio/mp3-cache', adminLimiter, adminRadioCacheRoutes); // ТЗ-65: dashboard MP3-кеша (stats/history/top-keys/clear/prewarm)
 app.use('/api/admin/education', adminLimiter, adminEducationRoutes); // ТЗ-101: LMS «Образование» (все методы за adminMiddleware)
 app.use('/api/admin/mcp', adminLimiter, adminMcpRoutes); // ТЗ-185: таба «МСП» — реестр токенов + отзыв (adminMiddleware внутри)
+app.use('/api/admin', adminLimiter, adminFactCheckingRoutes); // ТЗ-207: таба «Фактчекинг» — stats/list/detail сессий (adminMiddleware внутри)
 // ТЗ-118: dual mount. Legacy-префикс '/admin' удалить в Задаче 3.
 app.use(['/admin', '/api/admin'], adminLegacyRoutes); // legacy admin UI endpoints (moved from index.ts)
 
@@ -4250,6 +4252,10 @@ async function start() {
     // ТЗ-205: маркер атомарного захвата job'а воркером (FOR UPDATE SKIP LOCKED).
     // CHECK не трогаем — маркер в отдельной колонке, диалект-нейтрально.
     { sql: `ALTER TABLE fact_check_jobs ADD COLUMN IF NOT EXISTS locked_at ${USE_SQLITE ? 'TEXT' : 'TIMESTAMPTZ'}`, name: 'fact_check_jobs_locked_at' },
+    // ТЗ-207: разбивка токенов по этапам pipeline (учёт стоимости фактчека)
+    { sql: `ALTER TABLE fact_check_sessions ADD COLUMN IF NOT EXISTS tokens_breakdown_json ${USE_SQLITE ? 'TEXT' : 'JSONB'}`, name: 'fc_sessions_tokens_breakdown_json' },
+    // ТЗ-207: дедупликация дневного алерта бюджета — максимум 1 алерт/UTC-сутки
+    { sql: `CREATE TABLE IF NOT EXISTS fact_check_budget_alerts (alert_date TEXT PRIMARY KEY, cost_usd REAL, checks_count INTEGER, sent_at ${USE_SQLITE ? 'TEXT' : 'TIMESTAMPTZ'})`, name: 'fact_check_budget_alerts' },
     // News slugs for deeplinks
     { sql: `ALTER TABLE news ADD COLUMN IF NOT EXISTS slug VARCHAR(250) UNIQUE`, name: 'news_slug' },
     // TZ_ADMIN2_ANALYTICS_v3_5: user analytics and management columns

@@ -20,6 +20,8 @@ import { query } from '../config/db';
 import { yandexSearch, YandexSearchType, YandexSource } from './yandexSearch';
 import { serperSearch, SerperSource } from './serperSearch';
 import { sendFactCheckNotifications } from './factCheckNotifications';
+import { notifyAdmins } from './adminAlerts';
+import { computeCostUsd, DAILY_BUDGET_USD } from '../config/factCheckPricing';
 import { nowSql } from '../utils/nowSql';
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
@@ -310,6 +312,10 @@ type SessionPatch = Partial<{
   final_confidence: number;
   final_reasoning: string;
   error_message: string;
+  tokens_input: number;
+  tokens_output: number;
+  tokens_breakdown_json: string | null;
+  model: string;
   completed_at: string;
 }>;
 
@@ -318,7 +324,8 @@ export async function updateFactCheckSession(sessionId: string, patch: SessionPa
     'status', 'queries_json', 'sources_json', 'sources_count',
     'fetched_json', 'fetched_count', 'claims_json', 'claims_count',
     'final_verdict', 'final_confidence', 'final_reasoning',
-    'error_message', 'completed_at',
+    'error_message', 'tokens_input', 'tokens_output', 'tokens_breakdown_json',
+    'model', 'completed_at',
   ];
 
   const keys = Object.keys(patch).filter((k) => allowed.includes(k));
@@ -347,7 +354,49 @@ function delay(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-async function kimiChat(messages: any[], tools?: any[], jobId?: string | null): Promise<any> {
+// ─── Token meter (ТЗ-207) ───────────────────────────────────────────────────
+
+export interface StageTokens {
+  in: number;
+  out: number;
+}
+
+export type PipelineStageName = 'search' | 'analysis' | 'sources' | 'assessment';
+
+export interface FactCheckTokenMeter {
+  stages: Record<PipelineStageName, StageTokens>;
+  webSearchCalls: number;
+}
+
+export function createTokenMeter(): FactCheckTokenMeter {
+  return {
+    stages: {
+      search: { in: 0, out: 0 },
+      analysis: { in: 0, out: 0 },
+      sources: { in: 0, out: 0 },
+      assessment: { in: 0, out: 0 },
+    },
+    webSearchCalls: 0,
+  };
+}
+
+export function meterTotals(meter: FactCheckTokenMeter): { tokensIn: number; tokensOut: number } {
+  let tokensIn = 0;
+  let tokensOut = 0;
+  for (const stage of Object.values(meter.stages)) {
+    tokensIn += stage.in;
+    tokensOut += stage.out;
+  }
+  return { tokensIn, tokensOut };
+}
+
+async function kimiChat(
+  messages: any[],
+  tools?: any[],
+  jobId?: string | null,
+  meter?: FactCheckTokenMeter,
+  meterStage?: PipelineStageName
+): Promise<any> {
   if (!KIMI_API_KEY) throw new Error('KIMI_API_KEY not configured');
 
   let lastError: any;
@@ -367,6 +416,12 @@ async function kimiChat(messages: any[], tools?: any[], jobId?: string | null): 
       // может идти до 10 минут, recoverStuckJobs не должен считать его зависшим.
       if (jobId) touchJob(jobId).catch(() => {});
       const completion = await client!.chat.completions.create(params);
+      // ТЗ-207: учёт токенов внутри kimiChat — внутренние ретраи биллятся
+      // и суммируются автоматически.
+      if (meter && meterStage && completion.usage) {
+        meter.stages[meterStage].in += completion.usage.prompt_tokens || 0;
+        meter.stages[meterStage].out += completion.usage.completion_tokens || 0;
+      }
       return completion.choices[0].message as any;
     } catch (err: any) {
       lastError = err;
@@ -456,7 +511,8 @@ async function step1MultiSearch(
   newsId: string,
   userId: string,
   sessionId: string | null,
-  jobId: string | null
+  jobId: string | null,
+  meter: FactCheckTokenMeter | null
 ): Promise<{ sources: SearchSource[]; engineStatuses: EngineStatus[] }> {
   emitStage(newsId, userId, 'search', { status: 'searching' });
 
@@ -467,7 +523,7 @@ async function step1MultiSearch(
   emitStage(newsId, userId, 'search', { status: 'kimi_search' });
   const kimiStart = Date.now();
   try {
-    const kimiMsg = await kimiChat(messages, [WEB_SEARCH_TOOL], jobId);
+    const kimiMsg = await kimiChat(messages, [WEB_SEARCH_TOOL], jobId, meter || undefined, 'search');
     messages.push(kimiMsg);
 
     let kimiSources: SearchSource[] = [];
@@ -492,6 +548,8 @@ async function step1MultiSearch(
 
     allSources.push(...kimiSources);
     engineStatuses.push({ engine: 'kimi', status: 'ok', sources: kimiSources.length });
+    // ТЗ-207: сработавший tool_calls = один биллируемый вызов $web_search
+    if (meter && kimiMsg.tool_calls?.length) meter.webSearchCalls += 1;
     console.log(`[FactCheckPerf] job=${jobId || '-'} stage=engine:kimi durationMs=${Date.now() - kimiStart}${kimiSources.length === 0 ? ' empty=1' : ''}`);
     emitStage(newsId, userId, 'search', { status: 'kimi_done', sources: kimiSources.length });
   } catch (err: any) {
@@ -638,7 +696,8 @@ async function step2Analysis(
   newsId: string,
   userId: string,
   sessionId: string | null,
-  jobId: string | null
+  jobId: string | null,
+  meter: FactCheckTokenMeter | null
 ): Promise<string> {
   emitStage(newsId, userId, 'analysis', { status: 'analyzing' });
 
@@ -647,7 +706,7 @@ async function step2Analysis(
     { role: 'system', content: SYSTEM_ANALYSIS },
   ];
 
-  const msg = await kimiChat(analysisMessages, undefined, jobId);
+  const msg = await kimiChat(analysisMessages, undefined, jobId, meter || undefined, 'analysis');
   const analysis = msg.content || '';
 
   // Делаем анализ доступным для Steps 3-4
@@ -672,7 +731,8 @@ async function step3Sources(
   newsId: string,
   userId: string,
   sessionId: string | null,
-  jobId: string | null
+  jobId: string | null,
+  meter: FactCheckTokenMeter | null
 ): Promise<SourceV4[]> {
   emitStage(newsId, userId, 'sources', { status: 'extracting' });
 
@@ -681,7 +741,7 @@ async function step3Sources(
     { role: 'system', content: SYSTEM_SOURCES },
   ];
 
-  const msg = await kimiChat(sourcesMessages, undefined, jobId);
+  const msg = await kimiChat(sourcesMessages, undefined, jobId, meter || undefined, 'sources');
   const parsed = parseLlmJson(msg.content || '{}');
   const sources: SourceV4[] = Array.isArray(parsed?.sources)
     ? parsed.sources.map(normalizeSource)
@@ -746,7 +806,8 @@ async function step4Assessment(
   newsId: string,
   userId: string,
   sessionId: string | null,
-  jobId: string | null
+  jobId: string | null,
+  meter: FactCheckTokenMeter | null
 ): Promise<AssessmentV4> {
   emitStage(newsId, userId, 'assessment', { status: 'assessing' });
 
@@ -759,7 +820,7 @@ async function step4Assessment(
     },
   ];
 
-  const msg = await kimiChat(assessmentMessages, undefined, jobId);
+  const msg = await kimiChat(assessmentMessages, undefined, jobId, meter || undefined, 'assessment');
   const parsed = parseLlmJson(msg.content || '{}');
   const assessment = normalizeAssessment(parsed);
 
@@ -785,7 +846,8 @@ export async function runFactCheckPipelineV4(
   titleRu: string,
   titleOriginal: string | null | undefined,
   sessionId: string | null,
-  jobId: string | null = null
+  jobId: string | null = null,
+  meter: FactCheckTokenMeter | null = null
 ): Promise<PipelineV4Result> {
   // ТЗ-206: heartbeat на каждом переходе между этапами — порог
   // recoverStuckJobs измеряет «нет прогресса 20 минут», а не длительность.
@@ -807,23 +869,24 @@ export async function runFactCheckPipelineV4(
     newsId,
     userId,
     sessionId,
-    jobId
+    jobId,
+    meter
   );
   console.log(`[FactCheckPerf] job=${jobId || '-'} stage=search durationMs=${Date.now() - stageStart}`);
 
   beat();
   stageStart = Date.now();
-  const analysis = await step2Analysis(messages, newsId, userId, sessionId, jobId);
+  const analysis = await step2Analysis(messages, newsId, userId, sessionId, jobId, meter);
   console.log(`[FactCheckPerf] job=${jobId || '-'} stage=analysis durationMs=${Date.now() - stageStart}`);
 
   beat();
   stageStart = Date.now();
-  const sources = await step3Sources(messages, rawSources, newsId, userId, sessionId, jobId);
+  const sources = await step3Sources(messages, rawSources, newsId, userId, sessionId, jobId, meter);
   console.log(`[FactCheckPerf] job=${jobId || '-'} stage=sources durationMs=${Date.now() - stageStart}`);
 
   beat();
   stageStart = Date.now();
-  const assessment = await step4Assessment(messages, articleText, analysis, sources, newsId, userId, sessionId, jobId);
+  const assessment = await step4Assessment(messages, articleText, analysis, sources, newsId, userId, sessionId, jobId, meter);
   console.log(`[FactCheckPerf] job=${jobId || '-'} stage=assessment durationMs=${Date.now() - stageStart}`);
 
   return { analysis, sources, assessment, engineStatuses };
@@ -848,6 +911,10 @@ export async function processFactCheckJob(jobId: string): Promise<void> {
   const summary = (news.summary_ru || '').trim() || (news.summary_original || '').trim();
   const text = [title, summary].filter(Boolean).join('\n');
 
+  // Сессия создаётся до проверки кэша: кэш-попадание тоже проверка — она
+  // попадает в историю админки с бейджем «кэш» (ТЗ-207) и закрывается сразу.
+  const session = await createFactCheckSession(job.news_id, job.user_id);
+
   // Проверяем, есть ли готовый результат по этой новости (любой пользователь)
   const cachedResult = await query(
     `SELECT fact_check_result FROM news
@@ -863,6 +930,15 @@ export async function processFactCheckJob(jobId: string): Promise<void> {
       };
       await updateJobStatus(jobId, 'done');
       await updateNewsFactCheck(job.news_id, 'checked', factCheckResult);
+      // ТЗ-207: закрываем сессию кэш-попадания (LLM не вызывался — токены 0)
+      await updateFactCheckSession(session.id, {
+        status: 'completed',
+        tokens_input: 0,
+        tokens_output: 0,
+        tokens_breakdown_json: null,
+        model: FACT_CHECK_MODEL,
+        completed_at: new Date().toISOString(),
+      });
       const emitter = getEmitter(job.news_id, job.user_id);
       emitter?.emit('complete');
       sendFactCheckNotifications({ userId: job.user_id, newsId: job.news_id, result: factCheckResult }).catch((err) =>
@@ -879,12 +955,21 @@ export async function processFactCheckJob(jobId: string): Promise<void> {
   if (text.replace(/\s+/g, ' ').trim().length < 10) {
     await updateJobFailed(jobId, 'Недостаточно текста новости для проверки (перевод ещё не выполнен)', job.attempts + 1);
     await updateNewsFactCheck(job.news_id, 'not_checked', null);
+    await updateFactCheckSession(session.id, {
+      status: 'failed',
+      error_message: 'Недостаточно текста новости для проверки (перевод ещё не выполнен)',
+      tokens_input: 0,
+      tokens_output: 0,
+      tokens_breakdown_json: null,
+      completed_at: new Date().toISOString(),
+    });
     const emitter = getEmitter(job.news_id, job.user_id);
     emitter?.emit('error', 'Недостаточно текста новости для проверки. Попробуйте позже.');
     return;
   }
 
-  const session = await createFactCheckSession(job.news_id, job.user_id);
+  // ТЗ-207: метер токенов с разбивкой по этапам (ретраи суммируются в kimiChat)
+  const meter = createTokenMeter();
 
   try {
     const result = await runFactCheckPipelineV4(
@@ -894,7 +979,8 @@ export async function processFactCheckJob(jobId: string): Promise<void> {
       title,
       news.title_original,
       session.id,
-      jobId
+      jobId,
+      meter
     );
 
     const factCheckResult: FactCheckResultV4 = {
@@ -909,13 +995,22 @@ export async function processFactCheckJob(jobId: string): Promise<void> {
     await updateJobStatus(jobId, 'done');
     await updateNewsFactCheck(job.news_id, 'checked', factCheckResult);
 
+    // ТЗ-207: токены биллятся даже при ошибке — в failure-ветке ниже тоже пишем
+    const totals = meterTotals(meter);
     await updateFactCheckSession(session.id, {
       status: 'completed',
       final_verdict: result.assessment.credibility_label,
       final_confidence: result.assessment.credibility_score,
       final_reasoning: result.assessment.verdict,
+      tokens_input: totals.tokensIn,
+      tokens_output: totals.tokensOut,
+      tokens_breakdown_json: JSON.stringify(meter.stages),
+      model: FACT_CHECK_MODEL,
       completed_at: new Date().toISOString(),
     });
+    checkDailyBudgetAlert().catch((err) =>
+      console.error('[FactCheckWorker] budget alert check error:', err.message)
+    );
 
     const emitter = getEmitter(job.news_id, job.user_id);
     emitter?.emit('complete');
@@ -930,11 +1025,21 @@ export async function processFactCheckJob(jobId: string): Promise<void> {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[FactCheckWorker] Job ${jobId} failed (attempt ${attempts}):`, message);
 
+    // ТЗ-207: пишем потреблённые токены и при ошибке (ретраи внутри kimiChat
+    // уже просуммированы метером) + тот же бюджет-алерт
+    const totals = meterTotals(meter);
     await updateFactCheckSession(session.id, {
       status: 'failed',
       error_message: message,
+      tokens_input: totals.tokensIn,
+      tokens_output: totals.tokensOut,
+      tokens_breakdown_json: JSON.stringify(meter.stages),
+      model: FACT_CHECK_MODEL,
       completed_at: new Date().toISOString(),
     });
+    checkDailyBudgetAlert().catch((err) =>
+      console.error('[FactCheckWorker] budget alert check error:', err.message)
+    );
 
     const emitter = getEmitter(job.news_id, job.user_id);
 
@@ -958,6 +1063,54 @@ export async function processFactCheckJob(jobId: string): Promise<void> {
 }
 
 // ─── Cron ───────────────────────────────────────────────────────────────────
+
+// ТЗ-207: дневной бюджет фактчека. Суммы токенов за UTC-сутки; стоимость —
+// computeCostUsd, надбавка $web_search: сессия с tokens_input > 0 = 1 вызов.
+// Дедупликация PK alert_date: максимум 1 алерт/сутки. DAILY_BUDGET_USD = 0 —
+// запрос не выполняется вообще.
+async function checkDailyBudgetAlert(): Promise<void> {
+  if (DAILY_BUDGET_USD <= 0) return;
+  try {
+    const dayStart = USE_SQLITE ? "date('now')" : "date_trunc('day', NOW())";
+    const intCast = USE_SQLITE ? '' : '::int';
+    const floatCast = USE_SQLITE ? '' : '::float';
+    const sums = await query(
+      `SELECT COUNT(*)${intCast} AS checks,
+              COALESCE(SUM(tokens_input), 0)${floatCast} AS tokens_in,
+              COALESCE(SUM(tokens_output), 0)${floatCast} AS tokens_out,
+              COALESCE(SUM(CASE WHEN tokens_input > 0 THEN 1 ELSE 0 END), 0)${intCast} AS with_llm
+       FROM fact_check_sessions
+       WHERE started_at >= ${dayStart}`,
+      []
+    );
+    const row = sums.rows[0];
+    const costUsd = computeCostUsd(row.tokens_in, row.tokens_out, row.with_llm);
+    if (costUsd <= DAILY_BUDGET_USD) return;
+
+    const alertDate = new Date().toISOString().slice(0, 10);
+    const inserted = await query(
+      USE_SQLITE
+        ? `INSERT OR IGNORE INTO fact_check_budget_alerts (alert_date, cost_usd, checks_count, sent_at)
+           VALUES ($1, $2, $3, datetime('now'))`
+        : `INSERT INTO fact_check_budget_alerts (alert_date, cost_usd, checks_count, sent_at)
+           VALUES ($1, $2, $3, NOW())
+           ON CONFLICT (alert_date) DO NOTHING`,
+      [alertDate, costUsd, row.checks]
+    );
+    if (parseInt(inserted.rowCount as any, 10) === 0) return; // алерт за сегодня уже был
+
+    console.log(`[FactCheckWorker] Daily budget exceeded: $${costUsd.toFixed(2)} > $${DAILY_BUDGET_USD}`);
+    await notifyAdmins('factcheck_budget', {
+      spent_usd: Number(costUsd.toFixed(2)),
+      budget_usd: DAILY_BUDGET_USD,
+      checks_count: row.checks,
+      tokens_input: Math.round(row.tokens_in),
+      tokens_output: Math.round(row.tokens_out),
+    });
+  } catch (err: any) {
+    console.error('[FactCheckWorker] checkDailyBudgetAlert error:', err.message);
+  }
+}
 
 let isProcessing = false;
 

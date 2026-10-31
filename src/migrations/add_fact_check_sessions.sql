@@ -21,10 +21,18 @@ CREATE TABLE IF NOT EXISTS fact_check_sessions (
   error_message     TEXT,
   tokens_input      INTEGER DEFAULT 0,
   tokens_output     INTEGER DEFAULT 0,
+  tokens_breakdown_json JSONB,
   model             TEXT,
   started_at        TIMESTAMPTZ DEFAULT NOW(),
   completed_at      TIMESTAMPTZ,
   updated_at        TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS fact_check_budget_alerts (
+  alert_date    TEXT PRIMARY KEY,
+  cost_usd      REAL,
+  checks_count  INTEGER,
+  sent_at       TIMESTAMPTZ
 );
 
 CREATE INDEX IF NOT EXISTS idx_fc_sessions_news ON fact_check_sessions(news_id);

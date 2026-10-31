@@ -485,10 +485,18 @@ export async function initSQLiteSchema(): Promise<void> {
       error_message TEXT,
       tokens_input INTEGER DEFAULT 0,
       tokens_output INTEGER DEFAULT 0,
+      tokens_breakdown_json TEXT,
       model TEXT,
       started_at TEXT DEFAULT (datetime('now')),
       completed_at TEXT,
       updated_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS fact_check_budget_alerts (
+      alert_date TEXT PRIMARY KEY,
+      cost_usd REAL,
+      checks_count INTEGER,
+      sent_at TEXT
     );
 
     CREATE INDEX IF NOT EXISTS idx_fc_sessions_news ON fact_check_sessions(news_id);
