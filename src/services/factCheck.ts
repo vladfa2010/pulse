@@ -117,11 +117,21 @@ export function getEmitter(newsId: string, userId: string): EventEmitter | undef
 }
 
 export function setEmitter(newsId: string, userId: string, emitter: EventEmitter): void {
-  factCheckEmitters.set(emitterKey(newsId, userId), emitter);
+  // ТЗ-205: закрываем прежний эмиттер по этому ключу — иначе два подряд
+  // открытых SSE-потока (переподключение, два таба) наслаивают слушателей
+  // на одну запись, и стейджи дублируются обоим клиентам.
+  const key = emitterKey(newsId, userId);
+  factCheckEmitters.get(key)?.removeAllListeners();
+  factCheckEmitters.set(key, emitter);
 }
 
-export function removeEmitter(newsId: string, userId: string): void {
-  factCheckEmitters.delete(emitterKey(newsId, userId));
+export function removeEmitter(newsId: string, userId: string, emitter?: EventEmitter): void {
+  // Удаляем только если в реестре лежит именно этот эмиттер — иначе закрытие
+  // старого потока убьёт эмиттер уже открытого нового.
+  const key = emitterKey(newsId, userId);
+  if (!emitter || factCheckEmitters.get(key) === emitter) {
+    factCheckEmitters.delete(key);
+  }
 }
 
 function emitStage(newsId: string, userId: string, stage: string, payload: any): void {
@@ -135,6 +145,17 @@ function emitStage(newsId: string, userId: string, stage: string, payload: any):
 
 export async function createFactCheckJob(newsId: string, userId: string): Promise<string | null> {
   try {
+    // ТЗ-205: сначала атомарно переводим новость в in_progress (rowCount=0 —
+    // кто-то уже проверяет, не создаём дубль job'а). Кэшированный
+    // fact_check_result не трогаем: если job упадёт, статус вернёт в 'checked'
+    // со старым результатом, и повторный заказ использует кэш.
+    const newsLock = await query(
+      `UPDATE news SET fact_check_status = 'in_progress' WHERE id = $1 AND fact_check_status <> 'in_progress'`,
+      [newsId]
+    );
+    if (newsLock.rowCount === 0) {
+      return null;
+    }
     const result = await query(
       `INSERT INTO fact_check_jobs (news_id, user_id, status, attempts)
        VALUES ($1, $2, 'queued', 0)
@@ -142,10 +163,6 @@ export async function createFactCheckJob(newsId: string, userId: string): Promis
          SET status = 'queued', attempts = 0, error_message = NULL, next_retry_at = NULL, updated_at = ${nowSql()}
        RETURNING id`,
       [newsId, userId]
-    );
-    await query(
-      `UPDATE news SET fact_check_status = 'in_progress', fact_check_result = NULL WHERE id = $1`,
-      [newsId]
     );
     return result.rows[0]?.id || null;
   } catch (err: any) {
@@ -160,22 +177,46 @@ export async function getFactCheckJob(jobId: string) {
 }
 
 export async function getNextQueuedJob(): Promise<any | null> {
-  const timeFilter = USE_SQLITE
-    ? "(next_retry_at IS NULL OR next_retry_at <= datetime('now'))"
-    : '(next_retry_at IS NULL OR next_retry_at <= NOW())';
+  // ТЗ-205: атомарный захват — UPDATE ... FOR UPDATE SKIP LOCKED (PG).
+  // Два инстанса бэкенда больше не могут взять один job: второй UPDATE
+  // не найдёт строку (она уже заблокирована/захвачена) и вернёт 0 строк.
+  if (!USE_SQLITE) {
+    const result = await query(
+      `UPDATE fact_check_jobs
+       SET locked_at = NOW(), updated_at = NOW()
+       WHERE id = (
+         SELECT id FROM fact_check_jobs
+         WHERE status = 'queued' AND (next_retry_at IS NULL OR next_retry_at <= NOW())
+         ORDER BY created_at ASC
+         LIMIT 1
+         FOR UPDATE SKIP LOCKED
+       )
+       RETURNING *`,
+      []
+    );
+    return result.rows[0] || null;
+  }
+  // SQLite: писатели и так сериализованы — тот же захват без SKIP LOCKED.
+  const timeFilter = "(next_retry_at IS NULL OR next_retry_at <= datetime('now'))";
   const result = await query(
-    `SELECT * FROM fact_check_jobs
-     WHERE status = 'queued' AND ${timeFilter}
-     ORDER BY created_at ASC
-     LIMIT 1`,
+    `UPDATE fact_check_jobs
+     SET locked_at = datetime('now'), updated_at = datetime('now')
+     WHERE id = (
+       SELECT id FROM fact_check_jobs
+       WHERE status = 'queued' AND ${timeFilter}
+       ORDER BY created_at ASC
+       LIMIT 1
+     )
+     RETURNING *`,
     []
   );
   return result.rows[0] || null;
 }
 
 export async function updateJobStatus(jobId: string, status: string): Promise<void> {
+  // ТЗ-205: финальный статус снимает маркер захвата (гигиена)
   await query(
-    `UPDATE fact_check_jobs SET status = $1, updated_at = ${nowSql()} WHERE id = $2`,
+    `UPDATE fact_check_jobs SET status = $1, locked_at = NULL, updated_at = ${nowSql()} WHERE id = $2`,
     [status, jobId]
   );
 }
@@ -183,7 +224,7 @@ export async function updateJobStatus(jobId: string, status: string): Promise<vo
 export async function updateJobFailed(jobId: string, errorMessage: string, attempts: number): Promise<void> {
   await query(
     `UPDATE fact_check_jobs
-     SET status = 'failed', error_message = $1, attempts = $2, updated_at = ${nowSql()}
+     SET status = 'failed', error_message = $1, attempts = $2, locked_at = NULL, updated_at = ${nowSql()}
      WHERE id = $3`,
     [errorMessage, attempts, jobId]
   );
@@ -192,7 +233,7 @@ export async function updateJobFailed(jobId: string, errorMessage: string, attem
 export async function rescheduleJob(jobId: string, nextRetryAt: Date): Promise<void> {
   await query(
     `UPDATE fact_check_jobs
-     SET status = 'queued', next_retry_at = $1, updated_at = ${nowSql()}
+     SET status = 'queued', next_retry_at = $1, locked_at = NULL, updated_at = ${nowSql()}
      WHERE id = $2`,
     [USE_SQLITE ? nextRetryAt.toISOString() : nextRetryAt, jobId]
   );
@@ -212,7 +253,7 @@ export async function updateNewsFactCheck(
 
 export async function getNewsForFactCheck(newsId: string): Promise<any | null> {
   const result = await query(
-    `SELECT id, title_ru, title_original, summary_ru, url FROM news WHERE id = $1`,
+    `SELECT id, title_ru, title_original, summary_ru, summary_original, url FROM news WHERE id = $1`,
     [newsId]
   );
   return result.rows[0] || null;
@@ -725,7 +766,12 @@ export async function processFactCheckJob(jobId: string): Promise<void> {
     return;
   }
 
-  const text = [news.title_ru, news.summary_ru].filter(Boolean).join('\n');
+  // ТЗ-205: фолбэк на оригинальные поля — новость ещё может быть не переведена
+  // (title_ru/summary_ru NULL); без фолбэка text получался пустым и уходил
+  // модели как «Проанализируй эту тему:» с пустой темой.
+  const title = (news.title_ru || '').trim() || (news.title_original || '').trim();
+  const summary = (news.summary_ru || '').trim() || (news.summary_original || '').trim();
+  const text = [title, summary].filter(Boolean).join('\n');
 
   // Проверяем, есть ли готовый результат по этой новости (любой пользователь)
   const cachedResult = await query(
@@ -752,6 +798,17 @@ export async function processFactCheckJob(jobId: string): Promise<void> {
     }
   }
 
+  // ТЗ-205: гвард пустого текста — корневая защита от «вы не указали тему».
+  // Ретраи не нужны: статус возвращается в not_checked, повторный заказ
+  // доступен сразу (когда перевод догонит). Уведомления не шлём.
+  if (text.replace(/\s+/g, ' ').trim().length < 10) {
+    await updateJobFailed(jobId, 'Недостаточно текста новости для проверки (перевод ещё не выполнен)', job.attempts + 1);
+    await updateNewsFactCheck(job.news_id, 'not_checked', null);
+    const emitter = getEmitter(job.news_id, job.user_id);
+    emitter?.emit('error', 'Недостаточно текста новости для проверки. Попробуйте позже.');
+    return;
+  }
+
   const session = await createFactCheckSession(job.news_id, job.user_id);
 
   try {
@@ -759,7 +816,7 @@ export async function processFactCheckJob(jobId: string): Promise<void> {
       job.news_id,
       job.user_id,
       text,
-      news.title_ru || '',
+      title,
       news.title_original,
       session.id
     );
@@ -811,26 +868,11 @@ export async function processFactCheckJob(jobId: string): Promise<void> {
       const retryDelay = RETRY_DELAYS_MS[Math.min(attempts - 1, RETRY_DELAYS_MS.length - 1)];
       await rescheduleJob(jobId, new Date(Date.now() + retryDelay));
     } else {
-      const errorResult: FactCheckResultV4 = {
-        version: 4,
-        analysis: '',
-        sources: [],
-        assessment: {
-          credibility_score: 0,
-          credibility_label: 'Критическая',
-          tone: 'нейтральная',
-          facts_verified: 'нет',
-          has_opinion_bias: false,
-          missing_context: '',
-          manipulation_risks: '',
-          verdict: `Ошибка проверки: ${message}`,
-          verifiable: true,
-        },
-        checked_at: new Date().toISOString(),
-        model: FACT_CHECK_MODEL,
-        error: message,
-      };
-      await updateNewsFactCheck(job.news_id, 'checked', errorResult);
+      // ТЗ-205: кэшированный результат при перепроверке не затираем — мёртвый
+      // errorResult удалён. Возвращаем статус 'checked' с прежним результатом
+      // (он сохранён, т.к. createFactCheckJob больше не NULL-ит кэш);
+      // если кэша не было — result останется NULL.
+      await query(`UPDATE news SET fact_check_status = 'checked' WHERE id = $1`, [job.news_id]);
     }
   }
 }
@@ -871,8 +913,41 @@ async function processFactCheckQueue(): Promise<void> {
   }
 }
 
+// ТЗ-205: восстановление зависших проверок при старте процесса.
+// Job, захваченный воркером (locked_at) перед крашем/рестартом, вечно блокировал
+// бы новость (любой заказ → 409). Порог 20 минут: нормальный pipeline —
+// единицы минут, сверху запас; при превышении job вернётся в очередь с
+// attempts+1. Плюс возврат новостей in_progress, у которых не осталось
+// живых job'ов.
+export async function recoverStuckJobs(): Promise<void> {
+  const threshold = USE_SQLITE ? "datetime('now', '-20 minutes')" : "NOW() - INTERVAL '20 minutes'";
+  const jobsRes = await query(
+    `UPDATE fact_check_jobs
+     SET status = 'queued', locked_at = NULL, attempts = attempts + 1, updated_at = ${nowSql()}
+     WHERE status = 'queued' AND locked_at IS NOT NULL AND locked_at < ${threshold}
+     RETURNING id`,
+    []
+  );
+  const newsRes = await query(
+    `UPDATE news SET fact_check_status = 'not_checked', fact_check_result = NULL
+     WHERE fact_check_status = 'in_progress'
+       AND id NOT IN (
+         SELECT news_id FROM fact_check_jobs
+         WHERE status = 'queued' AND locked_at IS NOT NULL
+       )
+     RETURNING id`,
+    []
+  );
+  if (jobsRes.rows.length > 0 || newsRes.rows.length > 0) {
+    console.log(`[FactCheckWorker] Recovered ${jobsRes.rows.length} stuck jobs, ${newsRes.rows.length} stuck news`);
+  }
+}
+
 export function startFactCheckCron(): void {
   console.log('[FactCheckWorker] Starting worker (every 10s)');
+  recoverStuckJobs().catch((err) =>
+    console.error('[FactCheckWorker] recoverStuckJobs error:', err.message)
+  );
   setTimeout(() => {
     processFactCheckQueue().catch(() => {});
   }, 5000);

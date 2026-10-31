@@ -60,7 +60,7 @@ router.post('/:id/fact-check', async (req: AuthRequest, res) => {
     }
 
     const newsResult = await query(
-      `SELECT id, title_ru, summary_ru, fact_check_status, fact_check_result FROM news WHERE id = $1`,
+      `SELECT id, title_ru, title_original, summary_ru, summary_original, fact_check_status, fact_check_result FROM news WHERE id = $1`,
       [newsId]
     );
     if (newsResult.rows.length === 0) {
@@ -70,6 +70,18 @@ router.post('/:id/fact-check', async (req: AuthRequest, res) => {
 
     if (news.fact_check_status === 'in_progress') {
       return res.status(409).json({ error: 'Проверка уже выполняется' });
+    }
+
+    // ТЗ-205: ранний отказ — без фолбэка на original-поля пустой text уходил
+    // в pipeline и модель честно отвечала «укажите тему», а мусор кэшировался.
+    const fcTitle = (news.title_ru || '').trim() || (news.title_original || '').trim();
+    const fcSummary = (news.summary_ru || '').trim() || (news.summary_original || '').trim();
+    const fcText = [fcTitle, fcSummary].filter(Boolean).join('\n');
+    if (fcText.replace(/\s+/g, ' ').trim().length < 10) {
+      return res.status(422).json({
+        error: 'У этой новости пока нет текста для проверки (перевод ещё не выполнен). Попробуйте позже.',
+        not_ready: true,
+      });
     }
 
     const jobId = await createFactCheckJob(newsId, userId);
@@ -178,7 +190,7 @@ router.get('/:id/fact-check/stream', async (req: AuthRequest, res) => {
 
     req.on('close', () => {
       emitter.removeAllListeners();
-      removeEmitter(newsId, userId);
+      removeEmitter(newsId, userId, emitter);
     });
   } catch (err: any) {
     console.error('[FactCheckRoute] SSE error:', err.message);

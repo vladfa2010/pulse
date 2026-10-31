@@ -293,7 +293,7 @@ router.get('/:id/stream', authMiddleware, async (req: AuthRequest, res) => {
 
     req.on('close', () => {
       emitter.removeAllListeners();
-      removeEmitter(request.id, userId);
+      removeEmitter(request.id, userId, emitter);
     });
   } catch (err: any) {
     console.error('[FactCheckRequestRoute] SSE error:', err.message);

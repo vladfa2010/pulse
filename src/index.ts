@@ -4247,6 +4247,9 @@ async function start() {
     { sql: `CREATE INDEX IF NOT EXISTS idx_fact_check_jobs_status ON fact_check_jobs(status)`, name: 'idx_fact_check_jobs_status' },
     { sql: `CREATE INDEX IF NOT EXISTS idx_fact_check_jobs_news_id ON fact_check_jobs(news_id)`, name: 'idx_fact_check_jobs_news_id' },
     { sql: `CREATE INDEX IF NOT EXISTS idx_fact_check_jobs_user_id ON fact_check_jobs(user_id)`, name: 'idx_fact_check_jobs_user_id' },
+    // ТЗ-205: маркер атомарного захвата job'а воркером (FOR UPDATE SKIP LOCKED).
+    // CHECK не трогаем — маркер в отдельной колонке, диалект-нейтрально.
+    { sql: `ALTER TABLE fact_check_jobs ADD COLUMN IF NOT EXISTS locked_at ${USE_SQLITE ? 'TEXT' : 'TIMESTAMPTZ'}`, name: 'fact_check_jobs_locked_at' },
     // News slugs for deeplinks
     { sql: `ALTER TABLE news ADD COLUMN IF NOT EXISTS slug VARCHAR(250) UNIQUE`, name: 'news_slug' },
     // TZ_ADMIN2_ANALYTICS_v3_5: user analytics and management columns

@@ -457,6 +457,7 @@ export async function initSQLiteSchema(): Promise<void> {
       attempts INTEGER NOT NULL DEFAULT 0,
       max_attempts INTEGER NOT NULL DEFAULT 3,
       next_retry_at TEXT,
+      locked_at TEXT,
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now')),
       UNIQUE(news_id, user_id)
