@@ -18,6 +18,10 @@ const dateBucket = USE_SQLITE
 const durationSec = USE_SQLITE
   ? '((julianday(s.completed_at) - julianday(s.started_at)) * 86400)'
   : 'EXTRACT(EPOCH FROM (s.completed_at - s.started_at))';
+// ТЗ-207 правка-ревью: LEFT() нет в SQLite-шиме — обрезка ошибки диалектная
+const shortError = USE_SQLITE
+  ? 'SUBSTR(s.error_message, 1, 200)'
+  : 'LEFT(s.error_message, 200)';
 
 // Средние токены этапа из tokens_breakdown_json (диалект-специфичное извлечение)
 function stageAvg(stage: string, dir: 'in' | 'out'): string {
@@ -191,7 +195,7 @@ router.get('/fact-checking/list', adminMiddleware, async (req, res) => {
               s.news_id, n.url AS news_url,
               (s.tokens_input = 0 AND s.status = 'completed') AS cached,
               s.tokens_input, s.tokens_output,
-              LEFT(s.error_message, 200) AS error_message,
+              ${shortError} AS error_message,
               j.attempts AS attempts,
               ${durationSec} AS duration_sec
        ${baseSql}
