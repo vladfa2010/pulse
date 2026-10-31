@@ -1179,10 +1179,28 @@ export async function recoverStuckJobs(): Promise<void> {
   }
 }
 
+// ТЗ-209 п.4: ежедневная очистка шеринговых ссылок. Retention 360 дней
+// ПОСЛЕ expires_at — сам факт истёкшей ссылки хранится год (статистика/аудит).
+// SQLite-шим: порог считаем в JS — прямая арифметика с NOW() не работает.
+export async function cleanupExpiredShares(): Promise<void> {
+  const res = await query(
+    USE_SQLITE
+      ? `DELETE FROM fact_check_shares WHERE expires_at < ? RETURNING id`
+      : `DELETE FROM fact_check_shares WHERE expires_at < NOW() - INTERVAL '360 days' RETURNING id`,
+    USE_SQLITE ? [new Date(Date.now() - 360 * 24 * 3600 * 1000).toISOString()] : []
+  );
+  if (res.rows.length > 0) {
+    console.log(`[FactCheckSharesCleanup] deleted=${res.rows.length}`);
+  }
+}
+
 export function startFactCheckCron(): void {
   console.log('[FactCheckWorker] Starting worker (every 10s)');
   recoverStuckJobs().catch((err) =>
     console.error('[FactCheckWorker] recoverStuckJobs error:', err.message)
+  );
+  cleanupExpiredShares().catch((err) =>
+    console.error('[FactCheckSharesCleanup] error:', err.message)
   );
   // ТЗ-206: восстановление зависших захватов — по таймеру, а не только при boot.
   // Heartbeat обновляет locked_at между этапами, поэтому порог 20 минут
@@ -1192,6 +1210,12 @@ export function startFactCheckCron(): void {
       console.error('[FactCheckWorker] recoverStuckJobs error:', err.message)
     );
   }, 5 * 60 * 1000);
+  // ТЗ-209 п.4: ежедневная очистка — отдельный таймер, ритм recoverStuckJobs не трогаем
+  setInterval(() => {
+    cleanupExpiredShares().catch((err) =>
+      console.error('[FactCheckSharesCleanup] error:', err.message)
+    );
+  }, 24 * 60 * 60 * 1000);
   setTimeout(() => {
     processFactCheckQueue().catch(() => {});
   }, 5000);
