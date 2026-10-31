@@ -4,7 +4,7 @@
 
 On-demand факт-чекинг новостей через LLM + веб-поиск (Kimi API `$web_search` + Yandex Search API).
 
-- Доступно только для тарифов **Premium / Club / Pro** (запуск и перепроверка).
+- Доступно только для тарифов с включённым фича-флагом `factcheck` (ТЗ-208) — фактически **Premium / Club / Pro** (запуск и перепроверка). Гейт — `src/middleware/requirePremium.ts`, единый источник правды — `hasFeature(userId, 'factcheck')` (фича-флаги effective-плана, `subscription_plans.features` + `features_registry.is_active`), а не `plan_level`. Текст 403 динамический: перечисляет тарифы, где флаг включён.
 - **Результат проверки виден всем пользователям**, не только Premium.
 - Проверка запускается по требованию пользователя и выполняется асинхронно воркером.
 - UI получает прогресс в реальном времени через **SSE** (`GET /api/news/:id/fact-check/stream`).
@@ -52,7 +52,8 @@ search (Kimi + Yandex RU + Yandex COM + Serper RU + Serper EN) → analysis → 
 
 ## API endpoints
 
-Все endpoints требуют авторизации (`Authorization: Bearer <JWT>`).
+Все endpoints требуют авторизации (`Authorization: Bearer <JWT>`),
+кроме явно помеченного публичного `GET /api/fact-check/shared/:token` (ТЗ-209).
 
 ### POST `/api/news/:id/fact-check`
 
@@ -116,6 +117,56 @@ search (Kimi + Yandex RU + Yandex COM + Serper RU + Serper EN) → analysis → 
   "error": "Новость не найдена"
 }
 ```
+
+### POST `/api/news/:id/fact-check/share` (ТЗ-209)
+
+Создать многоразовую шеринговую ссылку на результат проверки для гостей.
+Любой авторизованный пользователь (результат внутри платформы виден всем,
+включая Free). Реализация: `src/routes/factCheck.ts`.
+
+**Условия и ответы:**
+
+- Новость не найдена → `404`.
+- `fact_check_status !== 'checked'` или результат с `error` → `409`
+  («Результат проверки ещё не готов» / «Проверка завершилась ошибкой…»).
+- У пользователя уже есть активная ссылка на эту новость → `200` с тем же
+  URL (идемпотентность, квота не расходуется).
+- У пользователя ≥ **20 активных** ссылок → `429` («Лимит активных ссылок
+  (20). Дождитесь истечения старых.»).
+- Иначе → `201`:
+  ```json
+  { "url": "https://pulse.inside-trade.ru/share/factcheck/<48 hex>" }
+  ```
+
+Ссылка **многоразовая** (в отличие от одноразовых `lesson_shares`, ТЗ-187),
+**TTL 7 дней**. Токен — 48 hex-символов (`crypto.randomBytes(24)`).
+
+При создании fire-and-forget пишется событие `factcheck_shared`
+(`{ news_id, share_id }`) в `user_events` — метка видна в ленте активности
+админки (`ActivityFeed`, иконка Share2).
+
+### GET `/api/fact-check/shared/:token` (ТЗ-209, публичный)
+
+Публичное чтение результата проверки по шеринговой ссылке — **без
+авторизации**. Реализация: `src/routes/factCheckRequests.ts`, роут объявлен
+**выше** `/:id`, иначе `shared` перехватится как id.
+
+- Токен не 48 hex или не найден → `404` («Ссылка не найдена»).
+- `expires_at` в прошлом → `410` («Срок действия ссылки истёк»); контент не
+  отдаётся. Порог сравнивается на JS — шим SQLite криво транслирует `NOW()`
+  (паттерн `lesson_shares`).
+- Иначе `200`:
+  ```json
+  {
+    "news": { "title": "...", "slug": "..." },
+    "result": { /* FactCheckResultV4 */ }
+  }
+  ```
+
+Гостевая страница (`pulse-frontend/src/pages/ShareFactCheckPage.tsx`,
+роут `/share/factcheck/:token`) рендерит результат через готовый
+`ResultTabs`, показывает дисклеймер «Анализ сгенерирован искусственным
+интеллектом» и ставит meta `noindex`.
 
 ### GET `/api/news/:id/fact-check/stream`
 
@@ -224,8 +275,9 @@ interface AssessmentV4 {
 - `pulse-frontend/src/components/factCheck/ResultTabs.tsx` — табы: Анализ / Источники / Оценка. Фильтр источников по пяти поисковым движкам.
 - `pulse-frontend/src/components/factCheck/SourceCard.tsx` — карточка источника.
 - `pulse-frontend/src/components/factCheck/AssessmentPanel.tsx` — score, label, metrics, verdict.
-- `pulse-frontend/src/components/FactCheckSection.tsx` — управление SSE, polling и отображением.
+- `pulse-frontend/src/components/FactCheckSection.tsx` — управление SSE, polling и отображением. Содержит кнопку шеринга (ТЗ-209): `POST /api/news/:id/fact-check/share`, показывает готовую ссылку из ответа.
 - `pulse-frontend/src/hooks/useFactCheckSSE.ts` — POST + SSE + fallback polling.
+- `pulse-frontend/src/pages/ShareFactCheckPage.tsx` — гостевая страница результата по ссылке `/share/factcheck/:token` (роут в `App.tsx`, lazy). Дисклеймер «Анализ сгенерирован искусственным интеллектом», meta noindex, результат через общий `ResultTabs`.
 
 Результат отображается в `NewsDetailModal` для всех пользователей. Кнопка запуска/перепроверки — только Premium.
 
@@ -315,6 +367,23 @@ sent_at TIMESTAMPTZ
 Вставка идёт через `INSERT ... ON CONFLICT DO NOTHING`: алерт по дате шлётся
 один раз. Порог — `DAILY_BUDGET_USD` в `src/config/factCheckPricing.ts`
 (`0` = алерт выключен).
+
+### Таблица `fact_check_shares` (ТЗ-209)
+
+Многоразовые шеринговые ссылки на результат проверки для гостей.
+
+```sql
+id UUID PRIMARY KEY DEFAULT gen_random_uuid()
+token VARCHAR(64) NOT NULL UNIQUE   -- 48 hex
+news_id UUID NOT NULL REFERENCES news(id) ON DELETE CASCADE
+owner_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE
+expires_at TIMESTAMPTZ NOT NULL     -- TTL 7 дней
+created_at TIMESTAMPTZ DEFAULT NOW()
+```
+
+Индексы: `idx_fc_shares_owner_exp (owner_user_id, expires_at)` — под квоту
+и идемпотентность, `idx_fc_shares_news (news_id)`. DDL продублирован в
+`src/index.ts` (PG) и `src/config/db-sqlite.ts` (SQLite).
 
 ## Учёт токенов и админ-таб «Фактчекинг» (ТЗ-207)
 

@@ -1,6 +1,6 @@
 # PULSE — Трекинг действий пользователя (user_events)
 
-> Дата актуализации: 2026-10-22
+> Дата актуализации: 2026-11-01
 > Backend: `pulse-backend/src/services/activityLog.ts`, `pulse-backend/src/types/events.ts`, `pulse-backend/src/index.ts` (эндпоинты трекинга)
 > Frontend: `pulse-frontend/src/pages/*` (вызовы `api.post('/events/...')`)
 > Админский доступ: `pulse-backend/src/routes/admin.ts` (`/api/admin/activity-log`), `pulse-backend/src/routes/adminMetrics.ts` (`/api/admin/metrics/flow`)
@@ -12,11 +12,11 @@
 
 Единый источник правды — `USER_EVENT_TYPES` в `src/types/events.ts` (вынесен в отдельный файл, чтобы разорвать циклическую зависимость между `activityLog.ts` и `adminAlerts.ts`).
 
-На текущий момент **63 типа**:
+На текущий момент **64 типа**:
 
 | Блок | Кол-во | Типы |
 |------|--------|------|
-| Базовые | 24 | `register`, `login`, `forgot_password`, `password_reset`, `tag_added`, `tag_removed`, `payment_completed`, `subscription_activated`, `subscription_cancelled`, `channel_connected`, `channel_disconnected` (универсальные, устарели), `telegram_connected`, `telegram_disconnected`, `email_connected`, `email_disconnected`, `sentiment_vote`, `factcheck_ordered`, `page_view_plans`, `admin_changed_plan`, `admin_extended_subscription`, `page_view_portfolio`, `portfolio_add_clicked`, `portfolio_created`, `admin_radio_flag_changed` |
+| Базовые | 26 | `register`, `login`, `forgot_password`, `password_reset`, `tag_added`, `tag_removed`, `payment_completed`, `subscription_activated`, `subscription_cancelled`, `channel_connected`, `channel_disconnected` (универсальные, устарели), `telegram_connected`, `telegram_disconnected`, `email_connected`, `email_disconnected`, `sentiment_vote`, `factcheck_ordered`, `factcheck_budget` (ТЗ-207, алерт дневного бюджета), `factcheck_shared` (ТЗ-209, создана шеринговая ссылка фактчека, payload `{ news_id, share_id }`), `page_view_plans`, `admin_changed_plan`, `admin_extended_subscription`, `page_view_portfolio`, `portfolio_add_clicked`, `portfolio_created`, `admin_radio_flag_changed` |
 | LMS (префикс `education.*`) | 30 | Аудит действий админа (курсы/программы/модерация) и студенческая аналитика, включая `education.enroll_auto` (ТЗ-184, автозапись при сдаче теста/завершении урока), `education.unenroll` (ТЗ-185, самоотписка студента), `education.enroll_notified` (ТЗ-186, админ уведомил записанного по почте/push/Telegram) и `education.lesson_shared` (ТЗ-187, создан разовый меджик-линк урока; payload дополнен `is_free` — Правка 1). Перечень — `src/types/events.ts`, подробности — [`../education.md`](../education.md) |
 | Аудит выгрузок | 1 | `admin_export_users` (ТЗ-120) |
 | ТЗ-123 (алерты/антифлуд) | 8 | `position_added`, `position_closed`, `course_started`, `lesson_completed`, `course_completed`, `weekly_report_viewed`, `cascades_viewed`, `page_view_feed` |
