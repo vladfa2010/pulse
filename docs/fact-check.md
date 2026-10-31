@@ -290,7 +290,58 @@ final_verdict TEXT
 final_confidence INTEGER CHECK(final_confidence BETWEEN 0 AND 100)
 final_reasoning TEXT
 error_message TEXT
+-- ТЗ-207: учёт токенов
+tokens_input INTEGER          -- сумма prompt_tokens всех LLM-вызовов (ретраи суммируются)
+tokens_output INTEGER         -- сумма completion_tokens
+tokens_breakdown_json JSONB   -- {"search": {"in": n, "out": n}, "analysis": {...}, ...}
+model TEXT                    -- фактически использованная модель
+completed_at TIMESTAMPTZ      -- время закрытия сессии (success/failure/cached)
 ```
+
+Сессия создаётся до проверки кэша: кэш-ветка и гвард пустого текста закрывают
+её соответственно со `status='completed'` (токены 0, `tokens_breakdown_json`
+= NULL) и `status='failed'`. У сессий, завершившихся до внедрения учёта,
+токены равны 0 — это ожидаемо, не дефект.
+
+### Таблица `fact_check_budget_alerts` (ТЗ-207)
+
+```sql
+alert_date TEXT PRIMARY KEY   -- UTC-дата
+cost_usd REAL
+checks_count INTEGER
+sent_at TIMESTAMPTZ
+```
+
+Вставка идёт через `INSERT ... ON CONFLICT DO NOTHING`: алерт по дате шлётся
+один раз. Порог — `DAILY_BUDGET_USD` в `src/config/factCheckPricing.ts`
+(`0` = алерт выключен).
+
+## Учёт токенов и админ-таб «Фактчекинг» (ТЗ-207)
+
+`src/config/factCheckPricing.ts` фиксирует тарифы Kimi (in $0.95/M, out
+$4/M, web-search $0.005/вызов) и `computeCostUsd()`. Метер
+(`FactCheckTokenMeter`) проброшен через шаги pipeline v4 и суммирует
+`completion.usage` по этапам; вызовы с тулколлом web-search считаются
+отдельно. После закрытия сессии fire-and-forget вызывается
+`checkDailyBudgetAlert()`: при превышении дневного бюджета админам уходит
+алерт `factcheck_budget` (реестр — `src/services/adminAlerts.ts`).
+
+Админ-эндпоинты (`src/routes/adminFactChecking.ts`, все за
+`adminMiddleware`, mounted на `/api/admin`):
+
+- `GET /api/admin/fact-checking/stats?days=N` — сводка (checks/completed/
+  failed/cached/success_rate/cache_rate/tokens in+out/cost_llm+cost_total/
+  avg/retried_share), средние токены по этапам `stage_avgs`, подневной ряд
+  `daily`, `top_users`, разбивка `errors`, `pricing`.
+- `GET /api/admin/fact-checking/list?from&to&status&user_query&page&page_size`
+  — история сессий, `page_size` ≤ 200, ответ `{rows, total}`; `cost_usd` и
+  `duration_sec` считаются на JS-стороне.
+- `GET /api/admin/fact-checking/:sessionId` — детальная карточка:
+  `tokens_breakdown` распарсен из JSON, `sources` — первые 20.
+
+Фронт: таб «Фактчекинг» в админке после «МСП»
+(`src/pages/admin/FactCheckingTab.tsx`) — KPI, графики токенов/стоимости,
+фильтры, пагинация, CSV-экспорт, детальный просмотр.
 
 ## Переменные окружения
 
