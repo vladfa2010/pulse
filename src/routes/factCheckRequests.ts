@@ -212,6 +212,42 @@ router.get('/my', authMiddleware, async (req: AuthRequest, res) => {
   }
 });
 
+// GET /api/fact-check/shared/:token — публичное чтение результата проверки по
+// шеринговой ссылке (ТЗ-209). Без auth, многоразовая, TTL 7 дней (просрочка →
+// 410). Роут объявлен ВЫШЕ '/:id' — иначе 'shared' перехватится как id.
+router.get('/shared/:token', async (req, res) => {
+  try {
+    const token = String(req.params.token || '');
+    if (!/^[0-9a-f]{48}$/.test(token)) {
+      return res.status(404).json({ error: 'Ссылка не найдена' });
+    }
+    const rowR = await query(
+      `SELECT s.expires_at, n.title_ru, n.title_original, n.slug, n.fact_check_result
+       FROM fact_check_shares s JOIN news n ON n.id = s.news_id
+       WHERE s.token = $1`,
+      [token]
+    );
+    const row = rowR.rows[0];
+    if (!row) return res.status(404).json({ error: 'Ссылка не найдена' });
+    // Порог на JS: шим SQLite криво транслирует NOW() (паттерн lesson_shares)
+    if (new Date(row.expires_at).getTime() <= Date.now()) {
+      return res.status(410).json({ error: 'Срок действия ссылки истёк' });
+    }
+    res.json({
+      news: {
+        title: row.title_ru || row.title_original || '',
+        slug: row.slug || null,
+      },
+      result: typeof row.fact_check_result === 'string'
+        ? JSON.parse(row.fact_check_result)
+        : row.fact_check_result,
+    });
+  } catch (err: any) {
+    console.error('[FactCheckShare] shared GET error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/fact-check/:id — статус/результат (owner; в v1 чужим всегда 403)
 router.get('/:id', authMiddleware, async (req: AuthRequest, res) => {
   try {

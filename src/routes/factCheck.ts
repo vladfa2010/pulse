@@ -11,11 +11,12 @@
 
 import { Router } from 'express';
 import { EventEmitter } from 'events';
+import crypto from 'crypto';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { query } from '../config/db';
 import { getUserSubscription } from '../services/subscription';
 import { createFactCheckJob, updateNewsFactCheck, setEmitter, removeEmitter } from '../services/factCheck';
-import { logFactCheckOrdered } from '../services/activityLog';
+import { logFactCheckOrdered, logUserEvent } from '../services/activityLog';
 import { nowSql } from '../utils/nowSql';
 import requirePremium from '../middleware/requirePremium';
 
@@ -201,6 +202,74 @@ router.get('/:id/fact-check/stream', async (req: AuthRequest, res) => {
     });
   } catch (err: any) {
     console.error('[FactCheckRoute] SSE error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/news/:id/fact-check/share — многоразовая шеринговая ссылка (ТЗ-209).
+// Создавать может любой авторизованный (результат внутри платформы виден всем,
+// включая Free). Мягкая квота: 20 активных ссылок на пользователя. Ссылка без
+// сгорания, TTL 7 дней — в отличие от одноразовых lesson_shares (ТЗ-187).
+router.post('/:id/fact-check/share', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const newsId = req.params.id.toLowerCase();
+    const userId = req.user!.userId;
+
+    const newsResult = await query(
+      `SELECT id, fact_check_status, fact_check_result FROM news WHERE id = $1`,
+      [newsId]
+    );
+    if (newsResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Новость не найдена' });
+    }
+    const news = newsResult.rows[0];
+    if (news.fact_check_status !== 'checked' || !news.fact_check_result) {
+      return res.status(409).json({ error: 'Результат проверки ещё не готов' });
+    }
+    const parsed = typeof news.fact_check_result === 'string'
+      ? JSON.parse(news.fact_check_result)
+      : news.fact_check_result;
+    if (parsed?.error) {
+      return res.status(409).json({ error: 'Проверка завершилась ошибкой, шеринг недоступен' });
+    }
+
+    // Идемпотентность: активная ссылка этого пользователя на эту новость —
+    // возвращаем её, квоту не расходуем.
+    const cutoff = new Date().toISOString();
+    const existing = await query(
+      `SELECT token, expires_at FROM fact_check_shares
+       WHERE owner_user_id = $1 AND news_id = $2 AND expires_at > $3
+       ORDER BY created_at DESC LIMIT 1`,
+      [userId, newsId, cutoff]
+    );
+    const base = (process.env.FRONTEND_URL || 'https://pulse.inside-trade.ru').replace(/\/+$/, '');
+    if (existing.rows.length > 0) {
+      return res.status(200).json({ url: `${base}/share/factcheck/${existing.rows[0].token}` });
+    }
+
+    // Квота: 20 активных ссылок (порог на JS — шим SQLite криво транслирует NOW()).
+    const quota = await query(
+      `SELECT count(*) AS cnt FROM fact_check_shares
+       WHERE owner_user_id = $1 AND expires_at > $2`,
+      [userId, cutoff]
+    );
+    if (Number(quota.rows[0]?.cnt ?? 0) >= 20) {
+      return res.status(429).json({ error: 'Лимит активных ссылок (20). Дождитесь истечения старых.' });
+    }
+
+    const shareId = crypto.randomUUID();
+    const token = crypto.randomBytes(24).toString('hex'); // 48 символов ≤ VARCHAR(64)
+    const expiresAt = new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString();
+    await query(
+      `INSERT INTO fact_check_shares (id, token, news_id, owner_user_id, expires_at)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [shareId, token, newsId, userId, expiresAt]
+    );
+    logUserEvent(userId, 'factcheck_shared', { news_id: newsId, share_id: shareId }).catch(() => {});
+
+    res.status(201).json({ url: `${base}/share/factcheck/${token}` });
+  } catch (err: any) {
+    console.error('[FactCheckShare] POST error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

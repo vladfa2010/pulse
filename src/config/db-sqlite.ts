@@ -503,6 +503,19 @@ export async function initSQLiteSchema(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_fc_sessions_user ON fact_check_sessions(user_id);
     CREATE INDEX IF NOT EXISTS idx_fc_sessions_status ON fact_check_sessions(status);
 
+    // ТЗ-209: многоразовые шеринговые ссылки на результат фактчека (TTL 7 дней,
+    // без сгорания — в отличие от одноразовых lesson_shares)
+    CREATE TABLE IF NOT EXISTS fact_check_shares (
+      id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+      token TEXT NOT NULL UNIQUE,
+      news_id TEXT NOT NULL REFERENCES news(id) ON DELETE CASCADE,
+      owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      expires_at TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_fc_shares_owner_exp ON fact_check_shares(owner_user_id, expires_at);
+    CREATE INDEX IF NOT EXISTS idx_fc_shares_news ON fact_check_shares(news_id);
+
     CREATE TABLE IF NOT EXISTS search_cache (
       query_hash TEXT PRIMARY KEY,
       results TEXT,

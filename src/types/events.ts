@@ -27,6 +27,7 @@ export const USER_EVENT_TYPES = [
   'sentiment_vote',
   'factcheck_ordered',
   'factcheck_budget',
+  'factcheck_shared',
   'page_view_plans',
   'admin_changed_plan',
   'admin_extended_subscription',

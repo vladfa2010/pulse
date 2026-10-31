@@ -4261,6 +4261,10 @@ async function start() {
         ? `INSERT OR IGNORE INTO features_registry (id, label, description) VALUES ('factcheck', 'Fact-Check', 'Проверка новостей фактчекингом')`
         : `INSERT INTO features_registry (id, label, description, integration_status) VALUES ('factcheck', 'Fact-Check', 'Проверка новостей фактчекингом', 'integrated') ON CONFLICT (id) DO NOTHING`,
       name: 'features_registry_factcheck' },
+    // ТЗ-209: многоразовые шеринговые ссылки на результат фактчека (TTL 7 дней, без сгорания)
+    { sql: `CREATE TABLE IF NOT EXISTS fact_check_shares (id ${USE_SQLITE ? 'TEXT PRIMARY KEY' : 'UUID PRIMARY KEY DEFAULT uuid_generate_v4()'}, token VARCHAR(64) NOT NULL UNIQUE, news_id ${USE_SQLITE ? 'TEXT' : 'UUID'} NOT NULL REFERENCES news(id) ON DELETE CASCADE, owner_user_id ${USE_SQLITE ? 'TEXT' : 'UUID'} NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires_at ${USE_SQLITE ? 'TEXT' : 'TIMESTAMPTZ'} NOT NULL, created_at ${USE_SQLITE ? 'TEXT' : 'TIMESTAMPTZ'} DEFAULT ${_SQL_NOW})`, name: 'fact_check_shares' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_fc_shares_owner_exp ON fact_check_shares(owner_user_id, expires_at)`, name: 'idx_fc_shares_owner_exp' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_fc_shares_news ON fact_check_shares(news_id)`, name: 'idx_fc_shares_news' },
     // News slugs for deeplinks
     { sql: `ALTER TABLE news ADD COLUMN IF NOT EXISTS slug VARCHAR(250) UNIQUE`, name: 'news_slug' },
     // TZ_ADMIN2_ANALYTICS_v3_5: user analytics and management columns
