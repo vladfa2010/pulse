@@ -240,6 +240,31 @@ export async function rescheduleJob(jobId: string, nextRetryAt: Date): Promise<v
   );
 }
 
+// ТЗ-206: нефинальная ошибка — один UPDATE возвращает job в очередь с задержкой
+// и сохраняет диагностику. locked_at снимается: job свободен для захвата
+// только после next_retry_at.
+export async function updateJobRetry(
+  jobId: string,
+  errorMessage: string,
+  attempts: number,
+  nextRetryAt: Date
+): Promise<void> {
+  await query(
+    `UPDATE fact_check_jobs
+     SET status = 'queued', locked_at = NULL, error_message = $1, attempts = $2,
+         next_retry_at = $3, updated_at = ${nowSql()}
+     WHERE id = $4`,
+    [errorMessage, attempts, USE_SQLITE ? nextRetryAt.toISOString() : nextRetryAt, jobId]
+  );
+}
+
+// ТЗ-206: heartbeat — признак прогресса. Порог recoverStuckJobs (20 мин)
+// измеряет «нет прогресса», а не общую длительность: честная проверка
+// (зафиксирована на 12,5 мин) держит locked_at свежим между этапами.
+export async function touchJob(jobId: string): Promise<void> {
+  await query(`UPDATE fact_check_jobs SET locked_at = ${nowSql()} WHERE id = $1`, [jobId]);
+}
+
 export async function updateNewsFactCheck(
   newsId: string,
   status: 'not_checked' | 'in_progress' | 'checked',
@@ -322,7 +347,7 @@ function delay(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-async function kimiChat(messages: any[], tools?: any[]): Promise<any> {
+async function kimiChat(messages: any[], tools?: any[], jobId?: string | null): Promise<any> {
   if (!KIMI_API_KEY) throw new Error('KIMI_API_KEY not configured');
 
   let lastError: any;
@@ -338,6 +363,9 @@ async function kimiChat(messages: any[], tools?: any[]): Promise<any> {
         params.tools = tools as any;
         params.tool_choice = 'auto';
       }
+      // ТЗ-206: heartbeat перед каждым LLM-вызовом — вызов без таймаута
+      // может идти до 10 минут, recoverStuckJobs не должен считать его зависшим.
+      if (jobId) touchJob(jobId).catch(() => {});
       const completion = await client!.chat.completions.create(params);
       return completion.choices[0].message as any;
     } catch (err: any) {
@@ -427,7 +455,8 @@ async function step1MultiSearch(
   titleOriginal: string | null | undefined,
   newsId: string,
   userId: string,
-  sessionId: string | null
+  sessionId: string | null,
+  jobId: string | null
 ): Promise<{ sources: SearchSource[]; engineStatuses: EngineStatus[] }> {
   emitStage(newsId, userId, 'search', { status: 'searching' });
 
@@ -436,8 +465,9 @@ async function step1MultiSearch(
 
   // ─── Kimi $web_search ───
   emitStage(newsId, userId, 'search', { status: 'kimi_search' });
+  const kimiStart = Date.now();
   try {
-    const kimiMsg = await kimiChat(messages, [WEB_SEARCH_TOOL]);
+    const kimiMsg = await kimiChat(messages, [WEB_SEARCH_TOOL], jobId);
     messages.push(kimiMsg);
 
     let kimiSources: SearchSource[] = [];
@@ -462,48 +492,62 @@ async function step1MultiSearch(
 
     allSources.push(...kimiSources);
     engineStatuses.push({ engine: 'kimi', status: 'ok', sources: kimiSources.length });
+    console.log(`[FactCheckPerf] job=${jobId || '-'} stage=engine:kimi durationMs=${Date.now() - kimiStart}${kimiSources.length === 0 ? ' empty=1' : ''}`);
     emitStage(newsId, userId, 'search', { status: 'kimi_done', sources: kimiSources.length });
   } catch (err: any) {
     const message = err instanceof Error ? err.message : String(err);
     engineStatuses.push({ engine: 'kimi', status: 'error', sources: 0, error: message });
+    console.log(`[FactCheckPerf] job=${jobId || '-'} stage=engine:kimi durationMs=${Date.now() - kimiStart} error=${message}`);
     emitStage(newsId, userId, 'search', { status: 'kimi_error', error: message });
   }
 
   // ─── Yandex RU ───
   emitStage(newsId, userId, 'search', { status: 'yandex_ru_search' });
+  const yandexRuStart = Date.now();
   const yandexRuResult = await yandexSearch(articleText.slice(0, 400), 'SEARCH_TYPE_RU');
+  const yandexRuMs = Date.now() - yandexRuStart;
 
   if (!yandexRuResult.error && yandexRuResult.sources.length > 0) {
     allSources.push(...(yandexRuResult.sources as YandexSource[]));
     engineStatuses.push({ engine: 'yandex_ru', status: 'ok', sources: yandexRuResult.sources.length });
+    console.log(`[FactCheckPerf] job=${jobId || '-'} stage=engine:yandexRu durationMs=${yandexRuMs}`);
     emitStage(newsId, userId, 'search', { status: 'yandex_ru_done', sources: yandexRuResult.sources.length });
   } else if (yandexRuResult.error) {
     engineStatuses.push({ engine: 'yandex_ru', status: 'error', sources: 0, error: yandexRuResult.error });
+    console.log(`[FactCheckPerf] job=${jobId || '-'} stage=engine:yandexRu durationMs=${yandexRuMs} error=${yandexRuResult.error}`);
     emitStage(newsId, userId, 'search', { status: 'yandex_ru_error', error: yandexRuResult.error });
   } else {
     engineStatuses.push({ engine: 'yandex_ru', status: 'ok', sources: 0 });
+    console.log(`[FactCheckPerf] job=${jobId || '-'} stage=engine:yandexRu durationMs=${yandexRuMs} empty=1`);
     emitStage(newsId, userId, 'search', { status: 'yandex_ru_done', sources: 0 });
   }
 
   // ─── Yandex COM ───
   emitStage(newsId, userId, 'search', { status: 'yandex_com_search' });
+  const yandexComStart = Date.now();
   const yandexComResult = await yandexSearch(articleText.slice(0, 400), 'SEARCH_TYPE_COM');
+  const yandexComMs = Date.now() - yandexComStart;
 
   if (!yandexComResult.error && yandexComResult.sources.length > 0) {
     allSources.push(...(yandexComResult.sources as YandexSource[]));
     engineStatuses.push({ engine: 'yandex_com', status: 'ok', sources: yandexComResult.sources.length });
+    console.log(`[FactCheckPerf] job=${jobId || '-'} stage=engine:yandexCom durationMs=${yandexComMs}`);
     emitStage(newsId, userId, 'search', { status: 'yandex_com_done', sources: yandexComResult.sources.length });
   } else if (yandexComResult.error) {
     engineStatuses.push({ engine: 'yandex_com', status: 'error', sources: 0, error: yandexComResult.error });
+    console.log(`[FactCheckPerf] job=${jobId || '-'} stage=engine:yandexCom durationMs=${yandexComMs} error=${yandexComResult.error}`);
     emitStage(newsId, userId, 'search', { status: 'yandex_com_error', error: yandexComResult.error });
   } else {
     engineStatuses.push({ engine: 'yandex_com', status: 'ok', sources: 0 });
+    console.log(`[FactCheckPerf] job=${jobId || '-'} stage=engine:yandexCom durationMs=${yandexComMs} empty=1`);
     emitStage(newsId, userId, 'search', { status: 'yandex_com_done', sources: 0 });
   }
 
   // ─── Serper RU + EN (Google News) ───
   emitStage(newsId, userId, 'search', { status: 'serper_search' });
+  const serperStart = Date.now();
   const { sources: serperSources, engineStatuses: serperStatuses } = await serperSearch(titleRu, titleOriginal);
+  const serperMs = Date.now() - serperStart;
 
   if (serperSources.length > 0) {
     allSources.push(
@@ -517,6 +561,11 @@ async function step1MultiSearch(
   }
   for (const es of serperStatuses) {
     engineStatuses.push(es);
+    const serperTag = es.engine === 'serper_ru' ? 'serperRu' : 'serperEn';
+    console.log(
+      `[FactCheckPerf] job=${jobId || '-'} stage=engine:${serperTag} durationMs=${serperMs}` +
+      `${es.status === 'error' ? ` error=${es.error}` : es.sources === 0 ? ' empty=1' : ''}`
+    );
     const statusKey = es.status === 'ok' && es.sources > 0 ? 'done' : es.status === 'error' ? 'error' : 'done';
     emitStage(newsId, userId, 'search', {
       status: `${es.engine}_${statusKey}`,
@@ -588,7 +637,8 @@ async function step2Analysis(
   messages: any[],
   newsId: string,
   userId: string,
-  sessionId: string | null
+  sessionId: string | null,
+  jobId: string | null
 ): Promise<string> {
   emitStage(newsId, userId, 'analysis', { status: 'analyzing' });
 
@@ -597,7 +647,7 @@ async function step2Analysis(
     { role: 'system', content: SYSTEM_ANALYSIS },
   ];
 
-  const msg = await kimiChat(analysisMessages);
+  const msg = await kimiChat(analysisMessages, undefined, jobId);
   const analysis = msg.content || '';
 
   // Делаем анализ доступным для Steps 3-4
@@ -621,7 +671,8 @@ async function step3Sources(
   rawSources: SearchSource[],
   newsId: string,
   userId: string,
-  sessionId: string | null
+  sessionId: string | null,
+  jobId: string | null
 ): Promise<SourceV4[]> {
   emitStage(newsId, userId, 'sources', { status: 'extracting' });
 
@@ -630,7 +681,7 @@ async function step3Sources(
     { role: 'system', content: SYSTEM_SOURCES },
   ];
 
-  const msg = await kimiChat(sourcesMessages);
+  const msg = await kimiChat(sourcesMessages, undefined, jobId);
   const parsed = parseLlmJson(msg.content || '{}');
   const sources: SourceV4[] = Array.isArray(parsed?.sources)
     ? parsed.sources.map(normalizeSource)
@@ -694,7 +745,8 @@ async function step4Assessment(
   sources: SourceV4[],
   newsId: string,
   userId: string,
-  sessionId: string | null
+  sessionId: string | null,
+  jobId: string | null
 ): Promise<AssessmentV4> {
   emitStage(newsId, userId, 'assessment', { status: 'assessing' });
 
@@ -707,7 +759,7 @@ async function step4Assessment(
     },
   ];
 
-  const msg = await kimiChat(assessmentMessages);
+  const msg = await kimiChat(assessmentMessages, undefined, jobId);
   const parsed = parseLlmJson(msg.content || '{}');
   const assessment = normalizeAssessment(parsed);
 
@@ -732,13 +784,21 @@ export async function runFactCheckPipelineV4(
   articleText: string,
   titleRu: string,
   titleOriginal: string | null | undefined,
-  sessionId: string | null
+  sessionId: string | null,
+  jobId: string | null = null
 ): Promise<PipelineV4Result> {
+  // ТЗ-206: heartbeat на каждом переходе между этапами — порог
+  // recoverStuckJobs измеряет «нет прогресса 20 минут», а не длительность.
+  const beat = () => {
+    if (jobId) touchJob(jobId).catch(() => {});
+  };
+
   const messages: any[] = [
     { role: 'system', content: 'Ты помощник, который ищет информацию в интернете и анализирует новости.' },
     { role: 'user', content: `Проанализируй эту тему:\n\n${articleText.slice(0, 8000)}` },
   ];
 
+  let stageStart = Date.now();
   const { sources: rawSources, engineStatuses } = await step1MultiSearch(
     messages,
     articleText,
@@ -746,11 +806,25 @@ export async function runFactCheckPipelineV4(
     titleOriginal,
     newsId,
     userId,
-    sessionId
+    sessionId,
+    jobId
   );
-  const analysis = await step2Analysis(messages, newsId, userId, sessionId);
-  const sources = await step3Sources(messages, rawSources, newsId, userId, sessionId);
-  const assessment = await step4Assessment(messages, articleText, analysis, sources, newsId, userId, sessionId);
+  console.log(`[FactCheckPerf] job=${jobId || '-'} stage=search durationMs=${Date.now() - stageStart}`);
+
+  beat();
+  stageStart = Date.now();
+  const analysis = await step2Analysis(messages, newsId, userId, sessionId, jobId);
+  console.log(`[FactCheckPerf] job=${jobId || '-'} stage=analysis durationMs=${Date.now() - stageStart}`);
+
+  beat();
+  stageStart = Date.now();
+  const sources = await step3Sources(messages, rawSources, newsId, userId, sessionId, jobId);
+  console.log(`[FactCheckPerf] job=${jobId || '-'} stage=sources durationMs=${Date.now() - stageStart}`);
+
+  beat();
+  stageStart = Date.now();
+  const assessment = await step4Assessment(messages, articleText, analysis, sources, newsId, userId, sessionId, jobId);
+  console.log(`[FactCheckPerf] job=${jobId || '-'} stage=assessment durationMs=${Date.now() - stageStart}`);
 
   return { analysis, sources, assessment, engineStatuses };
 }
@@ -819,7 +893,8 @@ export async function processFactCheckJob(jobId: string): Promise<void> {
       text,
       title,
       news.title_original,
-      session.id
+      session.id,
+      jobId
     );
 
     const factCheckResult: FactCheckResultV4 = {
@@ -855,7 +930,6 @@ export async function processFactCheckJob(jobId: string): Promise<void> {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[FactCheckWorker] Job ${jobId} failed (attempt ${attempts}):`, message);
 
-    await updateJobFailed(jobId, message, attempts);
     await updateFactCheckSession(session.id, {
       status: 'failed',
       error_message: message,
@@ -863,12 +937,17 @@ export async function processFactCheckJob(jobId: string): Promise<void> {
     });
 
     const emitter = getEmitter(job.news_id, job.user_id);
-    emitter?.emit('error', message);
 
     if (attempts < JOB_MAX_ATTEMPTS) {
+      // ТЗ-206: нефинальная ошибка — честный статус ретрая: stream жив,
+      // фронт показывает «попытка N не удалась, повтор через M сек».
       const retryDelay = RETRY_DELAYS_MS[Math.min(attempts - 1, RETRY_DELAYS_MS.length - 1)];
-      await rescheduleJob(jobId, new Date(Date.now() + retryDelay));
+      await updateJobRetry(jobId, message, attempts, new Date(Date.now() + retryDelay));
+      emitter?.emit('retry', { attempt: attempts, delaySec: Math.round(retryDelay / 1000), message });
     } else {
+      // Финальная попытка — error один раз, stream закрывается на фронте.
+      await updateJobFailed(jobId, message, attempts);
+      emitter?.emit('error', message);
       // ТЗ-205: кэшированный результат при перепроверке не затираем — мёртвый
       // errorResult удалён. Возвращаем статус 'checked' с прежним результатом
       // (он сохранён, т.к. createFactCheckJob больше не NULL-ит кэш);
@@ -952,6 +1031,14 @@ export function startFactCheckCron(): void {
   recoverStuckJobs().catch((err) =>
     console.error('[FactCheckWorker] recoverStuckJobs error:', err.message)
   );
+  // ТЗ-206: восстановление зависших захватов — по таймеру, а не только при boot.
+  // Heartbeat обновляет locked_at между этапами, поэтому порог 20 минут
+  // срабатывает только на реальное зависание (нет прогресса).
+  setInterval(() => {
+    recoverStuckJobs().catch((err) =>
+      console.error('[FactCheckWorker] recoverStuckJobs error:', err.message)
+    );
+  }, 5 * 60 * 1000);
   setTimeout(() => {
     processFactCheckQueue().catch(() => {});
   }, 5000);

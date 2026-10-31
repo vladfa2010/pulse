@@ -143,7 +143,7 @@ router.get('/:id/fact-check', async (req: AuthRequest, res) => {
 
     // in_progress — return latest job status
     const jobResult = await query(
-      `SELECT status FROM fact_check_jobs
+      `SELECT status, attempts, next_retry_at FROM fact_check_jobs
        WHERE news_id = $1 AND user_id = $2
        ORDER BY created_at DESC LIMIT 1`,
       [newsId, userId]
@@ -151,6 +151,9 @@ router.get('/:id/fact-check', async (req: AuthRequest, res) => {
     return res.status(202).json({
       status: 'in_progress',
       job_status: jobResult.rows[0]?.status || 'queued',
+      // ТЗ-206: polling-фолбэк показывает тот же честный статус ретрая, что и SSE
+      attempts: jobResult.rows[0]?.attempts ?? 0,
+      next_retry_at: jobResult.rows[0]?.next_retry_at || null,
     });
   } catch (err: any) {
     console.error('[FactCheckRoute] GET error:', err.message);
@@ -186,6 +189,10 @@ router.get('/:id/fact-check/stream', async (req: AuthRequest, res) => {
     emitter.on('error', (message: string) => {
       send({ type: 'error', message });
       res.end();
+    });
+    // ТЗ-206: нефинальная ошибка — stream не закрываем, фронт показывает статус ретрая
+    emitter.on('retry', (payload: any) => {
+      send({ type: 'retry', ...payload });
     });
 
     req.on('close', () => {
