@@ -4256,6 +4256,11 @@ async function start() {
     { sql: `ALTER TABLE fact_check_sessions ADD COLUMN IF NOT EXISTS tokens_breakdown_json ${USE_SQLITE ? 'TEXT' : 'JSONB'}`, name: 'fc_sessions_tokens_breakdown_json' },
     // ТЗ-207: дедупликация дневного алерта бюджета — максимум 1 алерт/UTC-сутки
     { sql: `CREATE TABLE IF NOT EXISTS fact_check_budget_alerts (alert_date TEXT PRIMARY KEY, cost_usd REAL, checks_count INTEGER, sent_at ${USE_SQLITE ? 'TEXT' : 'TIMESTAMPTZ'})`, name: 'fact_check_budget_alerts' },
+    // ТЗ-208: флаг factcheck в реестре фич — иначе галочки в Тарифах нет и hasFeature вернёт false
+    { sql: USE_SQLITE
+        ? `INSERT OR IGNORE INTO features_registry (id, label, description) VALUES ('factcheck', 'Fact-Check', 'Проверка новостей фактчекингом')`
+        : `INSERT INTO features_registry (id, label, description, integration_status) VALUES ('factcheck', 'Fact-Check', 'Проверка новостей фактчекингом', 'integrated') ON CONFLICT (id) DO NOTHING`,
+      name: 'features_registry_factcheck' },
     // News slugs for deeplinks
     { sql: `ALTER TABLE news ADD COLUMN IF NOT EXISTS slug VARCHAR(250) UNIQUE`, name: 'news_slug' },
     // TZ_ADMIN2_ANALYTICS_v3_5: user analytics and management columns

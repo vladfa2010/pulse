@@ -1192,7 +1192,8 @@ export async function initSQLiteSchema(): Promise<void> {
       ('custom_thresholds', 'Кастомные пороги', 'Настройка порогов для алертов'),
       ('club_access', 'Club доступ', 'Доступ к закрытому Telegram-чату'),
       ('api_access', 'API доступ', 'Доступ к REST API с токеном'),
-      ('multi_portfolio', 'Клиентские портфели', 'Несколько именованных клиентских портфелей Adviser (ТЗ-182)')`);
+      ('multi_portfolio', 'Клиентские портфели', 'Несколько именованных клиентских портфелей Adviser (ТЗ-182)'),
+      ('factcheck', 'Fact-Check', 'Проверка новостей фактчекингом (ТЗ-208)')`);
     console.log('[SQLite] Migration: features_registry seeded');
   } catch {
     // ignore

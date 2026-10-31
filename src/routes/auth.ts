@@ -344,7 +344,7 @@ router.post('/login', validate(LoginSchema), async (req, res) => {
       expiresIn: '7d',
     });
 
-    const subStatus = buildSubscriptionStatus({
+    const subStatus = await buildSubscriptionStatus({
       plan: user.subscription_plan || 'free',
       active: !!user.subscription_active,
       expiresAt: user.subscription_expires_at ? new Date(user.subscription_expires_at) : null,
@@ -570,7 +570,7 @@ router.post('/reset-password', validate(ResetPasswordSchema), async (req, res) =
       { expiresIn: '7d' }
     );
 
-    const subStatus = buildSubscriptionStatus({
+    const subStatus = await buildSubscriptionStatus({
       plan: user.subscription_plan || 'free',
       active: !!user.subscription_active,
       expiresAt: user.subscription_expires_at ? new Date(user.subscription_expires_at) : null,
@@ -650,7 +650,7 @@ router.get('/me', async (req, res) => {
     }
 
     const user = result.rows[0];
-    const subStatus = buildSubscriptionStatus({
+    const subStatus = await buildSubscriptionStatus({
       plan: user.subscription_plan || 'free',
       active: !!user.subscription_active,
       expiresAt: user.subscription_expires_at ? new Date(user.subscription_expires_at) : null,

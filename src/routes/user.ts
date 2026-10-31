@@ -65,7 +65,7 @@ router.get('/profile', authMiddleware, async (req: AuthRequest, res) => {
     }
 
     const user = userResult.rows[0];
-    const subStatus = buildSubscriptionStatus({
+    const subStatus = await buildSubscriptionStatus({
       plan: user.subscription_plan || 'free',
       active: !!user.subscription_active,
       expiresAt: user.subscription_expires_at ? new Date(user.subscription_expires_at) : null,
@@ -1028,7 +1028,7 @@ router.get('/tariff-status', authMiddleware, async (req: AuthRequest, res) => {
   try {
     const userId = req.user!.userId;
     const sub = await getUserSubscription(userId);
-    const status = buildSubscriptionStatus(sub);
+    const status = await buildSubscriptionStatus(sub);
     // DEFSUB-1: используем вычисленный effective plan (free после грейса)
     const plan = await getPlanById(status.plan);
     if (!plan) {
@@ -1094,7 +1094,7 @@ router.get('/tag-status', authMiddleware, async (req: AuthRequest, res) => {
   try {
     const userId = req.user!.userId;
     const sub = await getUserSubscription(userId);
-    const status = buildSubscriptionStatus(sub);
+    const status = await buildSubscriptionStatus(sub);
     // DEFSUB-1: лимит берём по вычисленному effective plan
     const plan = await getPlanById(status.plan);
     if (!plan) {
@@ -1378,7 +1378,7 @@ router.post('/downgrade', authMiddleware, async (req: AuthRequest, res) => {
       res.json({
         success: true,
         mode: 'immediate',
-        subscription: buildSubscriptionStatus(freshSub),
+        subscription: await buildSubscriptionStatus(freshSub),
       });
     } else {
       await scheduleDowngrade(userId, trimmedPlan);

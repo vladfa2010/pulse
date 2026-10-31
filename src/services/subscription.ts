@@ -76,6 +76,9 @@ export interface SubscriptionStatus {
   daysLeft: number;
   inGracePeriod: boolean;
   scheduledDowngrade: string | null;
+  // ТЗ-208: фича-флаги effective-плана (active ? plan : free) — единый источник
+  // правды для гейтов доступа на фронте. Весь объект целиком, не по одному флагу.
+  features: Record<string, boolean>;
 }
 
 // ─── SQL helpers ───────────────────────────────────────────────────────────
@@ -287,7 +290,9 @@ export async function getUserSubscription(userId: string): Promise<{
   };
 }
 
-export function buildSubscriptionStatus(sub: ReturnType<typeof getUserSubscription> extends Promise<infer T> ? T : never): SubscriptionStatus {
+// ТЗ-208: стала async — читает фича-флаги effective-плана для payload.
+// Попадание в кэш планов (getAllPlansCached), дёшево.
+export async function buildSubscriptionStatus(sub: ReturnType<typeof getUserSubscription> extends Promise<infer T> ? T : never): Promise<SubscriptionStatus> {
   const access = computeAccessState(sub.expiresAt);
 
   // DEFSUB-16: канарейка — платный план + active=TRUE, но expires_at=NULL.
@@ -303,16 +308,18 @@ export function buildSubscriptionStatus(sub: ReturnType<typeof getUserSubscripti
     });
   }
 
-  const plan = access.active ? sub.plan : 'free';
+  const planId = access.active ? sub.plan : 'free';
+  const plan = await getPlanById(planId);
 
   return {
-    plan,
+    plan: planId,
     active: access.active,
     expiresAt: sub.expiresAt ? sub.expiresAt.toISOString() : null,
     autoRenew: sub.autoRenew,
     daysLeft: access.daysLeft,
     inGracePeriod: access.inGrace,
     scheduledDowngrade: access.active ? sub.scheduledDowngrade : null,
+    features: parseDbJson<Record<string, boolean>>(plan?.features) || {},
   };
 }
 
@@ -1877,7 +1884,7 @@ export function requireMinPlan(minPlanId: string) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
     const sub = await getUserSubscription(userId);
-    const status = buildSubscriptionStatus(sub);
+    const status = await buildSubscriptionStatus(sub);
     if (!status.active && minPlanId !== 'free') {
       return res.status(403).json({ error: 'Subscription required', required: minPlanId, current: sub.plan });
     }
