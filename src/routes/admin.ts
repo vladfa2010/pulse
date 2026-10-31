@@ -812,6 +812,60 @@ router.delete('/news/:id', adminMiddleware, async (req: AuthRequest, res) => {
   }
 });
 
+// DELETE /api/admin/news/:id/fact-check — сброс результата фактчека (ТЗ-210).
+// Полный сброс до «новость никогда не проверялась»: новость остаётся,
+// результат стирается для всех, активные ссылки шеринга (ТЗ-209) перестают
+// работать, job/сессии удаляются — новость не удаляется, CASCADE не сработает,
+// всё чистим явными DELETE.
+router.delete('/news/:id/fact-check', adminMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const newsId = req.params.id;
+
+    if (!UUID_RE.test(newsId)) {
+      return res.status(404).json({ error: 'Новость не найдена' });
+    }
+
+    // 1. Чтение состояния
+    const newsResult = await query(
+      `SELECT id, fact_check_status FROM news WHERE id = $1`,
+      [newsId]
+    );
+    if (newsResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Новость не найдена' });
+    }
+    const newsStatus = newsResult.rows[0].fact_check_status;
+    if (newsStatus === 'in_progress') {
+      return res.status(409).json({ error: 'Проверка выполняется — дождитесь завершения или удалите фактчек после' });
+    }
+    if (newsStatus !== 'checked') {
+      return res.status(404).json({ error: 'У новости нет фактчека' });
+    }
+
+    // 2. Атомарный сброс (гоночный гейт: статус мог измениться между шагами 1 и 2)
+    const resetResult = await query(
+      `UPDATE news SET fact_check_status = 'not_checked', fact_check_result = NULL
+       WHERE id = $1 AND fact_check_status = 'checked'
+       RETURNING id`,
+      [newsId]
+    );
+    if (resetResult.rows.length === 0) {
+      return res.status(409).json({ error: 'Статус изменился, повторите' });
+    }
+
+    // 3. Чистка связанных данных (новость не удаляется — CASCADE не сработает)
+    await query(`DELETE FROM fact_check_jobs WHERE news_id = $1`, [newsId]);
+    await query(`DELETE FROM fact_check_sessions WHERE news_id = $1`, [newsId]);
+    await query(`DELETE FROM fact_check_shares WHERE news_id = $1`, [newsId]);
+
+    console.log('[Admin] Fact-check deleted by', req.user!.userId, 'news', newsId);
+
+    res.json({ ok: true, news_id: newsId, previous_status: 'checked' });
+  } catch (err: any) {
+    console.error('[Admin] Delete fact-check error:', err.message, err.stack?.substring(0, 200));
+    res.status(500).json({ error: 'Failed to delete fact-check', details: err.message });
+  }
+});
+
 // GET /api/admin/stats — dashboard stats
 router.get('/stats', adminMiddleware, async (_req, res) => {
   try {
