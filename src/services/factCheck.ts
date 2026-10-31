@@ -177,16 +177,17 @@ export async function getFactCheckJob(jobId: string) {
 }
 
 export async function getNextQueuedJob(): Promise<any | null> {
-  // ТЗ-205: атомарный захват — UPDATE ... FOR UPDATE SKIP LOCKED (PG).
-  // Два инстанса бэкенда больше не могут взять один job: второй UPDATE
-  // не найдёт строку (она уже заблокирована/захвачена) и вернёт 0 строк.
+  // ТЗ-205 + ПРАВКА-1: захват маркером locked_at. SKIP LOCKED защищает только
+  // внутри одной команды (UPDATE коммитится сразу, блокировка строки умирает),
+  // поэтому повторный захват того же job'а отсекает фильтр locked_at IS NULL —
+  // иначе второй инстанс бэкенда перезапустил бы чужой pipeline.
   if (!USE_SQLITE) {
     const result = await query(
       `UPDATE fact_check_jobs
        SET locked_at = NOW(), updated_at = NOW()
        WHERE id = (
          SELECT id FROM fact_check_jobs
-         WHERE status = 'queued' AND (next_retry_at IS NULL OR next_retry_at <= NOW())
+         WHERE status = 'queued' AND locked_at IS NULL AND (next_retry_at IS NULL OR next_retry_at <= NOW())
          ORDER BY created_at ASC
          LIMIT 1
          FOR UPDATE SKIP LOCKED
@@ -203,7 +204,7 @@ export async function getNextQueuedJob(): Promise<any | null> {
      SET locked_at = datetime('now'), updated_at = datetime('now')
      WHERE id = (
        SELECT id FROM fact_check_jobs
-       WHERE status = 'queued' AND ${timeFilter}
+       WHERE status = 'queued' AND locked_at IS NULL AND ${timeFilter}
        ORDER BY created_at ASC
        LIMIT 1
      )
@@ -928,12 +929,15 @@ export async function recoverStuckJobs(): Promise<void> {
      RETURNING id`,
     []
   );
+  // ПРАВКА-1: «живой» — любой job в очереди, включая ожидающий ретрая
+  // (queued, locked_at = NULL, next_retry_at в будущем): он выполнится,
+  // и новость не должна сбрасываться в not_checked при рестарте бэкенда.
   const newsRes = await query(
     `UPDATE news SET fact_check_status = 'not_checked', fact_check_result = NULL
      WHERE fact_check_status = 'in_progress'
        AND id NOT IN (
          SELECT news_id FROM fact_check_jobs
-         WHERE status = 'queued' AND locked_at IS NOT NULL
+         WHERE status = 'queued'
        )
      RETURNING id`,
     []
