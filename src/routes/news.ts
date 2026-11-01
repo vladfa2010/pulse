@@ -47,8 +47,10 @@ const USE_SQLITE = process.env.USE_SQLITE === 'true';
 // 01.11: **8 с** — переживает типичные заминки TEI, предел ожидания юзера.
 // Переопределяется env SEMANTIC_SEARCH_TIMEOUT_MS.
 const SEMANTIC_SEARCH_TIMEOUT_MS = parseInt(process.env.SEMANTIC_SEARCH_TIMEOUT_MS || '8000', 10);
-// ТЗ-213: квота смысловых карточек на порцию (кратна сетке 3×2)
-const SEMANTIC_PAGE_SIZE = 6;
+// ТЗ-213 v3: смысловой блок ФИКСИРОВАННЫЙ — «20 лучших», пагинации нет
+// (semantic_offset/hasMore не вводятся; решение владельца 01.11). Кратно
+// сетке 3/2/1 на всех брейкпоинтах.
+const SEMANTIC_BLOCK_SIZE = 20;
 // ТЗ-214: минимальный косинус курса к запросу для раздела «Курсы по теме».
 // Стартовая оценка, не измеренная на query↔course парах: запрос короче новости
 // → косинус шумнее типового 0.6–0.75 курс↔новость; при нерелевантной выдаче
@@ -456,8 +458,10 @@ router.get('/tags/:tagId', async (req, res) => {
 //   ?q=текст     — обязательный поисковый запрос
 //   ?tag=tagId   — искать только внутри тега (опционально)
 //   ?page=N      — пагинация (default: 1)
-//   ?limit=N     — количество (default: 50, max: 100)
-//   ?semantic_offset=N — пагинация смыслового раздела (ТЗ-213, default: 0)
+//   ?limit=N     — количество (default: 20 для выдачи ТЗ-213 v3, max: 1000 —
+//                  «Показать все» шлёт limit=total; cap держит злоупотребление
+//                  в рамках — max реальный total 842 на «санкции»)
+// ТЗ-213 v3: пагинации смыслового раздела нет — semantic_offset исключён.
 // ═══════════════════════════════════════════════════════════════════════════
 router.get('/search', authMiddleware, async (req: AuthRequest, res) => {
   try {
@@ -467,14 +471,12 @@ router.get('/search', authMiddleware, async (req: AuthRequest, res) => {
     // 500 с утечкой текста внутренней ошибки наружу (security-пробник 01.11).
     const pageRaw = parseInt(req.query.page as string);
     const page = Number.isNaN(pageRaw) || pageRaw < 1 ? 1 : pageRaw;
-    const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
+    // ТЗ-213 v3: дефолт 20 (стартовая квота «Прямого сходства»), cap 1000.
+    const limit = Math.min(parseInt(req.query.limit as string) || 20, 1000);
     const offset = (page - 1) * limit;
-    // ТЗ-213: независимая пагинация смысловых; NaN/отрицательное → 0
-    const semanticOffsetRaw = parseInt(req.query.semantic_offset as string);
-    const semanticOffset = Number.isNaN(semanticOffsetRaw) || semanticOffsetRaw < 0 ? 0 : semanticOffsetRaw;
 
     if (!q) {
-      return res.json({ articles: [], total: 0, page, hasMore: false, semantic: null, courses: null });
+      return res.json({ articles: [], total: 0, page, hasMore: false, semantic: null, courses: null, lessons: null });
     }
 
     const timeFilter = timeFilterSql();
@@ -581,28 +583,22 @@ router.get('/search', authMiddleware, async (req: AuthRequest, res) => {
     // и пагинация молча обрывается (REVIEW-TZ-161_163, нит hasMore).
     const lexicalCount = articles.length;
 
-    // ─── ТЗ-161/ТЗ-213/ТЗ-214: семантическая зона (PG-only) ────────────
-    // ТЗ-213: семантика запускается ВСЕГДА (гейт «до лимита страницы» снят) —
-    // смысловые результаты — самостоятельный раздел выдачи со своей
-    // пагинацией (semantic_offset), а не докид до лимита exact-страницы.
+    // ─── ТЗ-161/ТЗ-213 v3/ТЗ-214/ТЗ-215: семантическая зона (PG-only) ────
+    // ТЗ-213 v3: семантика запускается ВСЕГДА (гейт «до лимита страницы»
+    // снят) — смысловые результаты самостоятельный раздел выдачи:
+    // ФИКСИРОВАННЫЙ блок SEMANTIC_BLOCK_SIZE=20 «лучших», пагинации нет.
     // ТЗ-214: query-вектор ОДИН на запрос — смысловые новости и курсы делят
     // его; второй вызов embedBatch запрещён.
     // SQLite-режим (демо/CI): семантика недоступна — векторы живут только
     // в PostgreSQL; exact-only — осознанный фолбэк, поиск не падает.
-    let semantic: { articles: any[]; total: number; hasMore: boolean } | null = null;
+    let semantic: { articles: any[]; total: number } | null = null;
     let courses: any[] | null = null;
     let lessons: any[] | null = null;
     if (!USE_SQLITE && q.trim().length >= 4) {
       try {
         const vectors = await withTimeout(embedBatch([q]), SEMANTIC_SEARCH_TIMEOUT_MS);
         const vecLiteral = vectorLiteral(vectors[0]);
-        const sem = await semanticNewsSearch(articles, vecLiteral, semanticOffset, SEMANTIC_PAGE_SIZE);
-        if (sem) {
-          semantic = {
-            ...sem,
-            hasMore: semanticOffset + sem.articles.length < sem.total,
-          };
-        }
+        semantic = await semanticNewsSearch(articles, vecLiteral);
         if (SEARCH_COURSES_ENABLED) {
           courses = await searchCoursesByVector(vecLiteral);
         }
@@ -638,16 +634,16 @@ router.get('/search', authMiddleware, async (req: AuthRequest, res) => {
  * Без дат-фильтра: покрытие векторами за 90 дней — всего 20,5% (ТЗ-160),
  * дат-окно сделало бы поиск слепым к свежаку. Свежесть учитывается мягким
  * бустом скоринга.
- * ТЗ-213: возвращает страницу [offset, offset + pageSize) и total кандидатов
- * (см. комментарий у return); null — кандидатов нет, роут кладёт semantic: null.
+ * ТЗ-213 v3: ФИКСИРОВАННЫЙ блок «20 лучших» (SEMANTIC_BLOCK_SIZE), без
+ * пагинации; total — честное число кандидатов kNN top-50 ПОСЛЕ дедупа
+ * vs exact (глубже top-50 не смотрим; счётчик pill раздела «По смыслу»).
+ * null — кандидатов нет, роут кладёт semantic: null.
  * ТЗ-214: query-вектор приходит готовым (vecLiteral) — вызов embedBatch живёт
  * в роуте и общий с подбором курсов.
  */
 async function semanticNewsSearch(
   exactArticles: any[],
   vecLiteral: string,
-  offset: number,
-  pageSize: number,
 ): Promise<{ articles: any[]; total: number } | null> {
   const candRes = await query(
     `SELECT id, 1 - (embedding <=> $1::vector) AS sim
@@ -699,11 +695,9 @@ async function semanticNewsSearch(
     })
     .sort((a, b) => b.score - a.score);
 
-  // ТЗ-213: total — честное число кандидатов kNN top-50 ПОСЛЕ дедупа vs exact,
-  // а не глобальный COUNT по таблице: глубже top-50 не смотрим. hasMore
-  // считает вызывающий роут по срезу [offset, offset + pageSize).
+  // ТЗ-213 v3: без пагинации — срез лучших SEMANTIC_BLOCK_SIZE целиком.
   return {
-    articles: ranked.slice(offset, offset + pageSize).map(({ article, similarity }) => {
+    articles: ranked.slice(0, SEMANTIC_BLOCK_SIZE).map(({ article, similarity }) => {
       article.match_type = 'semantic';
       article.similarity = Math.round(similarity * 10000) / 10000;
       return article;
