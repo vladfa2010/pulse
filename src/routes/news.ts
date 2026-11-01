@@ -744,8 +744,10 @@ async function searchCoursesByVector(vecLiteral: string): Promise<any[] | null> 
 // courses, уроки хранят векторы как BYTEA (lms_v8, пакетный KG-контур) —
 // pgvector `<=>` недоступен, косинус считаем в Node через публичные хелперы
 // knowledgeGraph.ts. Полный перебор дёшев (уроков десятки). Фильтры — как у
-// курсов ТЗ-214 (published + public + не удалён) плюс hidden-уроки: их
-// заголовок не должен утекать в публичную выдачу (гейт урока 403).
+// курсов ТЗ-214 (published + public + не удалён): иначе hidden/draft курсы
+// утекают в публичную выдачу (анти-энумерация). Колонки visibility у
+// course_lessons НЕТ (схема: is_free_preview/unlock_after_days) — фильтровать
+// «скрытые уроки» нечем (ТЗ-215 v1.2).
 // Клик на фронте ведёт на страницу КУРСА — гейт урока не обходим (ТЗ-215 п.1).
 async function searchLessonsByVector(queryVector: number[]): Promise<any[] | null> {
   const res = await query(
@@ -755,8 +757,7 @@ async function searchLessonsByVector(queryVector: number[]): Promise<any[] | nul
      JOIN course_lessons cl ON cl.id = le.lesson_id
      JOIN courses c ON c.id = cl.course_id
      WHERE c.status = 'published' AND c.deleted_at IS NULL
-       AND c.visibility = 'public'
-       AND (cl.visibility IS NULL OR cl.visibility <> 'hidden')`,
+       AND c.visibility = 'public'`,
     [],
   );
   const matched = res.rows
