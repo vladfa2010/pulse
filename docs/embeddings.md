@@ -59,12 +59,20 @@
 | Бэкфилл новостей | `scripts/backfillEmbeddings.ts` | ручной запуск; партиции `BACKFILL_MOD/REM`, `BACKFILL_BATCH_SIZE` (деф. 16) | то же | `news.embedding`; skipped → `logs/backfill_embeddings_skipped.json` |
 | Смысловой поиск | `routes/news.ts` (`/api/news/search`) | реалтайм, по запросу юзера | запрос целиком, 1 текст (свой таймаут `SEMANTIC_SEARCH_TIMEOUT_MS`) | не пишет, ищет по `news.embedding` (HNSW) |
 
-Поиск в ленте — гибридный (ТЗ-161, 2026-10-16): точная ветка ILIKE идёт
-первыми (word-AND по словам запроса, ТЗ-163 — порядок слов не важен, слова
-≥2 символов, каждое в любом из 4 текстовых полей), семантика добивает до
-`limit` кандидатами из HNSW-топ-50 без дат-фильтра, скор = косинус + буст
-свежести (+0.10 ≤14 сут, +0.05 ≤90 сут). TEI недоступен → молчаливый
-фолбэк exact-only (5 с). Ответ помечает `match_type`/`similarity`.
+Поиск в ленте — гибридный (ТЗ-161, 2026-10-16; разделы выдачи — ТЗ-213/214,
+01.11.2026): точная ветка ILIKE идёт первыми (word-AND по словам запроса,
+ТЗ-163 — порядок слов не важен, слова ≥2 символов, каждое в любом из 4
+текстовых полей) и отдаётся разделом «Прямое сходство». Семантика (ТЗ-213)
+запускается на КАЖДЫЙ запрос ≥4 символов (до ТЗ-213 добивала exact до
+`limit`): kNN HNSW-топ-50 без дат-фильтра, скор = косинус + буст свежести
+(+0.10 ≤14 сут, +0.05 ≤90 сут), дедуп vs exact; ответ живёт в отдельном
+поле `semantic { articles, total, hasMore }` со своей пагинацией
+(`semantic_offset`, квота 6), `total` — кандидаты top-50 после дедупа, не
+глобальный COUNT. Третий раздел «Курсы по теме» (ТЗ-214) — те же
+query-вектор (второй вызов TEI запрещён), косинус по `courses.embedding`,
+фильтры published/public, порог `COURSE_SEARCH_MIN_SIM = 0.5`, топ-6 среди
+прошедших порог, фичефлаг `SEARCH_COURSES_ENABLED`. TEI недоступен →
+молчаливый фолбэк: `semantic: null` и `courses: null`, exact на месте (5 с).
 | Темы каскадов | Python-sidecar `topics-worker` (кластеризация, 03:40 МСК) + `services/cron.ts` (нейминг тем) | cron (ТЗ-115, `TOPICS_ENABLED` на VPS) | окно 14 дней, `embedding IS NOT NULL` | не считает заново — ест готовые векторы новостей |
 | Мэтчинг курсов ↔ новости | `services/education/match.ts` | триггер при сохранении курса (`scheduleCourseReembedding`, при `EDUCATION_MATCH_ENABLED`) + ретроскан при publish и смене порога | `title + '\n' + description + '\n' + названия уроков`, обрезка 1000 | `courses.embedding` |
 | Бэкфилл курсов | `scripts/backfill-course-embeddings.js` | ручной запуск (идемпотентен) | то же | `courses.embedding` |
@@ -217,6 +225,18 @@ SELECT round(sim::numeric,3), a.title, b.title
   перестановки находятся; «AI нефть» — AND семантика 50/50. Тем же коммитом
   ниты: `hasMore` по лексическому счётчику (семант. докиды не обрывают
   пагинацию), CONCURRENTLY в HNSW-страже, трим пунктуации в `highlight.tsx`.
+- **2026-11-01:** ТЗ-213 — семантическая ветка `/api/news/search` отдаётся
+  всегда (гейт «до лимита» снят): в ответе поле
+  `semantic {articles,total,hasMore}|null`, пагинация `semantic_offset`,
+  `SEMANTIC_PAGE_SIZE=6`; таймаут TEI возвращён **15 → 5 с** (решение
+  владельца, отменяет решение 27.10 — `2f00d1d`). ТЗ-214 — третий раздел
+  выдачи «Курсы по теме»: поле `courses` (топ-6, `similarity >= 0.5`
+  `COURSE_SEARCH_MIN_SIM`, по общему query-вектору — один embedBatch на
+  запрос; фильтры published/public/без deleted_at/embedding NOT NULL;
+  выключатель `SEARCH_COURSES_ENABLED`, дефолт true — `d5a039d`).
+  Счётчики карточек (`lessons_count/total_minutes/students_count`) приведены
+  к `::int` — паритет типов с витриной `465727b`. Проверка на проде:
+  «санкции трампа» → 1 курс sim=0.7016, поля совпадают с витриной 1:1.
 
 **Производительность TEI (ориентиры VDS 4 CPU / RAYON=1, 2026-10-27):** одиночный
 embed — 4–6 с (inference ~4,2 с); 8 коротких текстов — 60–300 с (очередь +
