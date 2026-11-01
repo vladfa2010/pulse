@@ -72,7 +72,8 @@ function vectorToBuffer(v: number[]): Buffer {
   return buf;
 }
 
-function bufferToVector(buf: unknown): number[] | null {
+/** ТЗ-215: публичный парсер BYTEA → float32[1024] для смыслового поиска уроков. */
+export function bufferToVector(buf: unknown): number[] | null {
   if (buf == null) return null;
   const b: Buffer = Buffer.isBuffer(buf) ? buf : Buffer.from(buf as any);
   if (b.length !== EMBEDDING_DIM * 4) return null;
@@ -96,7 +97,8 @@ function jsonToVector(value: unknown): number[] | null {
   }
 }
 
-function cosine(a: number[], b: number[]): number {
+/** ТЗ-215: публичный косинус для смыслового поиска уроков. */
+export function cosine(a: number[], b: number[]): number {
   let dot = 0;
   let na = 0;
   let nb = 0;

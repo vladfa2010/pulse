@@ -30,8 +30,9 @@ import { popularTagsCached } from '../utils/tagCache';
 import { computePopularTags } from '../services/popularTags';
 import { markAllNewsAsRead, timeFilterSql } from '../services/newsReads';
 import { embedBatch } from '../services/embeddings';
-import { SEARCH_COURSES_ENABLED } from '../config/courseSearch';
+import { SEARCH_COURSES_ENABLED, SEARCH_LESSONS_ENABLED } from '../config/courseSearch';
 import { nowSql } from '../utils/nowSql';
+import { bufferToVector, cosine } from '../services/education/knowledgeGraph';
 
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
@@ -50,6 +51,11 @@ const SEMANTIC_PAGE_SIZE = 6;
 // → косинус шумнее типового 0.6–0.75 курс↔новость; при нерелевантной выдаче
 // поднять до 0.55–0.6 одной константой (калибровка по жалобам/кликам).
 const COURSE_SEARCH_MIN_SIM = 0.5;
+// ТЗ-215: минимальный косинус урока к запросу для раздела «Уроки по теме».
+// Выше курсового 0.5 (урок конкретнее курса → попадание должно быть точнее);
+// решение владельца 01.11 — 0.65. На малом каталоге (десятки уроков) большинство
+// запросов даст пусто — штатно; калибровка одной константой.
+const LESSON_SEARCH_MIN_SIM = 0.65;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // GET /api/news/global — ПУБЛИЧНАЯ общая лента (все новости, без auth)
@@ -577,6 +583,7 @@ router.get('/search', authMiddleware, async (req: AuthRequest, res) => {
     // в PostgreSQL; exact-only — осознанный фолбэк, поиск не падает.
     let semantic: { articles: any[]; total: number; hasMore: boolean } | null = null;
     let courses: any[] | null = null;
+    let lessons: any[] | null = null;
     if (!USE_SQLITE && q.trim().length >= 4) {
       try {
         const vectors = await withTimeout(embedBatch([q]), SEMANTIC_SEARCH_TIMEOUT_MS);
@@ -591,6 +598,11 @@ router.get('/search', authMiddleware, async (req: AuthRequest, res) => {
         if (SEARCH_COURSES_ENABLED) {
           courses = await searchCoursesByVector(vecLiteral);
         }
+        // ТЗ-215: уроки делят тот же query-вектор (number[] — косинус считаем
+        // в Node, т.к. lesson_embeddings.vector — BYTEA, не pgvector).
+        if (SEARCH_LESSONS_ENABLED) {
+          lessons = await searchLessonsByVector(vectors[0]);
+        }
       } catch (err: any) {
         // ТЗ-161: недоступность/таймаут TEI — молчаливый фолбэк на exact-only.
         console.warn('[News] Semantic search unavailable, exact-only:', err?.message);
@@ -604,6 +616,7 @@ router.get('/search', authMiddleware, async (req: AuthRequest, res) => {
       hasMore: offset + lexicalCount < total,
       semantic,
       courses,
+      lessons,
     });
   } catch (err: any) {
     console.error('[News] Search error:', err.message, err.stack?.substring(0, 200));
@@ -723,6 +736,46 @@ async function searchCoursesByVector(vecLiteral: string): Promise<any[] | null> 
       ...r,
       category: category_id ? { id: category_id, name: category_name } : null,
     }));
+  return matched.length > 0 ? matched : null;
+}
+
+// ТЗ-215: подбор уроков по смыслу для раздела «Уроки по теме» — тот же
+// query-вектор (number[]), что и у смысловых новостей/курсов. В отличие от
+// courses, уроки хранят векторы как BYTEA (lms_v8, пакетный KG-контур) —
+// pgvector `<=>` недоступен, косинус считаем в Node через публичные хелперы
+// knowledgeGraph.ts. Полный перебор дёшев (уроков десятки). Фильтры — как у
+// курсов ТЗ-214 (published + public + не удалён) плюс hidden-уроки: их
+// заголовок не должен утекать в публичную выдачу (гейт урока 403).
+// Клик на фронте ведёт на страницу КУРСА — гейт урока не обходим (ТЗ-215 п.1).
+async function searchLessonsByVector(queryVector: number[]): Promise<any[] | null> {
+  const res = await query(
+    `SELECT le.lesson_id, le.vector, cl.title AS lesson_title, cl.duration_min,
+            c.slug AS course_slug, c.title AS course_title, c.cover_url
+     FROM lesson_embeddings le
+     JOIN course_lessons cl ON cl.id = le.lesson_id
+     JOIN courses c ON c.id = cl.course_id
+     WHERE c.status = 'published' AND c.deleted_at IS NULL
+       AND c.visibility = 'public'
+       AND (cl.visibility IS NULL OR cl.visibility <> 'hidden')`,
+    [],
+  );
+  const matched = res.rows
+    .map((r: any) => {
+      const v = bufferToVector(r.vector);
+      if (!v) return null;
+      return {
+        lesson_id: r.lesson_id,
+        title: r.lesson_title,
+        course_slug: r.course_slug,
+        course_title: r.course_title,
+        duration_min: r.duration_min,
+        cover_url: r.cover_url,
+        similarity: Math.round(cosine(v, queryVector) * 10000) / 10000,
+      };
+    })
+    .filter((r: any) => r !== null && r.similarity >= LESSON_SEARCH_MIN_SIM)
+    .sort((a: any, b: any) => b.similarity - a.similarity)
+    .slice(0, 4);
   return matched.length > 0 ? matched : null;
 }
 
