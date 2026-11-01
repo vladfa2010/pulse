@@ -237,6 +237,17 @@ SELECT round(sim::numeric,3), a.title, b.title
   Счётчики карточек (`lessons_count/total_minutes/students_count`) приведены
   к `::int` — паритет типов с витриной `465727b`. Проверка на проде:
   «санкции трампа» → 1 курс sim=0.7016, поля совпадают с витриной 1:1.
+- **2026-11-01 (ТЗ-215):** четвёртый раздел выдачи «Уроки по теме» — поле
+  `lessons` (топ-4, `similarity >= 0.65` `LESSON_SEARCH_MIN_SIM` — решение
+  владельца; измеренный max релевантных уроков ~0.63, раздел чаще пуст —
+  штатно, калибровка константой). Векторы уроков — `lesson_embeddings.vector`
+  BYTEA → косинус в Node через экспортированные `bufferToVector`/`cosine`
+  (`knowledgeGraph.ts`), полный перебор (уроков десятки); фильтры как у
+  курсов. Фичефлаг `SEARCH_LESSONS_ENABLED` (`4d13f90`). Hotfix `e9e1c8c`:
+  убран фильтр `cl.visibility` — колонки у `course_lessons` не существует,
+  запрос валился и глушился общим catch. Открытое наблюдение: проверка
+  `lesson.visibility === 'hidden'` в checkLessonAccess (education.ts:614) —
+  мёртвый код (колонки нет).
 
 **Производительность TEI (ориентиры VDS 4 CPU / RAYON=1, 2026-10-27):** одиночный
 embed — 4–6 с (inference ~4,2 с); 8 коротких текстов — 60–300 с (очередь +
