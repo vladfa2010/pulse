@@ -40,7 +40,10 @@ const USE_SQLITE = process.env.USE_SQLITE === 'true';
 // одиночный embed в TEI занимает 4–6 с + очередь (см. docs/embeddings.md,
 // трейд-off 14.10); 5 с гасили семантическую ветку в пике (5 фолбэков/24ч).
 // Переопределяется env SEMANTIC_SEARCH_TIMEOUT_MS.
-const SEMANTIC_SEARCH_TIMEOUT_MS = parseInt(process.env.SEMANTIC_SEARCH_TIMEOUT_MS || '15000', 10);
+// ТЗ-213: 5 с — семантика теперь идёт на КАЖДЫЙ запрос, ждать дольше нет смысла.
+const SEMANTIC_SEARCH_TIMEOUT_MS = parseInt(process.env.SEMANTIC_SEARCH_TIMEOUT_MS || '5000', 10);
+// ТЗ-213: квота смысловых карточек на порцию (кратна сетке 3×2)
+const SEMANTIC_PAGE_SIZE = 6;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // GET /api/news/global — ПУБЛИЧНАЯ общая лента (все новости, без auth)
@@ -437,6 +440,7 @@ router.get('/tags/:tagId', async (req, res) => {
 //   ?tag=tagId   — искать только внутри тега (опционально)
 //   ?page=N      — пагинация (default: 1)
 //   ?limit=N     — количество (default: 50, max: 100)
+//   ?semantic_offset=N — пагинация смыслового раздела (ТЗ-213, default: 0)
 // ═══════════════════════════════════════════════════════════════════════════
 router.get('/search', authMiddleware, async (req: AuthRequest, res) => {
   try {
@@ -445,9 +449,12 @@ router.get('/search', authMiddleware, async (req: AuthRequest, res) => {
     const page = parseInt(req.query.page as string) || 1;
     const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
     const offset = (page - 1) * limit;
+    // ТЗ-213: независимая пагинация смысловых; NaN/отрицательное → 0
+    const semanticOffsetRaw = parseInt(req.query.semantic_offset as string);
+    const semanticOffset = Number.isNaN(semanticOffsetRaw) || semanticOffsetRaw < 0 ? 0 : semanticOffsetRaw;
 
     if (!q) {
-      return res.json({ articles: [], total: 0, page, hasMore: false });
+      return res.json({ articles: [], total: 0, page, hasMore: false, semantic: null });
     }
 
     const timeFilter = timeFilterSql();
@@ -554,16 +561,21 @@ router.get('/search', authMiddleware, async (req: AuthRequest, res) => {
     // и пагинация молча обрывается (REVIEW-TZ-161_163, нит hasMore).
     const lexicalCount = articles.length;
 
-    // ─── ТЗ-161: семантическая часть гибридного поиска (PG-only) ────────
+    // ─── ТЗ-161/ТЗ-213: семантическая часть гибридного поиска (PG-only) ─
+    // ТЗ-213: семантика запускается ВСЕГДА (гейт «до лимита страницы» снят) —
+    // смысловые результаты — самостоятельный раздел выдачи со своей
+    // пагинацией (semantic_offset), а не докид до лимита exact-страницы.
     // SQLite-режим (демо/CI): семантика недоступна — векторы живут только
     // в PostgreSQL; exact-only — осознанный фолбэк, поиск не падает.
-    if (!USE_SQLITE && q.trim().length >= 4 && articles.length < limit) {
+    let semantic: { articles: any[]; total: number; hasMore: boolean } | null = null;
+    if (!USE_SQLITE && q.trim().length >= 4) {
       try {
-        const semantic = await semanticNewsSearch(q, articles, limit - articles.length);
-        for (const { article, similarity } of semantic) {
-          article.match_type = 'semantic';
-          article.similarity = similarity;
-          articles.push(article);
+        const sem = await semanticNewsSearch(q, articles, semanticOffset, SEMANTIC_PAGE_SIZE);
+        if (sem) {
+          semantic = {
+            ...sem,
+            hasMore: semanticOffset + sem.articles.length < sem.total,
+          };
         }
       } catch (err: any) {
         // ТЗ-161: недоступность/таймаут TEI — молчаливый фолбэк на exact-only.
@@ -576,6 +588,7 @@ router.get('/search', authMiddleware, async (req: AuthRequest, res) => {
       total,
       page,
       hasMore: offset + lexicalCount < total,
+      semantic,
     });
   } catch (err: any) {
     console.error('[News] Search error:', err.message, err.stack?.substring(0, 200));
@@ -588,14 +601,15 @@ router.get('/search', authMiddleware, async (req: AuthRequest, res) => {
  * Без дат-фильтра: покрытие векторами за 90 дней — всего 20,5% (ТЗ-160),
  * дат-окно сделало бы поиск слепым к свежаку. Свежесть учитывается мягким
  * бустом скоринга.
+ * ТЗ-213: возвращает страницу [offset, offset + pageSize) и total кандидатов
+ * (см. комментарий у return); null — кандидатов нет, роут кладёт semantic: null.
  */
 async function semanticNewsSearch(
   q: string,
   exactArticles: any[],
-  need: number,
-): Promise<Array<{ article: any; similarity: number }>> {
-  if (need <= 0) return [];
-
+  offset: number,
+  pageSize: number,
+): Promise<{ articles: any[]; total: number } | null> {
   const vectors = await withTimeout(embedBatch([q]), SEMANTIC_SEARCH_TIMEOUT_MS);
   const vecLiteral = vectorLiteral(vectors[0]);
 
@@ -610,7 +624,7 @@ async function semanticNewsSearch(
 
   const exactIds = new Set(exactArticles.map((a) => a.id));
   const candidates = candRes.rows.filter((r: any) => !exactIds.has(r.id));
-  if (candidates.length === 0) return [];
+  if (candidates.length === 0) return null;
 
   // ТЗ-99: широкие колонки — тот же набор, что в ILIKE-ветке PG,
   // включая каскадные поля через CTE ranked.
@@ -638,18 +652,28 @@ async function semanticNewsSearch(
   const nowMs = Date.now();
   const DAY_MS = 24 * 60 * 60 * 1000;
 
-  return wideRes.rows
+  // ТЗ-161: буст свежести — стартовые константы v1,
+  // подбираются по реальному использованию.
+  const ranked = wideRes.rows
     .map((article: any) => {
       const sim = simById.get(article.id) ?? 0;
       const ageMs = nowMs - new Date(article.published_at).getTime();
-      // ТЗ-161: буст свежести — стартовые константы v1,
-      // подбираются по реальному использованию.
       const boost = ageMs <= 14 * DAY_MS ? 0.10 : ageMs <= 90 * DAY_MS ? 0.05 : 0;
       return { article, similarity: sim, score: sim + boost };
     })
-    .sort((a, b) => b.score - a.score)
-    .slice(0, need)
-    .map(({ article, similarity }) => ({ article, similarity: Math.round(similarity * 10000) / 10000 }));
+    .sort((a, b) => b.score - a.score);
+
+  // ТЗ-213: total — честное число кандидатов kNN top-50 ПОСЛЕ дедупа vs exact,
+  // а не глобальный COUNT по таблице: глубже top-50 не смотрим. hasMore
+  // считает вызывающий роут по срезу [offset, offset + pageSize).
+  return {
+    articles: ranked.slice(offset, offset + pageSize).map(({ article, similarity }) => {
+      article.match_type = 'semantic';
+      article.similarity = Math.round(similarity * 10000) / 10000;
+      return article;
+    }),
+    total: ranked.length,
+  };
 }
 
 // ТЗ-161: гонка с таймаутом — внутренний fetch embedBatch продолжит фоном,
