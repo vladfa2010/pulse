@@ -66,8 +66,9 @@
 запускается на КАЖДЫЙ запрос ≥4 символов (до ТЗ-213 добивала exact до
 `limit`): kNN HNSW-топ-50 без дат-фильтра, скор = косинус + буст свежести
 (+0.10 ≤14 сут, +0.05 ≤90 сут), дедуп vs exact; ответ живёт в отдельном
-поле `semantic { articles, total, hasMore }` со своей пагинацией
-(`semantic_offset`, квота 6), `total` — кандидаты top-50 после дедупа, не
+поле `semantic { articles, total }` — **фиксированный блок «20 лучших»
+(ТЗ-213 v3, без пагинации: `hasMore`/`semantic_offset` убраны,
+`SEMANTIC_BLOCK_SIZE = 20`)**, `total` — кандидаты top-50 после дедупа, не
 глобальный COUNT. Третий раздел «Курсы по теме» (ТЗ-214) — те же
 query-вектор (второй вызов TEI запрещён), косинус по `courses.embedding`,
 фильтры published/public, порог `COURSE_SEARCH_MIN_SIM = 0.5`, топ-6 среди
@@ -225,6 +226,14 @@ SELECT round(sim::numeric,3), a.title, b.title
   перестановки находятся; «AI нефть» — AND семантика 50/50. Тем же коммитом
   ниты: `hasMore` по лексическому счётчику (семант. докиды не обрывают
   пагинацию), CONCURRENTLY в HNSW-страже, трим пунктуации в `highlight.tsx`.
+- **2026-11-01 (ТЗ-213 v3, `d7763e6`):** смысловой блок переведён на
+  фиксированные «20 лучших» — `SEMANTIC_BLOCK_SIZE = 20` вместо
+  `SEMANTIC_PAGE_SIZE = 6`, пагинация `semantic_offset` и поле `hasMore`
+  убраны (`semantic {articles,total}|null`); точные — стартовые 20 +
+  догрузка «ещё 50»/«все» на клиенте (cap `limit` поднят 100 → **1000**,
+  живой max total = 842 на «санкции»). Проверка на проде: default exact=20/
+  total=842, semantic=20 (total 40, без hasMore), limit=70 → 70, limit=999999
+  → 842, limit=842 → 842; курсы/уроки в ответе на месте.
 - **2026-11-01:** ТЗ-213 — семантическая ветка `/api/news/search` отдаётся
   всегда (гейт «до лимита» снят): в ответе поле
   `semantic {articles,total,hasMore}|null`, пагинация `semantic_offset`,
