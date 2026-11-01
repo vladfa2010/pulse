@@ -30,20 +30,26 @@ import { popularTagsCached } from '../utils/tagCache';
 import { computePopularTags } from '../services/popularTags';
 import { markAllNewsAsRead, timeFilterSql } from '../services/newsReads';
 import { embedBatch } from '../services/embeddings';
+import { SEARCH_COURSES_ENABLED } from '../config/courseSearch';
 import { nowSql } from '../utils/nowSql';
 
 const router = Router();
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 
 // ТЗ-161: интерактивный семантический поиск не ждёт батч-крон TEI
-// (внутренний таймаут embedBatch — 600 с). 27.10: 5 → 15 с — при RAYON=1
-// одиночный embed в TEI занимает 4–6 с + очередь (см. docs/embeddings.md,
-// трейд-off 14.10); 5 с гасили семантическую ветку в пике (5 фолбэков/24ч).
+// (внутренний таймаут embedBatch — 600 с). История порога: 27.10 поднимали
+// до 15 с (при RAYON=1 embed занимает 4–6 с + очередь, 5 с гасили ветку
+// в пике), но ТЗ-213 поставил семантику на КАЖДЫЙ запрос — ждать дольше
+// 5 с нет смысла, раздел молча скрывается по фолбэку.
 // Переопределяется env SEMANTIC_SEARCH_TIMEOUT_MS.
-// ТЗ-213: 5 с — семантика теперь идёт на КАЖДЫЙ запрос, ждать дольше нет смысла.
 const SEMANTIC_SEARCH_TIMEOUT_MS = parseInt(process.env.SEMANTIC_SEARCH_TIMEOUT_MS || '5000', 10);
 // ТЗ-213: квота смысловых карточек на порцию (кратна сетке 3×2)
 const SEMANTIC_PAGE_SIZE = 6;
+// ТЗ-214: минимальный косинус курса к запросу для раздела «Курсы по теме».
+// Стартовая оценка, не измеренная на query↔course парах: запрос короче новости
+// → косинус шумнее типового 0.6–0.75 курс↔новость; при нерелевантной выдаче
+// поднять до 0.55–0.6 одной константой (калибровка по жалобам/кликам).
+const COURSE_SEARCH_MIN_SIM = 0.5;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // GET /api/news/global — ПУБЛИЧНАЯ общая лента (все новости, без auth)
@@ -454,7 +460,7 @@ router.get('/search', authMiddleware, async (req: AuthRequest, res) => {
     const semanticOffset = Number.isNaN(semanticOffsetRaw) || semanticOffsetRaw < 0 ? 0 : semanticOffsetRaw;
 
     if (!q) {
-      return res.json({ articles: [], total: 0, page, hasMore: false, semantic: null });
+      return res.json({ articles: [], total: 0, page, hasMore: false, semantic: null, courses: null });
     }
 
     const timeFilter = timeFilterSql();
@@ -561,21 +567,29 @@ router.get('/search', authMiddleware, async (req: AuthRequest, res) => {
     // и пагинация молча обрывается (REVIEW-TZ-161_163, нит hasMore).
     const lexicalCount = articles.length;
 
-    // ─── ТЗ-161/ТЗ-213: семантическая часть гибридного поиска (PG-only) ─
+    // ─── ТЗ-161/ТЗ-213/ТЗ-214: семантическая зона (PG-only) ────────────
     // ТЗ-213: семантика запускается ВСЕГДА (гейт «до лимита страницы» снят) —
     // смысловые результаты — самостоятельный раздел выдачи со своей
     // пагинацией (semantic_offset), а не докид до лимита exact-страницы.
+    // ТЗ-214: query-вектор ОДИН на запрос — смысловые новости и курсы делят
+    // его; второй вызов embedBatch запрещён.
     // SQLite-режим (демо/CI): семантика недоступна — векторы живут только
     // в PostgreSQL; exact-only — осознанный фолбэк, поиск не падает.
     let semantic: { articles: any[]; total: number; hasMore: boolean } | null = null;
+    let courses: any[] | null = null;
     if (!USE_SQLITE && q.trim().length >= 4) {
       try {
-        const sem = await semanticNewsSearch(q, articles, semanticOffset, SEMANTIC_PAGE_SIZE);
+        const vectors = await withTimeout(embedBatch([q]), SEMANTIC_SEARCH_TIMEOUT_MS);
+        const vecLiteral = vectorLiteral(vectors[0]);
+        const sem = await semanticNewsSearch(articles, vecLiteral, semanticOffset, SEMANTIC_PAGE_SIZE);
         if (sem) {
           semantic = {
             ...sem,
             hasMore: semanticOffset + sem.articles.length < sem.total,
           };
+        }
+        if (SEARCH_COURSES_ENABLED) {
+          courses = await searchCoursesByVector(vecLiteral);
         }
       } catch (err: any) {
         // ТЗ-161: недоступность/таймаут TEI — молчаливый фолбэк на exact-only.
@@ -589,6 +603,7 @@ router.get('/search', authMiddleware, async (req: AuthRequest, res) => {
       page,
       hasMore: offset + lexicalCount < total,
       semantic,
+      courses,
     });
   } catch (err: any) {
     console.error('[News] Search error:', err.message, err.stack?.substring(0, 200));
@@ -603,16 +618,15 @@ router.get('/search', authMiddleware, async (req: AuthRequest, res) => {
  * бустом скоринга.
  * ТЗ-213: возвращает страницу [offset, offset + pageSize) и total кандидатов
  * (см. комментарий у return); null — кандидатов нет, роут кладёт semantic: null.
+ * ТЗ-214: query-вектор приходит готовым (vecLiteral) — вызов embedBatch живёт
+ * в роуте и общий с подбором курсов.
  */
 async function semanticNewsSearch(
-  q: string,
   exactArticles: any[],
+  vecLiteral: string,
   offset: number,
   pageSize: number,
 ): Promise<{ articles: any[]; total: number } | null> {
-  const vectors = await withTimeout(embedBatch([q]), SEMANTIC_SEARCH_TIMEOUT_MS);
-  const vecLiteral = vectorLiteral(vectors[0]);
-
   const candRes = await query(
     `SELECT id, 1 - (embedding <=> $1::vector) AS sim
      FROM news
@@ -674,6 +688,42 @@ async function semanticNewsSearch(
     }),
     total: ranked.length,
   };
+}
+
+// ТЗ-214: подбор курсов по смыслу для раздела «Курсы по теме» — тот же
+// query-вектор, что и у смысловых новостей (второй вызов TEI запрещён).
+// SELECT — по образцу витрины education.ts (поля под CourseCard). Полный
+// перебор дёшев (курсов десятки, индекс не нужен — прецедент embeddings.md:91).
+// Фильтры: published + не удалён + public + эмбеддинг есть — иначе hidden/
+// draft курсы утекают в публичную выдачу (анти-энумерация, как в графе знаний).
+async function searchCoursesByVector(vecLiteral: string): Promise<any[] | null> {
+  const res = await query(
+    `SELECT c.id, c.slug, c.title, c.cover_url, c.type, c.size, c.price, c.badges,
+            cc.id AS category_id, cc.name AS category_name,
+            (SELECT title_ru FROM news n WHERE n.id = c.source_news_id) AS source_title,
+            (SELECT COUNT(*) FROM course_lessons cl WHERE cl.course_id = c.id) AS lessons_count,
+            (SELECT COALESCE(SUM(cl2.duration_min), 0) FROM course_lessons cl2 WHERE cl2.course_id = c.id) AS total_minutes,
+            (SELECT COUNT(*) FROM course_enrollments ce WHERE ce.course_id = c.id) AS students_count,
+            1 - (c.embedding <=> $1::vector) AS similarity
+     FROM courses c
+     LEFT JOIN course_categories cc ON cc.id = c.category_id
+     WHERE c.status = 'published' AND c.deleted_at IS NULL
+       AND c.visibility = 'public' AND c.embedding IS NOT NULL
+     ORDER BY c.embedding <=> $1::vector
+     LIMIT 50`,
+    [vecLiteral],
+  );
+  // Топ-6 СРЕДИ прошедших порог (критерий 6 ТЗ-214): сначала фильтр по
+  // similarity, потом slice — не наоборот.
+  const matched = res.rows
+    .map((r: any) => ({ ...r, similarity: Math.round(Number(r.similarity) * 10000) / 10000 }))
+    .filter((r: any) => r.similarity >= COURSE_SEARCH_MIN_SIM)
+    .slice(0, 6)
+    .map(({ category_id, category_name, ...r }: any) => ({
+      ...r,
+      category: category_id ? { id: category_id, name: category_name } : null,
+    }));
+  return matched.length > 0 ? matched : null;
 }
 
 // ТЗ-161: гонка с таймаутом — внутренний fetch embedBatch продолжит фоном,
