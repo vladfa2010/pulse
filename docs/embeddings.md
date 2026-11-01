@@ -72,7 +72,7 @@
 query-вектор (второй вызов TEI запрещён), косинус по `courses.embedding`,
 фильтры published/public, порог `COURSE_SEARCH_MIN_SIM = 0.5`, топ-6 среди
 прошедших порог, фичефлаг `SEARCH_COURSES_ENABLED`. TEI недоступен →
-молчаливый фолбэк: `semantic: null` и `courses: null`, exact на месте (5 с).
+молчаливый фолбэк: `semantic`/`courses`/`lessons` — null, exact на месте (8 с).
 | Темы каскадов | Python-sidecar `topics-worker` (кластеризация, 03:40 МСК) + `services/cron.ts` (нейминг тем) | cron (ТЗ-115, `TOPICS_ENABLED` на VPS) | окно 14 дней, `embedding IS NOT NULL` | не считает заново — ест готовые векторы новостей |
 | Мэтчинг курсов ↔ новости | `services/education/match.ts` | триггер при сохранении курса (`scheduleCourseReembedding`, при `EDUCATION_MATCH_ENABLED`) + ретроскан при publish и смене порога | `title + '\n' + description + '\n' + названия уроков`, обрезка 1000 | `courses.embedding` |
 | Бэкфилл курсов | `scripts/backfill-course-embeddings.js` | ручной запуск (идемпотентен) | то же | `courses.embedding` |
@@ -228,8 +228,10 @@ SELECT round(sim::numeric,3), a.title, b.title
 - **2026-11-01:** ТЗ-213 — семантическая ветка `/api/news/search` отдаётся
   всегда (гейт «до лимита» снят): в ответе поле
   `semantic {articles,total,hasMore}|null`, пагинация `semantic_offset`,
-  `SEMANTIC_PAGE_SIZE=6`; таймаут TEI возвращён **15 → 5 с** (решение
-  владельца, отменяет решение 27.10 — `2f00d1d`). ТЗ-214 — третий раздел
+  `SEMANTIC_PAGE_SIZE=6`; таймаут TEI возвращён 15 → 5 с
+  (`2f00d1d`), затем 01.11 **5 → 8 с** (решение владельца по замеру:
+  типичный embed 4–6 с, в нагрузку очередь 5–40 с — при 5 с вся смысловая
+  зона молча обнулялась; таймаут гасит semantic/courses/lessons разом). ТЗ-214 — третий раздел
   выдачи «Курсы по теме»: поле `courses` (топ-6, `similarity >= 0.5`
   `COURSE_SEARCH_MIN_SIM`, по общему query-вектору — один embedBatch на
   запрос; фильтры published/public/без deleted_at/embedding NOT NULL;
