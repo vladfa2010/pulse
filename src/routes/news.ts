@@ -260,7 +260,8 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
     });
   } catch (err: any) {
     console.error('[News] Feed error:', err.message, err.stack?.substring(0, 200));
-    res.status(500).json({ error: 'Failed to fetch news', details: err.message });
+    // details только в лог — текст внутренней ошибки (SQL и пр.) наружу не отдаём
+    res.status(500).json({ error: 'Failed to fetch news' });
   }
 });
 
@@ -462,7 +463,10 @@ router.get('/search', authMiddleware, async (req: AuthRequest, res) => {
   try {
     const q = (req.query.q as string || '').trim();
     const tagId = req.query.tag as string;
-    const page = parseInt(req.query.page as string) || 1;
+    // Отрицательная/невалидная страница → 1: иначе offset<0 и PG бросает
+    // 500 с утечкой текста внутренней ошибки наружу (security-пробник 01.11).
+    const pageRaw = parseInt(req.query.page as string);
+    const page = Number.isNaN(pageRaw) || pageRaw < 1 ? 1 : pageRaw;
     const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
     const offset = (page - 1) * limit;
     // ТЗ-213: независимая пагинация смысловых; NaN/отрицательное → 0
@@ -624,7 +628,8 @@ router.get('/search', authMiddleware, async (req: AuthRequest, res) => {
     });
   } catch (err: any) {
     console.error('[News] Search error:', err.message, err.stack?.substring(0, 200));
-    res.status(500).json({ error: 'Failed to search news', details: err.message });
+    // details только в лог — текст внутренней ошибки (SQL и пр.) наружу не отдаём
+    res.status(500).json({ error: 'Failed to search news' });
   }
 });
 
