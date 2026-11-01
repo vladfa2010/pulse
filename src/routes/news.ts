@@ -701,9 +701,9 @@ async function searchCoursesByVector(vecLiteral: string): Promise<any[] | null> 
     `SELECT c.id, c.slug, c.title, c.cover_url, c.type, c.size, c.price, c.badges,
             cc.id AS category_id, cc.name AS category_name,
             (SELECT title_ru FROM news n WHERE n.id = c.source_news_id) AS source_title,
-            (SELECT COUNT(*) FROM course_lessons cl WHERE cl.course_id = c.id) AS lessons_count,
-            (SELECT COALESCE(SUM(cl2.duration_min), 0) FROM course_lessons cl2 WHERE cl2.course_id = c.id) AS total_minutes,
-            (SELECT COUNT(*) FROM course_enrollments ce WHERE ce.course_id = c.id) AS students_count,
+            (SELECT COUNT(*) FROM course_lessons cl WHERE cl.course_id = c.id)::int AS lessons_count,
+            (SELECT COALESCE(SUM(cl2.duration_min), 0) FROM course_lessons cl2 WHERE cl2.course_id = c.id)::int AS total_minutes,
+            (SELECT COUNT(*) FROM course_enrollments ce WHERE ce.course_id = c.id)::int AS students_count,
             1 - (c.embedding <=> $1::vector) AS similarity
      FROM courses c
      LEFT JOIN course_categories cc ON cc.id = c.category_id
