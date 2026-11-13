@@ -1,6 +1,9 @@
 # PULSE — Deployment Guide
 
 > Единый документ по инфраструктуре, деплою и окружению.
+> 2026-11-13: ТЗ-215 — runbook чистой установки PostgreSQL (бутовый раннер
+> schema.sql ломает свежий кластер; workaround — psql вручную). Выявлено при
+> чистой установке тестового контура на VPS 217.114.7.184.
 > Последнее обновление: 2026-10-11 (статус: Render временно отключён, основа — VPS).
 > Предыдущее: 2026-10-04 (Caddyfile унифицирован по образцу compose:
 > источник правды — `deploy/Caddyfile` в git, update-backend.sh сам синхронизирует
@@ -342,6 +345,43 @@ docker exec -i pulse-postgres psql -U pulse_user -d pulse -f - < src/migrations/
 docker exec -i pulse-postgres psql -U pulse_user -d pulse -f - < src/migrations/virality_reports_v1.sql
 docker exec -i pulse-postgres psql -U pulse_user -d pulse -f - < src/migrations/source_stats_daily_v1.sql
 ```
+
+### ⚠️ 2026-11-13: чистая БД PostgreSQL — бутовый раннер schema.sql портит схему (фикс: ТЗ-215)
+
+**Факт.** Чистая установка на новый VPS `217.114.7.184` (тестовый контур, доступ
+только по `https://217.114.7.184.sslip.io`) выявила: бутовый раннер схемы
+(`src/index.ts` ~3942–3968) делает наивный `schema.split(';')` **без вырезания
+SQL-комментариев** (в отличие от `/migrate-lms`, где вырезание есть — `index.ts`
+~959–968). В `schema.sql` комментарии содержат `;` («…получают индекс сразу; на
+существующих базах…») → split разрезает statements → часть CREATE TABLE молча
+не создаётся (users, payments, courses…), бэкенд стартует с WARN'ами
+(`syntax error at or near "на"`), воркеры сыплют `relation does not exist`
+(fact_check_jobs, fact_check_requests). На проде не проявляется — там схема
+из дампа Render, раннер работает в no-op. Поэтому баг до 2026-11-13 не ловился.
+
+**Workaround (применён на 217.114.7.184)** — свежий кластер собирается руками:
+
+```bash
+# 1. Базовая схема — строго через psql, НЕ бутовым раннером:
+docker exec -i pulse-postgres psql -U pulse_user -d pulse -f - < src/models/schema.sql
+# 2. Все миграции src/migrations/ подряд (алфавитный порядок: lms_v10 первым
+#    проходом падает на отсутствующих course_lessons/lesson_shares — норма,
+#    лечится пунктом 3):
+cd src/migrations && for f in *.sql; do
+  docker exec -i pulse-postgres psql -U pulse_user -d pulse -q -f - < $f
+done
+# 3. lms_v10 повторно — после lms_v1..v9:
+docker exec -i pulse-postgres psql -U pulse_user -d pulse -q -f - < src/migrations/lms_v10_lesson_shares.sql
+# 4. Перезапуск бэкенда: бутовые миграции (ALTER TABLE IF NOT EXISTS / кодовые)
+#    идемпотентны и доставят остаток. Контроль: /health → db-сигнатура объектом
+#    { news, users, courses }, не строкой "error".
+docker restart pulse-backend
+```
+
+**Класс инцидента** — тот же, что 2026-10-01 (compose) и 2026-10-04 (Caddyfile):
+штатный путь «из кода» молча деградирует, потому что прод его не упражняет.
+После фикса ТЗ-215 (раннер вырезает комментарии до split — копипаста из
+/migrate-lms) этот workaround не нужен: свежий кластер соберёт бут сам.
 
 В проде `news_embedding_hnsw` уже существует (построен вручную по ТЗ-91 задача 6,
 подтверждено разведкой ТЗ-160) — страж-миграция там no-op.
