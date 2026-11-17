@@ -16,8 +16,10 @@ import {
   kickClubMember,
   revokeClubInviteLink,
   getClubMemberStatus,
+  getClubMemberCount,
   sendTelegramMessage,
 } from './telegram';
+import { notifyAdminsSystemAlert } from './adminAlerts';
 import {
   logClubJoined,
   logClubKicked,
@@ -237,8 +239,10 @@ export async function handleClubChatMemberUpdate(chatMember: any): Promise<void>
 
     if (newStatus === 'kicked') {
       // Сработает и на наш собственный кик (cron/admin) — upsert идемпотентен,
-      // порядок cron→webhook не важен.
-      await markClubKicked(userId, 'admin');
+      // порядок cron→webhook не важен. Правка-1 к v3: onlyIfStatus='member' —
+      // апдейт от Telegram не затирает причину киков крона
+      // (subscription_expired/invite_expired → admin), статистика не врёт.
+      await markClubKicked(userId, 'admin', { onlyIfStatus: 'member' });
       console.log(`[Club] Member kicked (TG event) user=${userId} tg=${fromId}`);
       return;
     }
@@ -268,6 +272,9 @@ export interface ClubAuditStats {
   kicked: number;
   invitesRevoked: number;
   errors: string[];
+  // Правка-1 к v3 §3: сверка счётчиков состава группы (мониторинг дрейфа)
+  memberCountTg: number | null;
+  memberCountDb: number | null;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -284,7 +291,7 @@ function sleep(ms: number): Promise<void> {
  * Троттлинг Bot API: пауза 50 мс между действиями.
  */
 export async function auditClubAccess(): Promise<ClubAuditStats> {
-  const stats: ClubAuditStats = { checked: 0, kicked: 0, invitesRevoked: 0, errors: [] };
+  const stats: ClubAuditStats = { checked: 0, kicked: 0, invitesRevoked: 0, errors: [], memberCountTg: null, memberCountDb: null };
 
   try {
     const members = await query(
@@ -351,6 +358,24 @@ export async function auditClubAccess(): Promise<ClubAuditStats> {
       }
       await sleep(50);
     }
+    // Правка-1 к v3 §3: сверка счётчиков состава группы. Bot API не умеет
+    // выгружать список участников — если chat_member-апдейт о вступлении
+    // «левого» не дошёл (бэкенд лежал, сбой), дрейф виден только так.
+    // TG-счётчик включает админов группы и самого бота → допуск 2.
+    // Не авто-кикаем — только алерт: неизвестных через Bot API не идентифицировать.
+    const tgCount = await getClubMemberCount();
+    if (tgCount !== null) {
+      const dbCount = await query(
+        `SELECT CAST(COUNT(*) AS INTEGER) AS count FROM telegram_club_members WHERE status = 'member'`
+      );
+      stats.memberCountTg = tgCount;
+      stats.memberCountDb = dbCount.rows[0]?.count ?? null;
+      if (stats.memberCountDb !== null && tgCount - stats.memberCountDb > 2) {
+        const text = `⚠️ Клуб: в группе ${tgCount}, по базе членов ${stats.memberCountDb}. Проверьте состав глазами — возможен пропущенный апдейт о вступлении`;
+        notifyAdminsSystemAlert(text).catch(() => {});
+        console.log(`[Club] Audit member-count drift: tg=${tgCount} db=${stats.memberCountDb}`);
+      }
+    }
   } catch (err: any) {
     stats.errors.push(`fatal: ${String(err.message).slice(0, 120)}`);
   }
@@ -368,7 +393,13 @@ export async function auditClubAccess(): Promise<ClubAuditStats> {
 export async function reconcileClubMembership(row: ClubMembershipRow): Promise<ClubMembershipRow> {
   if (row.status !== 'member' || !row.tg_user_id || !isClubConfigured()) return row;
   const tgStatus = await getClubMemberStatus(row.tg_user_id);
-  if (tgStatus === 'left' || tgStatus === 'kicked') {
+  // Правка-1 к v3: различаем статусы — ручной бан в TG не записываем как
+  // «вышел сам», иначе статистика причин врёт.
+  if (tgStatus === 'kicked') {
+    await markClubKicked(row.user_id, 'admin', { onlyIfStatus: 'member' });
+    return { ...row, status: 'kicked', kick_reason: 'admin' };
+  }
+  if (tgStatus === 'left') {
     await markClubLeft(row.user_id, 'manual_leave');
     return { ...row, status: 'left', kick_reason: 'manual_leave' };
   }

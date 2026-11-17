@@ -29,7 +29,7 @@ import { listAllFeatures, createFeature, updateFeature } from './features';
 import { getPromoByCode } from '../services/promo';
 import { logAdminChangedPlan, logAdminExtendedSubscription, logUserEvent, logClubManualGrant, logClubManualRevoke, logClubKicked } from '../services/activityLog';
 import { isClubConfigured } from '../services/club'; // TZ-197-club
-import { kickClubMember } from '../services/telegram'; // TZ-197-club: ручной кик (ban+unban)
+import { kickClubMember, revokeClubInviteLink } from '../services/telegram'; // TZ-197-club: ручной кик (ban+unban) + отзыв ссылки (правка-1 к v3)
 import {
   getRadioFlags,
   setRadioFlag,
@@ -2358,11 +2358,18 @@ router.post('/club/members/:userId/kick', adminMiddleware, async (req: AuthReque
     }
 
     const existing = await query(
-      `SELECT status, tg_user_id FROM telegram_club_members WHERE user_id = $1`,
+      `SELECT status, tg_user_id, invite_link FROM telegram_club_members WHERE user_id = $1`,
       [targetUserId]
     );
     if (existing.rows[0]?.status === 'kicked') {
       return res.json({ ok: true, already: true });
+    }
+
+    // Правка-1 к v3: отзываем живую приглашательную ссылку — иначе приглашённый
+    // вступит по ней повторно после кика (образец — routes/club.ts revoke).
+    const existingLink = existing.rows[0]?.invite_link;
+    if (existingLink) {
+      await revokeClubInviteLink(existingLink); // best-effort внутри
     }
 
     // tg id — из строки клуба, fallback — из привязки user_channels

@@ -317,3 +317,24 @@ export async function getClubMemberStatus(tgUserId: string): Promise<'member' | 
     return 'unknown';
   }
 }
+
+/**
+ * Правка-1 к ТЗ-197 v3 §3: число участников группы «Клуб» (Bot API
+ * getChatMemberCount). null при недоступности/ошибке — не ошибка аудита,
+ * сверка просто пропускается. Гварды/таймаут — как у getClubMemberStatus.
+ */
+export async function getClubMemberCount(): Promise<number | null> {
+  if (!isConfigured()) return null;
+  try {
+    const resp = await axios.post(`${TELEGRAM_API}/getChatMemberCount`, {
+      chat_id: CLUB_CHAT_ID,
+    }, { timeout: 5000 });
+    const count = resp.data?.result;
+    return typeof count === 'number' ? count : null;
+  } catch (err: any) {
+    console.error('[Telegram] getChatMemberCount failed:',
+      err.response?.status, err.response?.data?.error_code,
+      err.response?.data?.description || (err as Error).message);
+    return null;
+  }
+}
