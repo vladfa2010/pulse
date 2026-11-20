@@ -24,6 +24,7 @@ import { setCachedPopularTags, popularTagsCached } from './utils/tagCache';
 import { computePopularTags } from './services/popularTags';
 import { adminCached, adminCacheInvalidate } from './utils/adminCache';
 import { slugify } from './utils/slugify';
+import { debugGuard } from './middleware/debugGuard';
 import authRoutes from './routes/auth';
 import newsRoutes from './routes/news';
 import factCheckRoutes from './routes/factCheck';
@@ -247,6 +248,12 @@ app.use((req, res, next) => {
 // статика обложек/материалов не должна съедать общий лимит API.
 // Подпись (signed URL) проверяется внутри mediaGuard.
 app.use('/media', mediaGuard);
+
+// ТЗ-186: единый guard на префикс /debug — подключён раньше всех /debug*
+// маршрутов (до первого app.get('/debug...')). Публичны только /debug/mcp и
+// /debug/version (allowlist в middleware), остальное — с заголовком
+// x-debug-secret (DEBUG_SECRET_KEY || CRON_SECRET_KEY), отказ — 404.
+app.use(debugGuard);
 
 app.use(apiLimiter);  // ← Rate limiting для всех API запросов (Task 4)
 

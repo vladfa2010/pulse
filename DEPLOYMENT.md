@@ -221,6 +221,7 @@ npm run build   # выход в dist/
 | `YOOKASSA_SECRET_KEY` | `(скрыт)` | ЮKassa secret key |
 | `KIMI_API_KEY` | `(скрыт)` | Kimi API (api.moonshot.ai) для перевода EN→RU, sentiment analysis, tag matching |
 | `CRON_SECRET_KEY` | `(скрыт)` | Секрет для manual triggers (/trigger-rss, /backfill-tags, /backfill-translate) |
+| `DEBUG_SECRET_KEY` | `(скрыт)` | Guard для `/debug*`-эндпоинтов (ТЗ-186, ИБ-аудит 19.10 — Medium): все `/debug*` кроме allowlist (`/debug/mcp`, `/debug/version`) требуют заголовок `x-debug-secret`. Fallback на `CRON_SECRET_KEY` — переходный период один релиз; оба пустые → fail-closed (все `/debug*` → 404, error в boot-логе). Генерировать: `openssl rand -hex 32`. Задан на VPS 21.11.2026. |
 | `EMAIL_PROVIDER` | `(скрыт)` | `resend` / `none` (ТЗ-09: Yandex-провайдер удалён — мёртвый код) |
 | `EMAIL_FROM` | `(скрыт)` | Адрес отправителя (`noreply@pulse.inside-trade.ru`) |
 | `RESEND_API_KEY` | `(скрыт)` | Resend API ключ |

@@ -265,3 +265,8 @@ curl https://pulse-api-bsov.onrender.com/api/user/tags \
 
 - `npm run audit` (`npm audit --audit-level=high`) — зелёно перед деплоем (ИБ-11, ТЗ-183; CI-сборки нет, только telegram-notify).
 - После первого деплоя MCP: применить миграцию `POST /migrate-mcp?secret=<CRON_SECRET>`, затем live-тесты `src/tests/mcpReadonly.test.ts` и `src/tests/adminMcpTokens.test.ts` (см. `docs/mcp.md`).
+- ТЗ-186 (guard `/debug*`): после каждого деплоя — напрямую к бэкенду (с VPS: `docker exec pulse-caddy wget -qO- ...` или `docker exec pulse-backend wget -qO- http://localhost:3001<path>`):
+  - `GET /debug-env` без заголовка → **404**; с `x-debug-secret: $DEBUG_SECRET_KEY` → **200**;
+  - `GET /debug/mcp` без заголовка → **200** `{ "status": "ok" }` (публичный, внешний мониторинг);
+  - `GET /debug/version` без заголовка → **200** (публичный);
+  - в boot-логе бэкенд-контейнера нет `[DebugGuard] FATAL` (иначе секрет не прописан в `.env` — fail-closed).
