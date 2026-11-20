@@ -8,6 +8,24 @@
 	root * /srv/dist
 	encode gzip
 
+	# ТЗ-188 (19.10.2026): базовые security-заголовки для всего домена —
+	# защита от MIME-sniffing, clickjacking, утечки referrer, доступ к
+	# camera/mic/geolocation (продукт не использует). Выставляются на Caddy
+	# (единая точка): бэкенд своих заголовков безопасности не ставит.
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+	}
+
+	# ТЗ-188 Задача 1: CSP — фаза report-only (инвентаризация 20.11).
+	# Собираем нарушения 3–7 дней; enforce — Задача 3 отдельным коммитом.
+	# Источники из инвентаризации: telegram.org + oauth.telegram.org (Login
+	# Widget), mc.yandex.ru (Metrika tag.js + хиты), плееры уроков
+	# (youtube-nocookie/rutube/vkvideo/vimeo), inline-стили React.
+	header Content-Security-Policy-Report-Only "default-src 'self'; img-src 'self' data: https:; media-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' https://telegram.org https://mc.yandex.ru; connect-src 'self' wss: https://mc.yandex.ru; font-src 'self' data:; frame-src https://www.youtube.com https://www.youtube-nocookie.com https://rutube.ru https://vkvideo.ru https://player.vimeo.com https://oauth.telegram.org; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+
 	handle /api/* {
 		reverse_proxy backend:3001
 	}
