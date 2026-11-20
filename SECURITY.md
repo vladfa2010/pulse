@@ -84,3 +84,25 @@ RESEND_API_KEY=
 При наступлении — вариант B (fail2ban по логам Caddy на 401/429 с `/mcp`), отдельным ТЗ на внедрение.
 
 **Мониторинг до пересмотра:** ежедневный крон 06:40 МСК (`startMcpSecurityCron`) считает счётчики `mcp_security_daily` (записывает `src/mcp/securityStats.ts` на каждый запрос /mcp), сверяет вчерашний день со средним за 7 дней и при превышении порогов пишет в `mcp_security_alerts` + шлёт Telegram-алерт админу (`TELEGRAM_ADMIN_CHAT_ID`). Лента видна в админке: таба «МСП» → «Безопасность /mcp». Дни с трафиком < 50 запросов не оцениваются (защита от x10-от-нуля). Сырые цифры — таблица `mcp_security_daily` (+ `mcp_security_daily_ips` для уникальных IP).
+
+## Безопасные заголовки (ТЗ-188)
+
+**Фаза 1 — включено 20.11.2026** (report-only, коммит `fc31fb1`). В `(common)` Caddyfile
+(`deploy/Caddyfile`): `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+`Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy` (camera/mic/
+geolocation/payment отключены) + `Content-Security-Policy-Report-Only` — сбор нарушений
+3–7 дней перед enforce (Задача 3, отдельным revert-able коммитом).
+
+CSP report-only (инвентаризация 20.11 — `telegram.org`/`oauth.telegram.org` Login Widget,
+`mc.yandex.ru` Metrika, плееры уроков youtube-nocookie/rutube/vkvideo/vimeo):
+
+```
+default-src 'self'; img-src 'self' data: https:; media-src 'self';
+style-src 'self' 'unsafe-inline'; script-src 'self' https://telegram.org https://mc.yandex.ru;
+connect-src 'self' wss: https://mc.yandex.ru; font-src 'self' data:;
+frame-src https://www.youtube.com https://www.youtube-nocookie.com https://rutube.ru
+  https://vkvideo.ru https://player.vimeo.com https://oauth.telegram.org;
+frame-ancestors 'none'; base-uri 'self'; form-action 'self'
+```
+
+HSTS намеренно не включён (решение вне scope ТЗ — см. «Риски» ТЗ-188).
