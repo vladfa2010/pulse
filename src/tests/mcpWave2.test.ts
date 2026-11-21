@@ -129,11 +129,14 @@ async function main() {
     if (r && Array.isArray(r.tags)) ok('portfolio_recommended_tags: контракт (tags[])');
     else bad('portfolio_recommended_tags', r);
 
-    // ИБ-4: user_id не принимается (zod strict → -32602)
+    // ИБ-4: user_id не принимается (zod strict → isError-результат «Unrecognized key»)
     const rUserId = await mcp(token, 'tools/call', { name: 'portfolio_list', arguments: { user_id: 'чужой-id' } });
-    const errCode = rUserId.data?.error?.code;
-    if (errCode === -32602) ok('ИБ-4: user_id в аргументах → -32602 (strict)');
-    else bad('ИБ-4: user_id не отсечён', rUserId.data?.error);
+    const rUserIdRes = rUserId.data?.result;
+    const blocked =
+      rUserIdRes?.isError === true &&
+      /unrecognized key/i.test(rUserIdRes?.content?.[0]?.text || '');
+    if (blocked) ok('ИБ-4: user_id в аргументах → isError «Unrecognized key» (strict)');
+    else bad('ИБ-4: user_id не отсечён', rUserId.data);
 
     // ─── Критерий 3: my_digest / market_summary ─────────────────────────────
     r = await callTool(token, 'my_digest', {});
@@ -166,9 +169,14 @@ async function main() {
     if (r && Array.isArray(r.items) && r.items.length === 0) ok('news_feed: несуществующий тег → пустой массив');
     else bad('news_feed: несуществующий тег', r);
 
+    // Контракт SDK: ошибки валидации схемы — result.isError (не JSON-RPC error)
     const rLimit = await mcp(token, 'tools/call', { name: 'news_feed', arguments: { tag: 'тест', limit: 51 } });
-    if (rLimit.data?.error?.code === -32602) ok('news_feed: limit > 50 → -32602 (zod max)');
-    else bad('news_feed: limit > 50 не отсечён', rLimit.data?.error);
+    const rLimitRes = rLimit.data?.result;
+    const limitBlocked =
+      rLimitRes?.isError === true &&
+      /too big/i.test(rLimitRes?.content?.[0]?.text || '');
+    if (limitBlocked) ok('news_feed: limit > 50 → isError «Too big» (zod max)');
+    else bad('news_feed: limit > 50 не отсечён', rLimit.data);
 
     // ─── Регрессия: старые инструменты на месте ─────────────────────────────
     const search = await callTool(token, 'news_search', { query: 'санкции', limit: 3 });
