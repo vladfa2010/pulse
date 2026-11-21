@@ -18,6 +18,12 @@ import { truncateTextSmart, stripPushMarkup, PUSH_TITLE_MAX, PUSH_BODY_MAX } fro
 
 let messaging: Messaging | null = null;
 
+// ТЗ-220: базовый URL для абсолютных диплинков пушей (паттерн как в dispatcher.ts)
+const FRONTEND_URL = (process.env.FRONTEND_URL || 'https://pulse.inside-trade.ru').replace(/\/+$/, '');
+export function pushAbsUrl(path: string): string {
+  return path.startsWith('http') ? path : `${FRONTEND_URL}${path}`;
+}
+
 // Initialize Firebase Admin from a base64-encoded service-account JSON.
 const serviceAccountBase64 = process.env.FIREBASE_SERVICE_ACCOUNT_BASE64;
 if (serviceAccountBase64 && serviceAccountBase64.length > 0) {
@@ -74,7 +80,7 @@ export async function sendSentimentVotePush(userId: string): Promise<boolean> {
 
     // Fan-out: FCM + VAPID web push
     const fcmOk = await sendEngagementPushFcm(userId);
-    const vapidOk = await sendWebPushToUser(userId, 'Оцените рынок', 'Ваш голос влияет на индекс сантимента. Как вы оцените рынок?', { type: 'sentiment_vote' });
+    const vapidOk = await sendWebPushToUser(userId, 'Оцените рынок', 'Ваш голос влияет на индекс сантимента. Как вы оцените рынок?', { type: 'sentiment_vote', url: '/sentiment' });
 
     return fcmOk || vapidOk > 0;
   } catch (err: any) {
@@ -102,6 +108,7 @@ async function sendEngagementPushFcm(userId: string): Promise<boolean> {
         type: 'sentiment_vote',
         title: 'Оцените рынок',
         body: 'Ваш голос влияет на индекс сантимента. Как вы оцените рынок?',
+        url: '/sentiment',
       },
       android: { priority: 'high' },
     });
@@ -186,6 +193,8 @@ export async function sendPushNotification(
         priority: 'high',
         notification: { channelId: 'pulse_default' },
       },
+      // ТЗ-220: официальный механизм клика FCM web (только с notification-payload)
+      ...(data.url ? { webpush: { fcmOptions: { link: pushAbsUrl(data.url) } } } : {}),
     });
 
     console.log(`[Push] Sent to user ${userId}`);
@@ -278,6 +287,7 @@ export async function sendNewArticlePush(
       news_id: newsId,
       tag: matchedTags[0] || '',
       source: source || '',
+      url: `/news/${newsId}`,
     };
 
     for (const userId of userIds) {

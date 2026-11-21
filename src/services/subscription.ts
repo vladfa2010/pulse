@@ -1309,8 +1309,9 @@ export async function notifySubscriptionEvent(
           await sendEmail(target.target, 'PULSE', html);
         }
       } else if (sub.channel === 'push') {
-        await sendPushNotification(userId, 'PULSE', message, { type });
-        await sendWebPushToUser(userId, 'PULSE', message, { type });
+        // ТЗ-220: диплинк на тарифный экран
+        await sendPushNotification(userId, 'PULSE', message, { type, url: '/profile/tariff' });
+        await sendWebPushToUser(userId, 'PULSE', message, { type, url: '/profile/tariff' });
       }
     } catch (err: any) {
       console.error(`[notifySubscriptionEvent] ${sub.channel} failed for ${userId}:`, err.message);
@@ -1605,9 +1606,10 @@ async function sendBillingPush(
     const subs = await getEnabledSubscriptions(userId, 'billing');
     if (!subs.some(s => s.channel === 'push')) return;
 
+    // ТЗ-220: диплинк на тарифный экран — одно место, все call site'и получают url
     await Promise.all([
-      sendPushNotification(userId, title, body, data, { skipQuietHours: true, skipEnabledCheck: true }),
-      sendWebPushToUser(userId, title, body, data),
+      sendPushNotification(userId, title, body, { ...data, url: '/profile/tariff' }, { skipQuietHours: true, skipEnabledCheck: true }),
+      sendWebPushToUser(userId, title, body, { ...data, url: '/profile/tariff' }),
     ]);
   } catch (e: any) {
     console.error(`[ExpiryNotify] Billing push failed for user ${userId}:`, e.message);

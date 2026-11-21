@@ -77,7 +77,7 @@ export function formatDigestPush(content: DigestContent): { title: string; body:
     return {
       title: 'Нет непрочитанных новостей',
       body: 'Новые статьи по вашим тегам появятся позже',
-      data: { type: 'digest', count: '0' },
+      data: { type: 'digest', count: '0', url: '/feed' },
     };
   }
 
@@ -95,7 +95,7 @@ export function formatDigestPush(content: DigestContent): { title: string; body:
   return {
     title,
     body,
-    data: { type: 'digest', count: String(n) },
+    data: { type: 'digest', count: String(n), url: '/feed' },
   };
 }
 
@@ -422,6 +422,9 @@ export function formatWeeklyReportPush(
   const data: Record<string, string> = { type: 'weekly_report', count: String(n), period: content.period };
   // ТЗ-191 Задача 5: deeplink на страницу отчёта (объём уведомления не меняется)
   if (reportUrl) data.report_url = reportUrl;
+  // ТЗ-220: дублируем в url — единый контракт диплинков (report_url не удалять,
+  // обратная совместимость с SW-веткой ТЗ-191)
+  if (reportUrl) data.url = reportUrl;
 
   return { title, body, data };
 }
