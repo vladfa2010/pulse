@@ -15,6 +15,8 @@ import { query } from '../../config/db';
 import type { McpContext } from '../context';
 import { truncateText } from '../audit';
 import { runAudited, textResult } from './helpers';
+import { timeFilterSql } from '../../services/newsReads';
+import { slugifyTagId } from '../../utils/slugifyTag';
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 const LIKE = USE_SQLITE ? 'LIKE' : 'ILIKE';
@@ -109,15 +111,52 @@ const SearchSchema = z
 
 const GetSchema = z.object({ id: z.string().max(64) }).strict();
 
+// ТЗ-193: свежая лента по тегу (тот же запрос, что GET /api/news/tags/:tagId:
+// окно 90 дней, матч по tag_id в matched_tags). tag_id — slug от имени тега
+// (slugifyTagId), резолвим из имени. limit ≤ 50, default 20.
+const FeedSchema = z
+  .object({
+    tag: z.string().min(1).max(120),
+    limit: z.number().int().min(1).max(50).default(20),
+  })
+  .strict();
+
+async function newsFeed(args: { tag: string; limit: number }): Promise<Record<string, unknown>[]> {
+  const tagId = slugifyTagId(args.tag);
+  const timeFilter = timeFilterSql();
+  let result;
+  if (USE_SQLITE) {
+    result = await query(
+      `SELECT ${NEWS_FIELDS} FROM news
+       WHERE matched_tags LIKE $1 AND ${timeFilter}
+       ORDER BY published_at DESC
+       LIMIT $2`,
+      [`%"${tagId}"%`, args.limit]
+    );
+  } else {
+    // ТЗ-7.5.2: выражение в ORDER BY — иначе Index Scan Backward по
+    // idx_news_published_at с построчным ANY-фильтром (замер в роуте:
+    // 6043 мс, 61k строк отфильтровано). Тот же фикс, что в routes/news.ts.
+    result = await query(
+      `SELECT ${NEWS_FIELDS} FROM news
+       WHERE matched_tags @> ARRAY[$1]::text[] AND ${timeFilter}
+       ORDER BY (published_at + INTERVAL '0 seconds') DESC
+       LIMIT $2`,
+      [tagId, args.limit]
+    );
+  }
+  return result.rows.map((r: any) => newsRowToResult(r, false));
+}
+
 export function registerNewsTools(server: McpServer, ctx: McpContext): void {
   server.registerTool(
     'news_search',
     {
       title: 'Поиск новостей',
       description:
-        'Поиск по ленте новостей Пульса: word-AND по заголовку/саммари (RU и оригинал), ' +
-        'фильтры по тегам и датам публикации. Возвращает заголовок, саммари, источник, URL, ' +
-        'дату, сентимент. Только чтение.',
+        'Archive search over the news feed: word-AND by title/summary (RU and original), ' +
+        'filters by tags and publish dates. Use news_feed for the latest feed by tag, ' +
+        'news_search for history. Returns title, summary, source, URL, date, sentiment. Read-only.',
       inputSchema: SearchSchema,
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
@@ -125,6 +164,24 @@ export function registerNewsTools(server: McpServer, ctx: McpContext): void {
       runAudited(ctx, 'news_search', args, async () => {
         const items = await searchNews(args as z.infer<typeof SearchSchema>);
         return textResult({ count: items.length, items });
+      }),
+  );
+
+  server.registerTool(
+    'news_feed',
+    {
+      title: 'Лента по тегу',
+      description:
+        'Latest ranked news feed for a tag name (90 days, same data as the app\'s tag feed). ' +
+        'Use news_feed for the latest feed, news_search for history. Read-only.',
+      inputSchema: FeedSchema,
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    },
+    (args) =>
+      runAudited(ctx, 'news_feed', args, async () => {
+        const { tag, limit } = args as z.infer<typeof FeedSchema>;
+        const items = await newsFeed({ tag, limit });
+        return textResult({ tag, count: items.length, items });
       }),
   );
 

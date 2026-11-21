@@ -201,6 +201,17 @@ export async function getMarketDialog(): Promise<RadioSegment[] | null> {
 }
 
 /**
+ * ТЗ-193: кэш-only вариант для MCP — МСП НИКОГДА не триггерит LLM-генерацию
+ * (критерий приёмки №2). Только чтение in-memory кэша: сводки крона нет или
+ * диалог по ней не прогрет → null → инструмент отвечает warming_up.
+ */
+export function getCachedMarketDialog(): RadioSegment[] | null {
+  const cached = getCachedGlobalSummary();
+  if (!cached || !cached.summary) return null;
+  return cacheGet(cached.summary);
+}
+
+/**
  * Аудит кеша, находка 1: крон сводки прогревает диалог СРАЗУ после генерации
  * сводки. Тексты диалога стабильны весь 6-часовой период → ключи mp3-кеша
  * не меняются → один cold-прогон T2A на период, а не на каждую перегенерацию.

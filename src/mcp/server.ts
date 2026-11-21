@@ -19,6 +19,8 @@ import type { McpContext } from './context';
 import { registerNewsTools } from './tools/news';
 import { registerCalendarTools } from './tools/calendarSentimentRadio';
 import { registerEducationTools } from './tools/education';
+import { registerPortfolioTools } from './tools/portfolio';
+import { registerDigestMarketTools } from './tools/digestMarket';
 import { registerAdminTools } from './tools/admin';
 
 /** Версия serverInfo — держим в паре с константой в /health (src/index.ts) */
@@ -47,6 +49,8 @@ export function buildServer(ctx: McpContext): McpServer {
   registerNewsTools(server, ctx);
   registerCalendarTools(server, ctx);
   registerEducationTools(server, ctx);
+  registerPortfolioTools(server, ctx);
+  registerDigestMarketTools(server, ctx);
   registerAdminTools(server, ctx);
   return server;
 }

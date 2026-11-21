@@ -59,19 +59,40 @@
 `openWorldHint: false`. Схемы аргументов — zod `.strict()` (ИБ-7).
 
 Базовые (любой валидный токен): `news_search`, `news_get`,
-`calendar_events`, `sentiment_index`, `radio_config`,
-`education_my_progress`, `education_my_attempts`.
+`news_feed` (ТЗ-193), `calendar_events`, `sentiment_index`, `radio_config`,
+`education_my_progress`, `education_my_attempts`,
+`portfolio_list`, `portfolio_summary`, `portfolio_recommended_tags`
+(ТЗ-193 — **только данные владельца токена**, ИБ-4: `userId` из контекста,
+аргумента `user_id` нет, zod `.strict()`),
+`my_digest`, `market_summary`, `my_tags` (ТЗ-193).
+
+Вторая волна (ТЗ-193, 21.11.2026):
+
+| Инструмент | Данные (тот же источник, что эндпоинт) | Нюансы |
+|---|---|---|
+| `news_feed` | `GET /api/news/tags/:tagId` — свежая лента по тегу, 90 дней | `tag` — имя тега (резолв в `tag_id` через `slugifyTagId`); `limit` ≤ 50, default 20. Отличие от `news_search`: `news_feed` — свежая лента, `news_search` — архивный поиск |
+| `portfolio_list` | `GET /api/portfolio/` (`listBrokerPortfolios`) | только владелец токена |
+| `portfolio_summary` | `GET /api/portfolio/summary` (`getPortfolioSummary`, mode `by-broker`) | только владелец токена |
+| `portfolio_recommended_tags` | `GET /api/portfolio/recommended-tags` (`getRecommendedTags`) | только владелец токена |
+| `my_digest` | кэш крона (`getCachedGlobalSummary`, как `GET /api/user/summary-global/cached`) | **кэш-only, никогда не триггерит LLM**; кэша нет → `{ status: 'warming_up', hint }` (не ошибка); текст дайджеста — до 4000 симв. (осознанное исключение из конвенции ~2000) |
+| `market_summary` | `GET /api/market/market-dialog` — **кэш-only вариант** `getCachedMarketDialog` (ТЗ-193; добавлен в `radioPodcast.ts`, читает in-memory кэш без LLM-вызова) | эндпоинт для юзеров генерирует лениво, MCP — никогда (критерий приёмки №2); нет кэша → `warming_up` |
+| `my_tags` | `GET /api/user/tags` (`getUserTagsFull`) | имена для `news_feed`; только владелец токена |
 
 Админские (дополнительно, регистрируются только при свежем `is_admin`):
 `admin_metrics` (секции из `GET /api/admin/metrics`), `admin_radio_cache`
 (ТЗ-65). Не-админ их не видит в `tools/list`; вызов → JSON-RPC `-32602`
 (инструмент не зарегистрирован — не раскрываем наличие админ-контура).
 
-`admin_education_stats` / `admin_course_stats` (ТЗ-180/181) — минорным
-релизом, когда стабилизируются зависимости (план, Этап 6).
+`admin_education_stats` / `admin_course_stats` (ТЗ-180/181 → ТЗ-193 Задача 4)
+— **отложены**: хендлеры `adminEducation.ts` (~270 строк прямого SQL) не
+вынесены в сервисы; вынос ради двух инструментов — рефакторинг с риском для
+админки, вне «минимальных изменений». Готовность — после выноса агрегатов в
+`services/education/stats.ts`. Отсрочка та же, что в плане Этап 6.
 
 Ответы инструментов: ограничение числа записей + обрезка длинных текстов
-(~2000 символов с пометкой обрезки) — защита от раздувания контекста клиента.
+(~2000 символов с пометкой обрезки; исключение — `my_digest`, до 4000) —
+защита от раздувания контекста клиента. `portfolio_summary` отдаёт сводку
+целиком как эндпоинт (без лимита записей — данных эквивалентно API).
 
 ## Аудит (`mcp_audit_log`)
 
@@ -161,6 +182,12 @@ API_URL=https://pulse.inside-trade.ru/api ADMIN_EMAIL=<email> ADMIN_PASSWORD=<pw
 
 # mcpAuthLimiter (20 неудач → 429): ВНИМАНИЕ — блокирует IP на 15 мин, локально:
 RUN_AUTH_FLOOD=1 npx ts-node src/tests/mcpReadonly.test.ts
+
+# вторая волна (ТЗ-193): контракт новых инструментов + ИБ-4 (strict отсекает
+# user_id) + warming_up + лимиты news_feed. Токен: env MCP_TOKEN или
+# ADMIN_EMAIL/ADMIN_PASSWORD (тест создаст и отзовёт сам):
+API_URL=https://pulse.inside-trade.ru/api ADMIN_EMAIL=<email> ADMIN_PASSWORD=<pwd> \
+  npx ts-node src/tests/mcpWave2.test.ts
 ```
 
 Ручная проверка через MCP Inspector:
