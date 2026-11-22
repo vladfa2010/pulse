@@ -67,15 +67,20 @@ function tagConds(tagIds: string[], params: unknown[], alias = 'n'): string {
 }
 
 /** Count непрочитанных в окне по набору тегов (один запрос на группу). */
-async function countUnreadInWindow(tagIds: string[], w: BucketWindow): Promise<number> {
+async function countUnreadInWindow(userId: string, tagIds: string[], w: BucketWindow): Promise<number> {
   const params: unknown[] = [];
   const tc = tagConds(tagIds, params);
   const ph = (v: unknown) => { params.push(v); return USE_SQLITE ? '?' : `$${params.length}`; };
+  const nr = USE_SQLITE
+    ? 'NOT EXISTS (SELECT 1 FROM user_news_reads r WHERE r.user_id = ? AND r.news_id = n.id)'
+    : `NOT EXISTS (SELECT 1 FROM user_news_reads r WHERE r.user_id = ${ph(userId)} AND r.news_id = n.id)`;
+  if (USE_SQLITE) params.push(userId);
   const res = await query(
     `SELECT COUNT(*) AS count FROM news n
      WHERE ${tc}
        AND n.published_at > ${ph(USE_SQLITE ? w.rangeStart.toISOString().replace('T', ' ').slice(0, 19) : w.rangeStart.toISOString())}
-       AND n.published_at <= ${ph(USE_SQLITE ? w.rangeEnd.toISOString().replace('T', ' ').slice(0, 19) : w.rangeEnd.toISOString())}`,
+       AND n.published_at <= ${ph(USE_SQLITE ? w.rangeEnd.toISOString().replace('T', ' ').slice(0, 19) : w.rangeEnd.toISOString())}
+       AND ${nr}`,
     params
   );
   return Number(res.rows[0]?.count || 0);
@@ -90,7 +95,12 @@ interface Candidate {
 async function selectCandidates(w: BucketWindow): Promise<Candidate[]> {
   const params: unknown[] = [];
   const ph = (v: unknown) => { params.push(v); return `$${params.length}`; };
-  const rs = ph(w.rangeStart.toISOString()); // $1 — last_sent_at / last_connected_at (TIMESTAMP)
+  // $1 — анти-активность (активен В окне?); $2 — дедupe. Дедupe сравниваем с
+  // КОНЦОМ окна: отправка идёт в момент закрытия (≈rangeEnd), и markSent пишет
+  // ≈rangeEnd — при сравнении с rangeStart следующее окно детерминированно
+  // отсекалось бы (БЛОКЕР ревью). Повтор того же окна: last_sent_at >= rangeEnd → skip ✓
+  const rs = ph(w.rangeStart.toISOString());
+  const re = ph(w.rangeEnd.toISOString());
   const res = await query(
     `SELECT p.user_id, array_agg(p.tag_id ORDER BY p.tag_id) AS tag_ids
      FROM portfolios p
@@ -98,7 +108,7 @@ async function selectCandidates(w: BucketWindow): Promise<Candidate[]> {
        AND EXISTS (
          SELECT 1 FROM notification_subscriptions ns
          WHERE ns.user_id = p.user_id AND ns.product = 'buckets' AND ns.channel = 'push' AND ns.enabled = TRUE
-           AND (ns.last_sent_at IS NULL OR ns.last_sent_at < ${rs}::timestamptz)
+           AND (ns.last_sent_at IS NULL OR ns.last_sent_at < ${re}::timestamptz)
        )
        AND (
          EXISTS (SELECT 1 FROM user_channels uc WHERE uc.user_id = p.user_id AND uc.channel = 'push' AND uc.is_active = TRUE)
@@ -112,6 +122,25 @@ async function selectCandidates(w: BucketWindow): Promise<Candidate[]> {
     params
   );
   return res.rows.map((r: any) => ({ userId: r.user_id, tagIds: Array.isArray(r.tag_ids) ? r.tag_ids : [] }));
+}
+
+/** Живая топ-новость окна (fallback критерия 8, когда bucket_summaries пуст). */
+async function readTopTitleLive(tagIds: string[], w: BucketWindow): Promise<string | null> {
+  const params: unknown[] = [];
+  const tc = tagConds(tagIds, params);
+  const ph = (v: unknown) => { params.push(v); return USE_SQLITE ? '?' : `$${params.length}`; };
+  const nullsLast = USE_SQLITE ? '' : ' NULLS LAST';
+  const res = await query(
+    `SELECT COALESCE(n.title_ru, n.title_original) AS title
+     FROM news n
+     WHERE ${tc}
+       AND n.published_at > ${ph(USE_SQLITE ? w.rangeStart.toISOString().replace('T', ' ').slice(0, 19) : w.rangeStart.toISOString())}
+       AND n.published_at <= ${ph(USE_SQLITE ? w.rangeEnd.toISOString().replace('T', ' ').slice(0, 19) : w.rangeEnd.toISOString())}
+     ORDER BY n.source_count DESC, n.sentiment_score DESC${nullsLast}
+     LIMIT 1`,
+    params
+  );
+  return res.rows[0]?.title || null;
 }
 
 /** Чтение саммари по полному квантованному ключу ТЗ-218 (без LLM). */
@@ -168,7 +197,7 @@ export async function sendBucketPushes(w: BucketWindow): Promise<BucketPushStats
     }
     const groupCounts = new Map<string, number>();
     for (const [h, g] of groups) {
-      groupCounts.set(h, await countUnreadInWindow(g.tagIds, w));
+      groupCounts.set(h, await countUnreadInWindow(g.members[0].userId, g.tagIds, w));
     }
 
     const title = `Пока вас не было: ${BUCKET_TITLES[w.key] || w.key}`;
@@ -182,7 +211,9 @@ export async function sendBucketPushes(w: BucketWindow): Promise<BucketPushStats
         const quiet = await getQuietHours(c.userId);
         if (quiet?.enabled && isQuietHoursMsk(quiet.start, quiet.end)) { stats.skipped++; continue; }
 
-        const { summary, topTitle } = await readSummary(c.userId, c.tagIds, w);
+        let { summary, topTitle } = await readSummary(c.userId, c.tagIds, w);
+        // критерий 8: строки саммари нет (LLM лежал) — топ-новость окна живым запросом
+        if (!summary && !topTitle) topTitle = await readTopTitleLive(c.tagIds, w);
         const firstSentence = summary ? summary.split(/(?<=[.!?])\s+/)[0] : (topTitle || '');
         const body = truncateAtWord(`${firstSentence} · ${count} новостей`, BODY_MAX);
 
@@ -197,7 +228,9 @@ export async function sendBucketPushes(w: BucketWindow): Promise<BucketPushStats
 
         // обе ветки: FCM (мобильные) + VAPID (десктоп) — критерий 1
         const [fcmOk, vapidCount] = await Promise.all([
-          sendPushNotification(c.userId, title, body, data),
+          // skipEnabledCheck/skipQuietHours: гарды матрицы и тихих часов свои (выше),
+          // иначе legacy-колонка push_enabled глушит FCM-ветку при выключенном news_alert
+          sendPushNotification(c.userId, title, body, data, { skipQuietHours: true, skipEnabledCheck: true }),
           sendWebPushToUser(c.userId, title, body, data),
         ]);
         if (fcmOk || vapidCount > 0) {

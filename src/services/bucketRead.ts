@@ -48,18 +48,36 @@ async function markWindowRead(userId: string, tagIds: string[], start: Date | nu
   }
   timeConds.push(`n.published_at <= ${ph(USE_SQLITE ? end.toISOString().replace('T', ' ').slice(0, 19) : end.toISOString())}`);
 
+  if (USE_SQLITE) {
+    // SQLite: плейсхолдеры ? в текстовом порядке — [userId(SELECT), ...tags, ...times, userId(NOT EXISTS)]
+    const litParams: unknown[] = [userId];
+    const litTc = tagIds.map(() => 'n.matched_tags LIKE ?').join(' OR ');
+    for (const t of tagIds) litParams.push(`%"${t}"%`);
+    const litTime: string[] = [];
+    if (start) {
+      litTime.push('n.published_at > ?');
+      litParams.push(start.toISOString().replace('T', ' ').slice(0, 19));
+    }
+    litTime.push('n.published_at <= ?');
+    litParams.push(end.toISOString().replace('T', ' ').slice(0, 19));
+    litParams.push(userId);
+    const litNotRead = 'NOT EXISTS (SELECT 1 FROM user_news_reads r WHERE r.user_id = ? AND r.news_id = n.id)';
+    const resLite = await query(
+      `INSERT INTO user_news_reads (user_id, news_id, read_at)
+       SELECT ?, n.id, datetime('now')
+       FROM news n
+       WHERE (${litTc}) AND ${litTime.join(' AND ')} AND ${litNotRead}
+       ON CONFLICT DO NOTHING`,
+      litParams
+    );
+    return resLite.rowCount ?? 0;
+  }
   const res = await query(
-    USE_SQLITE
-      ? `INSERT INTO user_news_reads (user_id, news_id, read_at)
-         SELECT ${'?'}, n.id, datetime('now')
-         FROM news n
-         WHERE ${tc} AND ${timeConds.join(' AND ')} AND ${notRead}
-         ON CONFLICT DO NOTHING`
-      : `INSERT INTO user_news_reads (user_id, news_id, read_at)
-         SELECT ${ph(userId)}, n.id, NOW()
-         FROM news n
-         WHERE ${tc} AND ${timeConds.join(' AND ')} AND ${notRead}
-         ON CONFLICT DO NOTHING`,
+    `INSERT INTO user_news_reads (user_id, news_id, read_at)
+     SELECT ${ph(userId)}, n.id, NOW()
+     FROM news n
+     WHERE ${tc} AND ${timeConds.join(' AND ')} AND ${notRead}
+     ON CONFLICT DO NOTHING`,
     params
   );
   return res.rowCount ?? 0;

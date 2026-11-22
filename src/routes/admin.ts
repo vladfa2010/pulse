@@ -2445,8 +2445,6 @@ router.post('/club/members/:userId/revoke-manual', adminMiddleware, async (req: 
   }
 });
 
-export default router;
-
 // ТЗ-219 Задача 7: debug-эндпоинт для стейджа/приёмки — ручной вызов отправки
 // пушей бакета для ближайшего закрытого окна ключа. Права админа — свежим
 // запросом в БД на каждый вызов (регламент ТЗ-120 v2).
@@ -2475,3 +2473,6 @@ router.post('/bucket-push/test', adminMiddleware, async (req: AuthRequest, res) 
     res.status(500).json({ error: 'Failed' });
   }
 });
+
+export default router;
+

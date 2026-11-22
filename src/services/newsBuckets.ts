@@ -63,6 +63,11 @@ function tagConds(tagIds: string[], params: unknown[], alias = 'n'): string {
   return `${alias}.matched_tags && $${params.length}::text[]`;
 }
 
+function pushParam(params: unknown[], v: unknown): string {
+  params.push(v);
+  return `$${params.length}`;
+}
+
 function timeCond(params: unknown[], start: Date | null, end: Date, alias = 'n'): string {
   const conds: string[] = [];
   if (start) {
@@ -74,16 +79,20 @@ function timeCond(params: unknown[], start: Date | null, end: Date, alias = 'n')
   return conds.join(' AND ');
 }
 
-async function countAndSentiment(tagIds: string[], start: Date | null, end: Date): Promise<{ count: number; pos: number; neg: number }> {
+async function countAndSentiment(userId: string, tagIds: string[], start: Date | null, end: Date): Promise<{ count: number; pos: number; neg: number }> {
   const params: unknown[] = [];
   const tc = tagConds(tagIds, params);
   const t = timeCond(params, start, end);
+  const nr = USE_SQLITE
+    ? 'NOT EXISTS (SELECT 1 FROM user_news_reads r WHERE r.user_id = ? AND r.news_id = n.id)'
+    : `NOT EXISTS (SELECT 1 FROM user_news_reads r WHERE r.user_id = ${pushParam(params, userId)} AND r.news_id = n.id)`;
+  if (USE_SQLITE) params.push(userId);
   const res = await query(
     `SELECT COUNT(*) AS count,
             COUNT(*) FILTER (WHERE n.sentiment = 'positive') AS pos,
             COUNT(*) FILTER (WHERE n.sentiment = 'negative') AS neg
      FROM news n
-     WHERE ${tc} AND ${t}`,
+     WHERE ${tc} AND ${t} AND ${nr}`,
     params
   );
   const r = res.rows[0] || {};
@@ -190,7 +199,7 @@ export async function buildBuckets(
 
   for (const b of closed) {
     if (viewed.has(String(b.start.getTime()))) continue;
-    const { count, pos, neg } = await countAndSentiment(tagIds, b.start, b.end);
+    const { count, pos, neg } = await countAndSentiment(userId, tagIds, b.start, b.end);
     if (count === 0) continue;
     const [summaryRes, tops, viral] = await Promise.all([
       getOrGenerateBucketSummary(userId, tagIds, b.start, b.end, 'bucket', b.key),

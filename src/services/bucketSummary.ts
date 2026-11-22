@@ -140,10 +140,12 @@ async function selectTopNewsForPrompt(
   timeConds.push(USE_SQLITE ? `published_at <= ?` : `published_at <= ${ph()}`);
   params.push(USE_SQLITE ? rangeEnd.toISOString().replace('T', ' ').slice(0, 19) : rangeEnd.toISOString());
   const nullsLast = USE_SQLITE ? '' : ' NULLS LAST';
+  // условия тегов соединяются OR (overlap — как PG && и зеркало newsBuckets);
+  // AND здесь дал бы пустую выборку почти всегда
   const res = await query(
     `SELECT id, slug, COALESCE(title_ru, title_original) AS title, source, source_count
      FROM news
-     WHERE ${tagConds.join(' AND ')} AND ${timeConds.join(' AND ')}
+     WHERE (${tagConds.join(' OR ')}) AND ${timeConds.join(' AND ')}
      ORDER BY source_count DESC, sentiment_score DESC${nullsLast}
      LIMIT ${TOP_N_PROMPT}`,
     params
@@ -384,10 +386,17 @@ export async function pregenBucketSummaries(
 /** Плановая уборка мусора: всё, что протухло более суток назад. */
 export async function cleanupBucketSummaries(): Promise<void> {
   try {
+    // Вариантно-зависимая валидность: 'bucket' — range_end + 24ч; 'older' —
+    // generated_at + 24ч (его range_end = T_gen−24ч плавает, иначе cleanup
+    // убивал бы валидные older-строки за ~6ч → лишние LLM-вызовы каждый час)
     const res = await query(
       USE_SQLITE
-        ? `DELETE FROM bucket_summaries WHERE range_end < datetime('now', '-24 hours')`
-        : `DELETE FROM bucket_summaries WHERE range_end < NOW() - INTERVAL '24 hours'`,
+        ? `DELETE FROM bucket_summaries
+           WHERE (variant = 'bucket' AND range_end < datetime('now', '-24 hours'))
+              OR (variant = 'older' AND generated_at < datetime('now', '-24 hours'))`
+        : `DELETE FROM bucket_summaries
+           WHERE (variant = 'bucket' AND range_end < NOW() - INTERVAL '24 hours')
+              OR (variant = 'older' AND generated_at < NOW() - INTERVAL '24 hours')`,
       []
     );
     if (res.rows.length > 0 || (res.rowCount ?? 0) > 0) {
