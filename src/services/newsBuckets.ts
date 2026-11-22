@@ -134,16 +134,21 @@ async function viralStories(tagIds: string[], start: Date | null, end: Date): Pr
   }
 }
 
-/** Окна исключения для живой выборки (NOT-предикат по каждому окну). */
-export function exclusionPredicate(windows: Array<{ start: Date | null; end: Date }>, params: unknown[]): string {
+/** Окна исключения для живой выборки (NOT-предикат по каждому окну).
+ *  PG: плейсхолдеры нумеруются со смещением baseIdx (после основных params). */
+export function exclusionPredicate(
+  windows: Array<{ start: Date | null; end: Date }>,
+  params: unknown[],
+  baseIdx = 0
+): string {
   const parts = windows.map((w) => {
     const p: string[] = [];
     if (w.start) {
       params.push(USE_SQLITE ? w.start.toISOString().replace('T', ' ').slice(0, 19) : w.start.toISOString());
-      p.push(`published_at > ${USE_SQLITE ? '?' : `$${params.length}`}`);
+      p.push(`published_at > ${USE_SQLITE ? '?' : `$${baseIdx + params.length}`}`);
     }
     params.push(USE_SQLITE ? w.end.toISOString().replace('T', ' ').slice(0, 19) : w.end.toISOString());
-    p.push(`published_at <= ${USE_SQLITE ? '?' : `$${params.length}`}`);
+    p.push(`published_at <= ${USE_SQLITE ? '?' : `$${baseIdx + params.length}`}`);
     return `(${p.join(' AND ')})`;
   });
   return parts.length ? ` AND NOT (${parts.join(' OR ')})` : '';

@@ -160,7 +160,9 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
       ? await buildBuckets(userId, tagIds)
       : { buckets: [], exclude: [] as Array<{ start: Date | null; end: Date }> };
     const exclParams: unknown[] = [];
-    const exclSql = exclusionPredicate(bucketCtx.exclude, exclParams);
+    // PG: базовые плейсхолдеры до excl — $1 (tags) + readFilter ($2 при unread), поэтому смещение = 1 + (readFilter ? 1 : 0)
+    const exclBaseIdx = USE_SQLITE ? 0 : 1 + (showAll ? 0 : 1);
+    const exclSql = exclusionPredicate(bucketCtx.exclude, exclParams, exclBaseIdx);
 
     if (USE_SQLITE) {
       // ─── SQLite версия ──────────────────────────────────────────────
@@ -218,6 +220,7 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
         pgParams = [tagIds, userId];
       }
       let pgIdx = pgParams.length + exclParams.length + 1;
+      void exclBaseIdx; // (использовано при сборке exclSql выше)
 
       // TZ-40: limit+1 вместо COUNT(*) — total никто не читает (проверено по фронту),
       // COUNT по 90 дням с GIN-фильтром и подзапросом user_news_reads — лишняя работа на каждой странице.
