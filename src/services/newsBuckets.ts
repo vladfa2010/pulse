@@ -15,6 +15,7 @@
  */
 
 import { query } from '../config/db';
+import { sanitizeNewsTitle } from './newsTitle'; // ТЗ-222
 import { closedBucketsSince, BucketKey, BucketRange, MSK_OFFSET_HOURS } from './bucketTime';
 import { getOrGenerateBucketSummary } from './bucketSummary';
 
@@ -115,7 +116,7 @@ async function topNews(tagIds: string[], start: Date | null, end: Date): Promise
   return res.rows.map((r: any) => ({
     id: r.id,
     slug: r.slug ?? null,
-    title: r.title ?? '',
+    title: sanitizeNewsTitle(r.title) ?? '', // ТЗ-222: очищенный заголовок
     source: r.source ?? null,
     sentiment: r.sentiment ?? null,
   }));

@@ -26,6 +26,7 @@
 import { createHash } from 'crypto';
 import axios from 'axios';
 import { query } from '../config/db';
+import { sanitizeNewsTitle } from './newsTitle'; // ТЗ-222
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 const KIMI_API_KEY = process.env.KIMI_API_KEY || '';
