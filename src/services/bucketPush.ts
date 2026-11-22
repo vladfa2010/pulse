@@ -121,7 +121,7 @@ async function selectCandidates(w: BucketWindow): Promise<Candidate[]> {
                    AND NOT EXISTS (SELECT 1 FROM user_news_reads r WHERE r.user_id = p.user_id AND r.news_id = n.id)
                 ) >= ${MIN_UNREAD}`
       : `WITH cand AS (
-           SELECT p.user_id, array_agg(p.tag_id ORDER BY p.tag_id) AS tag_ids
+           SELECT p.user_id, array_agg(p.tag_id ORDER BY p.tag_id)::text[] AS tag_ids
            FROM portfolios p
            WHERE p.is_frozen = FALSE
              AND EXISTS (
