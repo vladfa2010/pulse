@@ -4545,6 +4545,28 @@ END $$`,
     )`, name: 'telegram_club_v1' },
     { sql: `CREATE INDEX IF NOT EXISTS idx_tg_club_members_status ON telegram_club_members(status)`, name: 'idx_tg_club_members_status' },
     { sql: `CREATE INDEX IF NOT EXISTS idx_tg_club_members_tg_user ON telegram_club_members(tg_user_id)`, name: 'idx_tg_club_members_tg_user' },
+    // ТЗ-218: карусель саммари бакетов «Пока вас не было»
+    { sql: `CREATE TABLE IF NOT EXISTS user_bucket_reads (
+      user_id ${USE_SQLITE ? 'TEXT' : 'UUID'} NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      bucket_start ${USE_SQLITE ? 'TEXT' : 'TIMESTAMPTZ'} NOT NULL,
+      bucket_end ${USE_SQLITE ? 'TEXT' : 'TIMESTAMPTZ'} NOT NULL,
+      viewed_at ${USE_SQLITE ? 'TEXT' : 'TIMESTAMPTZ'} NOT NULL DEFAULT ${_SQL_NOW},
+      PRIMARY KEY (user_id, bucket_start)
+    )`, name: 'user_bucket_reads' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_ubr_user ON user_bucket_reads(user_id)`, name: 'idx_ubr_user' },
+    { sql: `CREATE TABLE IF NOT EXISTS bucket_summaries (
+      user_id ${USE_SQLITE ? 'TEXT' : 'UUID'} NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      tags_hash VARCHAR(64) NOT NULL,
+      range_start ${USE_SQLITE ? 'TEXT' : 'TIMESTAMPTZ'} NOT NULL,
+      range_end ${USE_SQLITE ? 'TEXT' : 'TIMESTAMPTZ'} NOT NULL,
+      variant VARCHAR(8) NOT NULL DEFAULT 'bucket',
+      summary TEXT NOT NULL,
+      top_news ${USE_SQLITE ? 'TEXT' : 'JSONB'} NOT NULL,
+      model VARCHAR(32) NOT NULL,
+      generated_at ${USE_SQLITE ? 'TEXT' : 'TIMESTAMPTZ'} NOT NULL DEFAULT ${_SQL_NOW},
+      PRIMARY KEY (user_id, tags_hash)
+    )`, name: 'bucket_summaries' },
+    { sql: `CREATE INDEX IF NOT EXISTS idx_bs_cleanup ON bucket_summaries(range_end)`, name: 'idx_bs_cleanup' },
   ];
   for (const m of migrations) {
     try {

@@ -29,6 +29,9 @@ import { query } from '../config/db';
 import { popularTagsCached } from '../utils/tagCache';
 import { computePopularTags } from '../services/popularTags';
 import { markAllNewsAsRead, timeFilterSql } from '../services/newsReads';
+import { buildBuckets, exclusionPredicate } from '../services/newsBuckets'; // ТЗ-218
+import { markBucketRead, archiveAllBuckets } from '../services/bucketRead'; // ТЗ-218
+import type { BucketKey } from '../services/bucketTime';
 import { embedBatch } from '../services/embeddings';
 import { SEARCH_COURSES_ENABLED, SEARCH_LESSONS_ENABLED } from '../config/courseSearch';
 import { nowSql } from '../utils/nowSql';
@@ -147,8 +150,17 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
     const tagIds = portfolioResult.rows.map(r => r.tag_id);
 
     if (tagIds.length === 0) {
-      return res.json({ articles: [], total: null, page, hasMore: false });
+      return res.json({ articles: [], total: null, page, hasMore: false, buckets: [] });
     }
+
+    // ТЗ-218: бакеты «Пока вас не было» — только unread-режим, первая страница.
+    // Режимы all/history/global и page>1 — байт-в-байт прежние.
+    const unreadMode = !showAll && !history;
+    const bucketCtx = unreadMode && page === 1
+      ? await buildBuckets(userId, tagIds)
+      : { buckets: [], exclude: [] as Array<{ start: Date | null; end: Date }> };
+    const exclParams: unknown[] = [];
+    const exclSql = exclusionPredicate(bucketCtx.exclude, exclParams);
 
     if (USE_SQLITE) {
       // ─── SQLite версия ──────────────────────────────────────────────
@@ -180,11 +192,11 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
                 tag_impact, source_count, all_sources, fact_check_status, fact_check_result, slug,
                 NULL AS cluster_id, NULL AS cluster_size, NULL AS cluster_position, NULL AS cluster_last_seen_at, 0 AS cluster_growing, 0 AS cluster_pending
          FROM news
-         WHERE (${conditions})${readFilter}
+         WHERE (${conditions})${readFilter}${exclSql}
          AND ${timeFilter}
          ORDER BY published_at ${orderDir}
          LIMIT ? OFFSET ?`,
-        [...likeParams, ...readParams, limit + 1, offset]
+        [...likeParams, ...readParams, ...exclParams, limit + 1, offset]
       );
       hasMore = result.rows.length > limit;
       articles = hasMore ? result.rows.slice(0, limit) : result.rows;
@@ -205,7 +217,7 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
         pgReadFilter = ' AND NOT EXISTS (SELECT 1 FROM user_news_reads r WHERE r.user_id = $2 AND r.news_id = news.id)';
         pgParams = [tagIds, userId];
       }
-      let pgIdx = pgParams.length + 1;
+      let pgIdx = pgParams.length + exclParams.length + 1;
 
       // TZ-40: limit+1 вместо COUNT(*) — total никто не читает (проверено по фронту),
       // COUNT по 90 дням с GIN-фильтром и подзапросом user_news_reads — лишняя работа на каждой странице.
@@ -237,7 +249,7 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
          LEFT JOIN ranked r ON r.id = n.id
          JOIN (
            SELECT id FROM news
-           WHERE matched_tags && $1::text[]${pgReadFilter}
+           WHERE matched_tags && $1::text[]${pgReadFilter}${exclSql}
            AND ${timeFilter}
            -- TZ-7.4: (published_at + INTERVAL '0 seconds') вместо published_at.
            -- Значение идентично, но планировщик не может использовать idx_news_published_at
@@ -248,17 +260,19 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
            LIMIT $${pgIdx} OFFSET $${pgIdx + 1}
          ) t ON t.id = n.id
          ORDER BY n.published_at ${pgOrder}`,
-        [...pgParams, limit + 1, offset]
+        [...pgParams, ...exclParams, limit + 1, offset]
       );
       hasMore = result.rows.length > limit;
       articles = hasMore ? result.rows.slice(0, limit) : result.rows;
     }
 
+    const bucketTotal = bucketCtx.buckets.reduce((s: number, b: any) => s + b.count, 0);
     res.json({
       articles,
-      total: null,
+      total: unreadMode ? articles.length + bucketTotal : null,
       page,
       hasMore,
+      buckets: bucketCtx.buckets,
     });
   } catch (err: any) {
     console.error('[News] Feed error:', err.message, err.stack?.substring(0, 200));
@@ -280,11 +294,39 @@ router.post('/read-all', authMiddleware, async (req: AuthRequest, res) => {
   try {
     const userId = req.user!.userId;
     const marked = await markAllNewsAsRead(userId);
+    // ТЗ-218: заодно архивируем все закрытые непросмотренные бакеты + sentinel «Вчера»
+    await archiveAllBuckets(userId).catch((err: any) =>
+      console.error('[News] Read-all bucket archive error:', err.message)
+    );
     console.log(`[News] Read-all: user=${userId} marked=${marked}`);
     res.json({ success: true, marked });
   } catch (err: any) {
     console.error('[News] Read-all error:', err.message);
     res.status(500).json({ error: 'Failed to mark all as read' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// POST /api/news/buckets/:key/read — Отметить бакет прочитанным (ТЗ-218)
+// ═══════════════════════════════════════════════════════════════════════════
+// Security (регламент массовых операций): authMiddleware (не JWT из кэша),
+// :key — белый список; окно резолвится ТОЛЬКО из фиксированных границ
+// bucketTime.ts (произвольных окон из тела нет). Массовый INSERT ограничен
+// окном ≤24ч и тегами самого юзера. Идемпотентен (ON CONFLICT DO NOTHING).
+const BUCKET_KEYS = new Set(['night', 'morning', 'day', 'evening', 'older']);
+router.post('/buckets/:key/read', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.userId;
+    const key = String(req.params.key);
+    if (!BUCKET_KEYS.has(key)) {
+      return res.status(400).json({ error: 'Invalid bucket key' });
+    }
+    const marked = await markBucketRead(userId, key as BucketKey | 'older');
+    console.log(`[News] Bucket read: user=${userId} key=${key} marked=${marked}`);
+    res.json({ success: true, marked });
+  } catch (err: any) {
+    console.error('[News] Bucket read error:', err.message);
+    res.status(500).json({ error: 'Failed to mark bucket as read' });
   }
 });
 

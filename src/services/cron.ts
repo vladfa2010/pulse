@@ -35,6 +35,8 @@ import { analyzeUnifiedBatch, UnifiedResult } from './smartTagMatcher';
 import { freezeHeatmapRecentDays } from './heatmapDaily';
 import { embedAndClusterBatch } from './clustering';      // ТЗ-92, задача 4
 import { runStoryGrouping } from './storyGrouper';        // ТЗ-92, задача 5
+import { closedBucketsSince } from './bucketTime';        // ТЗ-218
+import { pregenBucketSummaries, cleanupBucketSummaries } from './bucketSummary'; // ТЗ-218
 import { runViralityAnalytics } from './viralityAnalytics'; // ТЗ-185: аналитика виральности 05:30 МСК
 import { runSourceStatsDaily } from './sourceStatsDaily'; // ТЗ-186: срезы эффективности источников 05:40 МСК
 import { matchUnprocessedNews } from './education/match'; // ТЗ-103, задача 3: cron-страховка мэтчинга курсов
@@ -461,6 +463,29 @@ export function startCron() {
       console.error('[Cron] RSS process failed:', err.message);
     }
   });
+
+  // ТЗ-218: прегенерация саммари бакетов на границах 06/12/18/00 МСК
+  // (UTC+3 круглый год, DST отменён) = 03/09/15/21 UTC. CronLock не нужен —
+  // один node-процесс; идемпотентность обеспечивает PK (user_id, tags_hash).
+  cron.schedule('0 3,9,15,21 * * *', async () => {
+    try {
+      const now = new Date();
+      const closed = closedBucketsSince(now, new Date(now.getTime() - 24 * 3600 * 1000));
+      const justClosed = closed.filter((b) => now.getTime() - b.end.getTime() <= 10 * 60 * 1000);
+      for (const b of justClosed) {
+        await pregenBucketSummaries(b.start, b.end, 'bucket', b.key);
+      }
+      // в забеге 00:00 МСК (21:00 UTC) — прегенерация «Вчера» + уборка
+      if (justClosed.some((b) => b.key === 'night')) {
+        const olderEnd = new Date(now.getTime() - 24 * 3600 * 1000);
+        await pregenBucketSummaries(new Date(0), olderEnd, 'older', null);
+      }
+      await cleanupBucketSummaries();
+    } catch (err: any) {
+      console.error('[Cron] bucket pregen failed:', err.message);
+    }
+  });
+  console.log('[Cron] Bucket summary pregen scheduled at 03/09/15/21 UTC (06/12/18/00 MSK)');
 
   // Delayed first run: wait 2 minutes after startup
   setTimeout(() => {
