@@ -38,8 +38,10 @@ export function floorToBucket(d: Date): BucketRange {
   // иначе каждый запрос даёт уникальный ключ кэша и лавину LLM-генераций
   const mins = mskMinutesOfDay(d);
   const startMin = Math.floor(mins / (BUCKET_HOURS * 60)) * BUCKET_HOURS * 60;
-  // московская полночь сегодня как UTC-инстант (может быть предыдущий UTC-день)
-  const mskMidnight = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - MSK_OFFSET_HOURS * 3600000;
+  // московская полночь «сегодня»: сдвигаем инстант на +3ч, берём UTC-полночь
+  // сдвинутой даты, возвращаем назад (для UTC-часов ≥ 21 это следующий день)
+  const shifted = new Date(d.getTime() + MSK_OFFSET_HOURS * 3600000);
+  const mskMidnight = Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate()) - MSK_OFFSET_HOURS * 3600000;
   let start = new Date(mskMidnight + startMin * 60000);
   if (mins % (BUCKET_HOURS * 60) === 0) {
     // ровно на границе — принадлежит предыдущему бакету (start, end]
