@@ -118,7 +118,7 @@ async function selectTopNewsForPrompt(
   tagIds: string[],
   rangeStart: Date | null,
   rangeEnd: Date
-): Promise<Array<{ id: string; slug: string; title: string; source: string; source_count: number }>> {
+): Promise<Array<{ id: string; slug: string | null; title: string; source: string; sentiment: string | null; source_count: number }>> {
   const tagConds: string[] = [];
   const params: unknown[] = [];
   const ph = () => (USE_SQLITE ? '?' : `$${params.length + 1}`);
@@ -143,7 +143,7 @@ async function selectTopNewsForPrompt(
   // условия тегов соединяются OR (overlap — как PG && и зеркало newsBuckets);
   // AND здесь дал бы пустую выборку почти всегда
   const res = await query(
-    `SELECT id, slug, COALESCE(title_ru, title_original) AS title, source, source_count
+    `SELECT id, slug, COALESCE(title_ru, title_original) AS title, source, sentiment, source_count
      FROM news
      WHERE (${tagConds.join(' OR ')}) AND ${timeConds.join(' AND ')}
      ORDER BY source_count DESC, sentiment_score DESC${nullsLast}
@@ -221,7 +221,7 @@ async function generateAndStore(
   if (!summary) return;
 
   const topNews = variant === 'bucket'
-    ? JSON.stringify(articles.slice(0, 4).map((a) => ({ id: a.id, title: a.title, source: a.source })))
+    ? JSON.stringify(articles.slice(0, 4).map((a) => ({ id: a.id, slug: a.slug, title: a.title, source: a.source, sentiment: a.sentiment })))
     : '[]';
   const rs = (rangeStart || new Date(0)).toISOString();
   const re = rangeEnd.toISOString();
@@ -311,12 +311,35 @@ export async function pregenBucketSummaries(
   let usersRes;
   try {
     usersRes = await query(
-      `SELECT u.id AS user_id, p.tag_id
-       FROM users u
-       JOIN portfolios p ON p.user_id = u.id AND p.is_frozen = FALSE
-       WHERE u.last_login_at > $1
-       GROUP BY u.id, p.tag_id`,
-      [sinceIso]
+      USE_SQLITE
+        ? `SELECT u.id AS user_id, p.tag_id
+           FROM users u
+           JOIN portfolios p ON p.user_id = u.id AND p.is_frozen = 0
+           WHERE u.last_login_at > ?
+             AND EXISTS (
+               SELECT 1 FROM news n
+               WHERE n.published_at > ? AND n.published_at <= ?
+                 AND EXISTS (SELECT 1 FROM portfolios pt WHERE pt.user_id = u.id AND pt.is_frozen = 0
+                             AND n.matched_tags LIKE '%"' || pt.tag_id || '"%')
+                 AND NOT EXISTS (SELECT 1 FROM user_news_reads r WHERE r.user_id = u.id AND r.news_id = n.id)
+             )
+           GROUP BY u.id, p.tag_id`
+        : `SELECT u.id AS user_id, p.tag_id
+           FROM users u
+           JOIN portfolios p ON p.user_id = u.id AND p.is_frozen = FALSE
+           WHERE u.last_login_at > $1
+             AND EXISTS (
+               SELECT 1 FROM news n
+               WHERE n.published_at > $2 AND n.published_at <= $3
+                 AND n.matched_tags && (SELECT array_agg(tag_id) FROM portfolios WHERE user_id = u.id AND is_frozen = FALSE)
+                 AND NOT EXISTS (SELECT 1 FROM user_news_reads r WHERE r.user_id = u.id AND r.news_id = n.id)
+             )
+           GROUP BY u.id, p.tag_id`,
+      USE_SQLITE
+        ? [sinceIso.replace('T', ' ').slice(0, 19),
+           rangeStart.toISOString().replace('T', ' ').slice(0, 19),
+           rangeEnd.toISOString().replace('T', ' ').slice(0, 19)]
+        : [sinceIso, rangeStart.toISOString(), rangeEnd.toISOString()]
     );
   } catch (err: any) {
     console.error('[Cron] bucket pregen: users select failed:', err.message);
@@ -347,7 +370,7 @@ export async function pregenBucketSummaries(
       const summary = await callLlm(buildPrompt(variant, bucketKeyName, articles));
       if (!summary) { failed++; continue; }
       const topNews = variant === 'bucket'
-        ? JSON.stringify(articles.slice(0, 4).map((a) => ({ id: a.id, title: a.title, source: a.source })))
+        ? JSON.stringify(articles.slice(0, 4).map((a) => ({ id: a.id, slug: a.slug, title: a.title, source: a.source, sentiment: a.sentiment })))
         : '[]';
       const rs = (variant === 'bucket' ? rangeStart : new Date(0)).toISOString();
       const re = rangeEnd.toISOString();

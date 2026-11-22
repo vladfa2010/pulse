@@ -145,6 +145,36 @@ async function viralStories(tagIds: string[], start: Date | null, end: Date): Pr
 
 /** Окна исключения для живой выборки (NOT-предикат по каждому окну).
  *  PG: плейсхолдеры нумеруются со смещением baseIdx (после основных params). */
+/** Чтение top_news из bucket_summaries по квантованному ключу (без LLM и живого SELECT). */
+async function topNewsFromDb(userId: string, tagIds: string[], start: Date, end: Date): Promise<BucketTopNews[]> {
+  const { createHash } = await import('crypto');
+  const sorted = [...tagIds].sort().join('|');
+  const key = createHash('sha1').update(`${sorted}|${start.toISOString()}|${end.toISOString()}`).digest('hex');
+  const res = await query(
+    `SELECT top_news FROM bucket_summaries WHERE user_id = $1 AND tags_hash = $2 AND variant = 'bucket'`,
+    [userId, key]
+  );
+  return parseTopNews(res.rows[0]?.top_news);
+}
+
+/** top_news из строки БД (variant='bucket' — набор фиксирован, ТЗ-218 читать из БД). */
+function parseTopNews(raw: unknown): BucketTopNews[] {
+  if (!raw) return [];
+  try {
+    const arr = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    if (!Array.isArray(arr)) return [];
+    return arr.map((x: any) => ({
+      id: String(x.id),
+      slug: x.slug ?? null,
+      title: String(x.title ?? ''),
+      source: x.source ?? null,
+      sentiment: x.sentiment ?? null,
+    }));
+  } catch {
+    return [];
+  }
+}
+
 export function exclusionPredicate(
   windows: Array<{ start: Date | null; end: Date }>,
   params: unknown[],
@@ -201,11 +231,14 @@ export async function buildBuckets(
     if (viewed.has(String(b.start.getTime()))) continue;
     const { count, pos, neg } = await countAndSentiment(userId, tagIds, b.start, b.end);
     if (count === 0) continue;
-    const [summaryRes, tops, viral] = await Promise.all([
+    const [summaryRes, viral] = await Promise.all([
       getOrGenerateBucketSummary(userId, tagIds, b.start, b.end, 'bucket', b.key),
-      topNews(tagIds, b.start, b.end),
       viralStories(tagIds, b.start, b.end),
     ]);
+    // top_news: из строки БД (набор бакета фиксирован — ТЗ-218 читать из БД, не дёргать
+    // живой SELECT); живый запрос — только если строки ещё нет (ленивая генерация стартовала)
+    const tops = await topNewsFromDb(userId, tagIds, b.start, b.end)
+      .then((rows) => (rows.length ? rows : topNews(tagIds, b.start, b.end)));
     buckets.push({
       key: b.key,
       label: LABELS[b.key],
@@ -268,6 +301,9 @@ export async function buildBuckets(
     });
     exclude.push({ start: null, end: olderEnd });
   }
+  // ТЗ-218 З3 п.3: окно >24ч исключается из живой выборки БЕЗУСЛОВНО — иначе
+  // после просмотра «Вчера» остаток старого хвоста снова показывался живыми
+  exclude.push({ start: null, end: olderEnd });
 
   return { buckets, exclude };
 }
