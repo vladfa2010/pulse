@@ -71,15 +71,30 @@ async function countUnreadInWindow(userId: string, tagIds: string[], w: BucketWi
   const params: unknown[] = [];
   const tc = tagConds(tagIds, params);
   const ph = (v: unknown) => { params.push(v); return USE_SQLITE ? '?' : `$${params.length}`; };
-  const nr = USE_SQLITE
-    ? 'NOT EXISTS (SELECT 1 FROM user_news_reads r WHERE r.user_id = ? AND r.news_id = n.id)'
-    : `NOT EXISTS (SELECT 1 FROM user_news_reads r WHERE r.user_id = ${ph(userId)} AND r.news_id = n.id)`;
-  if (USE_SQLITE) params.push(userId);
+  if (USE_SQLITE) {
+    // SQLite: ? в текстовом порядке — [tags, start, end, userId]
+    const litParams: unknown[] = [];
+    const litTc = tagIds.map(() => 'n.matched_tags LIKE ?').join(' OR ');
+    for (const t of tagIds) litParams.push(`%"${t}"%`);
+    litParams.push(w.rangeStart.toISOString().replace('T', ' ').slice(0, 19));
+    litParams.push(w.rangeEnd.toISOString().replace('T', ' ').slice(0, 19));
+    litParams.push(userId);
+    const resLite = await query(
+      `SELECT COUNT(*) AS count FROM news n
+       WHERE (${litTc})
+         AND n.published_at > ?
+         AND n.published_at <= ?
+         AND NOT EXISTS (SELECT 1 FROM user_news_reads r WHERE r.user_id = ? AND r.news_id = n.id)`,
+      litParams
+    );
+    return Number(resLite.rows[0]?.count || 0);
+  }
+  const nr = `NOT EXISTS (SELECT 1 FROM user_news_reads r WHERE r.user_id = ${ph(userId)} AND r.news_id = n.id)`;
   const res = await query(
     `SELECT COUNT(*) AS count FROM news n
      WHERE ${tc}
-       AND n.published_at > ${ph(USE_SQLITE ? w.rangeStart.toISOString().replace('T', ' ').slice(0, 19) : w.rangeStart.toISOString())}
-       AND n.published_at <= ${ph(USE_SQLITE ? w.rangeEnd.toISOString().replace('T', ' ').slice(0, 19) : w.rangeEnd.toISOString())}
+       AND n.published_at > ${ph(w.rangeStart.toISOString())}
+       AND n.published_at <= ${ph(w.rangeEnd.toISOString())}
        AND ${nr}`,
     params
   );
@@ -102,26 +117,48 @@ async function selectCandidates(w: BucketWindow): Promise<Candidate[]> {
   const rs = ph(w.rangeStart.toISOString());
   const re = ph(w.rangeEnd.toISOString());
   const res = await query(
-    `SELECT p.user_id, array_agg(p.tag_id ORDER BY p.tag_id) AS tag_ids
-     FROM portfolios p
-     WHERE p.is_frozen = FALSE
-       AND EXISTS (
-         SELECT 1 FROM notification_subscriptions ns
-         WHERE ns.user_id = p.user_id AND ns.product = 'buckets' AND ns.channel = 'push' AND ns.enabled = TRUE
-           AND (ns.last_sent_at IS NULL OR ns.last_sent_at < ${re}::timestamptz)
-       )
-       AND (
-         EXISTS (SELECT 1 FROM user_channels uc WHERE uc.user_id = p.user_id AND uc.channel = 'push' AND uc.is_active = TRUE)
-         OR EXISTS (SELECT 1 FROM push_subscriptions ps WHERE ps.user_id = p.user_id AND ps.is_active = TRUE)
-       )
-       AND NOT EXISTS (
-         SELECT 1 FROM user_sessions s
-         WHERE s.user_id = p.user_id AND s.last_connected_at >= ${rs}::timestamptz
-       )
-     GROUP BY p.user_id`,
-    params
+    USE_SQLITE
+      ? `SELECT p.user_id, GROUP_CONCAT(p.tag_id, '|') AS tag_ids_csv
+         FROM portfolios p
+         WHERE p.is_frozen = 0
+           AND EXISTS (
+             SELECT 1 FROM notification_subscriptions ns
+             WHERE ns.user_id = p.user_id AND ns.product = 'buckets' AND ns.channel = 'push' AND ns.enabled = TRUE
+               AND (ns.last_sent_at IS NULL OR ns.last_sent_at < ?)
+           )
+           AND (
+             EXISTS (SELECT 1 FROM user_channels uc WHERE uc.user_id = p.user_id AND uc.channel = 'push' AND uc.is_active = 1)
+             OR EXISTS (SELECT 1 FROM push_subscriptions ps WHERE ps.user_id = p.user_id AND ps.is_active = 1)
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM user_sessions s
+             WHERE s.user_id = p.user_id AND s.last_connected_at >= ?
+           )
+         GROUP BY p.user_id`
+      : `SELECT p.user_id, array_agg(p.tag_id ORDER BY p.tag_id) AS tag_ids
+         FROM portfolios p
+         WHERE p.is_frozen = FALSE
+           AND EXISTS (
+             SELECT 1 FROM notification_subscriptions ns
+             WHERE ns.user_id = p.user_id AND ns.product = 'buckets' AND ns.channel = 'push' AND ns.enabled = TRUE
+               AND (ns.last_sent_at IS NULL OR ns.last_sent_at < ${re}::timestamptz)
+           )
+           AND (
+             EXISTS (SELECT 1 FROM user_channels uc WHERE uc.user_id = p.user_id AND uc.channel = 'push' AND uc.is_active = TRUE)
+             OR EXISTS (SELECT 1 FROM push_subscriptions ps WHERE ps.user_id = p.user_id AND ps.is_active = TRUE)
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM user_sessions s
+             WHERE s.user_id = p.user_id AND s.last_connected_at >= ${rs}::timestamptz
+           )
+         GROUP BY p.user_id`,
+    // SQLite: плейсхолдеры ? в текстовом порядке — дедupe(rangeEnd) затем анти-активность(rangeStart)
+    USE_SQLITE ? [w.rangeEnd.toISOString().replace('T', ' ').slice(0, 19), w.rangeStart.toISOString().replace('T', ' ').slice(0, 19)] : params
   );
-  return res.rows.map((r: any) => ({ userId: r.user_id, tagIds: Array.isArray(r.tag_ids) ? r.tag_ids : [] }));
+  return res.rows.map((r: any) => ({
+    userId: r.user_id,
+    tagIds: Array.isArray(r.tag_ids) ? r.tag_ids : String(r.tag_ids_csv || '').split('|').filter(Boolean),
+  }));
 }
 
 /** Живая топ-новость окна (fallback критерия 8, когда bucket_summaries пуст). */
@@ -196,8 +233,15 @@ export async function sendBucketPushes(w: BucketWindow): Promise<BucketPushStats
       groups.get(h)!.members.push(c);
     }
     const groupCounts = new Map<string, number>();
+    // Порог групповой: count по read-state первого члена группы применяется ко всей
+    // группе с одинаковыми тегами — компромисс ради запрета N+1 (аудит ТЗ-219 N3)
     for (const [h, g] of groups) {
       groupCounts.set(h, await countUnreadInWindow(g.members[0].userId, g.tagIds, w));
+    }
+    // hoist: топ-заголовок окна один на tag-группу (критерий 8 fallback)
+    const groupTopTitles = new Map<string, Promise<string | null>>();
+    for (const [h, g] of groups) {
+      groupTopTitles.set(h, readTopTitleLive(g.tagIds, w));
     }
 
     const title = `Пока вас не было: ${BUCKET_TITLES[w.key] || w.key}`;
@@ -212,8 +256,8 @@ export async function sendBucketPushes(w: BucketWindow): Promise<BucketPushStats
         if (quiet?.enabled && isQuietHoursMsk(quiet.start, quiet.end)) { stats.skipped++; continue; }
 
         let { summary, topTitle } = await readSummary(c.userId, c.tagIds, w);
-        // критерий 8: строки саммари нет (LLM лежал) — топ-новость окна живым запросом
-        if (!summary && !topTitle) topTitle = await readTopTitleLive(c.tagIds, w);
+        // критерий 8: строки саммари нет (LLM лежал) — топ-новость окна (hoisted на группу)
+        if (!summary && !topTitle) topTitle = (await groupTopTitles.get(groupHash(c.tagIds))) ?? null;
         const firstSentence = summary ? summary.split(/(?<=[.!?])\s+/)[0] : (topTitle || '');
         const body = truncateAtWord(`${firstSentence} · ${count} новостей`, BODY_MAX);
 
