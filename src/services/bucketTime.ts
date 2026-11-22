@@ -34,10 +34,14 @@ function mskMinutesOfDay(d: Date): number {
  * ТЗ-218). Следствие: 00:00 ровно принадлежит вчерашнему «Вечеру».
  */
 export function floorToBucket(d: Date): BucketRange {
-  const total = mskMinutesOfDay(d);
-  const startMin = Math.floor(total / (BUCKET_HOURS * 60)) * BUCKET_HOURS * 60;
-  let start = new Date(d.getTime() - total * 60000 + startMin * 60000);
-  if (total % (BUCKET_HOURS * 60) === 0) {
+  // московские минуты суток (без секунд/мс) — границы всегда ровные часы,
+  // иначе каждый запрос даёт уникальный ключ кэша и лавину LLM-генераций
+  const mins = mskMinutesOfDay(d);
+  const startMin = Math.floor(mins / (BUCKET_HOURS * 60)) * BUCKET_HOURS * 60;
+  // московская полночь сегодня как UTC-инстант (может быть предыдущий UTC-день)
+  const mskMidnight = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - MSK_OFFSET_HOURS * 3600000;
+  let start = new Date(mskMidnight + startMin * 60000);
+  if (mins % (BUCKET_HOURS * 60) === 0) {
     // ровно на границе — принадлежит предыдущему бакету (start, end]
     start = new Date(start.getTime() - BUCKET_HOURS * 3600000);
   }
