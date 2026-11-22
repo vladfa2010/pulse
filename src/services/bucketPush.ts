@@ -88,16 +88,17 @@ interface Candidate {
 
 /** Получатели одним запросом: матрица + активный канал + анти-активность + дедupe. */
 async function selectCandidates(w: BucketWindow): Promise<Candidate[]> {
-  const params: unknown[] = [w.rangeStart.toISOString()];
-  const ph = (v: unknown) => { params.push(v); return USE_SQLITE ? '?' : `$${params.length}`; };
+  const params: unknown[] = [];
+  const ph = (v: unknown) => { params.push(v); return `$${params.length}`; };
+  const rs = ph(w.rangeStart.toISOString()); // $1 — last_sent_at / last_connected_at (TIMESTAMP)
   const res = await query(
     `SELECT p.user_id, array_agg(p.tag_id ORDER BY p.tag_id) AS tag_ids
      FROM portfolios p
-     WHERE p.is_frozen = ${USE_SQLITE ? '0' : 'FALSE'}
+     WHERE p.is_frozen = FALSE
        AND EXISTS (
          SELECT 1 FROM notification_subscriptions ns
          WHERE ns.user_id = p.user_id AND ns.product = 'buckets' AND ns.channel = 'push' AND ns.enabled = TRUE
-           AND (ns.last_sent_at IS NULL OR ns.last_sent_at < ${USE_SQLITE ? '?' : ph(w.rangeStart.toISOString())})
+           AND (ns.last_sent_at IS NULL OR ns.last_sent_at < ${rs}::timestamptz)
        )
        AND (
          EXISTS (SELECT 1 FROM user_channels uc WHERE uc.user_id = p.user_id AND uc.channel = 'push' AND uc.is_active = TRUE)
@@ -105,7 +106,7 @@ async function selectCandidates(w: BucketWindow): Promise<Candidate[]> {
        )
        AND NOT EXISTS (
          SELECT 1 FROM user_sessions s
-         WHERE s.user_id = p.user_id AND s.last_connected_at >= ${USE_SQLITE ? '?' : ph(w.rangeStart.toISOString())}
+         WHERE s.user_id = p.user_id AND s.last_connected_at >= ${rs}::timestamptz
        )
      GROUP BY p.user_id`,
     params
