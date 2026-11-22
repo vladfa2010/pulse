@@ -29,7 +29,7 @@ import { query } from '../config/db';
 
 const USE_SQLITE = process.env.USE_SQLITE === 'true';
 const KIMI_API_KEY = process.env.KIMI_API_KEY || '';
-const KIMI_MODEL = process.env.KIMI_MODEL || 'kimi-k2-0711-preview';
+const KIMI_MODEL = process.env.KIMI_MODEL || 'kimi-k2.6'; // конвенция проекта (cron.ts, tagManager.ts, match.ts)
 const LLM_TIMEOUT_MS = 30_000;
 const TOP_N_PROMPT = 30;
 
