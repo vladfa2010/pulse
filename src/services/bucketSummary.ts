@@ -180,7 +180,9 @@ async function callLlm(prompt: string): Promise<string | null> {
       {
         model: KIMI_MODEL,
         messages: [{ role: 'user', content: prompt }],
-        temperature: KIMI_MODEL.startsWith('kimi-k') ? 0.3 : 0.1,
+        // ТЗ-218: kimi-k2.6 (reasoning) принимает ТОЛЬКО temperature 0.6 —
+        // иначе 400 "invalid temperature" (проверено на проде)
+        temperature: KIMI_MODEL.startsWith('kimi-k2.6') ? 0.6 : KIMI_MODEL.startsWith('kimi-k') ? 0.3 : 0.1,
         max_tokens: 500,
         thinking: KIMI_MODEL.startsWith('kimi-k') ? { type: 'disabled' } : undefined,
       },
