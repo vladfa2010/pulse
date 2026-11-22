@@ -13,7 +13,7 @@
  *  - engagement    — механики удержания: sentiment-напоминания «проголосуй», стрики
  *                    (event-driven, свой воркер; диспетчер решает только «кому»)
  */
-export type Product = 'digest' | 'weekly_report' | 'fact_check' | 'news_alert' | 'billing' | 'engagement';
+export type Product = 'digest' | 'buckets' | 'weekly_report' | 'fact_check' | 'news_alert' | 'billing' | 'engagement';
 export type Channel = 'telegram' | 'email' | 'push';
 
 // Защита от тяжёлых запросов в дайджесте/weekly report
@@ -57,6 +57,7 @@ export const FREQUENCY_LABELS_SHORT: Record<string, string> = {
 
 export const PRODUCT_LABELS: Record<Product, string> = {
   digest: 'Дайджест непрочитанного',
+  buckets: 'По времени суток',
   weekly_report: 'Еженедельный отчёт',
   fact_check: 'Факт-чек',
   news_alert: 'Мгновенные алерты',
@@ -66,6 +67,7 @@ export const PRODUCT_LABELS: Record<Product, string> = {
 
 export const PRODUCT_NOTES: Record<Product, string> = {
   digest: 'Подборка по вашим тегам',
+  buckets: 'Ночь, утро, день, вечер — в 06:00, 12:00, 18:00 МСК',
   weekly_report: 'Воскресенье, 13:00 МСК',
   fact_check: 'Результат проверки новости',
   news_alert: 'Пуш сразу при выходе новости',
@@ -75,6 +77,7 @@ export const PRODUCT_NOTES: Record<Product, string> = {
 
 export const PRODUCT_CHANNELS: Record<Product, Channel[]> = {
   digest: ['telegram', 'email', 'push'],
+  buckets: ['push'],
   weekly_report: ['telegram', 'email', 'push'],
   fact_check: ['telegram', 'email'],
   news_alert: ['push'],
@@ -133,6 +136,7 @@ export const VALID_FREQUENCIES = ['1h', '3h', '6h', '12h', '24h'] as const;
 
 export const VALID_PRODUCTS: Product[] = [
   'digest',
+  'buckets',
   'weekly_report',
   'fact_check',
   'news_alert',

@@ -127,6 +127,8 @@ export async function ensureDefaultSubscriptions(userId: string): Promise<void> 
     { product: 'digest', channel: 'telegram', enabled: false, frequency: '1h' },
     { product: 'digest', channel: 'email', enabled: false, frequency: '1h' },
     { product: 'digest', channel: 'push', enabled: false, frequency: '1h' },
+    // ТЗ-219: бакеты «Пока вас не было» — только push, дефолт выключен
+    { product: 'buckets', channel: 'push', enabled: false },
     { product: 'weekly_report', channel: 'telegram', enabled: true },
     { product: 'weekly_report', channel: 'email', enabled: true },
     { product: 'weekly_report', channel: 'push', enabled: false },

@@ -108,6 +108,7 @@ const USE_SQLITE = process.env.USE_SQLITE === 'true';
 // Middleware вынесен в src/middleware/admin.ts (ТЗ-66-lite);
 // re-export сохраняет существующие импорты из '../routes/admin'.
 import { adminMiddleware } from '../middleware/admin';
+import { closedBucketsSince } from '../services/bucketTime'; // ТЗ-219 З7
 export { adminMiddleware };
 
 // GET /api/admin/users — list all users with payment totals
@@ -373,12 +374,14 @@ router.get('/users/:id', adminMiddleware, async (req: AuthRequest, res) => {
 
     const user = userResult.rows[0];
 
-    const [paymentsResult, tagsResult, channelsResult, loginsResult, notifResult] = await Promise.all([
+    const [paymentsResult, tagsResult, channelsResult, loginsResult, notifResult, matrixResult] = await Promise.all([
       query(`SELECT id, amount, status, method, plan_id, paid_at, created_at FROM payments WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50`, [userId]),
       query(`SELECT tag_id, tag_name, tag_type, created_at FROM portfolios WHERE user_id = $1 ORDER BY created_at DESC`, [userId]),
       query(`SELECT channel, target, is_active, created_at FROM user_channels WHERE user_id = $1`, [userId]),
       query(`SELECT date(login_at) as day, COUNT(*) as count FROM user_logins WHERE user_id = $1 AND login_at > ${USE_SQLITE ? "datetime('now', '-30 days')" : "NOW() - INTERVAL '30 days'"} GROUP BY date(login_at) ORDER BY day ASC`, [userId]),
       query(`SELECT user_id, tg_enabled, email_enabled, push_enabled FROM notification_settings WHERE user_id = $1`, [userId]),
+      // ТЗ-219: сводка матрицы уведомлений (только чтение, legacy-поле выше не тронуто)
+      query(`SELECT product, channel, enabled, frequency, last_sent_at FROM notification_subscriptions WHERE user_id = $1`, [userId]),
     ]);
 
     res.json({
@@ -399,6 +402,7 @@ router.get('/users/:id', adminMiddleware, async (req: AuthRequest, res) => {
       channels: channelsResult.rows.map((r: any) => ({ ...r, is_active: r.is_active === true || r.is_active === 1 })),
       login_history: loginsResult.rows.map((r: any) => ({ day: r.day, count: Number(r.count) })),
       notifications: notifResult.rows[0] || null,
+      notification_matrix: matrixResult.rows.map((r: any) => ({ ...r, enabled: r.enabled === true || r.enabled === 1 })),
     });
   } catch (err: any) {
     console.error('[Admin] User detail error:', err.message);
@@ -2442,3 +2446,32 @@ router.post('/club/members/:userId/revoke-manual', adminMiddleware, async (req: 
 });
 
 export default router;
+
+// ТЗ-219 Задача 7: debug-эндпоинт для стейджа/приёмки — ручной вызов отправки
+// пушей бакета для ближайшего закрытого окна ключа. Права админа — свежим
+// запросом в БД на каждый вызов (регламент ТЗ-120 v2).
+router.post('/bucket-push/test', adminMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const key = String(req.body?.key || '');
+    const KEYS = new Set(['night', 'morning', 'day', 'evening']);
+    if (!KEYS.has(key)) {
+      return res.status(400).json({ error: 'Invalid bucket key' });
+    }
+    const adminCheck = await query(`SELECT is_admin FROM users WHERE id = $1`, [req.user!.userId]);
+    if (!adminCheck.rows[0]?.is_admin) {
+      return res.status(403).json({ error: 'Admin only' });
+    }
+    const now = new Date();
+    const closed = closedBucketsSince(now, new Date(now.getTime() - 24 * 3600 * 1000));
+    const target = [...closed].reverse().find((b) => b.key === key);
+    if (!target) {
+      return res.status(400).json({ error: 'bucket not closed' });
+    }
+    const { sendBucketPushes } = await import('../services/bucketPush');
+    const stats = await sendBucketPushes({ key: target.key, rangeStart: target.start, rangeEnd: target.end });
+    res.json({ ok: true, window: { key: target.key, range_start: target.start.toISOString(), range_end: target.end.toISOString() }, stats });
+  } catch (err: any) {
+    console.error('[Admin] bucket-push/test failed:', err.message);
+    res.status(500).json({ error: 'Failed' });
+  }
+});

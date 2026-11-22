@@ -37,6 +37,7 @@ import { embedAndClusterBatch } from './clustering';      // ТЗ-92, задач
 import { runStoryGrouping } from './storyGrouper';        // ТЗ-92, задача 5
 import { closedBucketsSince } from './bucketTime';        // ТЗ-218
 import { pregenBucketSummaries, cleanupBucketSummaries } from './bucketSummary'; // ТЗ-218
+import { sendBucketPushes } from './bucketPush'; // ТЗ-219
 import { runViralityAnalytics } from './viralityAnalytics'; // ТЗ-185: аналитика виральности 05:30 МСК
 import { runSourceStatsDaily } from './sourceStatsDaily'; // ТЗ-186: срезы эффективности источников 05:40 МСК
 import { matchUnprocessedNews } from './education/match'; // ТЗ-103, задача 3: cron-страховка мэтчинга курсов
@@ -474,6 +475,13 @@ export function startCron() {
       const justClosed = closed.filter((b) => now.getTime() - b.end.getTime() <= 10 * 60 * 1000);
       for (const b of justClosed) {
         await pregenBucketSummaries(b.start, b.end, 'bucket', b.key);
+        // ТЗ-219: пуши бакета — НЕЗАВИСИМО от результата LLM (при падении LLM
+        // body собирается из топ-новости; каскадная привязка гасила бы пуши).
+        // «Вечер» (закрытие 00:00) не пушим — ночной слот съедают тихие часы.
+        if (b.key !== 'evening') {
+          await sendBucketPushes({ key: b.key, rangeStart: b.start, rangeEnd: b.end })
+            .catch((err: any) => console.error('[Cron] bucket push failed:', err.message));
+        }
       }
       // в забеге 00:00 МСК (21:00 UTC) — прегенерация «Вчера» + уборка
       if (justClosed.some((b) => b.key === 'night')) {

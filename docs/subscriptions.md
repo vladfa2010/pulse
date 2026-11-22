@@ -94,7 +94,7 @@ return { active: false, inGrace: false, daysLeft: 0 }
 | Поле | Тип | Описание |
 |------|-----|----------|
 | `user_id` | UUID FK → users | Пользователь |
-| `product` | VARCHAR(32) | `digest`, `weekly_report`, `fact_check`, `news_alert`, `billing`, `engagement` |
+| `product` | VARCHAR(32) | `digest`, `buckets`, `weekly_report`, `fact_check`, `news_alert`, `billing`, `engagement` |
 | `channel` | VARCHAR(16) | `telegram`, `email`, `push` |
 | `enabled` | BOOLEAN | Включена ли подписка |
 | `frequency` | VARCHAR(8) | Только для `digest`: `1h`, `3h`, `6h`, `12h`, `24h` |
@@ -110,6 +110,7 @@ PRIMARY KEY: `(user_id, product, channel)`.
 | `digest` | `telegram`, `email`, `push` | Периодическая подборка непрочитанных |
 | `weekly_report` | `telegram`, `email`, `push` | Еженедельный отчёт (воскресенье, 13:00 МСК). Дистрибуция — сводка + ссылка на страницу отчёта (magic-link, см. [docs/weekly-report.md](weekly-report.md)); токен выпускается при генерации (вс 11:00) и перевыпускается при отправке |
 | `fact_check` | `telegram`, `email` | Результат on-demand факт-чека |
+| `buckets` | `push` | «Пока вас не было» — саммари бакетов в 06:00/12:00/18:00 МСК (ТЗ-219; только push, дефолт выключен) |
 | `news_alert` | `push` | Мгновенный пуш при выходе новости по тегу |
 | `billing` | `email`, `push` | Подписка, оплата, истечение, grace |
 | `engagement` | `push` | Sentiment-напоминания, стрики и механики удержания |
@@ -123,6 +124,7 @@ PRIMARY KEY: `(user_id, product, channel)`.
 - `digest` — все каналы выключены (`enabled = FALSE`), частота `1h`;
 - `weekly_report` — `telegram` и `email` включены, `push` выключен;
 - `fact_check` — `telegram` и `email` включены;
+- `buckets` — выключен (ленивый сидинг через `ensureDefaultSubscriptions`);
 - `news_alert` — выключен;
 - `billing` — `email` и `push` включены;
 - `engagement` — выключен.

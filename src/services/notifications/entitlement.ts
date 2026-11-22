@@ -28,6 +28,7 @@ const USE_SQLITE = process.env.USE_SQLITE === 'true';
 // 'paid' — только активная платная подписка
 const PRODUCT_ACCESS: Record<Product, 'all' | 'paid'> = {
   digest: 'all',          // лимит тегов и каналы — из плана (ниже)
+  buckets: 'all',         // ТЗ-219: доступен всем (порог ≥3 непрочитанных сам регулирует)
   news_alert: 'all',
   fact_check: 'all',
   engagement: 'all',      // механики удержания — всем
