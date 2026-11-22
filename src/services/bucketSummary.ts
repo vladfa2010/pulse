@@ -157,8 +157,8 @@ function buildPrompt(variant: 'bucket' | 'older', bucketKeyName: string | null, 
   const windowText = variant === 'bucket' && bucketKeyName
     ? BUCKET_LABEL[bucketKeyName] || 'за период'
     : 'за прошедшие дни';
+  // ТЗ-218: топ-30 заголовков в промпт (TOP_N_PROMPT=30), без срезов
   const lines = articles
-    .slice(0, 20)
     .map((a, i) => `${i + 1}. «${a.title}»${a.source ? ` (${a.source})` : ''}`)
     .join('\n');
   const grouping = variant === 'older'
@@ -248,10 +248,10 @@ async function generateAndStore(
            model = EXCLUDED.model,
            generated_at = NOW()`,
     USE_SQLITE
-      ? [userId, tagsHash, rs, re, variant, summary, topNews, 'kimi']
-      : [userId, tagsHash, rs, re, variant, summary, topNews, 'kimi']
+      ? [userId, tagsHash, rs, re, variant, summary, topNews, KIMI_MODEL]
+      : [userId, tagsHash, rs, re, variant, summary, topNews, KIMI_MODEL]
   );
-  memSet(tagsHash, { summary, generated_at: new Date().toISOString(), model: 'kimi' }, variant);
+  memSet(tagsHash, { summary, generated_at: new Date().toISOString(), model: KIMI_MODEL }, variant);
 }
 
 /**
@@ -393,8 +393,8 @@ export async function pregenBucketSummaries(
                  variant = EXCLUDED.variant, summary = EXCLUDED.summary,
                  top_news = EXCLUDED.top_news, model = EXCLUDED.model, generated_at = NOW()`,
           USE_SQLITE
-            ? [userId, groupHash, rs, re, variant, summary, topNews, 'kimi']
-            : [userId, groupHash, rs, re, variant, summary, topNews, 'kimi']
+            ? [userId, groupHash, rs, re, variant, summary, topNews, KIMI_MODEL]
+            : [userId, groupHash, rs, re, variant, summary, topNews, KIMI_MODEL]
         );
       }
       done++;

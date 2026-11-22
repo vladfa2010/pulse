@@ -269,10 +269,42 @@ router.get('/', authMiddleware, async (req: AuthRequest, res) => {
       articles = hasMore ? result.rows.slice(0, limit) : result.rows;
     }
 
-    const bucketTotal = bucketCtx.buckets.reduce((s: number, b: any) => s + b.count, 0);
+    // ТЗ-218 З3 п.4: total = ВСЕ живые непрочитанные (без лимита страницы) + бакеты
+    let total: number | null = null;
+    if (unreadMode && page === 1) {
+      try {
+        const exclParams2: unknown[] = [];
+        const exclBase2 = USE_SQLITE ? 0 : 1 + (showAll ? 0 : 1);
+        const exclSql2 = exclusionPredicate(bucketCtx.exclude, exclParams2, exclBase2);
+        if (USE_SQLITE) {
+          const conds = tagIds.map(() => 'matched_tags LIKE ?').join(' OR ');
+          const likeParams = tagIds.map(id => `%"${id}"%`);
+          const cr = await query(
+            `SELECT COUNT(*) AS count FROM news
+             WHERE (${conds})
+               AND NOT EXISTS (SELECT 1 FROM user_news_reads r WHERE r.user_id = ? AND r.news_id = news.id)${exclSql2}
+               AND ${timeFilter}`,
+            [...likeParams, userId, ...exclParams2]
+          );
+          total = Number(cr.rows[0]?.count || 0) + bucketCtx.buckets.reduce((x: number, b: any) => x + b.count, 0);
+        } else {
+          const cr = await query(
+            `SELECT COUNT(*) AS count FROM news
+             WHERE matched_tags && $1::text[]
+               AND NOT EXISTS (SELECT 1 FROM user_news_reads r WHERE r.user_id = $2 AND r.news_id = news.id)${exclSql2}
+               AND ${timeFilter}`,
+            [tagIds, userId, ...exclParams2]
+          );
+          total = Number(cr.rows[0]?.count || 0) + bucketCtx.buckets.reduce((x: number, b: any) => x + b.count, 0);
+        }
+      } catch (err: any) {
+        console.error('[News] total count error:', err.message);
+        total = articles.length + bucketCtx.buckets.reduce((x: number, b: any) => x + b.count, 0);
+      }
+    }
     res.json({
       articles,
-      total: unreadMode ? articles.length + bucketTotal : null,
+      total,
       page,
       hasMore,
       buckets: bucketCtx.buckets,
