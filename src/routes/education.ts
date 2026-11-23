@@ -403,6 +403,7 @@ ${desc ? `<meta property="og:description" content="${escapeHtml(desc)}">` : ''}
 <meta property="og:type" content="website">
 <meta property="og:url" content="${canonical}">
 <meta property="og:image" content="${image}">
+<meta property="og:image:alt" content="${title}">
 <meta property="og:site_name" content="PULSE">
 <meta property="og:locale" content="ru_RU">
 <meta name="twitter:card" content="summary_large_image">
