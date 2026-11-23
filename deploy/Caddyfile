@@ -32,15 +32,65 @@
 	# Googlebot/Bingbot НЕ добавляем (у них пререндер + JS-рендеринг, двойная
 	# подача = риск клоакинга). Только карточка курса — /education/paths/*
 	# и вложенные пути исключены. Rewrite идёт до handle /api/* → прокси бэка.
-	@course_og {
+	# Доказано тестами на живом Caddy 2.11 (изолированные контейнеры 23.11):
+	# header matcher матчит ТОЛЬКО одно wildcard-значение (*бот*); multi-value
+	# список ломает парсер («malformed header matcher»), regexp в /слэшах/
+	# конфиг принимает, но НЕ матчит. Поэтому — один matcher на бота.
+	# Googlebot/Bingbot НЕ добавляем (клоакинг-риск: у них пререндер + JS).
+	@og_telegrambot {
 		path /education/*
 		not path /education/paths/*
-		# один regexp (multi-value header matcher парсится со скобкой-терминатором —
-		# кавычки/wildcard-список валидность ломают; regexp в /слэшах/ — валиден)
-		# Caddy матчит regexp полностью (full match) — нужны .* по краям
-		header User-Agent /.*(TelegramBot|Twitterbot|facebookexternalhit|WhatsApp|Slackbot|Discordbot|LinkedInBot|vkShare|Viber).*/
+		header User-Agent *TelegramBot*
 	}
-	rewrite @course_og /api/education/og/{http.request.uri.path.2}
+	@og_twitterbot {
+		path /education/*
+		not path /education/paths/*
+		header User-Agent *Twitterbot*
+	}
+	@og_fb {
+		path /education/*
+		not path /education/paths/*
+		header User-Agent *facebookexternalhit*
+	}
+	@og_whatsapp {
+		path /education/*
+		not path /education/paths/*
+		header User-Agent *WhatsApp*
+	}
+	@og_slackbot {
+		path /education/*
+		not path /education/paths/*
+		header User-Agent *Slackbot*
+	}
+	@og_discordbot {
+		path /education/*
+		not path /education/paths/*
+		header User-Agent *Discordbot*
+	}
+	@og_linkedinbot {
+		path /education/*
+		not path /education/paths/*
+		header User-Agent *LinkedInBot*
+	}
+	@og_vkshare {
+		path /education/*
+		not path /education/paths/*
+		header User-Agent *vkShare*
+	}
+	@og_viber {
+		path /education/*
+		not path /education/paths/*
+		header User-Agent *Viber*
+	}
+	rewrite @og_telegrambot /api/education/og/{http.request.uri.path.2}
+	rewrite @og_twitterbot /api/education/og/{http.request.uri.path.2}
+	rewrite @og_fb /api/education/og/{http.request.uri.path.2}
+	rewrite @og_whatsapp /api/education/og/{http.request.uri.path.2}
+	rewrite @og_slackbot /api/education/og/{http.request.uri.path.2}
+	rewrite @og_discordbot /api/education/og/{http.request.uri.path.2}
+	rewrite @og_linkedinbot /api/education/og/{http.request.uri.path.2}
+	rewrite @og_vkshare /api/education/og/{http.request.uri.path.2}
+	rewrite @og_viber /api/education/og/{http.request.uri.path.2}
 
 	handle /api/* {
 		reverse_proxy backend:3001
