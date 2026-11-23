@@ -261,6 +261,20 @@ curl https://pulse-api-bsov.onrender.com/api/user/tags \
 ---
 
 *Обновлять при изменении логики auth / тегов / попапов.*
+## Backfill og.jpg обложек (ТЗ-205.1, разовый/при миграциях)
+
+Скрипт `scripts/backfill-og-covers.ts` пишет парные og.jpg (1200×630) для
+существующих webp-обложек. Идемпотентен, ничего не удаляет, в БД не лезет.
+Регламент (на VDS, после деплоя ТЗ-205.1 или при миграции хранилища):
+
+```bash
+# env подхватывается контейнером: на хосте UPLOADS_DIR отличается от /app/uploads
+docker exec -i pulse-backend sh -lc 'cd /app && npx ts-node --transpile-only scripts/backfill-og-covers.ts'            # сухой прогон
+docker exec -i pulse-backend sh -lc 'cd /app && npx ts-node --transpile-only scripts/backfill-og-covers.ts --apply'   # запись
+```
+
+Ожидаемый результат: `N обработано, 0 ошибок`. Повторный прогон — все skip.
+
 ## Деплойный чек-лист (дополнения)
 
 - `npm run audit` (`npm audit --audit-level=high`) — зелёно перед деплоем (ИБ-11, ТЗ-183; CI-сборки нет, только telegram-notify).
