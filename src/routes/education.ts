@@ -420,6 +420,9 @@ ${desc ? `<meta name="twitter:description" content="${escapeHtml(desc)}">` : ''}
   }
 }));
 
+// ═══════════════════════════════════════════════════════════════════════════
+// GET /api/education/courses/:slug
+// ═══════════════════════════════════════════════════════════════════════════
 router.get('/courses/:slug', optionalAuth, h(async (req, res) => {
   const slug = req.params.slug;
   const userId = req.user?.userId;
