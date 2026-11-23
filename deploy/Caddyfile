@@ -82,15 +82,15 @@
 		not path /education/paths/*
 		header User-Agent *Viber*
 	}
-	rewrite @og_telegrambot /api/education/og/{http.request.uri.path.2}
-	rewrite @og_twitterbot /api/education/og/{http.request.uri.path.2}
-	rewrite @og_fb /api/education/og/{http.request.uri.path.2}
-	rewrite @og_whatsapp /api/education/og/{http.request.uri.path.2}
-	rewrite @og_slackbot /api/education/og/{http.request.uri.path.2}
-	rewrite @og_discordbot /api/education/og/{http.request.uri.path.2}
-	rewrite @og_linkedinbot /api/education/og/{http.request.uri.path.2}
-	rewrite @og_vkshare /api/education/og/{http.request.uri.path.2}
-	rewrite @og_viber /api/education/og/{http.request.uri.path.2}
+	rewrite @og_telegrambot /api/education/og/{http.request.uri.path.1}
+	rewrite @og_twitterbot /api/education/og/{http.request.uri.path.1}
+	rewrite @og_fb /api/education/og/{http.request.uri.path.1}
+	rewrite @og_whatsapp /api/education/og/{http.request.uri.path.1}
+	rewrite @og_slackbot /api/education/og/{http.request.uri.path.1}
+	rewrite @og_discordbot /api/education/og/{http.request.uri.path.1}
+	rewrite @og_linkedinbot /api/education/og/{http.request.uri.path.1}
+	rewrite @og_vkshare /api/education/og/{http.request.uri.path.1}
+	rewrite @og_viber /api/education/og/{http.request.uri.path.1}
 
 	handle /api/* {
 		reverse_proxy backend:3001
