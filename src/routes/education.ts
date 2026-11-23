@@ -22,7 +22,7 @@ import axios from 'axios';
 import { query } from '../config/db';
 import { AuthRequest, authMiddleware } from '../middleware/auth';
 import { optionalAuth } from '../middleware/optionalAuth';
-import { checkRateLimit, lmsCalendarMatchLimiter, lmsFreeDownloadLimiter, lmsSubmissionLimiter } from '../middleware/rateLimit';
+import { checkRateLimit, lmsCalendarMatchLimiter, lmsFreeDownloadLimiter, lmsSubmissionLimiter, ogRenderLimiter } from '../middleware/rateLimit'; // ТЗ-205 ogRenderLimiter
 import { getActivePlans, getUserSubscription, parseDbJson } from '../services/subscription';
 import { getCached } from '../services/education/cache';
 import { getGraphCached, invalidateGraphCache } from '../services/education/knowledgeGraph'; // ТЗ-107 v3: кэш графа
@@ -361,6 +361,65 @@ router.get('/categories', h(async (_req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 // GET /api/education/courses/:slug — титульная (ТЗ-100 v4/v9/v13; критерии 9, 16-21)
 // ═══════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
+// ТЗ-205: GET /api/education/og/:slug — runtime OG-рендер карточки курса для
+// краулеров мессенджеров (Telegram/WhatsApp/…). Caddy по User-Agent реврайтит
+// сюда /education/<slug>. Зеркалит контроль доступа /courses/:slug: draft/
+// archived и visibility='hidden' (для анонима) → 404 — без noindex-меты, иначе
+// утёк бы заголовок скрытого курса в мессенджер. Build-time пререндер (ТЗ-140)
+// остаётся основным каналом для поисковиков.
+// ═══════════════════════════════════════════════════════════════════════════
+router.get('/og/:slug', h(async (req, res) => {
+  if (!(await checkRateLimit(req, res, ogRenderLimiter))) return; // 429 отправлен
+  try {
+    const slug = String(req.params.slug || '');
+    const r = await query(
+      `SELECT c.slug, c.title, c.description, c.cover_url, c.status, c.visibility
+       FROM courses c WHERE c.slug = $1 AND c.deleted_at IS NULL`,
+      [slug]
+    );
+    const c = r.rows[0];
+    // зеркало /courses/:slug: не опубликован или скрытый (анонимный краулер) → 404
+    if (!c || c.status !== 'published' || c.visibility === 'hidden') {
+      return res.status(404).send('Not found');
+    }
+
+    const { courseTitle, metaDescription, canonicalCourse, absoluteUrl, escapeHtml, OG_DEFAULT_IMAGE } = await import('../utils/ogMeta');
+    const canonical = canonicalCourse(c.slug);
+    const title = escapeHtml(courseTitle(c.title));
+    const desc = metaDescription(c.description);
+    const image = escapeHtml(absoluteUrl(c.cover_url || OG_DEFAULT_IMAGE));
+    res.set('Cache-Control', 'public, max-age=300');
+    res.set('Content-Type', 'text/html; charset=utf-8');
+    res.send(`<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>${title}</title>
+${desc ? `<meta name="description" content="${escapeHtml(desc)}">` : ''}
+<link rel="canonical" href="${canonical}">
+<meta property="og:title" content="${title}">
+${desc ? `<meta property="og:description" content="${escapeHtml(desc)}">` : ''}
+<meta property="og:type" content="website">
+<meta property="og:url" content="${canonical}">
+<meta property="og:image" content="${image}">
+<meta property="og:site_name" content="PULSE">
+<meta property="og:locale" content="ru_RU">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="${title}">
+${desc ? `<meta name="twitter:description" content="${escapeHtml(desc)}">` : ''}
+<meta name="twitter:image" content="${image}">
+</head>
+<body>
+<script>location.replace(${JSON.stringify(canonical)})</script>
+</body>
+</html>`);
+  } catch (err: any) {
+    console.error('[EducationOG] error:', err.message);
+    res.status(500).send('Error');
+  }
+}));
+
 router.get('/courses/:slug', optionalAuth, h(async (req, res) => {
   const slug = req.params.slug;
   const userId = req.user?.userId;

@@ -295,6 +295,21 @@ export const lmsFreeDownloadLimiter = rateLimit({
   validate: { trustProxy: false },
 });
 
+// ─── ТЗ-205: OG runtime-рендер карточек курсов (краулеры мессенджеров) ─────
+// 60 запросов/мин на IP — endpoint дешёвый (один SELECT), но краулеров много
+export const ogRenderLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  message: {
+    error: 'Too many requests',
+    retryAfter: '1 minute',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.ip || 'unknown',
+  validate: { trustProxy: false },
+});
+
 // ─── LMS: календарный мэтчинг (ТЗ-103 Задача 7) ─────────────────────────────
 // Публичные безликие эндпоинты (calendar-today / for-event / courses/:slug/
 // events) — ответ почти весь кэшируется (TTL 1 ч), лимит страхует от перебора
