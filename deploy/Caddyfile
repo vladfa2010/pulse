@@ -35,7 +35,7 @@
 	@course_og {
 		path /education/*
 		not path /education/paths/*
-		header User-Agent *TelegramBot* *Twitterbot* *facebookexternalhit* *WhatsApp* *Slackbot* *Discordbot* *LinkedInBot* *vkShare* *Viber*
+		header User-Agent "*TelegramBot*" "*Twitterbot*" "*facebookexternalhit*" "*WhatsApp*" "*Slackbot*" "*Discordbot*" "*LinkedInBot*" "*vkShare*" "*Viber*"
 	}
 	rewrite @course_og /api/education/og/{http.request.uri.path.2}
 
