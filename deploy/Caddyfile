@@ -26,6 +26,19 @@
 	# (youtube-nocookie/rutube/vkvideo/vimeo), inline-стили React.
 	header Content-Security-Policy-Report-Only "default-src 'self'; img-src 'self' data: https:; media-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' https://telegram.org https://mc.yandex.ru; connect-src 'self' wss: https://mc.yandex.ru; font-src 'self' data:; frame-src https://www.youtube.com https://www.youtube-nocookie.com https://rutube.ru https://vkvideo.ru https://player.vimeo.com https://oauth.telegram.org; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
 
+	# ТЗ-205: runtime OG для краулеров мессенджеров — курс, опубликованный после
+	# последнего деплоя фронта, даёт превью без редеплоя (build-time пререндер
+	# ТЗ-140 остаётся для поисковиков). Только User-Agent мессенджер-ботов;
+	# Googlebot/Bingbot НЕ добавляем (у них пререндер + JS-рендеринг, двойная
+	# подача = риск клоакинга). Только карточка курса — /education/paths/*
+	# и вложенные пути исключены. Rewrite идёт до handle /api/* → прокси бэка.
+	@course_og {
+		path /education/*
+		not path /education/paths/*
+		header User-Agent *TelegramBot* *Twitterbot* *facebookexternalhit* *WhatsApp* *Slackbot* *Discordbot* *LinkedInBot* *vkShare* *Viber*
+	}
+	rewrite @course_og /api/education/og/{http.request.uri.path.2}
+
 	handle /api/* {
 		reverse_proxy backend:3001
 	}
