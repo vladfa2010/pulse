@@ -35,7 +35,9 @@
 	@course_og {
 		path /education/*
 		not path /education/paths/*
-		header User-Agent "*TelegramBot*" "*Twitterbot*" "*facebookexternalhit*" "*WhatsApp*" "*Slackbot*" "*Discordbot*" "*LinkedInBot*" "*vkShare*" "*Viber*"
+		# один regexp (multi-value header matcher парсится со скобкой-терминатором —
+		# кавычки/wildcard-список валидность ломают; regexp в /слэшах/ — валиден)
+		header User-Agent /(TelegramBot|Twitterbot|facebookexternalhit|WhatsApp|Slackbot|Discordbot|LinkedInBot|vkShare|Viber)/
 	}
 	rewrite @course_og /api/education/og/{http.request.uri.path.2}
 
