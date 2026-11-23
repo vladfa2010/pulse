@@ -150,3 +150,11 @@ npm run verify:translateGuard
 | 2026-09-05 | News queries | `ensurePortfolioHistoryFresh` — `GROUP BY 1` → 42703 в PG-ветке (ложилась каждая годовая карта портфеля) |
 | 2026-09-05 | Calendar М1–М6 + manual | Скрипты использовали SQLite-паттерны (`admin1`, `datetime('now')`, `?`, `is_admin = 1`) — не работали в PG-режиме; продуктовый код пострадал только в одном месте — `;` в комментарии schema.sql ломала сплиттер bootstrap'а |
 | 2026-09-05 | News queries (ТЗ-11.11fix14) | `getYearCells`: gap-fallback дочитывал только хвост `(frozenThrough; вчера]` — после первого freeze без backfill «голова» года пустовала в проде. Добавлен head-fill `[allDates[0]; firstFrozen-1]`; тест 17 изолирует инцидент (негативная проверка: без фикса ячейка пустая) |
+
+## Probe-тесты (ТЗ-205/205.1 и далее)
+
+| Скрипт | Прогон | Покрытие |
+|---|---|---|
+| src/tests/ogMetaParity.test.ts | npx tsx | паритет формул fe/seo.ts ↔ be/ogMeta.ts (25 кейсов, включая деривацию og.jpg) |
+| src/tests/coverUpload.tz198.test.ts | npx tsx | пайплайн обложек: webp ≤1920 + ogJpg 1200×630 jpeg, бомба 413, мусор 415 |
+| src/tests/newsTitle.test.ts | npx tsx | санитайзер заголовков ТЗ-222 |

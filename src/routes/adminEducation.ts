@@ -26,7 +26,7 @@ import { query, pool } from '../config/db';
 import { nowSql } from '../utils/nowSql';
 import { slugify } from '../utils/slugify';
 import { decodeUploadName } from '../utils/filename';
-import { compressCoverImage, CoverImageError } from '../utils/coverImage';
+import { compressCoverImage, CoverImageError, type CoverDerivatives } from '../utils/coverImage';
 import { AuthRequest } from '../middleware/auth';
 import { adminMiddleware } from '../middleware/admin';
 import { checkRateLimit, lmsUploadLimiter } from '../middleware/rateLimit';
@@ -1171,7 +1171,7 @@ router.post('/courses/:id/cover', uploadMw(coverUpload, 'file'), h(async (req, r
   // EXIF strip (S3): rotate() применяет orientation, withMetadata НЕ вызываем —
   // метаданные камеры/GPS не копируются в выходной файл.
   // ТЗ-198: обложки жмутся до WebP ≤1920px q82 (вес в 3–6 раз ниже оригинала).
-  let derivatives: import('../utils/coverImage').CoverDerivatives;
+  let derivatives: CoverDerivatives;
   try {
     derivatives = await compressCoverImage(file.buffer);
   } catch (err: any) {
@@ -3635,17 +3635,19 @@ router.post('/paths/:id/cover', uploadMw(coverUpload, 'file'), h(async (req, res
     return fail(res, 415, 'Допустимы только jpg/png/webp');
   }
   // ТЗ-198: тот же пайплайн, что у обложек курсов — WebP ≤1920px q82.
-  let derivatives: import('../utils/coverImage').CoverDerivatives;
+  let derivatives: CoverDerivatives;
   try {
     derivatives = await compressCoverImage(file.buffer);
   } catch (err: any) {
     if (err instanceof CoverImageError) return fail(res, err.status, err.message);
     throw err;
   }
+  let putRef: { relPath: string } | null = null;
   try {
     // ТЗ-205.1: парный uuid webp + og.jpg
     const uuid = crypto.randomUUID();
     const put = await putBuffer(derivatives.webp, 'courses', 'cover.webp', { relPath: `/media/courses/${uuid}.webp` });
+    putRef = put;
     await putBuffer(derivatives.ogJpg, 'courses', 'cover.og.jpg', { relPath: `/media/courses/${uuid}.og.jpg` });
     const oldCover = pathR.rows[0].cover_url;
     await query(
@@ -3662,6 +3664,7 @@ router.post('/paths/:id/cover', uploadMw(coverUpload, 'file'), h(async (req, res
     logUserEvent(adminId, 'education.path_updated', { path_id: pathId, field: 'cover' });
     res.json({ cover_url: put.relPath });
   } catch (err: any) {
+    if (putRef) removeFile(putRef.relPath).catch(() => {});
     if (err instanceof StorageError) return fail(res, err.status, err.message);
     throw err;
   }
