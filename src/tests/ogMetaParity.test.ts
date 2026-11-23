@@ -53,6 +53,14 @@ eq(og.absoluteUrl('/x.png', 'https://example.com'), 'https://example.com/x.png',
 eq(og.absoluteUrl('https://cdn.io/x.png', 'https://example.com'), 'https://cdn.io/x.png', 'absoluteUrl: уже абсолютный');
 eq(og.absoluteUrl(null, 'https://example.com'), 'https://example.com', 'absoluteUrl: null → base');
 
+// ─── ТЗ-205.1: ogJpgPathFromCover / ogImageFromCover (parity с fe/seo.ts) ───
+eq(og.ogJpgPathFromCover('/media/courses/abc.webp'), '/media/courses/abc.og.jpg', 'ogJpg: webp → og.jpg');
+eq(og.ogJpgPathFromCover('/media/courses/abc.png'), null, 'ogJpg: не webp → null');
+eq(og.ogJpgPathFromCover(null), null, 'ogJpg: null → null');
+eq(og.ogImageFromCover('/media/courses/abc.webp'), '/media/courses/abc.og.jpg', 'ogImage: webp → производная');
+eq(og.ogImageFromCover('/media/courses/abc.png'), '/media/courses/abc.png', 'ogImage: не webp → как есть');
+eq(og.ogImageFromCover(null), og.OG_DEFAULT_IMAGE, 'ogImage: null → дефолт');
+
 // ─── escapeHtml ─────────────────────────────────────────────────────────────
 eq(og.escapeHtml(`<b>&"'</b>`), '&lt;b&gt;&amp;&quot;&#39;&lt;/b&gt;', 'escapeHtml: все символы');
 

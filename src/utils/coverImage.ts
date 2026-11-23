@@ -22,7 +22,16 @@ export class CoverImageError extends Error {
   }
 }
 
-export async function compressCoverImage(input: Buffer): Promise<Buffer> {
+export interface CoverDerivatives {
+  /** обложка витрины/карточки: ≤1920px webp q82 (контракт ТЗ-198) */
+  webp: Buffer;
+  /** ТЗ-205.1: og:image для краулеров — 1200×630 jpeg (Telegram/X не берут webp
+   *  в summary_large_image). Считается ОТ ИСХОДНОГО буфера (не от webp) —
+   *  качество, один metadata pass. */
+  ogJpg: Buffer;
+}
+
+export async function compressCoverImage(input: Buffer): Promise<CoverDerivatives> {
   try {
     const img = sharp(input).rotate();
     const meta = await img.metadata();
@@ -30,10 +39,17 @@ export async function compressCoverImage(input: Buffer): Promise<Buffer> {
     if (megapixels > 50) {
       throw new CoverImageError(413, 'Изображение больше 50 Мпикс (decompression bomb)');
     }
-    return await img
+    const webp = await img
+      .clone()
       .resize({ width: 1920, withoutEnlargement: true })
       .toFormat('webp', { quality: 82 })
       .toBuffer();
+    const ogJpg = await img
+      .clone()
+      .resize({ width: 1200, height: 630, fit: 'cover', position: 'attention' })
+      .jpeg({ quality: 85, mozjpeg: true })
+      .toBuffer();
+    return { webp, ogJpg };
   } catch (err: any) {
     if (err instanceof CoverImageError) throw err;
     throw new CoverImageError(415, 'Файл не является корректным изображением');

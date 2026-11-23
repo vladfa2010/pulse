@@ -384,11 +384,14 @@ router.get('/og/:slug', h(async (req, res) => {
       return res.status(404).send('Not found');
     }
 
-    const { courseTitle, metaDescription, canonicalCourse, absoluteUrl, escapeHtml, OG_DEFAULT_IMAGE } = await import('../utils/ogMeta');
+    const { courseTitle, metaDescription, canonicalCourse, absoluteUrl, escapeHtml, ogImageFromCover } = await import('../utils/ogMeta');
     const canonical = canonicalCourse(c.slug);
     const title = escapeHtml(courseTitle(c.title));
     const desc = metaDescription(c.description);
-    const image = escapeHtml(absoluteUrl(c.cover_url || OG_DEFAULT_IMAGE));
+    // ТЗ-205.1: webp-обложки → jpeg-производная 1200×630 (Telegram/X не берут webp)
+    const ogImageRel = ogImageFromCover(c.cover_url);
+    const image = escapeHtml(absoluteUrl(ogImageRel));
+    const isOgJpg = ogImageRel.endsWith('.og.jpg');
     res.set('Cache-Control', 'public, max-age=300');
     res.set('Content-Type', 'text/html; charset=utf-8');
     res.send(`<!doctype html>
@@ -403,7 +406,11 @@ ${desc ? `<meta property="og:description" content="${escapeHtml(desc)}">` : ''}
 <meta property="og:type" content="website">
 <meta property="og:url" content="${canonical}">
 <meta property="og:image" content="${image}">
-<meta property="og:image:alt" content="${title}">
+<meta property="og:image:secure_url" content="${image}">
+${isOgJpg ? `<meta property="og:image:type" content="image/jpeg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+` : ''}<meta property="og:image:alt" content="${title}">
 <meta property="og:site_name" content="PULSE">
 <meta property="og:locale" content="ru_RU">
 <meta name="twitter:card" content="summary_large_image">

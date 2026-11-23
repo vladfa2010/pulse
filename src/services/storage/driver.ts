@@ -181,16 +181,31 @@ export interface PutResult {
  * удаление. Ни при каком падении нет пары «запись в БД есть, файла нет»
  * (INSERT в БД делается вызывающим кодом ПОСЛЕ успешного put).
  */
+export interface PutBufferOpts {
+  /** ТЗ-205.1: целевой relPath с заданным именем (парный uuid webp+og.jpg).
+   *  Валидация: путь обязан остаться внутри kind. Без opts — safeFilename. */
+  relPath?: string;
+}
+
 export async function putBuffer(
   buf: Buffer,
   kind: UploadKind,
   originalName: string,
+  opts?: PutBufferOpts,
 ): Promise<PutResult> {
   if (STORAGE_DRIVER !== 'local') throw new StorageError(501, 'storage driver not implemented');
   await assertDiskSpace();
 
-  const filename = safeFilename(originalName);
-  const relPath = `/media/${kind}/${filename}`;
+  let relPath: string;
+  if (opts?.relPath) {
+    const expected = `/media/${kind}/`;
+    if (!opts.relPath.startsWith(expected) || opts.relPath.includes('..')) {
+      throw new StorageError(400, `relPath вне kind ${kind}`);
+    }
+    relPath = opts.relPath;
+  } else {
+    relPath = `/media/${kind}/${safeFilename(originalName)}`;
+  }
   const absTarget = absFromRel(relPath);
   const absTmp = path.join(UPLOADS_DIR, 'tmp', `${crypto.randomUUID()}.part`);
 

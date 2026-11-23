@@ -13,6 +13,23 @@ const BASE = (process.env.FRONTEND_URL || 'https://pulse.inside-trade.ru').repla
 
 export const OG_DEFAULT_IMAGE = '/og-default.png';
 
+/** ТЗ-205.1: деривация og.jpg-пути из cover_url (.webp → та же база .og.jpg).
+ *  Детерминированно, без fs.stat: краулер при редком промахе (файла нет) получит
+ *  404 картинки → текст-превью — деградация не хуже исходной webp-ситуации. */
+export function ogJpgPathFromCover(coverUrl: string | null | undefined): string | null {
+  if (!coverUrl) return null;
+  if (coverUrl.endsWith('.webp')) return coverUrl.slice(0, -'.webp'.length) + '.og.jpg';
+  return null; // не webp — пары нет
+}
+
+/** ТЗ-205.1: og:image для мета — jpeg-производная для webp-обложек (Telegram/X
+ *  не берут webp в summary_large_image); иначе cover как есть; null → дефолт. */
+export function ogImageFromCover(coverUrl: string | null | undefined): string {
+  const derived = ogJpgPathFromCover(coverUrl);
+  if (derived) return derived;
+  return coverUrl || OG_DEFAULT_IMAGE;
+}
+
 /** Title курса с правилом длины 50–60: суффикс «— курс на PULSE», затем «| PULSE», затем только название. */
 export function courseTitle(name: string): string {
   const full = `${name} — курс на PULSE`;

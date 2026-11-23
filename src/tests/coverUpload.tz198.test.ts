@@ -51,7 +51,7 @@ async function run() {
   for (const format of ['jpeg', 'png', 'webp'] as const) {
     const input = await noisyFixture(1200, 800, format);
     const out = await compressCoverImage(input);
-    const meta = await sharp(out).metadata();
+    const meta = await sharp(out.webp).metadata();
     check(`${format} → выход webp`, meta.format === 'webp', meta.format);
     check(`${format} → EXIF/GPS отсутствуют`, !meta.exif && !meta.xmp, { exif: !!meta.exif, xmp: !!meta.xmp });
   }
@@ -59,16 +59,20 @@ async function run() {
   // 2. 4000px → 1920px
   const big = await noisyFixture(4000, 3000, 'jpeg');
   const bigOut = await compressCoverImage(big);
-  const bigMeta = await sharp(bigOut).metadata();
+  const bigMeta = await sharp(bigOut.webp).metadata();
   check('4000px → ширина 1920px', bigMeta.width === 1920, bigMeta.width);
   check('пропорции сохранены (h=1440)', bigMeta.height === 1440, bigMeta.height);
-  check('вес выхода < веса входа', bigOut.length < big.length,
-    { in: big.length, out: bigOut.length });
+  check('вес выхода < веса входа', bigOut.webp.length < big.length,
+    { in: big.length, out: bigOut.webp.length });
+  // ТЗ-205.1: ogJpg — 1200×630 jpeg от исходника
+  const ogMeta = await sharp(bigOut.ogJpg).metadata();
+  check('ogJpg → jpeg 1200×630', ogMeta.format === 'jpeg' && ogMeta.width === 1200 && ogMeta.height === 630,
+    { format: ogMeta.format, w: ogMeta.width, h: ogMeta.height });
 
   // 3. Меньше 1920 — не увеличиваем
   const small = await noisyFixture(800, 600, 'jpeg');
   const smallOut = await compressCoverImage(small);
-  const smallMeta = await sharp(smallOut).metadata();
+  const smallMeta = await sharp(smallOut.webp).metadata();
   check('800px → не увеличен (800px)', smallMeta.width === 800, smallMeta.width);
 
   // 4. Бомба: 9000×7000 = 63 Мпикс > 50 → 413

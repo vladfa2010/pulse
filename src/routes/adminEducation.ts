@@ -34,6 +34,7 @@ import { logUserEvent } from '../services/activityLog';
 import { getEnrollNotifyChannels, notifyEnrolledUser, ENROLL_NOTIFY_CHANNELS } from '../services/education/enrollNotify'; // ТЗ-186: уведомление записанного пользователя
 import { getActivePlans, parseDbJson } from '../services/subscription';
 import { invalidateEducationCache } from '../services/education/cache';
+import { ogJpgPathFromCover } from '../utils/ogMeta'; // ТЗ-205.1
 import { scheduleEducationSeoRebuild, rebuildEducationSeoNow, fetchSeoRebuildLog, isEducationSeoRebuildPending } from '../services/education/seoRebuild'; // ТЗ-164: SEO-пересборка при сохранении + статус (Задачи 4-5)
 import { resolveSourceUrl, ResolveSourceError } from '../services/education/resolveSource';
 import { enqueueScan } from '../services/education/virusScan'; // ТЗ-102: retry-скан pending_scan при заходе в очередь
@@ -1170,25 +1171,30 @@ router.post('/courses/:id/cover', uploadMw(coverUpload, 'file'), h(async (req, r
   // EXIF strip (S3): rotate() применяет orientation, withMetadata НЕ вызываем —
   // метаданные камеры/GPS не копируются в выходной файл.
   // ТЗ-198: обложки жмутся до WebP ≤1920px q82 (вес в 3–6 раз ниже оригинала).
-  let normalized: Buffer;
+  let derivatives: import('../utils/coverImage').CoverDerivatives;
   try {
-    normalized = await compressCoverImage(file.buffer);
+    derivatives = await compressCoverImage(file.buffer);
   } catch (err: any) {
     if (err instanceof CoverImageError) return fail(res, err.status, err.message);
     throw err;
   }
 
   try {
-    const put = await putBuffer(normalized, 'courses', 'cover.webp');
+    // ТЗ-205.1: оба файла с ОДНИМ uuid — производная .og.jpg выводится из cover_url
+    const uuid = crypto.randomUUID();
+    const put = await putBuffer(derivatives.webp, 'courses', 'cover.webp', { relPath: `/media/courses/${uuid}.webp` });
+    await putBuffer(derivatives.ogJpg, 'courses', 'cover.og.jpg', { relPath: `/media/courses/${uuid}.og.jpg` });
     const oldCover = courseR.rows[0].cover_url;
     await query(
       `UPDATE courses SET cover_url = $1, updated_at = ${nowSql()} WHERE id = $2`,
       [put.relPath, courseId],
     );
-    // S7: старая обложка → soft-delete в tmp/trash (retention 30 дней)
+    // S7: старая обложка → soft-delete в tmp/trash (retention 30 дней); og.jpg-пара тоже
     if (oldCover && String(oldCover).startsWith('/media/')) {
       removeFile(String(oldCover)).catch((e: any) =>
         console.warn('[AdminEducation] old cover removeFile failed:', e?.message));
+      const oldOg = ogJpgPathFromCover(String(oldCover));
+      if (oldOg) removeFile(oldOg).catch(() => {});
     }
     invalidateEducationCache();
     scheduleEducationSeoRebuild(); // ТЗ-164: смена og:image
@@ -3629,15 +3635,18 @@ router.post('/paths/:id/cover', uploadMw(coverUpload, 'file'), h(async (req, res
     return fail(res, 415, 'Допустимы только jpg/png/webp');
   }
   // ТЗ-198: тот же пайплайн, что у обложек курсов — WebP ≤1920px q82.
-  let normalized: Buffer;
+  let derivatives: import('../utils/coverImage').CoverDerivatives;
   try {
-    normalized = await compressCoverImage(file.buffer);
+    derivatives = await compressCoverImage(file.buffer);
   } catch (err: any) {
     if (err instanceof CoverImageError) return fail(res, err.status, err.message);
     throw err;
   }
   try {
-    const put = await putBuffer(normalized, 'courses', 'cover.webp');
+    // ТЗ-205.1: парный uuid webp + og.jpg
+    const uuid = crypto.randomUUID();
+    const put = await putBuffer(derivatives.webp, 'courses', 'cover.webp', { relPath: `/media/courses/${uuid}.webp` });
+    await putBuffer(derivatives.ogJpg, 'courses', 'cover.og.jpg', { relPath: `/media/courses/${uuid}.og.jpg` });
     const oldCover = pathR.rows[0].cover_url;
     await query(
       `UPDATE course_paths SET cover_url = $1, updated_at = ${nowSql()} WHERE id = $2`,
@@ -3646,6 +3655,8 @@ router.post('/paths/:id/cover', uploadMw(coverUpload, 'file'), h(async (req, res
     if (oldCover && String(oldCover).startsWith('/media/')) {
       removeFile(String(oldCover)).catch((e: any) =>
         console.warn('[AdminEducation] old path cover removeFile failed:', e?.message));
+      const oldOg = ogJpgPathFromCover(String(oldCover));
+      if (oldOg) removeFile(oldOg).catch(() => {});
     }
     invalidateEducationCache();
     logUserEvent(adminId, 'education.path_updated', { path_id: pathId, field: 'cover' });
