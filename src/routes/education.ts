@@ -29,7 +29,7 @@ import { getGraphCached, invalidateGraphCache } from '../services/education/know
 import { isEducationGraphEnabled } from '../config/knowledgeGraph'; // ТЗ-107 v3: фичефлаг графа
 import { isEducationMatchEnabled } from '../services/education/match'; // ТЗ-103 Задача 6: фичефлаг мэтчинга
 import { NEWS_MATERIALS_ENABLED } from '../config/newsMaterials'; // ТЗ-230: auto-ветка today-блока
-import { materialsForVector, parseVectorText } from '../services/education/newsMaterials'; // ТЗ-230
+import { loadCoursesMatrix, rankCourses, parseVectorText } from '../services/education/newsMaterials'; // ТЗ-230
 import {
   courseTagIds,
   getCalMatchCached,
@@ -2390,10 +2390,13 @@ router.get('/home/today-courses', optionalAuth, h(async (req, res) => {
           [],
         );
       }
+      // Матрица курсов — один раз на запрос (ТЗ-230): математика та же
+      // (rankCourses сервиса ТЗ-229, общий порог), без 300×2 повторных SELECT
+      const courseRows = await loadCoursesMatrix();
       for (const n of autoNews.rows as any[]) {
         const vec = parseVectorText(n.emb_text);
         if (!vec) continue;
-        const { courses: autoCourses } = await materialsForVector(vec);
+        const autoCourses = rankCourses(vec, courseRows);
         if (autoCourses.length === 0) continue;
         const newsTagIds = parseEventTagIds(n.matched_tags);
         const common = userTagIds.length > 0

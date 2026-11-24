@@ -120,7 +120,9 @@ async function loadLessonsMatrix(): Promise<LessonRow[]> {
   return res.rows as LessonRow[];
 }
 
-async function loadCoursesMatrix(): Promise<CourseRow[]> {
+// Экспортировано для ТЗ-230: today-блок грузит матрицу один раз на запрос —
+// иначе 300 векторов × повторная загрузка дают cache miss ~4 с при норме ≤3 с.
+export async function loadCoursesMatrix(): Promise<CourseRow[]> {
   // SELECT — по образцу searchCoursesByVector (news.ts), вектор текстом для
   // Node-косинуса (прецедент-комментарий: полный перебор дёшев, индекс не нужен)
   const res = await query(
@@ -163,7 +165,9 @@ function rankLessons(newsVec: number[], rows: LessonRow[]): LessonMaterial[] {
     .slice(0, NEWS_MATERIALS_LESSON_TOP);
 }
 
-function rankCourses(newsVec: number[], rows: CourseRow[]): CourseMaterial[] {
+// Тот же ранкер, что в materialsForVector — ТЗ-230 подаёт матрицу один раз
+// на запрос (см. loadCoursesMatrix), порог общий NEWS_MATERIALS_COURSE_MIN_SIM.
+export function rankCourses(newsVec: number[], rows: CourseRow[]): CourseMaterial[] {
   const ranked: CourseMaterial[] = [];
   for (const r of rows) {
     const v = parseVectorText(r.emb_text);
