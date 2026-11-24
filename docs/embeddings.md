@@ -58,6 +58,7 @@
 | Кластеризация новостей | `services/clustering.ts` | hook в ingest (fire-and-forget при `CLUSTERING_ENABLED=true`) + cron `*/15` catch-up | `embeddingText(title_ru, summary_ru)` | `news.embedding` (pgvector) → `cluster_id` |
 | Бэкфилл новостей | `scripts/backfillEmbeddings.ts` | ручной запуск; партиции `BACKFILL_MOD/REM`, `BACKFILL_BATCH_SIZE` (деф. 16) | то же | `news.embedding`; skipped → `logs/backfill_embeddings_skipped.json` |
 | Смысловой поиск | `routes/news.ts` (`/api/news/search`) | реалтайм, по запросу юзера | запрос целиком, 1 текст (свой таймаут `SEMANTIC_SEARCH_TIMEOUT_MS`) | не пишет, ищет по `news.embedding` (HNSW) |
+| Материалы к новости | `services/education/newsMaterials.ts` (ТЗ-229) | реалтайм, по открытию новости / батч-lookup ленты | готовые векторы (новости/курсов/уроков), TEI НЕ вызывается | не пишет никуда — хранилища пар нет, вычисление на лету; читает `news.embedding`, `courses.embedding`, `lesson_embeddings` |
 
 Поиск в ленте — гибридный (ТЗ-161, 2026-10-16; разделы выдачи — ТЗ-213/214,
 01.11.2026): точная ветка ILIKE идёт первыми (word-AND по словам запроса,
@@ -248,6 +249,22 @@ SELECT round(sim::numeric,3), a.title, b.title
   Счётчики карточек (`lessons_count/total_minutes/students_count`) приведены
   к `::int` — паритет типов с витриной `465727b`. Проверка на проде:
   «санкции трампа» → 1 курс sim=0.7016, поля совпадают с витриной 1:1.
+- **2026-11-25 (ТЗ-229):** «Материалы к новости» — обратная к ТЗ-103 связка:
+  читатель новости видит уроки/курсы по смыслу (блок в модалке + чип в ленте).
+  Без хранилища пар: косинус новость↔урок (`lesson_embeddings.vector` BYTEA,
+  Node-косинус через `bufferToVector`/`cosine`) и новость↔курс
+  (`courses.embedding::text` → JSON.parse) на лету; выборки 1:1
+  `searchLessonsByVector`/`searchCoursesByVector` (фильтры published/public,
+  дубль SELECT'ов осознан — при смене фильтров править оба места). Пороги
+  env: `NEWS_MATERIALS_LESSON_MIN_SIM` (0.42), `NEWS_MATERIALS_COURSE_MIN_SIM`
+  (0.48), топы `NEWS_MATERIALS_LESSON_TOP` (4) / `NEWS_MATERIALS_COURSE_TOP`
+  (6); фичефлаг `NEWS_MATERIALS_ENABLED` (дефолт OFF). **Калибровка
+  пробой** (`scripts/probe_tz229.js`, 200 свежих новостей): top-1 уроки
+  p10/p50/p90 = 0.2714/0.3479/0.4576, курсы 0.2289/0.3172/0.4395 — порог
+  курса 0.60 из ТЗ-177 на эту ось НЕ переносится (дал бы <1% новостей),
+  выбрано 0.48; порог урока 0.25 из ТЗ-107 (одна спот-пара) заменён на 0.42.
+  Живые проверки: lookup 50 id 0.39 с (11/50 новостей с материалами),
+  101 id → 400, эндпоинт materials 0.25 с.
 - **2026-11-01 (ТЗ-215):** четвёртый раздел выдачи «Уроки по теме» — поле
   `lessons` (топ-4, `similarity >= 0.6` `LESSON_SEARCH_MIN_SIM`; история
   порога: 0.55 → 0.65 → измеренный max релевантных 0.6251 → 0.55 → 0.6 —
