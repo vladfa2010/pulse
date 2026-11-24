@@ -34,6 +34,8 @@ import { markBucketRead, archiveAllBuckets } from '../services/bucketRead'; // �
 import type { BucketKey } from '../services/bucketTime';
 import { embedBatch } from '../services/embeddings';
 import { SEARCH_COURSES_ENABLED, SEARCH_LESSONS_ENABLED } from '../config/courseSearch';
+import { NEWS_MATERIALS_ENABLED } from '../config/newsMaterials'; // ТЗ-229
+import { materialsForVector, materialsCountsForNews, parseVectorText } from '../services/education/newsMaterials'; // ТЗ-229
 import { nowSql } from '../utils/nowSql';
 import { bufferToVector, cosine } from '../services/education/knowledgeGraph';
 
@@ -409,6 +411,39 @@ router.get('/unread-count', authMiddleware, async (req: AuthRequest, res) => {
   } catch (err: any) {
     console.error('[News] unread-count error:', err.message);
     res.status(500).json({ error: 'Failed to fetch unread count' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// POST /api/news/materials-lookup — батч-счётчики материалов для чипов ленты
+// (ТЗ-229, Задача 3.2). Публичный: материалы — безликий публичный контент
+// витрины. Регистрация ДО /:id/read выше невозможна (тот ниже), но обязательно
+// ДО него: иначе 'materials-lookup' попадёт в '/:id/read'.
+// Флаг OFF → {} (паттерн молчаливого отсутствия, прецедент news.ts:686-689).
+// ═══════════════════════════════════════════════════════════════════════════
+router.post('/materials-lookup', async (req: AuthRequest, res) => {
+  try {
+    if (!NEWS_MATERIALS_ENABLED) return res.json({});
+
+    const raw = (req.body as any)?.ids;
+    if (!Array.isArray(raw)) {
+      return res.status(400).json({ error: 'ids — массив uuid' });
+    }
+    // макс. страница ленты — limit ≤ 100 (news.ts:138)
+    if (raw.length > 100) {
+      return res.status(400).json({ error: 'не более 100 id' });
+    }
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const ids = raw.map(String).filter(v => uuidRegex.test(v));
+    if (ids.length === 0) return res.json({});
+
+    const counts = await materialsCountsForNews(ids);
+    const payload: Record<string, { lessons: number; courses: number }> = {};
+    for (const [id, c] of counts) payload[id] = c;
+    res.json(payload);
+  } catch (err) {
+    console.error('[NewsMaterials] materials-lookup error:', err);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -996,6 +1031,40 @@ router.get('/by-slug/:slugOrId/tag-enrichments', async (req: AuthRequest, res) =
   } catch (err: any) {
     console.error('[TagEnrichments] By slug error:', err.message);
     res.status(500).json({ error: 'Failed to fetch tag enrichments' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GET /api/news/:id/materials — «Материалы по теме» для модалки новости
+// (ТЗ-229, Задача 3.1). Публичный: новость публична через /by-slug, материалы —
+// безликий публичный контент витрины (фильтры published+public — в сервисе).
+// Путь двухсегментный, конфликта с /:id нет; держим рядом с /by-slug.
+// Флаг OFF → 404 (паттерн education.ts:2282). Без эмбеддинга →
+// { lessons: null, courses: null } — фронт скрывает блок (прецедент молчаливого
+// фолбэка news.ts:686-689). SQLite-режим: сервис отдаёт пустые коллекции.
+// ═══════════════════════════════════════════════════════════════════════════
+router.get('/:id/materials', async (req: AuthRequest, res) => {
+  try {
+    if (!NEWS_MATERIALS_ENABLED) return res.status(404).json({ error: 'Not found' });
+
+    const newsId = req.params.id;
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(newsId)) return res.status(404).json({ error: 'Not found' });
+
+    const newsResult = await query(
+      `SELECT embedding::text AS emb_text FROM news WHERE id = $1`,
+      [newsId],
+    );
+    if (newsResult.rows.length === 0) return res.status(404).json({ error: 'News not found' });
+
+    const newsVec = parseVectorText(newsResult.rows[0].emb_text);
+    if (!newsVec) return res.json({ lessons: null, courses: null });
+
+    const { lessons, courses } = await materialsForVector(newsVec);
+    res.json({ lessons, courses });
+  } catch (err: any) {
+    console.error('[NewsMaterials] materials error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch materials' });
   }
 });
 
