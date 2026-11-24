@@ -2262,11 +2262,138 @@ router.get('/calendar-today', h(async (req, res) => {
         status: r.status,
         company: r.company,
         ticker: r.ticker,
+        tag_ids: parseEventTagIds(r.tag_ids), // ТЗ-226 Задача 1.2: для клиентской персонализации
         matched_courses: matchedCourses,
       });
     }
     return { events };
   });
+  res.json(payload);
+}));
+
+// GET /api/education/home/today-courses — курсы под текущие новости (ТЗ-226 Задача 1).
+// Источник — news_course_links (подтверждённая редактором связь, автопары из
+// suggestions публично не отдаём) по новостям за 48 часов. Optional auth:
+// авторизованный — персональная выдача (matched_tags новости ∩ теги портфеля,
+// паттерн ленты news.ts), гость — глобальная. Кэш calmatch: гость
+// 'home:today-courses:global' TTL 1 ч, юзер 'home:today-courses:u:<id>' TTL 10 мин;
+// attach сносит оба через invalidateEducationCache → invalidateCalMatchCache.
+router.get('/home/today-courses', optionalAuth, h(async (req, res) => {
+  if (!isEducationMatchEnabled()) return fail(res, 404, 'Not found');
+  if (!(await checkRateLimit(req, res, lmsCalendarMatchLimiter))) return; // 429 отправлен
+
+  const userId = req.user?.userId ?? null;
+  const isSqlite = process.env.USE_SQLITE === 'true';
+  const cacheKey = userId ? `home:today-courses:u:${userId}` : 'home:today-courses:global';
+  const cacheTtl = userId ? 10 * 60 * 1000 : undefined; // гость — дефолт calmatch (1 ч)
+
+  const payload = await getCalMatchCached(cacheKey, async () => {
+    console.log(`[EducationCalMatch] home/today-courses computed (cache miss, ${userId ?? 'guest'})`);
+    // Теги портфеля — паттерн news.ts (только активные, не замороженные)
+    let userTagIds: string[] = [];
+    if (userId) {
+      const pr = await query(
+        `SELECT tag_id FROM portfolios WHERE user_id = $1 AND is_frozen = ${isSqlite ? '0' : 'FALSE'}`,
+        [userId],
+      );
+      userTagIds = pr.rows.map((r: any) => String(r.tag_id));
+    }
+
+    const winSql = isSqlite
+      ? "n.published_at >= datetime('now', '-48 hours')"
+      : "n.published_at >= NOW() - INTERVAL '48 hours'";
+
+    let rows;
+    if (!isSqlite && userTagIds.length > 0) {
+      // PG: персональная выдача — GIN && как в ленте
+      rows = await query(
+        `SELECT c.id, c.slug, c.title, c.price, c.cover_url, n.matched_tags, n.published_at
+         FROM news_course_links l
+         JOIN news n ON n.id = l.news_id
+         JOIN courses c ON c.id = l.course_id
+         WHERE ${winSql}
+           AND c.status = 'published' AND c.deleted_at IS NULL AND c.visibility = 'public'
+           AND n.matched_tags && $1
+         ORDER BY n.published_at DESC`,
+        [userTagIds],
+      );
+    } else {
+      // гость / юзер без тегов / SQLite: LIKE-паттерн news.ts (без тегов — глобальная выдача)
+      const like = userTagIds.length > 0
+        ? ` AND (${userTagIds.map(() => 'n.matched_tags LIKE ?').join(' OR ')})`
+        : '';
+      rows = await query(
+        `SELECT c.id, c.slug, c.title, c.price, c.cover_url, n.matched_tags, n.published_at
+         FROM news_course_links l
+         JOIN news n ON n.id = l.news_id
+         JOIN courses c ON c.id = l.course_id
+         WHERE ${winSql}
+           AND c.status = 'published' AND c.deleted_at IS NULL AND c.visibility = 'public'${like}
+         ORDER BY n.published_at DESC`,
+        userTagIds.map(id => `%"${id}"%`),
+      );
+    }
+
+    // Дедуп по курсу: news_count, свежесть, до 3 общих тегов (паттерн MatchedCourse)
+    const byCourse = new Map<string, {
+      slug: string; title: string; price: number; cover_url: string | null;
+      count: number; lastPublished: string; tagIds: Set<string>;
+    }>();
+    for (const r of rows.rows as any[]) {
+      const newsTagIds = parseEventTagIds(r.matched_tags); // TEXT-JSON / array
+      const common = userTagIds.length > 0
+        ? newsTagIds.filter(t => userTagIds.includes(t))
+        : newsTagIds;
+      let e = byCourse.get(r.id);
+      if (!e) {
+        e = {
+          slug: r.slug, title: r.title, price: Number(r.price), cover_url: r.cover_url,
+          count: 0, lastPublished: r.published_at, tagIds: new Set(),
+        };
+        byCourse.set(r.id, e);
+      }
+      e.count += 1;
+      if (new Date(r.published_at) > new Date(e.lastPublished)) e.lastPublished = r.published_at;
+      for (const t of common) {
+        if (e.tagIds.size >= 3) break;
+        e.tagIds.add(t);
+      }
+    }
+
+    const courses = [...byCourse.values()]
+      .sort((a, b) => b.count - a.count
+        || new Date(b.lastPublished).getTime() - new Date(a.lastPublished).getTime())
+      .slice(0, 6);
+
+    // Названия тегов одним запросом (паттерн matchCoursesToEvent)
+    const allTagIds = [...new Set(courses.flatMap(c => [...c.tagIds]))];
+    const names = new Map<string, string>();
+    if (allTagIds.length > 0) {
+      const tR = isSqlite
+        ? await query(
+            `SELECT tag_id, tag_name FROM user_defined_tags WHERE tag_id IN (${allTagIds.map(() => '?').join(',')})`,
+            allTagIds,
+          )
+        : await query(
+            'SELECT tag_id, tag_name FROM user_defined_tags WHERE tag_id = ANY($1)',
+            [allTagIds],
+          );
+      for (const t of tR.rows as any[]) names.set(String(t.tag_id), t.tag_name || String(t.tag_id));
+    }
+
+    return {
+      personalized: Boolean(userId),
+      courses: courses.map(c => ({
+        slug: c.slug,
+        title: c.title,
+        cover_url: c.cover_url,
+        price: c.price,
+        news_count: c.count,
+        matched_tags: [...c.tagIds].map(id => names.get(id) || id),
+      })),
+    };
+  }, cacheTtl);
+
   res.json(payload);
 }));
 

@@ -41,10 +41,10 @@ export function invalidateCalMatchCache(): void {
   }
 }
 
-export function getCalMatchCached<T>(key: string, producer: () => Promise<T>): Promise<T> {
+export function getCalMatchCached<T>(key: string, producer: () => Promise<T>, ttlMs?: number): Promise<T> {
   const fullKey = CACHE_PREFIX + key;
   const hit = cache.get(fullKey);
-  if (hit && Date.now() - hit.at <= CALMATCH_TTL_MS) {
+  if (hit && Date.now() - hit.at <= (ttlMs ?? CALMATCH_TTL_MS)) {
     return Promise.resolve(hit.payload as T);
   }
   cache.delete(fullKey);
