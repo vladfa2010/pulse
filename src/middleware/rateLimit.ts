@@ -328,6 +328,23 @@ export const lmsCalendarMatchLimiter = rateLimit({
   validate: { trustProxy: false },
 });
 
+// ─── Материалы к новости — батч-lookup чипов (ТЗ-229) ──────────────────────
+// 30/мин на IP: самый тяжёлый анонимный эндпоинт (2 матрицы + до 100×полный
+// перебор ≈ 0.4 с CPU), легитимный сценарий — 1 запрос на загрузку страницы
+// ленты. Поверх общего apiLimiter (300/15 мин) — ревью ТЗ-229.
+export const newsMaterialsLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 минута
+  max: 30,
+  message: {
+    error: 'Слишком много запросов. Попробуйте через минуту.',
+    retryAfter: '1 minute',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.ip || 'unknown',
+  validate: { trustProxy: false },
+});
+
 // ─── Club invite — 10 ссылок/час на юзера (TZ-197-club, защита от фарма ссылок) ──
 export const clubInviteLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 час

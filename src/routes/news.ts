@@ -35,6 +35,7 @@ import type { BucketKey } from '../services/bucketTime';
 import { embedBatch } from '../services/embeddings';
 import { SEARCH_COURSES_ENABLED, SEARCH_LESSONS_ENABLED } from '../config/courseSearch';
 import { NEWS_MATERIALS_ENABLED } from '../config/newsMaterials'; // ТЗ-229
+import { checkRateLimit, newsMaterialsLimiter } from '../middleware/rateLimit'; // ТЗ-229: лимит тяжёлого батч-lookup
 import { materialsForVector, materialsCountsForNews, parseVectorText } from '../services/education/newsMaterials'; // ТЗ-229
 import { nowSql } from '../utils/nowSql';
 import { bufferToVector, cosine } from '../services/education/knowledgeGraph';
@@ -423,6 +424,7 @@ router.get('/unread-count', authMiddleware, async (req: AuthRequest, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 router.post('/materials-lookup', async (req: AuthRequest, res) => {
   try {
+    if (!(await checkRateLimit(req, res, newsMaterialsLimiter))) return; // 429 отправлен (ТЗ-229)
     if (!NEWS_MATERIALS_ENABLED) return res.json({});
 
     const raw = (req.body as any)?.ids;
