@@ -28,6 +28,8 @@ import { getCached } from '../services/education/cache';
 import { getGraphCached, invalidateGraphCache } from '../services/education/knowledgeGraph'; // ТЗ-107 v3: кэш графа
 import { isEducationGraphEnabled } from '../config/knowledgeGraph'; // ТЗ-107 v3: фичефлаг графа
 import { isEducationMatchEnabled } from '../services/education/match'; // ТЗ-103 Задача 6: фичефлаг мэтчинга
+import { NEWS_MATERIALS_ENABLED } from '../config/newsMaterials'; // ТЗ-230: auto-ветка today-блока
+import { materialsForVector, parseVectorText } from '../services/education/newsMaterials'; // ТЗ-230
 import {
   courseTagIds,
   getCalMatchCached,
@@ -2334,10 +2336,12 @@ router.get('/home/today-courses', optionalAuth, h(async (req, res) => {
       );
     }
 
-    // Дедуп по курсу: news_count, свежесть, до 3 общих тегов (паттерн MatchedCourse)
+    // Дедуп по курсу: news_count, свежесть, до 3 общих тегов (паттерн MatchedCourse).
+    // ТЗ-230: source manual|auto — ручная связка всегда приоритетнее auto.
     const byCourse = new Map<string, {
       slug: string; title: string; price: number; cover_url: string | null;
       count: number; lastPublished: string; tagIds: Set<string>;
+      source: 'manual' | 'auto'; sim: number | null;
     }>();
     for (const r of rows.rows as any[]) {
       const newsTagIds = parseEventTagIds(r.matched_tags); // TEXT-JSON / array
@@ -2349,6 +2353,7 @@ router.get('/home/today-courses', optionalAuth, h(async (req, res) => {
         e = {
           slug: r.slug, title: r.title, price: Number(r.price), cover_url: r.cover_url,
           count: 0, lastPublished: r.published_at, tagIds: new Set(),
+          source: 'manual', sim: null,
         };
         byCourse.set(r.id, e);
       }
@@ -2360,8 +2365,69 @@ router.get('/home/today-courses', optionalAuth, h(async (req, res) => {
       }
     }
 
+    // ТЗ-230: auto-ветка — косинусная добивка тем же движком, что материалы
+    // к новости (ТЗ-229): новости за 48 ч с эмбеддингом → материалыForVector →
+    // курсы выше NEWS_MATERIALS_COURSE_MIN_SIM (0.48, калибровка ТЗ-229).
+    // Только при NEWS_MATERIALS_ENABLED; SQLite — пропуск (эмбеддингов нет,
+    // прецедент ТЗ-229): поведение блока байт-в-байт текущее (только manual).
+    // Персональный фильтр — тот же, что у manual-ветки (matched_tags ∩ портфель).
+    if (NEWS_MATERIALS_ENABLED && !isSqlite) {
+      let autoNews;
+      if (userTagIds.length > 0) {
+        autoNews = await query(
+          `SELECT n.id, n.embedding::text AS emb_text, n.matched_tags, n.published_at
+           FROM news n
+           WHERE ${winSql} AND n.embedding IS NOT NULL AND n.matched_tags && $1
+           ORDER BY n.published_at DESC LIMIT 300`,
+          [userTagIds],
+        );
+      } else {
+        autoNews = await query(
+          `SELECT n.id, n.embedding::text AS emb_text, n.matched_tags, n.published_at
+           FROM news n
+           WHERE ${winSql} AND n.embedding IS NOT NULL
+           ORDER BY n.published_at DESC LIMIT 300`,
+          [],
+        );
+      }
+      for (const n of autoNews.rows as any[]) {
+        const vec = parseVectorText(n.emb_text);
+        if (!vec) continue;
+        const { courses: autoCourses } = await materialsForVector(vec);
+        if (autoCourses.length === 0) continue;
+        const newsTagIds = parseEventTagIds(n.matched_tags);
+        const common = userTagIds.length > 0
+          ? newsTagIds.filter(t => userTagIds.includes(t))
+          : newsTagIds;
+        for (const c of autoCourses) {
+          let e = byCourse.get(c.id);
+          if (!e) {
+            e = {
+              slug: c.slug, title: c.title, price: c.price, cover_url: c.cover_url,
+              count: 0, lastPublished: n.published_at, tagIds: new Set(),
+              source: 'auto', sim: c.similarity,
+            };
+            byCourse.set(c.id, e);
+          } else {
+            // курс найден обеими ветками: source остаётся 'manual'
+            // (редакционный приоритет), similarity = max auto-sim
+            e.sim = Math.max(e.sim ?? 0, c.similarity);
+          }
+          e.count += 1; // news_count суммируется по веткам
+          if (new Date(n.published_at) > new Date(e.lastPublished)) e.lastPublished = n.published_at;
+          for (const t of common) {
+            if (e.tagIds.size >= 3) break;
+            e.tagIds.add(t);
+          }
+        }
+      }
+    }
+
+    // ТЗ-230: manual-курсы всегда раньше auto; внутри группы — как ТЗ-226
+    // (count DESC → свежесть DESC); лимит 6 сохраняется
     const courses = [...byCourse.values()]
-      .sort((a, b) => b.count - a.count
+      .sort((a, b) => (a.source === b.source ? 0 : a.source === 'manual' ? -1 : 1)
+        || b.count - a.count
         || new Date(b.lastPublished).getTime() - new Date(a.lastPublished).getTime())
       .slice(0, 6);
 
@@ -2392,6 +2458,10 @@ router.get('/home/today-courses', optionalAuth, h(async (req, res) => {
         price: c.price,
         news_count: c.count,
         matched_tags: [...c.tagIds].map(id => names.get(id) || id),
+        // ТЗ-230: manual|auto (аддитивно, фронт ТЗ-226 обратно совместим);
+        // similarity — max auto-косинус, null у чисто manual
+        source: c.source,
+        similarity: c.sim,
       })),
     };
   }, cacheTtl);

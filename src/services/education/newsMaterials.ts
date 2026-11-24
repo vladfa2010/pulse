@@ -45,6 +45,7 @@ export interface LessonMaterial {
 
 /** Курс для блока «Материалы по теме» — поля под CourseCard + similarity. */
 export interface CourseMaterial {
+  id: string;
   slug: string;
   title: string;
   cover_url: string | null;
@@ -177,6 +178,7 @@ function rankCourses(newsVec: number[], rows: CourseRow[]): CourseMaterial[] {
       badges = [];
     }
     ranked.push({
+      id: r.id,
       slug: r.slug,
       title: r.title,
       cover_url: r.cover_url,
