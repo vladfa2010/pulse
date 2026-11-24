@@ -2382,7 +2382,9 @@ router.get('/home/today-courses', optionalAuth, h(async (req, res) => {
     }
 
     return {
-      personalized: Boolean(userId),
+      // personalized только если выдача реально отфильтрована по тегам портфеля:
+      // юзер без тегов получает глобальную выдачу — фронт покажет «в новостях сегодня»
+      personalized: Boolean(userId) && userTagIds.length > 0,
       courses: courses.map(c => ({
         slug: c.slug,
         title: c.title,
