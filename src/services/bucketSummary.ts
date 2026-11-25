@@ -119,7 +119,7 @@ async function selectTopNewsForPrompt(
   tagIds: string[],
   rangeStart: Date | null,
   rangeEnd: Date
-): Promise<Array<{ id: string; slug: string | null; title: string; source: string; sentiment: string | null; source_count: number }>> {
+): Promise<Array<{ id: string; slug: string | null; title: string; source: string; sentiment: string | null; source_count: number; cluster_id: string | null }>> {
   const tagConds: string[] = [];
   const params: unknown[] = [];
   const ph = () => (USE_SQLITE ? '?' : `$${params.length + 1}`);
@@ -144,10 +144,10 @@ async function selectTopNewsForPrompt(
   // условия тегов соединяются OR (overlap — как PG && и зеркало newsBuckets);
   // AND здесь дал бы пустую выборку почти всегда
   const res = await query(
-    `SELECT id, slug, COALESCE(title_ru, title_original) AS title, source, sentiment, source_count
+    `SELECT id, slug, COALESCE(title_ru, title_original) AS title, source, sentiment, source_count, cluster_id
      FROM news
      WHERE (${tagConds.join(' OR ')}) AND ${timeConds.join(' AND ')}
-     ORDER BY source_count DESC, sentiment_score DESC${nullsLast}
+     ORDER BY (cluster_id IS NOT NULL) DESC, source_count DESC, sentiment_score DESC${nullsLast}
      LIMIT ${TOP_N_PROMPT}`,
     params
   );
@@ -222,7 +222,7 @@ async function generateAndStore(
   if (!summary) return;
 
   const topNews = variant === 'bucket'
-    ? JSON.stringify(articles.slice(0, 4).map((a) => ({ id: a.id, slug: a.slug, title: a.title, source: a.source, sentiment: a.sentiment })))
+    ? JSON.stringify(articles.slice(0, 4).map((a) => ({ id: a.id, slug: a.slug, title: a.title, source: a.source, sentiment: a.sentiment, source_count: a.source_count, cascade: a.cluster_id != null })))
     : '[]';
   const rs = (rangeStart || new Date(0)).toISOString();
   const re = rangeEnd.toISOString();

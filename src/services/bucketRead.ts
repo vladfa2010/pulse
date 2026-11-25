@@ -97,6 +97,26 @@ async function insertBucketRead(userId: string, bucketStart: Date, bucketEnd: Da
 }
 
 /**
+ * Окно бакета по ключу (только границы — без записи просмотра).
+ * 'older' → (-∞, now-24h); фикс-ключи → ближайший закрытый бакет с этим
+ * ключом за 24ч. Бросает code 'bucket_not_closed', если бакет открыт/отсутствует.
+ * Общий резолв для markBucketRead и GET /buckets/:key/articles (ТЗ-224).
+ */
+export function resolveBucketWindow(key: BucketKey | 'older'): { start: Date | null; end: Date } {
+  const now = new Date();
+  if (key === 'older') {
+    return { start: null, end: new Date(now.getTime() - 24 * 3600 * 1000) };
+  }
+  // ближайший закрытый бакет с этим ключом за последние 24ч
+  const closed = closedBucketsSince(now, new Date(now.getTime() - 24 * 3600 * 1000));
+  const target = [...closed].reverse().find((b) => b.key === key);
+  if (!target) {
+    throw Object.assign(new Error('bucket not closed'), { code: 'bucket_not_closed' });
+  }
+  return { start: target.start, end: target.end };
+}
+
+/**
  * Просмотр бакета по ключу. Резолвит окно из фиксированных границ за 24ч;
  * отказывает, если бакет ещё открыт/отсутствует. Для 'older' — окно
  * (-∞, now-24h) + sentinel bucket_start = epoch.
@@ -105,22 +125,16 @@ export async function markBucketRead(userId: string, key: BucketKey | 'older'): 
   const tagIds = await userTagIds(userId);
   if (tagIds.length === 0) return 0;
 
-  const now = new Date();
   if (key === 'older') {
-    const end = new Date(now.getTime() - 24 * 3600 * 1000);
+    const { end } = resolveBucketWindow('older');
     const marked = await markWindowRead(userId, tagIds, null, end);
     await insertBucketRead(userId, new Date(0), end);
     return marked;
   }
 
-  // ближайший закрытый бакет с этим ключом за последние 24ч
-  const closed = closedBucketsSince(now, new Date(now.getTime() - 24 * 3600 * 1000));
-  const target = [...closed].reverse().find((b) => b.key === key);
-  if (!target) {
-    throw Object.assign(new Error('bucket not closed'), { code: 'bucket_not_closed' });
-  }
-  const marked = await markWindowRead(userId, tagIds, target.start, target.end);
-  await insertBucketRead(userId, target.start, target.end);
+  const { start, end } = resolveBucketWindow(key);
+  const marked = await markWindowRead(userId, tagIds, start, end);
+  await insertBucketRead(userId, start!, end);
   return marked;
 }
 

@@ -29,6 +29,7 @@ import { query } from '../config/db';
 import { popularTagsCached } from '../utils/tagCache';
 import { computePopularTags } from '../services/popularTags';
 import { markAllNewsAsRead, timeFilterSql } from '../services/newsReads';
+import { getBucketArticles } from '../services/bucketArticles'; // ТЗ-224: полный список бакета
 import { buildBuckets, exclusionPredicate } from '../services/newsBuckets'; // ТЗ-218
 import { markBucketRead, archiveAllBuckets } from '../services/bucketRead'; // ТЗ-218
 import type { BucketKey } from '../services/bucketTime';
@@ -365,6 +366,31 @@ router.post('/buckets/:key/read', authMiddleware, async (req: AuthRequest, res) 
   } catch (err: any) {
     console.error('[News] Bucket read error:', err.message);
     res.status(500).json({ error: 'Failed to mark bucket as read' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GET /api/news/buckets/:key/articles — полный список новостей окна (ТЗ-224)
+// ═══════════════════════════════════════════════════════════════════════════
+// «Развернуть все» в панели бакета: те же границы/теги, что у markBucketRead,
+// список шире непрочитанных (оглавление окна, правило 4 ТЗ-224). Каскады
+// первыми, hard cap 500, total — COUNT до лимита. Окно не закрыто → 409.
+// Регистрация рядом с /buckets/:key/read — путь трёхсегментный, конфликтов нет.
+router.get('/buckets/:key/articles', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user!.userId;
+    const key = String(req.params.key);
+    if (!BUCKET_KEYS.has(key)) {
+      return res.status(400).json({ error: 'Invalid bucket key' });
+    }
+    const { articles, total } = await getBucketArticles(userId, key as BucketKey | 'older');
+    res.json({ articles, total });
+  } catch (err: any) {
+    if (err?.code === 'bucket_not_closed') {
+      return res.status(409).json({ error: 'bucket_not_closed' });
+    }
+    console.error('[News] Bucket articles error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch bucket articles' });
   }
 });
 
