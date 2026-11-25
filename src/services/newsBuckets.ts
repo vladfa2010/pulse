@@ -30,6 +30,10 @@ export interface BucketTopNews {
   title: string;
   source: string | null;
   sentiment: string | null;
+  /** ТЗ-224/228: число СМИ (бейдж ×N у каскадной). */
+  source_count?: number;
+  /** ТЗ-224/228: новость в каскаде — идёт первой, бейдж ×N. */
+  cascade?: boolean;
 }
 
 export interface BucketPayload {
@@ -106,19 +110,22 @@ async function topNews(tagIds: string[], start: Date | null, end: Date): Promise
   const t = timeCond(params, start, end);
   const nullsLast = USE_SQLITE ? '' : ' NULLS LAST';
   const res = await query(
-    `SELECT n.id, n.slug, COALESCE(n.title_ru, n.title_original) AS title, n.source, n.sentiment
+    `SELECT n.id, n.slug, COALESCE(n.title_ru, n.title_original) AS title, n.source, n.sentiment, n.source_count, n.cluster_id
      FROM news n
      WHERE ${tc} AND ${t}
-     ORDER BY n.source_count DESC, n.sentiment_score DESC${nullsLast}
+     ORDER BY (n.cluster_id IS NOT NULL) DESC, n.source_count DESC, n.sentiment_score DESC${nullsLast}
      LIMIT 4`,
     params
   );
+  // ТЗ-228: зеркало DB-пути (bucketSummary) — каскады первыми, бейдж ×N на фронте
   return res.rows.map((r: any) => ({
     id: r.id,
     slug: r.slug ?? null,
     title: sanitizeNewsTitle(r.title) ?? '', // ТЗ-222: очищенный заголовок
     source: r.source ?? null,
     sentiment: r.sentiment ?? null,
+    source_count: Number(r.source_count ?? 1),
+    cascade: r.cluster_id != null,
   }));
 }
 
@@ -164,12 +171,16 @@ function parseTopNews(raw: unknown): BucketTopNews[] {
   try {
     const arr = typeof raw === 'string' ? JSON.parse(raw) : raw;
     if (!Array.isArray(arr)) return [];
+    // ТЗ-224: проброс source_count/cascade (пишутся generateAndStore с c5a2679;
+    // у строк до миграции полей нет — undefined, бейдж не рисуется)
     return arr.map((x: any) => ({
       id: String(x.id),
       slug: x.slug ?? null,
       title: String(x.title ?? ''),
       source: x.source ?? null,
       sentiment: x.sentiment ?? null,
+      source_count: x.source_count != null ? Number(x.source_count) : undefined,
+      cascade: x.cascade === true,
     }));
   } catch {
     return [];

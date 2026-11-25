@@ -371,7 +371,7 @@ export async function pregenBucketSummaries(
       const summary = await callLlm(buildPrompt(variant, bucketKeyName, articles));
       if (!summary) { failed++; continue; }
       const topNews = variant === 'bucket'
-        ? JSON.stringify(articles.slice(0, 4).map((a) => ({ id: a.id, slug: a.slug, title: a.title, source: a.source, sentiment: a.sentiment })))
+        ? JSON.stringify(articles.slice(0, 4).map((a) => ({ id: a.id, slug: a.slug, title: a.title, source: a.source, sentiment: a.sentiment, source_count: a.source_count, cascade: a.cluster_id != null })))
         : '[]';
       const rs = (variant === 'bucket' ? rangeStart : new Date(0)).toISOString();
       const re = rangeEnd.toISOString();
