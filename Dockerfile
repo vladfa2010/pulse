@@ -38,6 +38,8 @@ RUN cp src/migrations/weekly_reports_v1.sql dist/migrations/weekly_reports_v1.sq
 RUN cp src/migrations/lms_v10_lesson_shares.sql dist/migrations/lms_v10_lesson_shares.sql
 # TZ-197-club: членство в закрытом канале «Клуб» (миграция авто-применяется из раннера; копия — по конвенции)
 RUN cp src/migrations/telegram_club_v1.sql dist/migrations/telegram_club_v1.sql
+# ТЗ-234: просмотры/скролл уроков для POST /migrate-lms-lesson-last-view
+RUN cp src/migrations/lms_v11_lesson_last_view.sql dist/migrations/lms_v11_lesson_last_view.sql
 EXPOSE 3001
 ENV BUILD_TIMESTAMP=1779922500
 CMD ["node", "dist/index.js"]
