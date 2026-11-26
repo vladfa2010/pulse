@@ -1151,13 +1151,7 @@ router.get('/shared-lessons/:token', h(async (req, res) => {
 // сохранённое значение не трогаем. Upsert кросс-диалектный (SELECT →
 // UPDATE/INSERT, паттерн complete): всегда viewed_at = now. Ответ 204,
 // ошибки записи логируем, юзеру не мешаем.
-router.post('/lessons/:lessonId/view',
-  // ВРЕМЕННАЯ диагностика ТЗ-234 (убрать после разбора): видим факт POST'а и наличие токена
-  (req, res, next) => {
-    console.log(`[LessonView] POST hit lesson=${req.params.lessonId} auth=${req.headers.authorization ? 'yes' : 'NO'} ua=${String(req.headers['user-agent'] || '').slice(0, 40)}`);
-    next();
-  },
-  authMiddleware, h(async (req, res) => {
+router.post('/lessons/:lessonId/view', authMiddleware, h(async (req, res) => {
   const lessonId = req.params.lessonId;
   const userId = req.user!.userId;
   if (!isUuid(lessonId)) return fail(res, 404, 'Урок не найден');
