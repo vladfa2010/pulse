@@ -2759,7 +2759,8 @@ router.post('/courses/:id/enrollments', h(async (req, res) => {
   // (дешёвые индексные SELECT'ы; отправка здесь не происходит).
   const notify_channels = await getEnrollNotifyChannels(userId);
   if (existing.rows.length > 0) {
-    return res.status(200).json({ ok: true, already_enrolled: true, notify_channels });
+    // ТЗ-233: course_status — фронту для предупреждения «запись на draft/archived»
+    return res.status(200).json({ ok: true, already_enrolled: true, notify_channels, course_status: courseR.rows[0].status });
   }
 
   await query(
@@ -2770,7 +2771,7 @@ router.post('/courses/:id/enrollments', h(async (req, res) => {
   // Инвалидация кэша витрины НЕ нужна (счётчик записанных не входит в каталог,
   // ТЗ-101 Задача 4) — но аналитика обязательна: кто кому раздал доступ
   logUserEvent(adminId, 'education.enroll_admin', { course_id: courseId, target_user_id: userId });
-  res.status(201).json({ ok: true, source: 'admin_grant', notify_channels });
+  res.status(201).json({ ok: true, source: 'admin_grant', notify_channels, course_status: courseR.rows[0].status }); // ТЗ-233: course_status
 }));
 
 // POST /courses/:id/enrollments/:userId/notify — ТЗ-186: отправить записанному

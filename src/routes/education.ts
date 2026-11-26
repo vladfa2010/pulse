@@ -463,11 +463,8 @@ router.get('/courses/:slug', optionalAuth, h(async (req, res) => {
     }
   }
 
-  // draft/archived: только админ через ?preview_token=<JWT> (ТЗ-101 Задача 2)
-  if (c.status !== 'published' && !previewAdmin) {
-    return fail(res, 404, 'Курс не найден');
-  }
-
+  // Вычисление admin/enrollment поднято ВЫШЕ статус-гейта (ТЗ-233): гейту
+  // нужно знать, записан ли юзер, чтобы отдать честный статус вместо 404.
   // Скрытый курс (v9): аноним/без enrollment → 404 (не 403 — факт существования
   // секретного курса не подтверждаем). Админ (is_admin или валидный preview_token) — ок.
   const admin = (await isAdminUser(userId)) || previewAdmin;
@@ -478,6 +475,22 @@ router.get('/courses/:slug', optionalAuth, h(async (req, res) => {
       )
     : { rows: [] as any[] };
   const enrollment = enrollR.rows[0] || null;
+
+  // draft/archived (ТЗ-233): админ — preview как раньше; записанный на archived —
+  // 200 + archived:true ниже; записанный на draft — честный 409 вместо лживого
+  // 404; аноним/не-записанный — прежний 404 (анти-энумерация: факт существования
+  // черновика/архива не подтверждаем; 409 раскрывает его только записанному,
+  // который и так видит курс в /education/my — осознанный trade-off ТЗ-233).
+  if (c.status !== 'published' && !admin) {
+    if (c.status === 'archived' && enrollment) {
+      // пропускаем ниже — в ответ добавится archived: true
+    } else if (enrollment) {
+      // Ключ error обязателен: generic-обработчик api.ts читает data.error.
+      return res.status(409).json({ code: 'course_not_published', error: 'Курс пока не опубликован', title: c.title });
+    } else {
+      return fail(res, 404, 'Курс не найден');
+    }
+  }
 
   if (c.visibility === 'hidden' && !enrollment && !admin) {
     logIdorBlocked(userId, 'course', c.id);
@@ -629,6 +642,9 @@ router.get('/courses/:slug', optionalAuth, h(async (req, res) => {
     badges: parseDbJson<string[]>(c.badges) || [],
     status: c.status,
     visibility: c.visibility,
+    // ТЗ-233: плашка «Курс в архиве» на фронте — только для archived+enrolled
+    // (в остальных ответах поле не добавляем)
+    ...(c.status === 'archived' && enrollment ? { archived: true } : {}),
     author: c.author,
     category: c.category_id ? { id: c.category_id, name: c.category_name } : null,
     tags: tagsR.rows.map((t: any) => ({ id: t.tag_id, label: t.tag_name || t.tag_id })),
