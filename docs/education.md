@@ -1426,9 +1426,21 @@ scroll — программный scrollTo сам генерирует scroll); 
 flush на `visibilitychange:hidden`/`pagehide` через `fetch keepalive` (не
 sendBeacon — нет Authorization). Пройденный урок открывается с начала.
 Процент, а не пиксели — переживает смену ориентации по построению.
-Под fixed-body локом читалки (ТЗ-235) window.scrollY === 0 — onScroll/flush
-загардированы (`body.style.position === 'fixed'` → не шлём), иначе сворачивание
-PWA во время чтения затирало бы позицию нулём (фоллоу-ап приёмки ТЗ-235).
+Под fixed-body локом читалки (ТЗ-235) window.scrollY === 0 — при открытой
+читалке scroll_percent НЕ пишется никогда (гард readOpenRef, ТЗ-236; заменил
+временный гард по body.style из фоллоу-апа ТЗ-235), иначе сворачивание PWA во
+время чтения затирало бы позицию нулём.
+
+**ТЗ-236 (2026-11-27) — страница читалки:** колонка `rm_page INTEGER NULL` в
+`lesson_last_view` (миграция `lms_v12_lesson_rm_page.sql`, эндпоинт
+`/migrate-lms-lesson-rm-page`, SQLite — колонка в CREATE TABLE + try/catch
+ALTER для существующих баз). `POST /view` принимает `rm_page` (целое 1..10000,
+тот же hasOwnProperty-паттерн — не передан, колонку не трогаем); `my_view`
+отдаёт `rm_page` (гостю null). Фронт: стоп-точка читалки восстанавливается из
+`my_view.rm_page` (visited = 1..rmPage — осознанное ослабление гейта
+allVisited между сессиями, риск 1 ТЗ), смена страницы шлёт fire-and-forget
+`{rm_page}`; flush при открытой читалке шлёт `{rm_page}` вместо скролла.
+`GET /my` и resume не тронуты — resume на уроке, не на странице.
 
 **CTA «Продолжить»:** страница курса и главная (HomeCoursesSection) ведут на
 `resume_lesson_id ?? next_lesson_id`; подпись не менялась.

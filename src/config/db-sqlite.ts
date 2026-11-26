@@ -946,11 +946,13 @@ export async function initSQLiteSchema(): Promise<void> {
     );
 
     -- ТЗ-234: последний просмотренный урок + скролл-позиция (PG-зеркало: lms_v11_lesson_last_view.sql)
+    -- ТЗ-236: + rm_page — страница читалки (PG-зеркало: lms_v12_lesson_rm_page.sql)
     CREATE TABLE IF NOT EXISTS lesson_last_view (
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       lesson_id TEXT NOT NULL REFERENCES course_lessons(id) ON DELETE CASCADE,
       viewed_at TEXT DEFAULT (datetime('now')),
       scroll_percent REAL,
+      rm_page INTEGER,
       PRIMARY KEY (user_id, lesson_id)
     );
 
@@ -1097,6 +1099,14 @@ export async function initSQLiteSchema(): Promise<void> {
   try {
     db.run('ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0');
     console.log('[SQLite] Migration: added is_admin column');
+  } catch {
+    // Column already exists — ignore
+  }
+
+  // ТЗ-236: rm_page для существующих SQLite-баз (свежие получают колонку из CREATE TABLE)
+  try {
+    db.run('ALTER TABLE lesson_last_view ADD COLUMN rm_page INTEGER');
+    console.log('[SQLite] Migration: added lesson_last_view.rm_page column');
   } catch {
     // Column already exists — ignore
   }

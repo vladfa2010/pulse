@@ -832,7 +832,7 @@ router.get('/lessons/:lessonId', optionalAuth, h(async (req, res) => {
   let progress: { completed: boolean; test_score: number | null } | null = null;
   // ТЗ-234: позиция просмотра — авторизованному {scroll_percent} (null — не
   // скроллил), гостю — null (поле в ответе присутствует всегда)
-  let myView: { scroll_percent: number | null } | null = null;
+  let myView: { scroll_percent: number | null; rm_page?: number | null } | null = null; // ТЗ-236: +rm_page
   if (userId) {
     const progR = await query(
       `SELECT test_score FROM lesson_progress WHERE user_id = $1 AND lesson_id = $2`,
@@ -843,11 +843,14 @@ router.get('/lessons/:lessonId', optionalAuth, h(async (req, res) => {
       : { completed: false, test_score: null };
 
     const viewR = await query(
-      `SELECT scroll_percent FROM lesson_last_view WHERE user_id = $1 AND lesson_id = $2`,
+      `SELECT scroll_percent, rm_page FROM lesson_last_view WHERE user_id = $1 AND lesson_id = $2`,
       [userId, lessonId],
     );
     if (viewR.rows.length > 0) {
-      myView = { scroll_percent: viewR.rows[0].scroll_percent != null ? Number(viewR.rows[0].scroll_percent) : null };
+      myView = {
+        scroll_percent: viewR.rows[0].scroll_percent != null ? Number(viewR.rows[0].scroll_percent) : null,
+        rm_page: viewR.rows[0].rm_page != null ? Number(viewR.rows[0].rm_page) : null, // ТЗ-236
+      };
     }
   }
 
@@ -1196,6 +1199,16 @@ router.post('/lessons/:lessonId/view', authMiddleware, h(async (req, res) => {
       return fail(res, 400, 'scroll_percent — число 0..1');
     }
   }
+  // ТЗ-236: rm_page — страница читалки; тот же hasOwnProperty-паттерн:
+  // не передан — колонку не трогаем; передан — целое 1..10000, иначе 400
+  const hasRmPage = req.body && Object.prototype.hasOwnProperty.call(req.body, 'rm_page');
+  let rmPage: number | null = null;
+  if (hasRmPage) {
+    rmPage = Number(req.body.rm_page);
+    if (!Number.isInteger(rmPage) || rmPage < 1 || rmPage > 10000) {
+      return fail(res, 400, 'rm_page — целое 1..10000');
+    }
+  }
 
   try {
     const existing = await query(
@@ -1203,24 +1216,22 @@ router.post('/lessons/:lessonId/view', authMiddleware, h(async (req, res) => {
       [userId, lessonId],
     );
     if (existing.rows.length > 0) {
-      if (hasScroll) {
-        await query(
-          `UPDATE lesson_last_view SET viewed_at = ${nowSqlInline()}, scroll_percent = $1
-           WHERE user_id = $2 AND lesson_id = $3`,
-          [scrollPercent, userId, lessonId],
-        );
-      } else {
-        await query(
-          `UPDATE lesson_last_view SET viewed_at = ${nowSqlInline()}
-           WHERE user_id = $1 AND lesson_id = $2`,
-          [userId, lessonId],
-        );
-      }
+      // ТЗ-236: scroll_percent и rm_page обновляем независимо — только переданные
+      const sets: string[] = [`viewed_at = ${nowSqlInline()}`];
+      const params: unknown[] = [];
+      if (hasScroll) { params.push(scrollPercent); sets.push(`scroll_percent = $${params.length}`); }
+      if (hasRmPage) { params.push(rmPage); sets.push(`rm_page = $${params.length}`); }
+      params.push(userId, lessonId);
+      await query(
+        `UPDATE lesson_last_view SET ${sets.join(', ')}
+         WHERE user_id = $${params.length - 1} AND lesson_id = $${params.length}`,
+        params,
+      );
     } else {
       await query(
-        `INSERT INTO lesson_last_view (user_id, lesson_id, viewed_at, scroll_percent)
-         VALUES ($1, $2, ${nowSqlInline()}, $3)`,
-        [userId, lessonId, hasScroll ? scrollPercent : null],
+        `INSERT INTO lesson_last_view (user_id, lesson_id, viewed_at, scroll_percent, rm_page)
+         VALUES ($1, $2, ${nowSqlInline()}, $3, $4)`,
+        [userId, lessonId, hasScroll ? scrollPercent : null, hasRmPage ? rmPage : null],
       );
     }
   } catch (err: any) {
