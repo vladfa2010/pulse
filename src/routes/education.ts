@@ -814,6 +814,9 @@ router.get('/lessons/:lessonId', optionalAuth, h(async (req, res) => {
 
   // Прогресс: записанному — состояние, анониму — null
   let progress: { completed: boolean; test_score: number | null } | null = null;
+  // ТЗ-234: позиция просмотра — авторизованному {scroll_percent} (null — не
+  // скроллил), гостю — null (поле в ответе присутствует всегда)
+  let myView: { scroll_percent: number | null } | null = null;
   if (userId) {
     const progR = await query(
       `SELECT test_score FROM lesson_progress WHERE user_id = $1 AND lesson_id = $2`,
@@ -822,6 +825,14 @@ router.get('/lessons/:lessonId', optionalAuth, h(async (req, res) => {
     progress = progR.rows.length > 0
       ? { completed: true, test_score: progR.rows[0].test_score ?? null }
       : { completed: false, test_score: null };
+
+    const viewR = await query(
+      `SELECT scroll_percent FROM lesson_last_view WHERE user_id = $1 AND lesson_id = $2`,
+      [userId, lessonId],
+    );
+    if (viewR.rows.length > 0) {
+      myView = { scroll_percent: viewR.rows[0].scroll_percent != null ? Number(viewR.rows[0].scroll_percent) : null };
+    }
   }
 
   // prev/next по позициям курса. ТЗ-127: выбираем title/kind/duration_min —
@@ -954,6 +965,7 @@ router.get('/lessons/:lessonId', optionalAuth, h(async (req, res) => {
     has_full_access: !!enrollment || admin,
     test,
     progress,
+    my_view: myView, // ТЗ-234: {scroll_percent} | null
     // ТЗ-127: программа курса, прогресс и соседи с номерами/названиями
     total_lessons: totalLessons,
     program: neighborsR.rows.map((r: any) => ({
@@ -1130,6 +1142,77 @@ router.get('/shared-lessons/:token', h(async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 // POST /api/education/lessons/:lessonId/complete — прогресс (критерии 5, 10)
 // ═══════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
+// POST /api/education/lessons/:lessonId/view — фиксация просмотра + скролла (ТЗ-234)
+// ═══════════════════════════════════════════════════════════════════════════
+// Auth обязателен (гости не трекаются). Гейт — тот же checkLessonAccess, что
+// у GET урока: blocked → его ответ как есть, запись не производится.
+// Тело: { scroll_percent?: number } — finite 0..1, иначе 400; не передан —
+// сохранённое значение не трогаем. Upsert кросс-диалектный (SELECT →
+// UPDATE/INSERT, паттерн complete): всегда viewed_at = now. Ответ 204,
+// ошибки записи логируем, юзеру не мешаем.
+router.post('/lessons/:lessonId/view', authMiddleware, h(async (req, res) => {
+  const lessonId = req.params.lessonId;
+  const userId = req.user!.userId;
+  if (!isUuid(lessonId)) return fail(res, 404, 'Урок не найден');
+
+  const lessonR = await query(
+    `SELECT l.*, c.status AS course_status, c.visibility, c.deleted_at,
+            c.subscription_unlock_mode, c.type AS course_type, c.slug AS course_slug,
+            c.title AS course_title
+     FROM course_lessons l JOIN courses c ON c.id = l.course_id
+     WHERE l.id = $1`,
+    [lessonId],
+  );
+  if (lessonR.rows.length === 0) return fail(res, 404, 'Урок не найден');
+  const lesson = lessonR.rows[0];
+  if (lesson.deleted_at) return fail(res, 404, 'Урок не найден');
+
+  const access = await checkLessonAccess(userId, lesson);
+  if (access.blocked) return res.status(access.blocked.status).json(access.blocked.body);
+
+  // scroll_percent: не передан — не трогаем; передан — finite 0..1, иначе 400
+  const hasScroll = req.body && Object.prototype.hasOwnProperty.call(req.body, 'scroll_percent');
+  let scrollPercent: number | null = null;
+  if (hasScroll) {
+    scrollPercent = Number(req.body.scroll_percent);
+    if (!Number.isFinite(scrollPercent) || scrollPercent < 0 || scrollPercent > 1) {
+      return fail(res, 400, 'scroll_percent — число 0..1');
+    }
+  }
+
+  try {
+    const existing = await query(
+      `SELECT 1 FROM lesson_last_view WHERE user_id = $1 AND lesson_id = $2`,
+      [userId, lessonId],
+    );
+    if (existing.rows.length > 0) {
+      if (hasScroll) {
+        await query(
+          `UPDATE lesson_last_view SET viewed_at = ${nowSqlInline()}, scroll_percent = $1
+           WHERE user_id = $2 AND lesson_id = $3`,
+          [scrollPercent, userId, lessonId],
+        );
+      } else {
+        await query(
+          `UPDATE lesson_last_view SET viewed_at = ${nowSqlInline()}
+           WHERE user_id = $1 AND lesson_id = $2`,
+          [userId, lessonId],
+        );
+      }
+    } else {
+      await query(
+        `INSERT INTO lesson_last_view (user_id, lesson_id, viewed_at, scroll_percent)
+         VALUES ($1, $2, ${nowSqlInline()}, $3)`,
+        [userId, lessonId, hasScroll ? scrollPercent : null],
+      );
+    }
+  } catch (err: any) {
+    console.error('[Education] lesson view upsert error:', err.message);
+  }
+  res.status(204).end();
+}));
+
 router.post('/lessons/:lessonId/complete', authMiddleware, h(async (req, res) => {
   const lessonId = req.params.lessonId;
   const userId = req.user!.userId;
@@ -2041,6 +2124,39 @@ router.get('/my', authMiddleware, h(async (req, res) => {
                                WHERE lp.lesson_id = cl.id AND lp.user_id = ce.user_id)
             ORDER BY cl.position ASC
             LIMIT 1) AS next_lesson_id,
+         -- ТЗ-234: стоп-точка (последний просмотренный непройденный) и первый
+         -- пропуск (не пройден И не просмотрен) — id + position каждого.
+         -- Правило выбора resume — в маппинге ответа (§1 ТЗ-234).
+         (SELECT lv.lesson_id FROM lesson_last_view lv
+            JOIN course_lessons clv ON clv.id = lv.lesson_id
+           WHERE lv.user_id = ce.user_id AND clv.course_id = c.id
+             AND NOT EXISTS (SELECT 1 FROM lesson_progress lpv
+                              WHERE lpv.lesson_id = lv.lesson_id AND lpv.user_id = ce.user_id)
+           ORDER BY lv.viewed_at DESC
+           LIMIT 1) AS resume_viewed_id,
+         (SELECT clv.position FROM lesson_last_view lv
+            JOIN course_lessons clv ON clv.id = lv.lesson_id
+           WHERE lv.user_id = ce.user_id AND clv.course_id = c.id
+             AND NOT EXISTS (SELECT 1 FROM lesson_progress lpv
+                              WHERE lpv.lesson_id = lv.lesson_id AND lpv.user_id = ce.user_id)
+           ORDER BY lv.viewed_at DESC
+           LIMIT 1) AS resume_viewed_position,
+         (SELECT clg.id FROM course_lessons clg
+           WHERE clg.course_id = c.id
+             AND NOT EXISTS (SELECT 1 FROM lesson_progress lpg
+                              WHERE lpg.lesson_id = clg.id AND lpg.user_id = ce.user_id)
+             AND NOT EXISTS (SELECT 1 FROM lesson_last_view lvg
+                              WHERE lvg.lesson_id = clg.id AND lvg.user_id = ce.user_id)
+           ORDER BY clg.position ASC
+           LIMIT 1) AS first_gap_id,
+         (SELECT clg.position FROM course_lessons clg
+           WHERE clg.course_id = c.id
+             AND NOT EXISTS (SELECT 1 FROM lesson_progress lpg
+                              WHERE lpg.lesson_id = clg.id AND lpg.user_id = ce.user_id)
+             AND NOT EXISTS (SELECT 1 FROM lesson_last_view lvg
+                              WHERE lvg.lesson_id = clg.id AND lvg.user_id = ce.user_id)
+           ORDER BY clg.position ASC
+           LIMIT 1) AS first_gap_position,
          (SELECT MAX(lp2.completed_at) FROM lesson_progress lp2
             JOIN course_lessons cl2 ON cl2.id = lp2.lesson_id
            WHERE lp2.user_id = ce.user_id AND cl2.course_id = c.id) AS last_activity,
@@ -2101,6 +2217,14 @@ router.get('/my', authMiddleware, h(async (req, res) => {
       enrollment_source: r.source,
       enrolled_at: r.enrolled_at,
       next_lesson_id: r.next_lesson_id ?? null,
+      // ТЗ-234: resume с проверкой пропусков (§1 ТЗ-234): пропуск раньше
+      // стоп-точки → пропуск; иначе стоп-точка; ничего не просмотрено → null
+      resume_lesson_id:
+        r.resume_viewed_id == null
+          ? null
+          : r.first_gap_id != null && Number(r.first_gap_position) < Number(r.resume_viewed_position)
+            ? r.first_gap_id
+            : r.resume_viewed_id,
       last_activity: r.last_activity ?? null,
       progress: {
         completed_lessons: completed,

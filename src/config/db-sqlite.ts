@@ -945,6 +945,15 @@ export async function initSQLiteSchema(): Promise<void> {
       PRIMARY KEY (user_id, lesson_id)
     );
 
+    -- ТЗ-234: последний просмотренный урок + скролл-позиция (PG-зеркало: lms_v11_lesson_last_view.sql)
+    CREATE TABLE IF NOT EXISTS lesson_last_view (
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      lesson_id TEXT NOT NULL REFERENCES course_lessons(id) ON DELETE CASCADE,
+      viewed_at TEXT DEFAULT (datetime('now')),
+      scroll_percent REAL,
+      PRIMARY KEY (user_id, lesson_id)
+    );
+
     CREATE TABLE IF NOT EXISTS news_course_links (
       news_id TEXT NOT NULL REFERENCES news(id) ON DELETE CASCADE,
       course_id TEXT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,

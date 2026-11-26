@@ -1398,3 +1398,38 @@ auto-курсу «Санкции» → `source:'manual'`, count 6+1=7, sim=max a
 курс первым в выдаче; удаление связки → возврат к `auto`/6. Флаг OFF/ON
 переключался recreate контейнера (`docker restart` НЕ перечитывает env_file —
 ловушка зафиксирована здесь).
+
+## ТЗ-234 — персистентность прогресса: последний урок, пропуски, скролл (2026-11-26)
+
+Контур «где остановился» поверх бинарного прогресса `lesson_progress`.
+
+**Таблица `lesson_last_view`** (миграция `lms_v11_lesson_last_view.sql`,
+SQLite-зеркало в `initSQLiteSchema`): `(user_id, lesson_id)` PK,
+`viewed_at`, `scroll_percent REAL NULL` («открывал, не скроллил» — легально).
+Индексов сверх PK нет.
+
+**API:**
+- `POST /api/education/lessons/:id/view` (auth; гейт — тот же
+  `checkLessonAccess`, blocked → его ответ, записи нет). Тело
+  `{scroll_percent?}`: finite 0..1, иначе 400; не передан — сохранённое не
+  трогаем. Upsert кросс-диалектный (SELECT → UPDATE/INSERT). Ответ 204.
+- `GET /lessons/:id` — поле `my_view: {scroll_percent} | null` (гостю null).
+- `GET /my` — поле `resume_lesson_id`: стоп-точка (последний просмотренный
+  непройденный) с проверкой пропусков — если первый пропуск (не пройден И не
+  просмотрен) раньше стоп-точки, ведём на пропуск (§1 ТЗ-234, сценарная
+  таблица). `next_lesson_id` не изменён (контракт ТЗ-126/226).
+
+**Фронт (LessonPage):** после загрузки урока — fire-and-forget POST view;
+восстановление позиции `scrollTo(percent × (scrollHeight − innerHeight))`
+(rAF + повтор 500 мс; детект юзер-скролла по wheel/touchmove/keydown, НЕ по
+scroll — программный scrollTo сам генерирует scroll); трекинг — throttle 3 с,
+flush на `visibilitychange:hidden`/`pagehide` через `fetch keepalive` (не
+sendBeacon — нет Authorization). Пройденный урок открывается с начала.
+Процент, а не пиксели — переживает смену ориентации по построению.
+
+**CTA «Продолжить»:** страница курса и главная (HomeCoursesSection) ведут на
+`resume_lesson_id ?? next_lesson_id`; подпись не менялась.
+
+**Вне скоупа:** видео-таймкод (проверка API хостов — следующий шаг);
+magic-link гости не трекаются (ТЗ-187). Миграция на проде:
+`POST /migrate-lms-lesson-last-view` (secret), SQLite — авто.
