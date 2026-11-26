@@ -1426,6 +1426,9 @@ scroll — программный scrollTo сам генерирует scroll); 
 flush на `visibilitychange:hidden`/`pagehide` через `fetch keepalive` (не
 sendBeacon — нет Authorization). Пройденный урок открывается с начала.
 Процент, а не пиксели — переживает смену ориентации по построению.
+Под fixed-body локом читалки (ТЗ-235) window.scrollY === 0 — onScroll/flush
+загардированы (`body.style.position === 'fixed'` → не шлём), иначе сворачивание
+PWA во время чтения затирало бы позицию нулём (фоллоу-ап приёмки ТЗ-235).
 
 **CTA «Продолжить»:** страница курса и главная (HomeCoursesSection) ведут на
 `resume_lesson_id ?? next_lesson_id`; подпись не менялась.
