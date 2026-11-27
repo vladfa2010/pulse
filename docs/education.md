@@ -1545,3 +1545,26 @@ hl_upsell_click/hl_login_click/hl_created/hl_note_saved.
 - Живые проверки: quote-share 201 → `/q/:token` 200 с OG (цитата, курс,
   обложка .og.jpg) через Caddy снаружи; resolve 200; невалидный токен 404;
   после DELETE — 404 «Цитата удалена автором».
+
+**Этап 3 «Возврат» (2026-11-27, backend `c174517`, web 8.6.118):**
+- Продукт уведомлений `lesson_review` («Повторение выделений», push+email,
+  entitlement 'all'); строка в NotificationMatrix с подсветкой нового
+  продукта (§2.10, снимается следующим релизом). Email-канал — отдельной
+  подзадачей (форматтер дайджеста).
+- `GET /review/today` — до 5 карточек (kind='hl'), самые давно не
+  повторявшиеся первыми; «сегодня» — порог начала суток МСК параметром
+  (без `::date` — шим SQLite, техлид). `POST /review/seen` — «Помню»,
+  идемпотентно, владелец.
+- `startLessonReviewCron` — НОВАЯ функция с CronLock (startCron отключён —
+  техлид-ревью), 06:00 UTC (09:00 МСК): юзеры с due-хайлайтами × подписка
+  push × enabled → sendPushNotification (тихие часы внутри) с
+  url `/education/review?utm_source=push&utm_campaign=lesson_review`, markSent.
+- Фронт: `ReviewPage` (`/education/review` — маршрут ВЫШЕ `/:slug`): табы
+  «Сегодня»/«Все заметки» (фильтр по курсу), карточка §2.9 (скрытая заметка,
+  «Помню», «Открыть в уроке» `?hl=`); ЛК-блок «Мои заметки» (≤3 + «Все
+  заметки (N)», скрыт при 0). Аналитика: review_push_open (utm),
+  review_card_seen. Метрики задачи 11 считаются из hl_*/review_* событий и
+  таблицы без доработок схемы.
+- Живые проверки: highlight 201 → today 1 карточка → «Помню» 200 → today 0;
+  PUT notification-matrix lesson_review 200 (isValidProduct пропускает),
+  строка в матрице enabled; крон в расписании (лог boot).
