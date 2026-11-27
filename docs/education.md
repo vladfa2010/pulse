@@ -1476,3 +1476,47 @@ archived+enrolled пускает). Уроки draft остаются закры�
 отдаёт `course_status`; модалка «Уведомить о записи» при draft/archived
 показывает янтарное предупреждение, что ссылка из уведомления ведёт на
 заглушку/плашку (ТЗ-186: уведомление о записи на draft ведёт на заглушку).
+
+## ТЗ-237 — выделения, заметки и шеринг цитат (этап 1 «Ядро», 2026-11-27)
+
+Этапность после тимлид/техлид-ревью: этап 1 — ядро (этот раздел), этап 2 —
+шеринг `/q/:token` + карточка-цитата, этап 3 — дэйли-ревью + ЛК-блок.
+
+**Таблица `lesson_highlights`** (миграция `lms_v13`, `/migrate-lms-highlights`;
+правки аудита: `REFERENCES course_lessons`, `uuid_generate_v4`): якорь W3C
+TextQuoteSelector — `exact_text` + `prefix`/`suffix` (≤64) + `pos_hint`;
+`note`; `kind` ('hl' — заметки; 'share' — этап 2, в выборки не попадает);
+`share_token` hex48 (генерится при создании); `last_reviewed_at` (этап 3).
+SQLite-паритет — CREATE TABLE в `initSQLiteSchema` (новая таблица, ALTER не нужен).
+
+**API** (auth; логика — `services/education/highlights.ts`):
+- `GET /highlights?lesson_id=&course_id=&limit≤200&offset=` → `{items, total}`
+  (items с lesson_title/course_slug/course_title, ORDER created_at DESC).
+- `POST /highlights` (hlLimiter 30/мин userId||ip): гейт — `checkLessonAccess`
+  → blocked как есть; **затем `access.enrollment != null`** (аудит: НЕ
+  «!blocked» — free-preview пускает не-записанных) → иначе
+  `403 {error:'not_enrolled', course_slug}` (фронт открывает апселл).
+- `PATCH /highlights/:id` — заметка (null/"" — удалить); чужой id → 404.
+- `DELETE /highlights/:id` — владелец; = отзыв шеринга.
+- Ответ урока: топ-левел `can_highlight` (= !!enrollment; в ТЗ поле было
+  внутри my_view, но my_view null до первого просмотра — вынесено).
+
+**Фронт:** `HighlightLayer` — painting одним проходом TreeWalker (исключая
+.chart-block/table/mark; каскад exact+context → ближайший к pos_hint →
+orphan молча, автоудаление запрещено), тулбар под выделением по
+getClientRects (pointerdown+preventDefault — iOS не схлопывает selection;
+z-320 > читалки 200), поповер по тапу на mark, апселл §2.4, гостевой CTA →
+логин-модалка. Роли A/B/C по can_highlight; «Поделиться» — этап 2. Два слоя:
+обычный вид (стабильный callback-ref — memo SafeHtmlContent сравнивает
+innerRef!) и контент читалки (проп onContentEl). Коучмарк
+(`lms_hl_coach_seen`, 6 с) + тост первого сохранения (`lms_hl_first_saved`,
+«Открыть» → `/education/:slug#notes`). Вкладка «Заметки» на странице курса
+(гейт card.my_enrollment, группировка по программе, клик → урок `?hl=`).
+Диплинк `?hl=` — scrollIntoView + flash 1.5 с, orphan молча. iOS 5.3:
+user-select/touch-action на тексте читалки, тап-зоны игнорируют тап при
+активной selection. Аналитика: hl_toolbar_shown/hl_create_click/
+hl_upsell_click/hl_login_click/hl_created/hl_note_saved.
+
+**Живые проверки (прод):** миграция 3×OK без WARN; гость → 401; записанный →
+201 (token 48 hex), can_highlight:true, PATCH 200, DELETE 204; не-записанный
+на free-preview → 403 not_enrolled + course_slug.
