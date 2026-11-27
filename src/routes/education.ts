@@ -29,6 +29,13 @@ import { getGraphCached, invalidateGraphCache } from '../services/education/know
 import { isEducationGraphEnabled } from '../config/knowledgeGraph'; // ТЗ-107 v3: фичефлаг графа
 import { isEducationMatchEnabled } from '../services/education/match'; // ТЗ-103 Задача 6: фичефлаг мэтчинга
 import { NEWS_MATERIALS_ENABLED } from '../config/newsMaterials'; // ТЗ-230: auto-ветка today-блока
+import { hlLimiter } from '../middleware/rateLimit'; // ТЗ-237
+import {
+  listHighlights,
+  createHighlight,
+  updateHighlightNote,
+  deleteHighlight,
+} from '../services/education/highlights'; // ТЗ-237
 import { loadCoursesMatrix, rankCourses, parseVectorText } from '../services/education/newsMaterials'; // ТЗ-230
 import {
   courseTagIds,
@@ -984,7 +991,11 @@ router.get('/lessons/:lessonId', optionalAuth, h(async (req, res) => {
     has_full_access: !!enrollment || admin,
     test,
     progress,
-    my_view: myView, // ТЗ-234: {scroll_percent} | null
+    my_view: myView, // ТЗ-234: {scroll_percent, rm_page} | null
+    // ТЗ-237: гейт варианта тулбара выделений — записан ли юзер на курс
+    // (гость/не-записанный/админ-без-записи → false; ТЗ-первоисточник клал поле
+    // в my_view, но my_view null до первого просмотра — вынесен топ-левел)
+    can_highlight: !!enrollment,
     // ТЗ-127: программа курса, прогресс и соседи с номерами/названиями
     total_lessons: totalLessons,
     program: neighborsR.rows.map((r: any) => ({
@@ -1161,6 +1172,92 @@ router.get('/shared-lessons/:token', h(async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════════
 // POST /api/education/lessons/:lessonId/complete — прогресс (критерии 5, 10)
 // ═══════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
+// ТЗ-237 — выделения и заметки в уроках (CRUD; шеринг/ревью — этапы 2-3)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// GET /api/education/highlights?lesson_id=&course_id=&limit=&offset= — свои заметки
+router.get('/highlights', authMiddleware, h(async (req, res) => {
+  const userId = req.user!.userId;
+  const lessonId = req.query.lesson_id ? String(req.query.lesson_id) : undefined;
+  const courseId = req.query.course_id ? String(req.query.course_id) : undefined;
+  if (lessonId && !isUuid(lessonId)) return fail(res, 400, 'lesson_id — uuid');
+  if (courseId && !isUuid(courseId)) return fail(res, 400, 'course_id — uuid');
+  const limit = Math.min(Math.max(parseInt(String(req.query.limit || '50'), 10) || 50, 1), 200);
+  const offset = Math.max(parseInt(String(req.query.offset || '0'), 10) || 0, 0);
+  const { items, total } = await listHighlights(userId, { lesson_id: lessonId, course_id: courseId, limit, offset });
+  res.json({ items, total });
+}));
+
+// POST /api/education/highlights — создать выделение/заметку.
+// Гейт (аудит ТЗ-237): checkLessonAccess → blocked как есть; НО записи может
+// не быть и без блока (free-preview) — тогда 403 not_enrolled + course_slug
+// (фронт открывает апселл, §0.2 ТЗ).
+router.post('/highlights', authMiddleware, h(async (req, res) => {
+  if (!(await checkRateLimit(req, res, hlLimiter))) return; // 429 отправлен
+  const userId = req.user!.userId;
+  const body = req.body || {};
+  const lessonId = String(body.lesson_id || '');
+  if (!isUuid(lessonId)) return fail(res, 400, 'lesson_id — uuid');
+  const exactText = typeof body.exact_text === 'string' ? body.exact_text.trim() : '';
+  if (!exactText || exactText.length > 2000) return fail(res, 400, 'exact_text — строка 1..2000');
+  const prefix = typeof body.prefix === 'string' ? body.prefix.slice(-64) : null;
+  const suffix = typeof body.suffix === 'string' ? body.suffix.slice(0, 64) : null;
+  const posHint = Number.isInteger(body.pos_hint) && body.pos_hint >= 0 ? body.pos_hint : null;
+  const note = typeof body.note === 'string' && body.note.trim() ? body.note.trim().slice(0, 2000) : null;
+
+  const lessonR = await query(
+    `SELECT l.*, c.status AS course_status, c.visibility, c.deleted_at,
+            c.subscription_unlock_mode, c.type AS course_type, c.slug AS course_slug,
+            c.title AS course_title
+     FROM course_lessons l JOIN courses c ON c.id = l.course_id
+     WHERE l.id = $1`,
+    [lessonId],
+  );
+  if (lessonR.rows.length === 0 || lessonR.rows[0].deleted_at) return fail(res, 404, 'Урок не найден');
+  const lesson = lessonR.rows[0];
+
+  const access = await checkLessonAccess(userId, lesson);
+  if (access.blocked) return res.status(access.blocked.status).json(access.blocked.body);
+  if (!access.enrollment) {
+    return res.status(403).json({ error: 'not_enrolled', course_slug: lesson.course_slug });
+  }
+
+  const highlight = await createHighlight(userId, {
+    lesson_id: lessonId, exact_text: exactText, prefix, suffix, pos_hint: posHint, note,
+  });
+  res.status(201).json(highlight);
+}));
+
+// PATCH /api/education/highlights/:id — обновить заметку (null/"" — удалить)
+router.patch('/highlights/:id', authMiddleware, h(async (req, res) => {
+  const userId = req.user!.userId;
+  const id = req.params.id;
+  if (!isUuid(id)) return fail(res, 404, 'Не найдено');
+  const note = typeof req.body?.note === 'string' && req.body.note.trim()
+    ? req.body.note.trim().slice(0, 2000)
+    : null;
+  const updated = await updateHighlightNote(userId, id, note);
+  if (!updated) {
+    logIdorBlocked(userId, 'highlight_patch', id);
+    return fail(res, 404, 'Не найдено');
+  }
+  res.json(updated);
+}));
+
+// DELETE /api/education/highlights/:id — удалить (владелец; = отзыв шеринга)
+router.delete('/highlights/:id', authMiddleware, h(async (req, res) => {
+  const userId = req.user!.userId;
+  const id = req.params.id;
+  if (!isUuid(id)) return fail(res, 404, 'Не найдено');
+  const ok = await deleteHighlight(userId, id);
+  if (!ok) {
+    logIdorBlocked(userId, 'highlight_delete', id);
+    return fail(res, 404, 'Не найдено');
+  }
+  res.status(204).end();
+}));
+
 // ═══════════════════════════════════════════════════════════════════════════
 // POST /api/education/lessons/:lessonId/view — фиксация просмотра + скролла (ТЗ-234)
 // ═══════════════════════════════════════════════════════════════════════════

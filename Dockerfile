@@ -42,6 +42,8 @@ RUN cp src/migrations/telegram_club_v1.sql dist/migrations/telegram_club_v1.sql
 RUN cp src/migrations/lms_v11_lesson_last_view.sql dist/migrations/lms_v11_lesson_last_view.sql
 # ТЗ-236: страница читалки для POST /migrate-lms-lesson-rm-page
 RUN cp src/migrations/lms_v12_lesson_rm_page.sql dist/migrations/lms_v12_lesson_rm_page.sql
+# ТЗ-237: выделения/заметки для POST /migrate-lms-highlights
+RUN cp src/migrations/lms_v13_lesson_highlights.sql dist/migrations/lms_v13_lesson_highlights.sql
 EXPOSE 3001
 ENV BUILD_TIMESTAMP=1779922500
 CMD ["node", "dist/index.js"]

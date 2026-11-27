@@ -956,6 +956,24 @@ export async function initSQLiteSchema(): Promise<void> {
       PRIMARY KEY (user_id, lesson_id)
     );
 
+    -- ТЗ-237: выделения/заметки (PG-зеркало: lms_v13_lesson_highlights.sql).
+    -- initSchema на каждом boot — существующие SQLite-БД покрываются без ALTER.
+    CREATE TABLE IF NOT EXISTS lesson_highlights (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      lesson_id TEXT NOT NULL REFERENCES course_lessons(id) ON DELETE CASCADE,
+      exact_text TEXT NOT NULL,
+      prefix TEXT,
+      suffix TEXT,
+      pos_hint INTEGER,
+      note TEXT,
+      kind TEXT NOT NULL DEFAULT 'hl',
+      share_token TEXT UNIQUE,
+      last_reviewed_at TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_highlights_user_lesson ON lesson_highlights(user_id, lesson_id);
+
     CREATE TABLE IF NOT EXISTS news_course_links (
       news_id TEXT NOT NULL REFERENCES news(id) ON DELETE CASCADE,
       course_id TEXT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,

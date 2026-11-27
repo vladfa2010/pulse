@@ -345,6 +345,22 @@ export const newsMaterialsLimiter = rateLimit({
   validate: { trustProxy: false },
 });
 
+// ─── Выделения/заметки в уроках (ТЗ-237) ────────────────────────────────────
+// 30/мин на юзера (или IP): создание хайлайтов/шерингов — ручные действия,
+// легитимный темп единицы в минуту; лимит закрывает спам-записи в БД.
+export const hlLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  message: {
+    error: 'Слишком много действий. Попробуйте через минуту.',
+    retryAfter: '1 minute',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => (req as any).user?.userId || req.ip || 'unknown',
+  validate: { trustProxy: false },
+});
+
 // ─── Club invite — 10 ссылок/час на юзера (TZ-197-club, защита от фарма ссылок) ──
 export const clubInviteLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 час
