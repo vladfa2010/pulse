@@ -229,6 +229,8 @@ export interface ReviewCard {
   lesson_id: string;
   lesson_title: string;
   course_slug: string;
+  /** Приёмка F5: название курса для мета-строки карточки (§2.9). */
+  course_title: string;
 }
 
 /** Порог «сегодня» по МСК (бизнес-дата платформы). Без ::date в SQL —
@@ -243,7 +245,7 @@ function mskTodayStart(): Date {
 export async function getReviewToday(userId: string): Promise<ReviewCard[]> {
   const threshold = mskTodayStart().toISOString();
   const r = await query(
-    `SELECT h.id, h.exact_text, h.note, h.lesson_id, cl.title AS lesson_title, c.slug AS course_slug
+    `SELECT h.id, h.exact_text, h.note, h.lesson_id, cl.title AS lesson_title, c.slug AS course_slug, c.title AS course_title
      FROM lesson_highlights h
      JOIN course_lessons cl ON cl.id = h.lesson_id
      JOIN courses c ON c.id = cl.course_id
@@ -260,6 +262,7 @@ export async function getReviewToday(userId: string): Promise<ReviewCard[]> {
     lesson_id: String(x.lesson_id),
     lesson_title: x.lesson_title,
     course_slug: x.course_slug,
+    course_title: x.course_title,
   }));
 }
 
