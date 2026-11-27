@@ -134,3 +134,86 @@ export async function deleteHighlight(userId: string, id: string): Promise<boole
   await query(`DELETE FROM lesson_highlights WHERE id = $1`, [id]);
   return true;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ТЗ-237 этап 2 — шеринг цитат (/q/:token)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** share_url для существующего хайлайта владельца (kind='hl'); токен есть с
+ *  создания, для старых записей без токена — догенерируем. null — не владелец. */
+export async function getOwnedShareToken(userId: string, id: string): Promise<string | null> {
+  const r = await query(
+    `SELECT share_token FROM lesson_highlights WHERE id = $1 AND user_id = $2 AND kind = 'hl'`,
+    [id, userId],
+  );
+  if (r.rows.length === 0) return null;
+  let token = r.rows[0].share_token;
+  if (!token) {
+    token = crypto.randomBytes(24).toString('hex');
+    await query(`UPDATE lesson_highlights SET share_token = $1 WHERE id = $2`, [token, id]);
+  }
+  return token;
+}
+
+/** Шеринг без сохранения заметки (вариант B): kind='share' — в списках и
+ *  дэйли-ревью не участвует, для /q/:token валиден наравне с 'hl'. */
+export async function createQuoteShare(userId: string, input: CreateHighlightInput): Promise<string> {
+  const id = crypto.randomUUID();
+  const token = crypto.randomBytes(24).toString('hex');
+  await query(
+    `INSERT INTO lesson_highlights (id, user_id, lesson_id, exact_text, prefix, suffix, pos_hint, note, kind, share_token, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, 'share', $8, ${USE_SQLITE ? "datetime('now')" : 'NOW()'})`,
+    [id, userId, input.lesson_id, input.exact_text, input.prefix ?? null, input.suffix ?? null, input.pos_hint ?? null, token],
+  );
+  return token;
+}
+
+export interface ShareResolve {
+  highlight_id: string;
+  lesson_id: string;
+  course_slug: string;
+}
+
+/** Резолв токена (любой kind) — для диплинка ?q= и страницы /q. */
+export async function resolveShareToken(token: string): Promise<ShareResolve | null> {
+  const r = await query(
+    `SELECT h.id, h.lesson_id, c.slug AS course_slug
+     FROM lesson_highlights h
+     JOIN course_lessons cl ON cl.id = h.lesson_id
+     JOIN courses c ON c.id = cl.course_id
+     WHERE h.share_token = $1`,
+    [token],
+  );
+  if (r.rows.length === 0) return null;
+  return { highlight_id: String(r.rows[0].id), lesson_id: String(r.rows[0].lesson_id), course_slug: r.rows[0].course_slug };
+}
+
+export interface SharePageData {
+  exact_text: string;
+  course_title: string;
+  course_slug: string;
+  course_cover: string | null;
+  lesson_id: string;
+  highlight_id: string;
+}
+
+/** Данные публичной страницы /q/:token. PII автора в SELECT нет в принципе. */
+export async function getSharePageData(token: string): Promise<SharePageData | null> {
+  const r = await query(
+    `SELECT h.id, h.exact_text, h.lesson_id, c.title AS course_title, c.slug AS course_slug, c.cover_url
+     FROM lesson_highlights h
+     JOIN course_lessons cl ON cl.id = h.lesson_id
+     JOIN courses c ON c.id = cl.course_id
+     WHERE h.share_token = $1`,
+    [token],
+  );
+  if (r.rows.length === 0) return null;
+  return {
+    exact_text: r.rows[0].exact_text,
+    course_title: r.rows[0].course_title,
+    course_slug: r.rows[0].course_slug,
+    course_cover: r.rows[0].cover_url ?? null,
+    lesson_id: String(r.rows[0].lesson_id),
+    highlight_id: String(r.rows[0].id),
+  };
+}

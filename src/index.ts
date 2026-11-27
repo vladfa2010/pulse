@@ -76,7 +76,7 @@ import { bootstrapStorage } from './services/storage/driver'; // ТЗ-100 v15: L
 import { startVirusScanSweeper } from './services/education/virusScan'; // ТЗ-102 v2: sweeper перескана pending_scan
 import { initEducationSeoBootHeal } from './services/education/seoRebuild'; // ТЗ-164: heal пропавших SEO-файлов после ручной заливки dist
 import { mediaGuard } from './services/storage/media';       // ТЗ-100 v15: отдача файлов /media
-import { apiLimiter, authLimiter, webhookLimiter, forgotPasswordLimiter, passwordResetFlowLimiter, promoValidateLimiter, adminLimiter } from './middleware/rateLimit';
+import { apiLimiter, authLimiter, webhookLimiter, forgotPasswordLimiter, passwordResetFlowLimiter, promoValidateLimiter, adminLimiter, checkRateLimit, ogRenderLimiter } from './middleware/rateLimit';
 import { startCron, startHeatmapFreezeCron, startClusteringCron, startTopicsNamingCron, startEducationMatchCron, startAnalyzeNewsCron, startKnowledgeGraphCron, startMcpCron, startViralityCron, startSourceStatsCron, startMcpSecurityCron, startClubAuditCron } from './services/cron';   // startCron (RSS) отключен (TZ_REMOVE_DUPLICATE_RSS_CRON); heatmap freeze — TZ-49; clustering — ТЗ-92 (флаг CLUSTERING_ENABLED); topics naming — ТЗ-115 (флаг TOPICS_ENABLED); education match catch-up — ТЗ-103 (флаг EDUCATION_MATCH_ENABLED); analyze news — ТЗ-150 задача 7 (без флага); knowledge graph — ТЗ-107 v3 (флаг EDUCATION_GRAPH_ENABLED); MCP-обслуживание — ТЗ-183 Задача 5; virality analytics — ТЗ-185; source stats daily — ТЗ-186; MCP security daily — ТЗ-190; club access audit — TZ-197-club
 import { mountMcp } from './mcp/index'; // ТЗ-183 Задача 1: транспорт /mcp (streamable HTTP, токены)
 import { startMcpCounterFlush } from './mcp/counters'; // ТЗ-185 Задача 1: requests_count, flush раз в минуту
@@ -3146,6 +3146,81 @@ function escapeHtml(text: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GET /q/:token — публичная страница цитаты из урока (ТЗ-237, этап 2)
+// Server-render по паттерну /n/:slug. Постоянная ссылка (без сгорания);
+// revoke = DELETE хайлайта владельцем. PII автора нет. escapeHtml — обязателен
+// (exact_text — пользовательская строка, техлид-ревью). Inline-JS нет
+// (будущий CSP enforce, ТЗ-188).
+// ═══════════════════════════════════════════════════════════════════════════
+const SHARE_TOKEN_RE_Q = /^[a-f0-9]{48}$/;
+app.get('/q/:token', async (req, res) => {
+  const escapeHtmlQ = (v: unknown) =>
+    String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  try {
+    if (!(await checkRateLimit(req, res, ogRenderLimiter))) return;
+    const token = String(req.params.token || '');
+    const frontendUrl = process.env.FRONTEND_URL || 'https://pulse.inside-trade.ru';
+
+    const notFound = (msg: string) => {
+      res.status(404).setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.send(`<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtmlQ(msg)} — PULSE</title></head>
+<body style="background:#060606;color:#9CA3AF;font-family:Inter,system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0">
+<div style="text-align:center"><p>${escapeHtmlQ(msg)}</p><a href="${frontendUrl}" style="color:#00D4FF">На главную PULSE</a></div></body></html>`);
+    };
+
+    if (!SHARE_TOKEN_RE_Q.test(token)) return notFound('Цитата не найдена');
+
+    const { getSharePageData } = await import('./services/education/highlights');
+    const data = await getSharePageData(token);
+    if (!data) return notFound('Цитата удалена автором');
+
+    const { ogImageFromCover } = await import('./utils/ogMeta');
+    const quoteShort = data.exact_text.length > 80 ? `${data.exact_text.slice(0, 80)}…` : data.exact_text;
+    const ogImgPath = ogImageFromCover(data.course_cover);
+    const ogImage = ogImgPath.startsWith('http') ? ogImgPath : frontendUrl + ogImgPath;
+    const canonical = `${frontendUrl}/q/${token}`;
+    const quoteLong = data.exact_text.length > 300 ? `${data.exact_text.slice(0, 300)}…` : data.exact_text;
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(`<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${escapeHtmlQ(quoteShort)} — ${escapeHtmlQ(data.course_title)} · PULSE</title>
+  <meta name="description" content="Цитата из курса «${escapeHtmlQ(data.course_title)}» на платформе PULSE">
+  <link rel="canonical" href="${canonical}">
+  <meta property="og:title" content="${escapeHtmlQ(quoteShort)}">
+  <meta property="og:description" content="Курс «${escapeHtmlQ(data.course_title)}» · PULSE">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="${canonical}">
+  <meta property="og:site_name" content="PULSE">
+  ${ogImage ? `<meta property="og:image" content="${escapeHtmlQ(ogImage)}">` : ''}
+  <meta name="twitter:card" content="summary_large_image">
+</head>
+<body style="background:#060606;color:#FFFFFF;font-family:Inter,system-ui,-apple-system,sans-serif;margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px">
+  <div style="max-width:560px;width:100%">
+    <div style="font:700 22px Inter;line-height:1.45;color:#FFFFFF">
+      <span style="color:#00D4FF;font-size:34px;line-height:0;vertical-align:-8px">&laquo;</span>${escapeHtmlQ(quoteLong)}<span style="color:#00D4FF;font-size:34px;line-height:0;vertical-align:-12px">&raquo;</span>
+    </div>
+    <div style="margin-top:18px;padding-top:14px;border-top:1px solid #222222;font:400 13px Inter;color:#9CA3AF">
+      Курс <span style="color:#00D4FF;font-weight:700;text-transform:uppercase;letter-spacing:.06em">${escapeHtmlQ(data.course_title)}</span> · PULSE
+    </div>
+    <div style="margin-top:26px;display:flex;gap:12px;flex-wrap:wrap">
+      <a href="${frontendUrl}/education/${escapeHtmlQ(data.course_slug)}" style="background:#00D4FF;color:#060606;border-radius:999px;font:600 14px Inter;padding:12px 22px;text-decoration:none">Читать курс</a>
+      <a href="${frontendUrl}/education/lesson/${escapeHtmlQ(data.lesson_id)}?hl=${escapeHtmlQ(data.highlight_id)}" style="border:1px solid #222222;color:#9CA3AF;border-radius:999px;font:600 14px Inter;padding:12px 22px;text-decoration:none">Открыть в уроке &rarr;</a>
+    </div>
+  </div>
+</body>
+</html>`);
+  } catch (err: any) {
+    console.error('[QuotePage] error:', err.message);
+    res.status(500).send('Internal error');
+  }
+});
 
 app.get('/n/:slug', async (req, res) => {
   try {

@@ -35,6 +35,9 @@ import {
   createHighlight,
   updateHighlightNote,
   deleteHighlight,
+  getOwnedShareToken,
+  createQuoteShare,
+  resolveShareToken,
 } from '../services/education/highlights'; // ТЗ-237
 import { loadCoursesMatrix, rankCourses, parseVectorText } from '../services/education/newsMaterials'; // ТЗ-230
 import {
@@ -1256,6 +1259,60 @@ router.delete('/highlights/:id', authMiddleware, h(async (req, res) => {
     return fail(res, 404, 'Не найдено');
   }
   res.status(204).end();
+}));
+
+// POST /api/education/highlights/:id/share — share_url существующего хайлайта
+// (владелец; токен с создания, старым записям догенерируется). hlLimiter (3.1).
+router.post('/highlights/:id/share', authMiddleware, h(async (req, res) => {
+  if (!(await checkRateLimit(req, res, hlLimiter))) return;
+  const userId = req.user!.userId;
+  const id = req.params.id;
+  if (!isUuid(id)) return fail(res, 404, 'Не найдено');
+  const token = await getOwnedShareToken(userId, id);
+  if (!token) {
+    logIdorBlocked(userId, 'highlight_share', id);
+    return fail(res, 404, 'Не найдено');
+  }
+  const origin = process.env.FRONTEND_URL || 'https://pulse.inside-trade.ru';
+  res.json({ share_url: `${origin}/q/${token}` });
+}));
+
+// POST /api/education/quote-shares — шеринг БЕЗ сохранения заметки (вариант B,
+// залогинен не записанный; виральность без записи). kind='share': в списках и
+// дэйли-ревью не участвует. Гейт записи НЕ применяется (3.2), урок должен существовать.
+router.post('/quote-shares', authMiddleware, h(async (req, res) => {
+  if (!(await checkRateLimit(req, res, hlLimiter))) return;
+  const userId = req.user!.userId;
+  const body = req.body || {};
+  const lessonId = String(body.lesson_id || '');
+  if (!isUuid(lessonId)) return fail(res, 400, 'lesson_id — uuid');
+  const exactText = typeof body.exact_text === 'string' ? body.exact_text.trim() : '';
+  if (!exactText || exactText.length > 2000) return fail(res, 400, 'exact_text — строка 1..2000');
+  const prefix = typeof body.prefix === 'string' ? body.prefix.slice(-64) : null;
+  const suffix = typeof body.suffix === 'string' ? body.suffix.slice(0, 64) : null;
+  const posHint = Number.isInteger(body.pos_hint) && body.pos_hint >= 0 ? body.pos_hint : null;
+
+  const lessonR = await query(
+    `SELECT l.id, c.deleted_at FROM course_lessons l JOIN courses c ON c.id = l.course_id WHERE l.id = $1`,
+    [lessonId],
+  );
+  if (lessonR.rows.length === 0 || lessonR.rows[0].deleted_at) return fail(res, 404, 'Урок не найден');
+
+  const token = await createQuoteShare(userId, { lesson_id: lessonId, exact_text: exactText, prefix, suffix, pos_hint: posHint });
+  const origin = process.env.FRONTEND_URL || 'https://pulse.inside-trade.ru';
+  res.status(201).json({ share_token: token, share_url: `${origin}/q/${token}` });
+}));
+
+// GET /api/education/highlights/resolve/:token — JSON-резолвер диплинка ?q=
+// (3.3, публичный). IP-лимит — ogRenderLimiter (прецедент /og/:slug).
+const SHARE_TOKEN_RE = /^[a-f0-9]{48}$/;
+router.get('/highlights/resolve/:token', h(async (req, res) => {
+  if (!(await checkRateLimit(req, res, ogRenderLimiter))) return;
+  const token = String(req.params.token || '');
+  if (!SHARE_TOKEN_RE.test(token)) return fail(res, 404, 'Not found');
+  const r = await resolveShareToken(token);
+  if (!r) return fail(res, 404, 'Not found');
+  res.json(r);
 }));
 
 // ═══════════════════════════════════════════════════════════════════════════
