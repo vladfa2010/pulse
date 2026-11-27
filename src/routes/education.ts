@@ -38,6 +38,8 @@ import {
   getOwnedShareToken,
   createQuoteShare,
   resolveShareToken,
+  getReviewToday,
+  markReviewSeen,
 } from '../services/education/highlights'; // ТЗ-237
 import { loadCoursesMatrix, rankCourses, parseVectorText } from '../services/education/newsMaterials'; // ТЗ-230
 import {
@@ -1313,6 +1315,21 @@ router.get('/highlights/resolve/:token', h(async (req, res) => {
   const r = await resolveShareToken(token);
   if (!r) return fail(res, 404, 'Not found');
   res.json(r);
+}));
+
+// GET /api/education/review/today — карточки дэйли-ревью (ТЗ-237 этап 3, 4.2)
+router.get('/review/today', authMiddleware, h(async (req, res) => {
+  const cards = await getReviewToday(req.user!.userId);
+  res.json({ cards });
+}));
+
+// POST /api/education/review/seen — «Помню» (4.3, идемпотентно)
+router.post('/review/seen', authMiddleware, h(async (req, res) => {
+  const id = String(req.body?.highlight_id || '');
+  if (!isUuid(id)) return fail(res, 400, 'highlight_id — uuid');
+  const ok = await markReviewSeen(req.user!.userId, id);
+  if (!ok) return fail(res, 404, 'Не найдено');
+  res.json({ ok: true });
 }));
 
 // ═══════════════════════════════════════════════════════════════════════════

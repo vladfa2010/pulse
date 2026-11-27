@@ -34,6 +34,7 @@ const PRODUCT_ACCESS: Record<Product, 'all' | 'paid'> = {
   engagement: 'all',      // механики удержания — всем
   billing: 'all',         // transactional — всегда
   weekly_report: 'paid',  // как раньше: только subscription_active
+  lesson_review: 'all', // ТЗ-237: повторение выделений — всем (механика возврата)
 };
 
 // ── Канал → фича-флаг плана (features_registry) ────────────────────────────

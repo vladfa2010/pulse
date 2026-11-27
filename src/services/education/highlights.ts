@@ -217,3 +217,75 @@ export async function getSharePageData(token: string): Promise<SharePageData | n
     highlight_id: String(r.rows[0].id),
   };
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ТЗ-237 этап 3 — дэйли-ревью «Повторение выделений»
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface ReviewCard {
+  id: string;
+  exact_text: string;
+  note: string | null;
+  lesson_id: string;
+  lesson_title: string;
+  course_slug: string;
+}
+
+/** Порог «сегодня» по МСК (бизнес-дата платформы). Без ::date в SQL —
+ *  шим SQLite его не транслирует (техлид-ревью), сравнение параметром. */
+function mskTodayStart(): Date {
+  const mskNow = new Date(Date.now() + 3 * 3600 * 1000);
+  return new Date(Date.UTC(mskNow.getUTCFullYear(), mskNow.getUTCMonth(), mskNow.getUTCDate()) - 3 * 3600 * 1000);
+}
+
+/** До 5 карточек на сегодня: самые давно не повторявшиеся первыми;
+ *  просмотренные сегодня исключены. Только kind='hl'. */
+export async function getReviewToday(userId: string): Promise<ReviewCard[]> {
+  const threshold = mskTodayStart().toISOString();
+  const r = await query(
+    `SELECT h.id, h.exact_text, h.note, h.lesson_id, cl.title AS lesson_title, c.slug AS course_slug
+     FROM lesson_highlights h
+     JOIN course_lessons cl ON cl.id = h.lesson_id
+     JOIN courses c ON c.id = cl.course_id
+     WHERE h.user_id = $1 AND h.kind = 'hl'
+       AND (h.last_reviewed_at IS NULL OR h.last_reviewed_at < $2)
+     ORDER BY COALESCE(h.last_reviewed_at, h.created_at) ASC
+     LIMIT 5`,
+    [userId, USE_SQLITE ? threshold.replace('T', ' ').slice(0, 19) : threshold],
+  );
+  return r.rows.map((x: any) => ({
+    id: String(x.id),
+    exact_text: x.exact_text,
+    note: x.note ?? null,
+    lesson_id: String(x.lesson_id),
+    lesson_title: x.lesson_title,
+    course_slug: x.course_slug,
+  }));
+}
+
+/** «Помню» — last_reviewed_at = now. Идемпотентно; только владелец. */
+export async function markReviewSeen(userId: string, highlightId: string): Promise<boolean> {
+  const own = await query(
+    `SELECT id FROM lesson_highlights WHERE id = $1 AND user_id = $2 AND kind = 'hl'`,
+    [highlightId, userId],
+  );
+  if (own.rows.length === 0) return false;
+  await query(
+    `UPDATE lesson_highlights SET last_reviewed_at = ${USE_SQLITE ? "datetime('now')" : 'NOW()'} WHERE id = $1`,
+    [highlightId],
+  );
+  return true;
+}
+
+/** Получатели крона: юзеры с ≥1 due-хайлайтом (порог — начало суток МСК). */
+export async function listReviewDueUserIds(): Promise<string[]> {
+  const threshold = mskTodayStart().toISOString();
+  const r = await query(
+    `SELECT DISTINCT h.user_id
+     FROM lesson_highlights h
+     WHERE h.kind = 'hl'
+       AND (h.last_reviewed_at IS NULL OR h.last_reviewed_at < $1)`,
+    [USE_SQLITE ? threshold.replace('T', ' ').slice(0, 19) : threshold],
+  );
+  return r.rows.map((x: any) => String(x.user_id));
+}

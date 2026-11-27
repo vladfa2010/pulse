@@ -833,6 +833,52 @@ export function startEducationMatchCron(opts?: { isShuttingDown?: () => boolean 
   console.log('[Cron] Education match catch-up scheduled hourly');
 }
 
+/**
+ * ТЗ-237 этап 3: дэйли-ревью «Повторение выделений» — 09:00 МСК (06:00 UTC).
+ * НОВАЯ функция с CronLock по образцу startEducationMatchCron (startCron
+ * отключён — техлид-ревью). Получатели: юзеры с due-хайлайтами × подписка
+ * lesson_review × push × enabled; тихие часы — внутри sendPushNotification.
+ * Email-канал — отдельной подзадачей (форматтер дайджеста, план этапа 3).
+ */
+export function startLessonReviewCron(opts?: { isShuttingDown?: () => boolean }) {
+  cron.schedule('0 6 * * *', async () => {
+    if (opts?.isShuttingDown?.()) return;
+    const acquired = await acquireCronLock('lesson-review-daily');
+    if (!acquired) return;
+    const startedAt = Date.now();
+    try {
+      const { listReviewDueUserIds, getReviewToday } = await import('./education/highlights');
+      const { getEnabledSubscriptions, markSent } = await import('./notifications/subscriptions');
+      const { sendPushNotification } = await import('./push');
+      const userIds = await listReviewDueUserIds();
+      let sent = 0;
+      for (const userId of userIds) {
+        const subs = await getEnabledSubscriptions(userId, 'lesson_review');
+        if (!subs.some(s => s.channel === 'push')) continue;
+        const cards = await getReviewToday(userId);
+        if (cards.length === 0) continue;
+        const first = cards[0].exact_text;
+        const body = cards.length > 1
+          ? `«${first.slice(0, 80)}${first.length > 80 ? '…' : ''}» — и ещё ${cards.length - 1}`
+          : `«${first.slice(0, 100)}${first.length > 100 ? '…' : ''}»`;
+        const ok = await sendPushNotification(userId, 'Повторение выделений', body, {
+          url: '/education/review?utm_source=push&utm_campaign=lesson_review',
+        });
+        if (ok) {
+          await markSent(userId, 'lesson_review', 'push');
+          sent++;
+        }
+      }
+      console.log(`[Cron] Lesson review daily: users=${userIds.length}, sent=${sent}, ${Date.now() - startedAt}ms`);
+    } catch (err: any) {
+      console.error('[Cron] Lesson review daily failed:', err.message);
+    } finally {
+      await releaseCronLock('lesson-review-daily');
+    }
+  });
+  console.log('[Cron] Lesson review daily scheduled at 06:00 UTC (09:00 MSK)');
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // ТЗ-150 задача 7 — ежедневный ANALYZE news
 // ═══════════════════════════════════════════════════════════════════════════

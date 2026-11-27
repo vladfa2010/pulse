@@ -13,7 +13,7 @@
  *  - engagement    — механики удержания: sentiment-напоминания «проголосуй», стрики
  *                    (event-driven, свой воркер; диспетчер решает только «кому»)
  */
-export type Product = 'digest' | 'buckets' | 'weekly_report' | 'fact_check' | 'news_alert' | 'billing' | 'engagement';
+export type Product = 'digest' | 'buckets' | 'weekly_report' | 'fact_check' | 'news_alert' | 'billing' | 'engagement' | 'lesson_review'; // ТЗ-237: дэйли-ревью выделений
 export type Channel = 'telegram' | 'email' | 'push';
 
 // Защита от тяжёлых запросов в дайджесте/weekly report
@@ -63,6 +63,7 @@ export const PRODUCT_LABELS: Record<Product, string> = {
   news_alert: 'Мгновенные алерты',
   billing: 'Подписка и оплата',
   engagement: 'Механики и напоминания',
+  lesson_review: 'Повторение выделений',
 };
 
 export const PRODUCT_NOTES: Record<Product, string> = {
@@ -73,6 +74,7 @@ export const PRODUCT_NOTES: Record<Product, string> = {
   news_alert: 'Пуш сразу при выходе новости',
   billing: 'Истечение, продление, чеки',
   engagement: 'Sentiment Index, стрики',
+  lesson_review: 'Ежедневный повтор ваших выделений и заметок',
 };
 
 export const PRODUCT_CHANNELS: Record<Product, Channel[]> = {
@@ -83,6 +85,7 @@ export const PRODUCT_CHANNELS: Record<Product, Channel[]> = {
   news_alert: ['push'],
   billing: ['email', 'push'],
   engagement: ['push'],
+  lesson_review: ['push', 'email'],
 };
 
 export const CHANNEL_LABELS: Record<Channel, string> = {
@@ -142,6 +145,7 @@ export const VALID_PRODUCTS: Product[] = [
   'news_alert',
   'billing',
   'engagement',
+  'lesson_review',
 ];
 
 export const VALID_CHANNELS: Channel[] = ['telegram', 'email', 'push'];
