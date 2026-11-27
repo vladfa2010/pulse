@@ -1520,3 +1520,28 @@ hl_upsell_click/hl_login_click/hl_created/hl_note_saved.
 **Живые проверки (прод):** миграция 3×OK без WARN; гость → 401; записанный →
 201 (token 48 hex), can_highlight:true, PATCH 200, DELETE 204; не-записанный
 на free-preview → 403 not_enrolled + course_slug.
+
+**Этап 2 «Виральность» (2026-11-27, backend `6d1cab9`, web 8.6.117):**
+- `POST /highlights/:id/share` (владелец, hlLimiter) → `{share_url}`; токен с
+  создания, старым записям догенерируется.
+- `POST /quote-shares` — шеринг БЕЗ сохранения заметки (вариант B):
+  `kind='share'` в той же таблице, гейт записи не применяется (виральность);
+  в списках/дэйли-ревью не участвует.
+- `GET /highlights/resolve/:token` — публичный JSON-резолвер диплинка `?q=`
+  (hex48-гард, ogRenderLimiter).
+- `GET /q/:token` — публичная server-render страница цитаты (паттерн
+  `/n/:slug`): OG (title=цитата ≤80, description=курс, image=обложка
+  `.og.jpg`), CTA «Читать курс» + ghost «Открыть в уроке» (`?hl=`); 404
+  «Цитата удалена автором» (revoke = DELETE хайлайта); escapeHtml
+  пользовательской строки; без inline-JS (будущий CSP enforce). **Caddyfile:
+  `handle /q/*` → backend** — прецедента `/n/` в роутинге не существовало
+  (техлид-ревью), блок обязателен.
+- Фронт: `QuoteShare` — canvas-карточка 1080×1350 (§2.7, document.fonts.ready,
+  эфемерный blob), один шеринг-флоу: `navigator.share({files,text,url})` →
+  фолбэки link_only → copy_link/download_png (десктопный шит); «Поделиться»
+  в тулбаре (A — create+share, хайлайт сохраняется; B — quote-shares) и в
+  поповере (share существующего); `?q=` резолв → прокрутка к цитате.
+  Аналитика `hl_shared {path}`.
+- Живые проверки: quote-share 201 → `/q/:token` 200 с OG (цитата, курс,
+  обложка .og.jpg) через Caddy снаружи; resolve 200; невалидный токен 404;
+  после DELETE — 404 «Цитата удалена автором».
